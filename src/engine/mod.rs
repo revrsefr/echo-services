@@ -2,6 +2,8 @@ pub mod db;
 pub mod service;
 pub mod state;
 
+use std::collections::HashMap;
+
 use crate::proto::{NetAction, NetEvent};
 use db::{Db, RegError};
 use service::{Sender, Service, ServiceCtx};
@@ -11,11 +13,12 @@ pub struct Engine {
     services: Vec<Box<dyn Service>>,
     network: Network,
     db: Db,
+    sasl_sessions: HashMap<String, String>, // client uid -> in-progress mechanism
 }
 
 impl Engine {
     pub fn new(services: Vec<Box<dyn Service>>, db: Db) -> Self {
-        Self { services, network: Network::default(), db }
+        Self { services, network: Network::default(), db, sasl_sessions: HashMap::new() }
     }
 
     // Sent right after the SERVER line: burst, introduce every service, endburst.
@@ -48,6 +51,41 @@ impl Engine {
             NetEvent::Privmsg { from, to, text } => self.dispatch(&from, &to, &text),
             NetEvent::AccountRequest { reqid, kind, account, p2, p3, .. } => {
                 self.account_request(reqid, kind, account, p2, p3)
+            }
+            NetEvent::Sasl { client, mode, data, .. } => self.sasl(client, mode, data),
+            _ => Vec::new(),
+        }
+    }
+
+    // SASL agent side of the exchange the ircd relays to us (modes H/S/C/D).
+    // PLAIN only for now: verify the credentials against the account store. NOTE:
+    // this proves the password; wiring the account login (metadata) + advertising
+    // the mechanism list to the ircd are the remaining integration steps.
+    fn sasl(&mut self, client: String, mode: String, data: Vec<String>) -> Vec<NetAction> {
+        let agent = match self.services.first() {
+            Some(s) => s.uid().to_string(),
+            None => return Vec::new(),
+        };
+        let mk = |mode: &str, d: Vec<String>| {
+            vec![NetAction::Sasl { agent: agent.clone(), client: client.clone(), mode: mode.to_string(), data: d }]
+        };
+        match mode.as_str() {
+            "H" => Vec::new(), // host info
+            "S" => match data.first().map(String::as_str) {
+                Some("PLAIN") => {
+                    self.sasl_sessions.insert(client.clone(), "PLAIN".to_string());
+                    mk("C", vec!["+".to_string()]) // empty challenge -> client sends the payload
+                }
+                _ => mk("D", vec!["F".to_string()]), // unsupported mechanism
+            },
+            "C" => {
+                let is_plain = self.sasl_sessions.remove(&client).as_deref() == Some("PLAIN");
+                let ok = is_plain && verify_plain(&data, &self.db);
+                mk("D", vec![if ok { "S".to_string() } else { "F".to_string() }])
+            }
+            "D" => {
+                self.sasl_sessions.remove(&client);
+                Vec::new()
             }
             _ => Vec::new(),
         }
@@ -90,5 +128,20 @@ impl Engine {
             }
         }
         ctx.actions
+    }
+}
+
+// Decode a SASL PLAIN payload (authzid \0 authcid \0 passwd) and verify it.
+fn verify_plain(data: &[String], db: &Db) -> bool {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let Some(b64) = data.first() else { return false };
+    let Ok(raw) = STANDARD.decode(b64) else { return false };
+    let parts: Vec<&[u8]> = raw.split(|&b| b == 0).collect();
+    if parts.len() != 3 {
+        return false;
+    }
+    match (std::str::from_utf8(parts[1]), std::str::from_utf8(parts[2])) {
+        (Ok(authcid), Ok(passwd)) => db.verify(authcid, passwd),
+        _ => false,
     }
 }

@@ -98,6 +98,27 @@ impl Protocol for InspIrcd {
                     vec![]
                 }
             }
+            // ENCAP <target> <subcmd> …  — we only care about relayed SASL:
+            // ENCAP <target> SASL <client> <agent> <mode> [data…]
+            "ENCAP" => {
+                let _target = tokens.next();
+                match tokens.next().map(|s| s.to_ascii_uppercase()).as_deref() {
+                    Some("SASL") => {
+                        let p: Vec<&str> = tokens.collect();
+                        if p.len() >= 3 {
+                            vec![NetEvent::Sasl {
+                                client: p[0].to_string(),
+                                agent: p[1].to_string(),
+                                mode: p[2].to_string(),
+                                data: p[3..].iter().map(|s| s.to_string()).collect(),
+                            }]
+                        } else {
+                            vec![]
+                        }
+                    }
+                    _ => vec![NetEvent::Unknown { line: line.to_string() }],
+                }
+            }
             _ => vec![NetEvent::Unknown { line: line.to_string() }],
         }
     }
@@ -128,6 +149,15 @@ impl Protocol for InspIrcd {
                     "ACCTREGRESULT {} {} {} {} {} :{}",
                     reqid, kind, account, status, code, message
                 ))]
+            }
+            // ENCAP * SASL <agent> <client> <mode> [data…]
+            NetAction::Sasl { agent, client, mode, data } => {
+                let mut line = format!("ENCAP * SASL {} {} {}", agent, client, mode);
+                for d in data {
+                    line.push(' ');
+                    line.push_str(d);
+                }
+                vec![self.from_us(line)]
             }
             NetAction::Raw(s) => vec![s.clone()],
         }
