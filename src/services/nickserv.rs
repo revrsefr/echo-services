@@ -1,4 +1,5 @@
-use crate::engine::service::{Service, ServiceCtx};
+use crate::engine::db::{Db, RegError};
+use crate::engine::service::{Sender, Service, ServiceCtx};
 
 pub struct NickServ {
     pub uid: String,
@@ -15,10 +16,37 @@ impl Service for NickServ {
         "Nickname Services"
     }
 
-    fn on_command(&mut self, from: &str, args: &[&str], ctx: &mut ServiceCtx) {
+    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut Db) {
+        let me = self.uid.as_str();
         match args.first().map(|s| s.to_ascii_uppercase()).as_deref() {
-            Some("HELP") => ctx.notice(self.uid(), from, "Commands: REGISTER, IDENTIFY (coming soon)."),
-            Some(other) => ctx.notice(self.uid(), from, format!("Unknown command: {}. Try HELP.", other)),
+            Some("REGISTER") => {
+                // REGISTER <password> [email] — registers the sender's current nick.
+                let Some(password) = args.get(1) else {
+                    ctx.notice(me, from.uid, "Syntax: REGISTER <password> [email]");
+                    return;
+                };
+                let email = args.get(2).map(|s| s.to_string());
+                match db.register(from.nick, password, email) {
+                    Ok(()) => ctx.notice(me, from.uid, format!("Nickname \x02{}\x02 is now registered.", from.nick)),
+                    Err(RegError::Exists) => ctx.notice(me, from.uid, format!("Nickname \x02{}\x02 is already registered.", from.nick)),
+                    Err(RegError::Internal) => ctx.notice(me, from.uid, "Registration failed, please try again later."),
+                }
+            }
+            Some("IDENTIFY") => {
+                let Some(password) = args.get(1) else {
+                    ctx.notice(me, from.uid, "Syntax: IDENTIFY <password>");
+                    return;
+                };
+                if db.verify(from.nick, password) {
+                    ctx.notice(me, from.uid, format!("You are now identified for \x02{}\x02.", from.nick));
+                } else {
+                    ctx.notice(me, from.uid, "Invalid password.");
+                }
+            }
+            Some("HELP") => {
+                ctx.notice(me, from.uid, "Commands: REGISTER <password> [email], IDENTIFY <password>.")
+            }
+            Some(other) => ctx.notice(me, from.uid, format!("Unknown command: {}. Try HELP.", other)),
             None => {}
         }
     }

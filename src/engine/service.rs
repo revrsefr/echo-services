@@ -1,7 +1,14 @@
+use crate::engine::db::Db;
 use crate::proto::NetAction;
 
-// A pseudo-client (NickServ, ChanServ, OperServ, ...). Introduced at burst,
-// receives the commands users message it, and pushes actions onto the ctx.
+// Who sent the command, resolved by the engine (UID + current nick).
+pub struct Sender<'a> {
+    pub uid: &'a str,
+    pub nick: &'a str,
+}
+
+// A pseudo-client (NickServ, ChanServ, ...). Introduced at burst, receives the
+// commands users message it, reads/writes the account store, and pushes actions.
 pub trait Service: Send {
     fn nick(&self) -> &str;
     fn uid(&self) -> &str;
@@ -9,10 +16,9 @@ pub trait Service: Send {
         "services.local"
     }
     fn gecos(&self) -> &str;
-    fn on_command(&mut self, from: &str, args: &[&str], ctx: &mut ServiceCtx);
+    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut Db);
 }
 
-// What a service can do in response to a command, collected for the link to flush.
 #[derive(Default)]
 pub struct ServiceCtx {
     pub actions: Vec<NetAction>,

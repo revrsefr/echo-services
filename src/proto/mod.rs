@@ -10,6 +10,7 @@ pub enum NetEvent {
     EndBurst,
     Ping { token: String, from: Option<String> },
     Privmsg { from: String, to: String, text: String },
+    UserConnect { uid: String, nick: String },
     Quit { uid: String },
     Unknown { line: String },
 }

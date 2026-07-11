@@ -35,7 +35,8 @@ async fn main() -> Result<()> {
     let services: Vec<Box<dyn engine::service::Service>> = vec![Box::new(NickServ {
         uid: format!("{}AAAAAA", cfg.server.sid),
     })];
-    let engine = Engine::new(services);
+    let db = engine::db::Db::open("fedserv.db.jsonl");
+    let engine = Engine::new(services, db);
 
     let addr = format!("{}:{}", cfg.uplink.host, cfg.uplink.port);
     tracing::info!(server = %cfg.server.name, %addr, "linking to uplink");

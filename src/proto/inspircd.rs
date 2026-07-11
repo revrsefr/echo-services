@@ -69,6 +69,17 @@ impl Protocol for InspIrcd {
                     text: trailing(rest),
                 }]
             }
+            // UID <uuid> <nickts> <nick> … — track who's online so services can
+            // resolve a sender's current nick.
+            "UID" => {
+                let a: Vec<&str> = tokens.collect();
+                match (a.first(), a.get(2)) {
+                    (Some(uid), Some(nick)) => {
+                        vec![NetEvent::UserConnect { uid: uid.to_string(), nick: nick.to_string() }]
+                    }
+                    _ => vec![],
+                }
+            }
             "QUIT" => vec![NetEvent::Quit { uid: source.unwrap_or_default() }],
             _ => vec![NetEvent::Unknown { line: line.to_string() }],
         }

@@ -1,39 +1,34 @@
 use std::collections::HashMap;
 
-// Live network view the services reason about.
+// Live network view, rebuilt from the uplink's burst each connect (ephemeral —
+// unlike the account store, which persists).
 #[derive(Default)]
 pub struct Network {
-    pub users: HashMap<String, User>,    // keyed by UID
+    pub users: HashMap<String, User>, // keyed by UID
     pub channels: HashMap<String, Channel>,
 }
 
 pub struct User {
     pub uid: String,
     pub nick: String,
-    pub account: Option<String>,
 }
 
+#[allow(dead_code)]
 pub struct Channel {
     pub name: String,
     pub ts: u64,
 }
 
-// The Sable-inspired core: every persistent change is an Event, and state is a
-// fold over the log. Single-node today; replicating this log across service
-// nodes is what turns it federated later, without rewriting the services.
-#[derive(Debug, Clone)]
-pub enum Event {
-    AccountRegistered { account: String, uid: String },
-    ChannelRegistered { channel: String, founder: String },
-}
+impl Network {
+    pub fn user_connect(&mut self, uid: String, nick: String) {
+        self.users.insert(uid.clone(), User { uid, nick });
+    }
 
-#[derive(Default)]
-pub struct EventLog {
-    pub events: Vec<Event>,
-}
+    pub fn user_quit(&mut self, uid: &str) {
+        self.users.remove(uid);
+    }
 
-impl EventLog {
-    pub fn append(&mut self, event: Event) {
-        self.events.push(event);
+    pub fn nick_of(&self, uid: &str) -> Option<&str> {
+        self.users.get(uid).map(|u| u.nick.as_str())
     }
 }
