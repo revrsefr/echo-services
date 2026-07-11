@@ -32,6 +32,12 @@ impl Protocol for InspIrcd {
     }
 
     fn parse(&mut self, line: &str) -> Vec<NetEvent> {
+        // Strip an optional IRCv3 message-tag prefix (@k=v;… ) — insp tags PRIVMSGs
+        // with time/msgid, and it sits before the :source.
+        let line = match line.strip_prefix('@') {
+            Some(rest) => rest.splitn(2, ' ').nth(1).unwrap_or(""),
+            None => line,
+        };
         let (source, rest) = match line.strip_prefix(':') {
             Some(s) => {
                 let mut it = s.splitn(2, ' ');
@@ -76,8 +82,10 @@ impl Protocol for InspIrcd {
                 let dest = from.clone().unwrap_or_else(|| self.sid.clone());
                 vec![self.from_us(format!("PONG {} {}", dest, token))]
             }
+            // insp4 UID: uuid nickts nick realhost disphost realuser dispuser ip signonts +modes :gecos
+            // (both a real AND a displayed user field — see m_spanningtree/uid.cpp Builder).
             NetAction::IntroduceUser { uid, nick, ident, host, gecos } => vec![self.from_us(format!(
-                "UID {uid} {ts} {nick} {host} {host} {ident} 0.0.0.0 {ts} +ioS :{gecos}",
+                "UID {uid} {ts} {nick} {host} {host} {ident} {ident} 0.0.0.0 {ts} +i :{gecos}",
                 uid = uid, ts = self.ts, nick = nick, host = host, ident = ident, gecos = gecos
             ))],
             NetAction::Privmsg { from, to, text } => {
