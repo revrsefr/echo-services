@@ -3,7 +3,7 @@ pub mod service;
 pub mod state;
 
 use crate::proto::{NetAction, NetEvent};
-use db::Db;
+use db::{Db, RegError};
 use service::{Sender, Service, ServiceCtx};
 use state::Network;
 
@@ -46,8 +46,33 @@ impl Engine {
                 Vec::new()
             }
             NetEvent::Privmsg { from, to, text } => self.dispatch(&from, &to, &text),
+            NetEvent::AccountRequest { reqid, kind, account, p2, p3, .. } => {
+                self.account_request(reqid, kind, account, p2, p3)
+            }
             _ => Vec::new(),
         }
+    }
+
+    // Authority side of the IRCv3 account-registration relay: create the account
+    // (same store as classic NickServ REGISTER) and answer the requesting ircd.
+    fn account_request(&mut self, reqid: String, kind: String, account: String, p2: String, p3: String) -> Vec<NetAction> {
+        if !kind.eq_ignore_ascii_case("REGISTER") {
+            return Vec::new(); // VERIFY / RESEND / STATUS: later
+        }
+        let email = if p2.is_empty() || p2 == "*" { None } else { Some(p2) };
+        let (status, code, message) = match self.db.register(&account, &p3, email) {
+            Ok(()) => ("success", "*", "Account registered."),
+            Err(RegError::Exists) => ("error", "ACCOUNT_EXISTS", "That account name is already registered."),
+            Err(RegError::Internal) => ("error", "TEMPORARILY_UNAVAILABLE", "Registration is unavailable, try again later."),
+        };
+        vec![NetAction::AccountResponse {
+            reqid,
+            kind,
+            account,
+            status: status.to_string(),
+            code: code.to_string(),
+            message: message.to_string(),
+        }]
     }
 
     // Route a PRIVMSG addressed to a service (by uid or nick) into that service,

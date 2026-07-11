@@ -12,6 +12,8 @@ pub enum NetEvent {
     Privmsg { from: String, to: String, text: String },
     UserConnect { uid: String, nick: String },
     Quit { uid: String },
+    // An ircd relaying an IRCv3 account-registration request to us as the authority.
+    AccountRequest { reqid: String, origin: String, kind: String, account: String, p2: String, p3: String },
     Unknown { line: String },
 }
 
@@ -24,6 +26,7 @@ pub enum NetAction {
     IntroduceUser { uid: String, nick: String, ident: String, host: String, gecos: String },
     Privmsg { from: String, to: String, text: String },
     Notice { from: String, to: String, text: String },
+    AccountResponse { reqid: String, kind: String, account: String, status: String, code: String, message: String },
     Raw(String),
 }
 

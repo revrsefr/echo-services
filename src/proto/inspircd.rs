@@ -81,6 +81,23 @@ impl Protocol for InspIrcd {
                 }
             }
             "QUIT" => vec![NetEvent::Quit { uid: source.unwrap_or_default() }],
+            // account-registration relay from an ircd:
+            // ACCTREGISTER <reqid> <origin> <kind> <account> <p2> :<p3>
+            "ACCTREGISTER" => {
+                let a: Vec<&str> = tokens.by_ref().take(5).collect();
+                if a.len() == 5 {
+                    vec![NetEvent::AccountRequest {
+                        reqid: a[0].to_string(),
+                        origin: a[1].to_string(),
+                        kind: a[2].to_string(),
+                        account: a[3].to_string(),
+                        p2: a[4].to_string(),
+                        p3: trailing(rest),
+                    }]
+                } else {
+                    vec![]
+                }
+            }
             _ => vec![NetEvent::Unknown { line: line.to_string() }],
         }
     }
@@ -104,6 +121,13 @@ impl Protocol for InspIrcd {
             }
             NetAction::Notice { from, to, text } => {
                 vec![format!(":{} NOTICE {} :{}", from, to, text)]
+            }
+            // ACCTREGRESULT <reqid> <kind> <account> <status> <code> :<message>
+            NetAction::AccountResponse { reqid, kind, account, status, code, message } => {
+                vec![self.from_us(format!(
+                    "ACCTREGRESULT {} {} {} {} {} :{}",
+                    reqid, kind, account, status, code, message
+                ))]
             }
             NetAction::Raw(s) => vec![s.clone()],
         }
