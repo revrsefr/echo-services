@@ -1,0 +1,13 @@
+[package]
+name = "fedserv"
+version = "0.0.1"
+edition = "2021"
+description = "Federated IRC services daemon (protocol-agnostic core, InspIRCd link first)"
+
+[dependencies]
+tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "time"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

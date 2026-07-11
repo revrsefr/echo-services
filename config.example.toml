@@ -1,0 +1,12 @@
+# Copy to config.toml and edit. config.toml is gitignored (holds the link password).
+
+[uplink]
+host = "127.0.0.1"
+port = 7000
+password = "changeme"      # must match the <link> block on the uplink IRCd
+
+[server]
+name = "services.example.net"
+sid = "42S"                # 3 chars, unique on the network
+description = "Federated Services"
+protocol = 1206            # InspIRCd link protocol version (1206 = insp4, 1205 = insp3)
