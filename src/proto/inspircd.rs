@@ -197,3 +197,33 @@ fn trailing(rest: &str) -> String {
         None => rest.rsplit(' ').next().unwrap_or("").to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn proto() -> InspIrcd {
+        InspIrcd::new("services.test".into(), "42S".into(), "pw".into(), 1206, 1)
+    }
+
+    // A remote nick change must surface as a NickChange for the source uid, or
+    // nick-based commands act on a stale nick.
+    #[test]
+    fn parses_nick_change() {
+        let ev = proto().parse(":0IRAAAAAB NICK newnick 1783833000");
+        assert!(
+            matches!(ev.as_slice(), [NetEvent::NickChange { uid, nick }] if uid == "0IRAAAAAB" && nick == "newnick"),
+            "{ev:?}"
+        );
+    }
+
+    // A UID burst introduces the user under their current nick.
+    #[test]
+    fn parses_uid_burst() {
+        let ev = proto().parse(":0IR UID 0IRAAAAAB 1783833000 alice host host user user 0.0.0.0 1783833000 +i :real");
+        assert!(
+            matches!(ev.as_slice(), [NetEvent::UserConnect { uid, nick }] if uid == "0IRAAAAAB" && nick == "alice"),
+            "{ev:?}"
+        );
+    }
+}
