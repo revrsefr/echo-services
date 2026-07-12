@@ -15,6 +15,8 @@ pub enum NetEvent {
     // A channel was created or bursted (InspIRCd FJOIN). Subsequent single joins
     // arrive as IJOIN and are not surfaced.
     ChannelCreate { channel: String },
+    // A user joined a channel (an FJOIN member or an IJOIN), for auto-op.
+    Join { uid: String, channel: String },
     // A channel's modes changed (FMODE), for enforcing mode locks. Our own
     // changes are filtered out by the protocol layer.
     ChannelModeChange { channel: String, modes: String },

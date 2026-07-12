@@ -91,8 +91,30 @@ impl Protocol for InspIrcd {
                 _ => vec![],
             },
             // FJOIN <chan> <ts> <modes> [params] :<members> — channel create/burst.
-            "FJOIN" => match tokens.next() {
-                Some(chan) if !chan.is_empty() => vec![NetEvent::ChannelCreate { channel: chan.to_string() }],
+            // Each member is "<prefixes>,<uid>"; surface a Join for each.
+            "FJOIN" => {
+                let chan = tokens.next().unwrap_or("").to_string();
+                if chan.is_empty() {
+                    vec![]
+                } else {
+                    let mut out = vec![NetEvent::ChannelCreate { channel: chan.clone() }];
+                    // Members are "<prefixes>,<uid>[:<membid>]"; take the uid.
+                    for m in trailing(rest).split_whitespace() {
+                        if let Some((_, member)) = m.split_once(',') {
+                            let uid = member.split(':').next().unwrap_or("");
+                            if !uid.is_empty() {
+                                out.push(NetEvent::Join { uid: uid.to_string(), channel: chan.clone() });
+                            }
+                        }
+                    }
+                    out
+                }
+            }
+            // :<uid> IJOIN <chan> — a single user joining an existing channel.
+            "IJOIN" => match (source.as_deref(), tokens.next()) {
+                (Some(uid), Some(chan)) if chan.starts_with('#') => {
+                    vec![NetEvent::Join { uid: uid.to_string(), channel: chan.to_string() }]
+                }
                 _ => vec![],
             },
             // :<src> FMODE <chan> <ts> <modes> [params] — a channel mode change.
@@ -249,14 +271,13 @@ mod tests {
         );
     }
 
-    // FJOIN (channel create/burst) surfaces as ChannelCreate for the channel.
+    // FJOIN (channel create/burst) surfaces as ChannelCreate for the channel, and
+    // the member's uid is taken without its :membid suffix.
     #[test]
     fn parses_fjoin_as_channel_create() {
         let ev = proto().parse(":0IR FJOIN #chan 1783845132 +tn :o,0IRAAAAAB:0");
-        assert!(
-            matches!(ev.as_slice(), [NetEvent::ChannelCreate { channel }] if channel == "#chan"),
-            "{ev:?}"
-        );
+        assert!(matches!(ev.first(), Some(NetEvent::ChannelCreate { channel }) if channel == "#chan"), "{ev:?}");
+        assert!(ev.iter().any(|e| matches!(e, NetEvent::Join { uid, .. } if uid == "0IRAAAAAB")), "{ev:?}");
     }
 
     // A peer FMODE surfaces as a mode change; our own (sid 42S) is filtered out.
@@ -269,5 +290,20 @@ mod tests {
         );
         let ev = proto().parse(":42S FMODE #chan 1783845132 -m");
         assert!(!ev.iter().any(|e| matches!(e, NetEvent::ChannelModeChange { .. })), "own change filtered: {ev:?}");
+    }
+
+    // FJOIN members and IJOIN both surface as Join events.
+    #[test]
+    fn parses_joins() {
+        let ev = proto().parse(":0IR FJOIN #chan 1783845132 +nt :o,0IRAAAAAB ,0IRAAAAAC");
+        assert!(matches!(ev.first(), Some(NetEvent::ChannelCreate { channel }) if channel == "#chan"));
+        let joins: Vec<&str> = ev.iter().filter_map(|e| match e {
+            NetEvent::Join { uid, .. } => Some(uid.as_str()),
+            _ => None,
+        }).collect();
+        assert_eq!(joins, ["0IRAAAAAB", "0IRAAAAAC"]);
+
+        let ev = proto().parse(":0IRAAAAAD IJOIN #chan");
+        assert!(matches!(ev.as_slice(), [NetEvent::Join { uid, channel }] if uid == "0IRAAAAAD" && channel == "#chan"), "{ev:?}");
     }
 }

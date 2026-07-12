@@ -186,6 +186,15 @@ impl Engine {
                     None => Vec::new(),
                 }
             }
+            // Auto-op the founder when they join their registered channel.
+            NetEvent::Join { uid, channel } => {
+                let founder = self.db.channel(&channel).map(|c| c.founder.clone());
+                let account = self.network.account_of(&uid).map(str::to_string);
+                match (founder, account) {
+                    (Some(f), Some(a)) if f == a => vec![NetAction::ChannelMode { channel, modes: format!("+o {uid}") }],
+                    _ => Vec::new(),
+                }
+            }
             NetEvent::Quit { uid } => {
                 self.network.user_quit(&uid);
                 self.sasl_sessions.remove(&uid); // drop any half-finished exchange
@@ -1000,5 +1009,26 @@ mod tests {
 
         // An unrelated mode change is left alone.
         assert!(e.handle(NetEvent::ChannelModeChange { channel: "#lk".into(), modes: "+m".into() }).is_empty());
+    }
+
+    // The founder is opped when they join their channel; others are not.
+    #[test]
+    fn founder_is_opped_on_join() {
+        let path = std::env::temp_dir().join("fedserv-autoop.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#x", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let mut e = Engine::new(vec![Box::new(ns)], db);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#x".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes } if channel == "#x" && modes == "+o 000AAAAAB")), "founder opped: {out:?}");
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into() });
+        assert!(e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#x".into() }).is_empty(), "non-founder not opped");
     }
 }
