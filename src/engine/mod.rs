@@ -542,7 +542,7 @@ impl RegLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::nickserv::NickServ;
+    use crate::nickserv::NickServ;
 
     fn plain(authzid: &[u8], authcid: &[u8], passwd: &[u8]) -> String {
         let mut payload = Vec::new();
@@ -934,7 +934,7 @@ mod tests {
     // only the founder can drop.
     #[test]
     fn chanserv_register_info_drop() {
-        use crate::services::chanserv::ChanServ;
+        use crate::chanserv::ChanServ;
         let path = std::env::temp_dir().join("fedserv-chanserv.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");

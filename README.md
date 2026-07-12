@@ -7,14 +7,19 @@ derived from any project's source.
 
 ## Design
 
-- **`proto/`** the ircd link layer. A `Protocol` trait maps raw server-to-server
-  lines to and from a normalized `NetEvent`/`NetAction` model, so the engine never
-  touches a raw line and a new ircd is one new module. InspIRCd is the first.
-- **`engine/`** the services engine: live network `state`, the account store, and
-  the `Service` trait. The store is event-sourced: every change is an `Event`
+The core lives in `src/`; the pluggable parts live in `modules/` (see
+`modules/README.md`).
+
+- **`src/engine/`** the services engine: live network `state`, the account store,
+  and the `Service` trait. The store is event-sourced: every change is an `Event`
   appended to a per-node log, and state is a fold over that log.
-- **`gossip/`** node-to-node replication over the logs.
-- **`services/`** the pseudo-clients: NickServ first, then ChanServ / OperServ.
+- **`src/gossip.rs`** node-to-node replication over the logs.
+- **`modules/protocol/`** the ircd link layer. A `Protocol` trait maps raw
+  server-to-server lines to and from a normalized `NetEvent`/`NetAction` model, so
+  the engine never touches a raw line and a new ircd is one new module. InspIRCd is
+  the first.
+- **`modules/nickserv/`, `modules/chanserv/`** the pseudo-clients, one directory
+  each. OperServ and others follow the same shape.
 
 ## Replication
 

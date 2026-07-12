@@ -263,7 +263,7 @@ async fn send(tx: &mpsc::Sender<String>, msg: &Msg) -> Result<(), ()> {
 mod tests {
     use super::*;
     use crate::engine::db::Db;
-    use crate::services::nickserv::NickServ;
+    use crate::nickserv::NickServ;
 
     fn engine(origin: &str, tag: &str) -> (Shared, Outbound) {
         let path = std::env::temp_dir().join(format!("fedserv-gossip-{tag}.jsonl"));

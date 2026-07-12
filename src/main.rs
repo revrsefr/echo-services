@@ -1,19 +1,24 @@
+// Core lives in src/; pluggable modules live in ../modules/.
 mod config;
 mod engine;
 mod gossip;
 mod link;
+#[path = "../modules/protocol/mod.rs"]
 mod proto;
-mod services;
+#[path = "../modules/nickserv/nickserv.rs"]
+mod nickserv;
+#[path = "../modules/chanserv/chanserv.rs"]
+mod chanserv;
 
 use anyhow::Result;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
+use chanserv::ChanServ;
 use engine::Engine;
+use nickserv::NickServ;
 use proto::inspircd::InspIrcd;
-use services::chanserv::ChanServ;
-use services::nickserv::NickServ;
 
 #[tokio::main]
 async fn main() -> Result<()> {

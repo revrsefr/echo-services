@@ -1,6 +1,5 @@
 //! SCRAM (RFC 5802 / RFC 7677) server side for SASL SCRAM-SHA-256 and
-//! SCRAM-SHA-512. The stored verifier is byte-compatible with the rest of the
-//! stack (Anope m_apiauth / Django): `v=1,i=,s=,sk=,sv=` where
+//! SCRAM-SHA-512. Stored verifier format `v=1,i=,s=,sk=,sv=` where
 //!
 //!     SaltedPassword = Hi(password, salt, i)         (PBKDF2, dklen = hash len)
 //!     ClientKey      = HMAC(SaltedPassword, "Client Key")
