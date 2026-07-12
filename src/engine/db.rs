@@ -40,53 +40,85 @@ pub enum Event {
 }
 
 // A durable record: the event plus the metadata a gossip layer needs to address
-// and order it — the origin node and its per-node sequence. Lines written before
-// these existed default them in.
+// and order it — the origin node, its per-node sequence (`origin:seq` is the
+// cluster-unique id), and a Lamport clock for causal ordering across nodes.
+// Lines written before these existed default them in.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct LogEntry {
+pub struct LogEntry {
     #[serde(default)]
     origin: String,
     #[serde(default)]
     seq: u64,
+    #[serde(default)]
+    lamport: u64,
     #[serde(flatten)]
     event: Event,
 }
 
-// Append-only log, the sole persistent source of truth: `open` replays it, `append`
-// stamps and writes one entry. Owning origin + next_seq is the seam a future gossip
-// layer ships entries over, without the services knowing.
+// Append-only log, the sole persistent source of truth: `open` replays it,
+// `append` stamps and writes a locally-authored entry, and `ingest` folds in an
+// entry authored by another node. The version vector (highest seq applied per
+// origin) plus the Lamport clock are the seam a future gossip layer ships entries
+// over — de-duplicating and ordering them — without the services knowing.
 pub struct EventLog {
     path: PathBuf,
     origin: String,
-    next_seq: u64,
+    lamport: u64,                   // logical clock, ticked on every event
+    versions: HashMap<String, u64>, // per-origin highest seq applied (version vector)
 }
 
 impl EventLog {
     fn open(path: PathBuf, origin: String) -> (Self, Vec<Event>) {
         let mut events = Vec::new();
-        let mut next_seq = 0;
+        let mut lamport = 0;
+        let mut versions: HashMap<String, u64> = HashMap::new();
         if let Ok(data) = std::fs::read_to_string(&path) {
             for line in data.lines().filter(|l| !l.trim().is_empty()) {
                 match serde_json::from_str::<LogEntry>(line) {
                     Ok(entry) => {
-                        if entry.origin == origin {
-                            next_seq = next_seq.max(entry.seq + 1);
-                        }
+                        lamport = lamport.max(entry.lamport);
+                        versions.entry(entry.origin.clone()).and_modify(|s| *s = (*s).max(entry.seq)).or_insert(entry.seq);
                         events.push(entry.event);
                     }
                     Err(e) => tracing::warn!(%e, "skipping malformed event log line"),
                 }
             }
         }
-        (Self { path, origin, next_seq }, events)
+        (Self { path, origin, lamport, versions }, events)
     }
 
+    // Seq the next locally-authored event will carry (0-based, per our origin).
+    fn next_seq(&self) -> u64 {
+        self.versions.get(&self.origin).map_or(0, |s| s + 1)
+    }
+
+    // Stamp a locally-authored event with the next seq + a ticked Lamport clock,
+    // then persist it.
     fn append(&mut self, event: Event) -> std::io::Result<()> {
-        let entry = LogEntry { origin: self.origin.clone(), seq: self.next_seq, event };
-        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&self.path)?;
-        writeln!(f, "{}", serde_json::to_string(&entry).unwrap_or_default())?;
-        self.next_seq += 1;
+        self.lamport += 1;
+        let entry = LogEntry { origin: self.origin.clone(), seq: self.next_seq(), lamport: self.lamport, event };
+        self.persist(&entry)?;
+        self.versions.insert(entry.origin.clone(), entry.seq);
         Ok(())
+    }
+
+    // Ingest an entry authored by another node — the gossip seam. Returns the
+    // event to fold into state, or None if already applied (idempotent, so
+    // re-delivery converges). Assumes per-origin in-order delivery.
+    #[allow(dead_code)]
+    fn ingest(&mut self, entry: LogEntry) -> std::io::Result<Option<Event>> {
+        if self.versions.get(&entry.origin).is_some_and(|&s| entry.seq <= s) {
+            return Ok(None); // already have it
+        }
+        self.persist(&entry)?;
+        self.lamport = self.lamport.max(entry.lamport) + 1; // Lamport receive rule
+        self.versions.insert(entry.origin.clone(), entry.seq);
+        Ok(Some(entry.event))
+    }
+
+    fn persist(&self, entry: &LogEntry) -> std::io::Result<()> {
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&self.path)?;
+        writeln!(f, "{}", serde_json::to_string(entry).unwrap_or_default())
     }
 }
 
@@ -140,24 +172,20 @@ impl Db {
         let (log, events) = EventLog::open(path.into(), origin.into());
         let mut accounts = HashMap::new();
         for event in events {
-            match event {
-                Event::AccountRegistered(a) => {
-                    accounts.insert(key(&a.name), a);
-                }
-                Event::CertAdded { account, fp } => {
-                    if let Some(a) = accounts.get_mut(&key(&account)) {
-                        a.certfps.push(fp);
-                    }
-                }
-                Event::CertRemoved { account, fp } => {
-                    if let Some(a) = accounts.get_mut(&key(&account)) {
-                        a.certfps.retain(|c| *c != fp);
-                    }
-                }
-            }
+            apply(&mut accounts, event);
         }
         tracing::info!(accounts = accounts.len(), "account store loaded");
         Self { accounts, log, scram_iterations: scram::DEFAULT_ITERATIONS }
+    }
+
+    /// Fold an entry authored by another node into the store — the services-side
+    /// of the gossip seam. Idempotent (re-delivered entries are dropped).
+    #[allow(dead_code)]
+    pub fn ingest(&mut self, entry: LogEntry) -> std::io::Result<()> {
+        if let Some(event) = self.log.ingest(entry)? {
+            apply(&mut self.accounts, event);
+        }
+        Ok(())
     }
 
     pub fn exists(&self, name: &str) -> bool {
@@ -265,6 +293,26 @@ impl Db {
     }
 }
 
+// Fold one event into the account map. Shared by log replay (`open`) and gossip
+// ingest, so both routes reconstruct identical state.
+fn apply(accounts: &mut HashMap<String, Account>, event: Event) {
+    match event {
+        Event::AccountRegistered(a) => {
+            accounts.insert(key(&a.name), a);
+        }
+        Event::CertAdded { account, fp } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.certfps.push(fp);
+            }
+        }
+        Event::CertRemoved { account, fp } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.certfps.retain(|c| *c != fp);
+            }
+        }
+    }
+}
+
 fn hash_password(password: &str) -> Option<String> {
     let salt = SaltString::generate(&mut OsRng);
     Argon2::default().hash_password(password.as_bytes(), &salt).ok().map(|h| h.to_string())
@@ -274,4 +322,75 @@ fn verify_password(password: &str, hash: &str) -> bool {
     PasswordHash::new(hash)
         .map(|parsed| Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp(name: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("fedserv-log-{name}.jsonl"));
+        let _ = std::fs::remove_file(&p);
+        p
+    }
+
+    fn cert(account: &str, fp: &str) -> Event {
+        Event::CertAdded { account: account.into(), fp: fp.into() }
+    }
+
+    // Locally-authored events get an incrementing per-origin seq and a ticking
+    // Lamport clock.
+    #[test]
+    fn append_stamps_monotonic_metadata() {
+        let (mut log, ev) = EventLog::open(tmp("append"), "nodeA".into());
+        assert!(ev.is_empty());
+        log.append(cert("x", "f1")).unwrap();
+        log.append(cert("x", "f2")).unwrap();
+        assert_eq!(log.versions.get("nodeA"), Some(&1)); // seqs 0 then 1
+        assert_eq!(log.lamport, 2);
+        assert_eq!(log.next_seq(), 2);
+    }
+
+    // Reopening the log recovers the clocks so seqs are never reused.
+    #[test]
+    fn reopen_recovers_clocks() {
+        let p = tmp("reopen");
+        {
+            let (mut log, _) = EventLog::open(p.clone(), "nodeA".into());
+            log.append(cert("x", "f1")).unwrap();
+            log.append(cert("x", "f2")).unwrap();
+        }
+        let (log, events) = EventLog::open(p, "nodeA".into());
+        assert_eq!(events.len(), 2);
+        assert_eq!(log.next_seq(), 2);
+        assert_eq!(log.lamport, 2);
+    }
+
+    // Ingesting a peer's entry applies it once and advances the Lamport clock;
+    // a re-delivered entry is dropped (gossip convergence).
+    #[test]
+    fn ingest_is_idempotent() {
+        let (mut log, _) = EventLog::open(tmp("ingest"), "local".into());
+        let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 5, event: cert("x", "f") };
+        assert!(log.ingest(entry.clone()).unwrap().is_some(), "first ingest applies");
+        assert_eq!(log.versions.get("peer"), Some(&0));
+        assert_eq!(log.lamport, 6, "receive rule: max(local, remote) + 1");
+        assert!(log.ingest(entry).unwrap().is_none(), "duplicate ingest is a no-op");
+    }
+
+    // The gossip seam folds a peer's account into local state.
+    #[test]
+    fn db_ingest_folds_peer_account() {
+        let mut db = Db::open(tmp("dbingest"), "local");
+        db.scram_iterations = 4096;
+        db.register("alice", "pw", None).unwrap();
+        let bob = Account {
+            name: "bob".into(), password_hash: "x".into(), email: None,
+            ts: 0, scram256: None, scram512: None, certfps: vec![],
+        };
+        let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, event: Event::AccountRegistered(bob) };
+        db.ingest(entry).unwrap();
+        assert!(db.exists("bob"), "peer's account is present locally");
+        assert!(db.exists("alice"), "local account still there");
+    }
 }
