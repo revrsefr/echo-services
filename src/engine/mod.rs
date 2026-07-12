@@ -978,6 +978,25 @@ mod tests {
         assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "realnick")), "must log into the current nick's account: {out:?}");
     }
 
+    // IDENTIFY accepts the two-arg account+password form: log into a named
+    // account even when the current nick differs; a wrong password is refused.
+    #[test]
+    fn identify_two_arg_account_form() {
+        let mut e = engine_with("twoarg", "realacct", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "someguest".into(), host: "host.example".into() });
+        let out = e.handle(NetEvent::Privmsg {
+            from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY realacct sesame".into(),
+        });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "realacct")), "two-arg identify logs into the named account: {out:?}");
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "other".into(), host: "host.example".into() });
+        let bad = e.handle(NetEvent::Privmsg {
+            from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY realacct wrongpw".into(),
+        });
+        assert!(bad.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Invalid password"))), "{bad:?}");
+        assert!(!bad.iter().any(|a| matches!(a, NetAction::Metadata { .. })), "wrong password must not log in: {bad:?}");
+    }
+
     // ChanServ: registration needs identification, INFO shows the founder, and
     // only the founder can drop.
     #[test]

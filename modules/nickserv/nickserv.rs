@@ -39,12 +39,18 @@ impl Service for NickServ {
                     nick: from.nick.to_string(),
                 });
             }
-            Some("IDENTIFY") => {
-                let Some(password) = args.get(1) else {
-                    ctx.notice(me, from.uid, "Syntax: IDENTIFY <password>");
-                    return;
+            Some("IDENTIFY") | Some("ID") => {
+                // IDENTIFY [account] <password> — the account defaults to the
+                // current nick, so both the bare-password and account+password forms work.
+                let (account_name, password) = match (args.get(1), args.get(2)) {
+                    (Some(account), Some(password)) => (*account, *password),
+                    (Some(password), None) => (from.nick, *password),
+                    _ => {
+                        ctx.notice(me, from.uid, "Syntax: IDENTIFY [account] <password>");
+                        return;
+                    }
                 };
-                match db.authenticate(from.nick, password) {
+                match db.authenticate(account_name, password) {
                     Some(account) => {
                         // Already identified to this account: don't re-fire the login.
                         if from.account == Some(account) {
@@ -75,7 +81,7 @@ impl Service for NickServ {
             Some("HELP") => ctx.notice(
                 me,
                 from.uid,
-                "NickServ looks after your nickname. Commands: \x02REGISTER\x02 <password> [email], \x02IDENTIFY\x02 <password>, \x02LOGOUT\x02, \x02CERT\x02 ADD|DEL|LIST <password> [fingerprint].",
+                "NickServ looks after your nickname. Commands: \x02REGISTER\x02 <password> [email], \x02IDENTIFY\x02 [account] <password>, \x02LOGOUT\x02, \x02CERT\x02 ADD|DEL|LIST <password> [fingerprint].",
             ),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
