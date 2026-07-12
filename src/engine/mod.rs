@@ -535,13 +535,27 @@ impl Engine {
         let Some(creds) = creds else {
             return reg_reply(&reply, RegOutcome::Internal, account);
         };
+        let addr = email.clone();
         let outcome = match self.db.register_prepared(account, creds, email) {
             Ok(()) => RegOutcome::Ok,
             Err(RegError::Exists) => RegOutcome::Exists,
             Err(RegError::Internal) => RegOutcome::Internal,
         };
-        let out = reg_reply(&reply, outcome, account);
+        let ok = matches!(outcome, RegOutcome::Ok);
+        let mut out = reg_reply(&reply, outcome, account);
         self.track_accounts(&out);
+        // If this created an unverified account (email confirmation applies), email a code.
+        if ok && !self.db.is_verified(account) {
+            if let (Some(addr), RegReply::NickServ { agent, uid, .. }) = (addr, &reply) {
+                let code = self.db.issue_code(account, db::CodeKind::Confirm);
+                out.push(NetAction::SendEmail {
+                    to: addr,
+                    subject: format!("Confirm your {account} registration"),
+                    body: format!("Welcome! Confirm your account {account} with:\n  /msg NickServ CONFIRM {code}\nThe code expires in 15 minutes."),
+                });
+                out.push(NetAction::Notice { from: agent.clone(), to: uid.clone(), text: "A confirmation code has been emailed to you. Confirm with \x02CONFIRM <code>\x02.".to_string() });
+            }
+        }
         out
     }
 
@@ -1088,7 +1102,7 @@ mod tests {
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), password_hash: "OTHER".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![],
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true,
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(winner));
         e.gossip_ingest(entry).unwrap();
@@ -1242,6 +1256,38 @@ mod tests {
 
         // A used/wrong code is refused.
         assert!(to_ns(&mut e, "RESETPASS alice 000000 x").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Invalid or expired"))));
+    }
+
+    // With email configured, registering with an address creates an unverified
+    // account and emails a confirmation code; CONFIRM <code> verifies it.
+    #[test]
+    fn nickserv_confirm() {
+        let path = std::env::temp_dir().join("fedserv-nsconfirm.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "test");
+        db.scram_iterations = 4096;
+        db.set_email_enabled(true);
+        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "newbie".into(), host: "h".into() });
+
+        // REGISTER with an email defers; complete it as the link layer would.
+        let reg = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "REGISTER pw newbie@example.org".into() });
+        let (account, password, email, reply) = reg.iter().find_map(|a| match a {
+            NetAction::DeferRegister { account, password, email, reply } => Some((account.clone(), password.clone(), email.clone(), reply.clone())),
+            _ => None,
+        }).expect("register defers");
+        let out = e.complete_register(&account, Db::derive_credentials(&password, 4096), email, reply);
+        assert!(!e.db.is_verified("newbie"), "registering with email starts unverified");
+        let body = out.iter().find_map(|a| match a {
+            NetAction::SendEmail { body, .. } => Some(body.clone()),
+            _ => None,
+        }).expect("a confirm code is emailed");
+        let code = body.split("CONFIRM ").nth(1).unwrap().split_whitespace().next().unwrap().to_string();
+
+        // CONFIRM verifies (the user was auto-logged-in by register).
+        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: format!("CONFIRM {code}") });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("now confirmed"))), "{out:?}");
+        assert!(e.db.is_verified("newbie"), "confirmed after CONFIRM");
     }
 
     // GHOST renames off a session using a nick the caller owns.

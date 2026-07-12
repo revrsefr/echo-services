@@ -1,4 +1,4 @@
-use crate::engine::db::Db;
+use crate::engine::db::{CodeKind, Db};
 use crate::engine::service::{Sender, ServiceCtx};
 
 // RESETPASS <account>: email a reset code to the address on file.
@@ -18,7 +18,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 ctx.notice(me, from.uid, "That account has no email on file, so it can't be reset.");
                 return;
             };
-            let code = db.issue_reset_code(&canonical);
+            let code = db.issue_code(&canonical, CodeKind::Reset);
             ctx.send_email(
                 email,
                 format!("Password reset for {canonical}"),
@@ -31,7 +31,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 ctx.notice(me, from.uid, format!("\x02{name}\x02 isn't registered."));
                 return;
             };
-            if !db.take_reset_code(&canonical, code) {
+            if !db.take_code(&canonical, CodeKind::Reset, code) {
                 ctx.notice(me, from.uid, "Invalid or expired reset code.");
                 return;
             }

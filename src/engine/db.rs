@@ -34,6 +34,15 @@ pub struct Account {
     // this account via SASL EXTERNAL. Each fingerprint maps to one account.
     #[serde(default)]
     pub certfps: Vec<String>,
+    // Whether the email on file has been confirmed. Defaults true so accounts
+    // predating email confirmation (and those registered without email) count
+    // as verified.
+    #[serde(default = "verified_default")]
+    pub verified: bool,
+}
+
+fn verified_default() -> bool {
+    true
 }
 
 // Event-sourced persistence: every change is an Event appended to a JSONL log,
@@ -48,6 +57,7 @@ pub enum Event {
     AccountEmailSet { account: String, email: Option<String> },
     AccountPasswordSet { account: String, password_hash: String, scram256: String, scram512: String },
     AccountDropped { account: String },
+    AccountVerified { account: String },
     NickGrouped { nick: String, account: String },
     NickUngrouped { nick: String },
     ChannelRegistered { name: String, founder: String, ts: u64 },
@@ -81,6 +91,7 @@ impl Event {
             | Event::AccountEmailSet { .. }
             | Event::AccountPasswordSet { .. }
             | Event::AccountDropped { .. }
+            | Event::AccountVerified { .. }
             | Event::NickGrouped { .. }
             | Event::NickUngrouped { .. } => Scope::Global,
             Event::ChannelRegistered { .. }
@@ -445,8 +456,15 @@ pub struct Db {
     pub(crate) scram_iterations: u32,
     // Whether outbound email is configured, so email features can gate themselves.
     email_enabled: bool,
-    // Node-local, non-persisted password-reset codes: account -> (code, expiry).
-    reset_codes: HashMap<String, (String, Instant)>,
+    // Node-local, non-persisted email codes: account -> (purpose, code, expiry).
+    codes: HashMap<String, (CodeKind, String, Instant)>,
+}
+
+// What an emailed code authorises.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CodeKind {
+    Reset,
+    Confirm,
 }
 
 fn key(name: &str) -> String {
@@ -486,7 +504,7 @@ impl Db {
             apply(&mut accounts, &mut channels, &mut grouped, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, reset_codes: HashMap::new() }
+        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, codes: HashMap::new() }
     }
 
     /// Fold an entry authored by another node into the store — the services-side
@@ -626,6 +644,9 @@ impl Db {
         if self.exists(name) {
             return Err(RegError::Exists);
         }
+        // Unverified only when email confirmation actually applies (email is
+        // configured and an address was given); otherwise verified immediately.
+        let verified = !(self.email_enabled && email.is_some());
         let account = Account {
             name: name.to_string(),
             password_hash: creds.password_hash,
@@ -635,6 +656,7 @@ impl Db {
             scram256: Some(creds.scram256),
             scram512: Some(creds.scram512),
             certfps: Vec::new(),
+            verified,
         };
         self.log.append(Event::AccountRegistered(account.clone())).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
@@ -689,23 +711,40 @@ impl Db {
         self.email_enabled
     }
 
+    /// Whether `account`'s email is confirmed (true for unknown/legacy accounts).
+    pub fn is_verified(&self, account: &str) -> bool {
+        self.account(account).map_or(true, |a| a.verified)
+    }
+
+    /// Mark `account`'s email confirmed.
+    pub fn verify_account(&mut self, account: &str) -> Result<(), RegError> {
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return Err(RegError::Internal);
+        }
+        self.log.append(Event::AccountVerified { account: account.to_string() }).map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().verified = true;
+        Ok(())
+    }
+
     pub fn set_email_enabled(&mut self, on: bool) {
         self.email_enabled = on;
     }
 
-    /// Issue a fresh password-reset code for `account`, valid for 15 minutes.
-    pub fn issue_reset_code(&mut self, account: &str) -> String {
+    /// Issue a fresh emailed code for `account` and purpose, valid for 15 minutes.
+    pub fn issue_code(&mut self, account: &str, kind: CodeKind) -> String {
         let code = gen_code();
-        self.reset_codes.insert(key(account), (code.clone(), Instant::now() + Duration::from_secs(900)));
+        self.codes.insert(key(account), (kind, code.clone(), Instant::now() + Duration::from_secs(900)));
         code
     }
 
-    /// Consume a reset code for `account`: true if it matches and hasn't expired.
-    pub fn take_reset_code(&mut self, account: &str, code: &str) -> bool {
+    /// Consume a code for `account`: true if the purpose and code match and it
+    /// hasn't expired.
+    pub fn take_code(&mut self, account: &str, kind: CodeKind, code: &str) -> bool {
         let k = key(account);
-        match self.reset_codes.get(&k) {
-            Some((c, deadline)) if c == code && *deadline > Instant::now() => {
-                self.reset_codes.remove(&k);
+        match self.codes.get(&k) {
+            Some((ki, c, deadline)) if *ki == kind && c == code && *deadline > Instant::now() => {
+                self.codes.remove(&k);
                 true
             }
             _ => false,
@@ -1005,6 +1044,11 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             accounts.remove(&key(&account));
             grouped.retain(|_, a| !a.eq_ignore_ascii_case(&account)); // its aliases go too
         }
+        Event::AccountVerified { account } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.verified = true;
+            }
+        }
         Event::NickGrouped { nick, account } => {
             grouped.insert(key(&nick), account);
         }
@@ -1146,7 +1190,7 @@ mod tests {
     fn account_conflict_resolves_deterministically() {
         let alice = |hash: &str, ts: u64, home: &str| Account {
             name: "alice".into(), password_hash: hash.into(), email: None,
-            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![],
+            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true,
         };
         let converge = |first: &Account, second: &Account| {
             let (mut acc, mut ch, mut gr) = (HashMap::new(), HashMap::new(), HashMap::new());
@@ -1251,7 +1295,7 @@ mod tests {
         db.register("alice", "pw", None).unwrap();
         let bob = Account {
             name: "bob".into(), password_hash: "x".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![],
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true,
         };
         let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, event: Event::AccountRegistered(bob) };
         db.ingest(entry).unwrap();
