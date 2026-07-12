@@ -60,6 +60,7 @@ async fn main() -> Result<()> {
     if let Some(email) = &cfg.email {
         db.set_email_brand(&email.brand);
         db.set_email_accent(&email.accent);
+        db.set_email_logo(&email.logo);
     }
     let engine = Arc::new(Mutex::new(Engine::new(services, db)));
 

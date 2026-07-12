@@ -548,7 +548,7 @@ impl Engine {
         if ok && !self.db.is_verified(account) {
             if let (Some(addr), RegReply::NickServ { agent, uid, .. }) = (addr, &reply) {
                 let code = self.db.issue_code(account, db::CodeKind::Confirm);
-                let mail = crate::email::confirm(self.db.email_brand(), self.db.email_accent(), account, &code);
+                let mail = crate::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), account, &code);
                 out.push(NetAction::SendEmail { to: addr, subject: mail.subject, text: mail.text, html: Some(mail.html) });
                 out.push(NetAction::Notice { from: agent.clone(), to: uid.clone(), text: "A confirmation code has been emailed to you. Confirm with \x02CONFIRM <code>\x02.".to_string() });
             }

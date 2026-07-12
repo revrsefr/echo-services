@@ -9,8 +9,23 @@ pub struct Mail {
 
 const BASE: &str = include_str!("../templates/email/base.html");
 
-fn render(brand: &str, accent: &str, title: &str, message: &str, code: &str, note: &str) -> String {
-    BASE.replace("{{brand}}", &escape(brand))
+// The masthead: a logo image beside the brand name when a logo URL is set,
+// otherwise the brand name as an accent eyebrow.
+fn brand_mark(brand: &str, accent: &str, logo: &str) -> String {
+    let (brand, accent) = (escape(brand), escape(accent));
+    if logo.is_empty() {
+        format!("<span style=\"font-size:12px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:{accent};\">{brand}</span>")
+    } else {
+        format!(
+            "<img src=\"{}\" width=\"40\" height=\"40\" alt=\"\" style=\"display:inline-block;border-radius:9px;vertical-align:middle;\"><span style=\"display:inline-block;margin-left:12px;vertical-align:middle;font-size:18px;font-weight:800;letter-spacing:.2px;color:#0f172a;\">{brand}</span>",
+            escape(logo)
+        )
+    }
+}
+
+fn render(brand: &str, accent: &str, logo: &str, title: &str, message: &str, code: &str, note: &str) -> String {
+    BASE.replace("{{brand_mark}}", &brand_mark(brand, accent, logo))
+        .replace("{{brand}}", &escape(brand))
         .replace("{{accent}}", &escape(accent))
         .replace("{{title}}", &escape(title))
         .replace("{{message}}", &escape(message))
@@ -18,7 +33,7 @@ fn render(brand: &str, accent: &str, title: &str, message: &str, code: &str, not
         .replace("{{note}}", &escape(note))
 }
 
-pub fn reset(brand: &str, accent: &str, account: &str, code: &str) -> Mail {
+pub fn reset(brand: &str, accent: &str, logo: &str, account: &str, code: &str) -> Mail {
     Mail {
         subject: format!("Password reset for {account}"),
         text: format!(
@@ -27,6 +42,7 @@ pub fn reset(brand: &str, accent: &str, account: &str, code: &str) -> Mail {
         html: render(
             brand,
             accent,
+            logo,
             "Password reset",
             &format!("Use this code to reset the password for your account {account}."),
             code,
@@ -35,7 +51,7 @@ pub fn reset(brand: &str, accent: &str, account: &str, code: &str) -> Mail {
     }
 }
 
-pub fn confirm(brand: &str, accent: &str, account: &str, code: &str) -> Mail {
+pub fn confirm(brand: &str, accent: &str, logo: &str, account: &str, code: &str) -> Mail {
     Mail {
         subject: format!("Confirm your {account} registration"),
         text: format!(
@@ -44,6 +60,7 @@ pub fn confirm(brand: &str, accent: &str, account: &str, code: &str) -> Mail {
         html: render(
             brand,
             accent,
+            logo,
             "Confirm your account",
             &format!("Welcome! Confirm the email for your account {account} with the code below."),
             code,

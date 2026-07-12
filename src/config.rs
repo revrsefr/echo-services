@@ -27,6 +27,10 @@ pub struct Email {
     // Accent colour (any CSS colour) for the email template.
     #[serde(default = "default_accent")]
     pub accent: String,
+    // Optional logo image URL shown in the email header (must be a hosted image;
+    // email clients don't render inline SVG or data URIs).
+    #[serde(default)]
+    pub logo: String,
 }
 
 fn default_brand() -> String {

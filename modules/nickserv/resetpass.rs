@@ -19,7 +19,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             };
             let code = db.issue_code(&canonical, CodeKind::Reset);
-            let mail = crate::email::reset(db.email_brand(), db.email_accent(), &canonical, &code);
+            let mail = crate::email::reset(db.email_brand(), db.email_accent(), db.email_logo(), &canonical, &code);
             ctx.send_email(email, mail.subject, mail.text, Some(mail.html));
             ctx.notice(me, from.uid, format!("A reset code has been emailed to the address on file for \x02{canonical}\x02."));
         }
