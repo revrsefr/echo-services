@@ -45,6 +45,9 @@ pub enum Event {
     AccountRegistered(Account),
     CertAdded { account: String, fp: String },
     CertRemoved { account: String, fp: String },
+    AccountEmailSet { account: String, email: Option<String> },
+    AccountPasswordSet { account: String, password_hash: String, scram256: String, scram512: String },
+    AccountDropped { account: String },
     ChannelRegistered { name: String, founder: String, ts: u64 },
     ChannelDropped { name: String },
     ChannelMlock { name: String, on: String, off: String },
@@ -70,7 +73,12 @@ enum Scope {
 impl Event {
     fn scope(&self) -> Scope {
         match self {
-            Event::AccountRegistered(_) | Event::CertAdded { .. } | Event::CertRemoved { .. } => Scope::Global,
+            Event::AccountRegistered(_)
+            | Event::CertAdded { .. }
+            | Event::CertRemoved { .. }
+            | Event::AccountEmailSet { .. }
+            | Event::AccountPasswordSet { .. }
+            | Event::AccountDropped { .. } => Scope::Global,
             Event::ChannelRegistered { .. }
             | Event::ChannelDropped { .. }
             | Event::ChannelMlock { .. }
@@ -386,6 +394,13 @@ pub enum RegError {
     Internal,
 }
 
+// What an ingested entry did to a locally-known account, so the engine can log
+// out sessions that were relying on it.
+pub enum AccountChange {
+    TakenOver(String),
+    Dropped(String),
+}
+
 #[derive(Debug)]
 pub enum CertError {
     Invalid,    // not a plausible fingerprint
@@ -468,19 +483,22 @@ impl Db {
     /// of the gossip seam. Idempotent (re-delivered entries are dropped). Returns
     /// the account name if this ingest changed its owner (a registration conflict
     /// resolved against the local claim), so the caller can log out stale sessions.
-    pub fn ingest(&mut self, entry: LogEntry) -> std::io::Result<Option<String>> {
-        // Record the current owner of an incoming account before applying, to see
-        // if this ingest transfers ownership away from us.
-        let contested = match &entry.event {
-            Event::AccountRegistered(a) => self.accounts.get(&key(&a.name)).map(|cur| (a.name.clone(), cur.home.clone())),
+    pub fn ingest(&mut self, entry: LogEntry) -> std::io::Result<Option<AccountChange>> {
+        // Snapshot the incoming account's local owner before applying, to detect a
+        // takeover (home changed) or a remote drop (it disappears).
+        let watched: Option<(String, Option<String>)> = match &entry.event {
+            Event::AccountRegistered(a) => Some((a.name.clone(), self.account(&a.name).map(|c| c.home.clone()))),
+            Event::AccountDropped { account } => Some((account.clone(), self.account(account).map(|c| c.home.clone()))),
             _ => None,
         };
         if let Some(event) = self.log.ingest(entry)? {
             apply(&mut self.accounts, &mut self.channels, event);
         }
-        if let Some((name, prev_home)) = contested {
-            if self.accounts.get(&key(&name)).is_some_and(|cur| cur.home != prev_home) {
-                return Ok(Some(name)); // ownership moved to another node
+        if let Some((name, prev_home)) = watched {
+            match (prev_home, self.account(&name).map(|c| c.home.clone())) {
+                (Some(prev), Some(cur)) if cur != prev => return Ok(Some(AccountChange::TakenOver(name))),
+                (Some(_), None) => return Ok(Some(AccountChange::Dropped(name))),
+                _ => {}
             }
         }
         Ok(None)
@@ -609,6 +627,49 @@ impl Db {
     /// The fingerprints registered to an account (empty if unknown/none).
     pub fn certfps(&self, account: &str) -> &[String] {
         self.accounts.get(&key(account)).map_or(&[], |a| a.certfps.as_slice())
+    }
+
+    /// Set (or clear) `account`'s email.
+    pub fn set_email(&mut self, account: &str, email: Option<String>) -> Result<(), RegError> {
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return Err(RegError::Internal);
+        }
+        self.log.append(Event::AccountEmailSet { account: account.to_string(), email: email.clone() }).map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().email = email;
+        Ok(())
+    }
+
+    /// Replace `account`'s password with freshly derived credentials.
+    pub fn set_credentials(&mut self, account: &str, creds: Credentials) -> Result<(), RegError> {
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return Err(RegError::Internal);
+        }
+        self.log
+            .append(Event::AccountPasswordSet {
+                account: account.to_string(),
+                password_hash: creds.password_hash.clone(),
+                scram256: creds.scram256.clone(),
+                scram512: creds.scram512.clone(),
+            })
+            .map_err(|_| RegError::Internal)?;
+        let a = self.accounts.get_mut(&k).unwrap();
+        a.password_hash = creds.password_hash;
+        a.scram256 = Some(creds.scram256);
+        a.scram512 = Some(creds.scram512);
+        Ok(())
+    }
+
+    /// Delete `account`. Ok(false) if it wasn't registered.
+    pub fn drop_account(&mut self, account: &str) -> Result<bool, RegError> {
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return Ok(false);
+        }
+        self.log.append(Event::AccountDropped { account: account.to_string() }).map_err(|_| RegError::Internal)?;
+        self.accounts.remove(&k);
+        Ok(true)
     }
 
     /// Register `fp` to `account`. Fingerprints are one-to-one with accounts.
@@ -844,6 +905,21 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             if let Some(a) = accounts.get_mut(&key(&account)) {
                 a.certfps.retain(|c| *c != fp);
             }
+        }
+        Event::AccountEmailSet { account, email } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.email = email;
+            }
+        }
+        Event::AccountPasswordSet { account, password_hash, scram256, scram512 } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.password_hash = password_hash;
+                a.scram256 = Some(scram256);
+                a.scram512 = Some(scram512);
+            }
+        }
+        Event::AccountDropped { account } => {
+            accounts.remove(&key(&account));
         }
         Event::ChannelRegistered { name, founder, ts } => {
             channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new() });

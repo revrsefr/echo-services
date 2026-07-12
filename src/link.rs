@@ -54,6 +54,15 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
                                     }
                                 }
                             }
+                            // Password change: same off-thread derivation as register.
+                            NetAction::DeferPassword { account, password, agent, uid } => {
+                                let iterations = engine.lock().await.scram_iterations();
+                                let creds = tokio::task::spawn_blocking(move || {
+                                    Db::derive_credentials(&password, iterations)
+                                })
+                                .await?;
+                                engine.lock().await.complete_password_change(&account, creds, &agent, &uid)
+                            }
                             action => vec![action],
                         };
                         for act in outs {

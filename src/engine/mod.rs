@@ -123,19 +123,20 @@ impl Engine {
     }
 
     pub fn gossip_ingest(&mut self, entry: LogEntry) -> std::io::Result<()> {
-        // If ingesting a peer's registration took an account name away from a
-        // local session (it lost the conflict), clean up after the loser.
-        if let Some(account) = self.db.ingest(entry)? {
-            self.handle_account_takeover(&account);
+        // If ingesting a peer's entry removed an account a local session relied on
+        // (lost a conflict, or dropped elsewhere), clean up after it.
+        match self.db.ingest(entry)? {
+            Some(db::AccountChange::TakenOver(a)) => self.handle_account_gone(&a, "collided with another network and no longer belongs to you"),
+            Some(db::AccountChange::Dropped(a)) => self.handle_account_gone(&a, "was dropped"),
+            None => {}
         }
         Ok(())
     }
 
-    // A registration conflict resolved against this node: the name `account` is now
-    // owned by another node. Log out any local session on it (its credential is
-    // gone) and drop the channels it had registered locally — their founder
-    // identity now belongs to another node, so they can't silently transfer.
-    fn handle_account_takeover(&mut self, account: &str) {
+    // An account a local session was using is gone (lost a conflict, or dropped on
+    // another node). Log out those sessions (their credential is gone) and drop the
+    // channels it founded locally — their founder identity no longer exists here.
+    fn handle_account_gone(&mut self, account: &str, reason: &str) {
         let victims = self.network.uids_logged_into(account);
         let orphaned = self.db.channels_owned_by(account);
         for chan in &orphaned {
@@ -156,7 +157,7 @@ impl Engine {
                 self.emit_irc(NetAction::Notice {
                     from: ns.clone(),
                     to: uid.clone(),
-                    text: format!("Your registration of \x02{account}\x02 collided with another network and it now belongs elsewhere. You have been logged out; please register a different name."),
+                    text: format!("Your account \x02{account}\x02 {reason}. You have been logged out."),
                 });
                 if !orphaned.is_empty() {
                     self.emit_irc(NetAction::Notice {
@@ -542,6 +543,15 @@ impl Engine {
         let out = reg_reply(&reply, outcome, account);
         self.track_accounts(&out);
         out
+    }
+
+    // Commit a password change the link layer derived off-thread, then notice the user.
+    pub fn complete_password_change(&mut self, account: &str, creds: Option<db::Credentials>, agent: &str, uid: &str) -> Vec<NetAction> {
+        let text = match creds.and_then(|c| self.db.set_credentials(account, c).ok()) {
+            Some(()) => format!("Your password for \x02{account}\x02 has been changed."),
+            None => "Sorry, that didn't work. Please try again in a moment.".to_string(),
+        };
+        vec![NetAction::Notice { from: agent.to_string(), to: uid.to_string(), text }]
     }
 
     // Route a PRIVMSG addressed to a service (by uid or nick) into that service,
@@ -1130,6 +1140,54 @@ mod tests {
         assert!(notice(&info, "Email"), "owner sees their email line: {info:?}");
         assert!(notice(&to_ns(&mut e, "INFO ghost"), "isn't registered"));
         assert!(notice(&to_ns(&mut e, "ALIST"), "#a"));
+    }
+
+    // SET EMAIL stores an email; SET PASSWORD defers derivation, and once
+    // completed the new password authenticates and the old one no longer does.
+    #[test]
+    fn nickserv_set_password_and_email() {
+        let mut e = engine_with("nsset", "alice", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let to_ns = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() });
+        let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
+
+        assert!(notice(&to_ns(&mut e, "SET EMAIL alice@example.org"), "updated"));
+        assert!(notice(&to_ns(&mut e, "INFO"), "alice@example.org"), "owner INFO shows the email");
+
+        let out = to_ns(&mut e, "SET PASSWORD newsecret");
+        let deferred = out.iter().find_map(|a| match a {
+            NetAction::DeferPassword { account, password, agent, uid } => Some((account.clone(), password.clone(), agent.clone(), uid.clone())),
+            _ => None,
+        });
+        let (account, password, agent, uid) = deferred.expect("SET PASSWORD defers derivation");
+        assert_eq!(password, "newsecret");
+        let creds = Db::derive_credentials(&password, 4096);
+        e.complete_password_change(&account, creds, &agent, &uid);
+        assert!(e.db.authenticate("alice", "newsecret").is_some(), "new password works");
+        assert!(e.db.authenticate("alice", "sesame").is_none(), "old password rejected");
+    }
+
+    // DROP deletes the account, releases and drops the channels it founded, and
+    // logs the session out; a wrong password is refused.
+    #[test]
+    fn nickserv_drop_account() {
+        let mut e = engine_with("nsdrop", "alice", "sesame");
+        e.db.register_channel("#a", "alice").unwrap();
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let to_ns = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() });
+        let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
+
+        assert!(notice(&to_ns(&mut e, "DROP wrongpass"), "Invalid password"));
+        assert!(e.db.account("alice").is_some(), "wrong password keeps the account");
+
+        let out = to_ns(&mut e, "DROP sesame");
+        assert!(notice(&out, "has been dropped"));
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#a" && modes == "-r")), "channel released: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { target, key, value } if target == "000AAAAAB" && key == "accountname" && value.is_empty())), "session logged out: {out:?}");
+        assert!(e.db.account("alice").is_none(), "account gone");
+        assert!(e.db.channel("#a").is_none(), "founded channel gone");
     }
 
     // IDENTIFY accepts the two-arg account+password form: log into a named

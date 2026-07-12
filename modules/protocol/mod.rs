@@ -68,6 +68,9 @@ pub enum NetAction {
     // still needs its (expensive) key derivation. The link layer runs the
     // derivation off-thread, then calls Engine::complete_register.
     DeferRegister { account: String, password: String, email: Option<String>, reply: RegReply },
+    // Internal only: a password change awaiting the same off-thread derivation.
+    // The link layer derives, then calls Engine::complete_password_change.
+    DeferPassword { account: String, password: String, agent: String, uid: String },
 }
 
 // How to answer a registration once its credentials have been derived.

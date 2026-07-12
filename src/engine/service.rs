@@ -57,6 +57,17 @@ impl ServiceCtx {
         });
     }
 
+    // Hand a password change to the engine to finish: its derivation runs off the
+    // reactor, then the engine commits it and notices `uid`, sourced from `agent`.
+    pub fn defer_password(&mut self, account: impl Into<String>, password: impl Into<String>, agent: impl Into<String>, uid: impl Into<String>) {
+        self.actions.push(NetAction::DeferPassword {
+            account: account.into(),
+            password: password.into(),
+            agent: agent.into(),
+            uid: uid.into(),
+        });
+    }
+
     // Log a user into an account: sets the accountname the ircd turns into
     // RPL_LOGGEDIN (900) and exposes to account-tag / WHOX, the same login the
     // SASL agent applies. Used after a successful REGISTER / IDENTIFY.

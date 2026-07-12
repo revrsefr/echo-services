@@ -280,8 +280,8 @@ impl Protocol for InspIrcd {
                 vec![format!(":{} INVITE {} {} 1 0", from, uid, channel)]
             }
             NetAction::Raw(s) => vec![s.clone()],
-            // Internal: the link layer handles this before serialization.
-            NetAction::DeferRegister { .. } => vec![],
+            // Internal: the link layer handles these before serialization.
+            NetAction::DeferRegister { .. } | NetAction::DeferPassword { .. } => vec![],
         }
     }
 
