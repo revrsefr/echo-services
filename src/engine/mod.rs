@@ -968,8 +968,13 @@ mod tests {
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#room" && modes == "+rnt-s")), "mlock applied: {out:?}");
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "MLOCK #room"), "+nt-s"));
 
-        // A different, unidentified user cannot set the lock or drop it.
+        // Founder sets modes directly via ChanServ MODE.
+        let out = to_cs(&mut e, "000AAAAAB", "MODE #room +S");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#room" && modes == "+S")), "MODE applies: {out:?}");
+
+        // A different, unidentified user cannot change modes, set the lock, or drop it.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into() });
+        assert!(notice(&to_cs(&mut e, "000AAAAAC", "MODE #room +i"), "founder"));
         assert!(notice(&to_cs(&mut e, "000AAAAAC", "MLOCK #room +i"), "founder"));
         assert!(notice(&to_cs(&mut e, "000AAAAAC", "DROP #room"), "founder"));
 
