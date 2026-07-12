@@ -39,6 +39,57 @@ pub enum Event {
     CertRemoved { account: String, fp: String },
 }
 
+// A durable record: the event plus the metadata a gossip layer needs to address
+// and order it — the origin node and its per-node sequence. Lines written before
+// these existed default them in.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LogEntry {
+    #[serde(default)]
+    origin: String,
+    #[serde(default)]
+    seq: u64,
+    #[serde(flatten)]
+    event: Event,
+}
+
+// Append-only log, the sole persistent source of truth: `open` replays it, `append`
+// stamps and writes one entry. Owning origin + next_seq is the seam a future gossip
+// layer ships entries over, without the services knowing.
+pub struct EventLog {
+    path: PathBuf,
+    origin: String,
+    next_seq: u64,
+}
+
+impl EventLog {
+    fn open(path: PathBuf, origin: String) -> (Self, Vec<Event>) {
+        let mut events = Vec::new();
+        let mut next_seq = 0;
+        if let Ok(data) = std::fs::read_to_string(&path) {
+            for line in data.lines().filter(|l| !l.trim().is_empty()) {
+                match serde_json::from_str::<LogEntry>(line) {
+                    Ok(entry) => {
+                        if entry.origin == origin {
+                            next_seq = next_seq.max(entry.seq + 1);
+                        }
+                        events.push(entry.event);
+                    }
+                    Err(e) => tracing::warn!(%e, "skipping malformed event log line"),
+                }
+            }
+        }
+        (Self { path, origin, next_seq }, events)
+    }
+
+    fn append(&mut self, event: Event) -> std::io::Result<()> {
+        let entry = LogEntry { origin: self.origin.clone(), seq: self.next_seq, event };
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&self.path)?;
+        writeln!(f, "{}", serde_json::to_string(&entry).unwrap_or_default())?;
+        self.next_seq += 1;
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 pub enum RegError {
     Exists,
@@ -71,7 +122,7 @@ pub struct Credentials {
 
 pub struct Db {
     accounts: HashMap<String, Account>, // keyed by casefolded name
-    path: PathBuf,
+    log: EventLog,
     // PBKDF2 cost baked into new SCRAM verifiers; lowered by tests.
     pub(crate) scram_iterations: u32,
 }
@@ -85,31 +136,28 @@ fn now() -> u64 {
 }
 
 impl Db {
-    pub fn open(path: impl Into<PathBuf>) -> Self {
-        let path = path.into();
+    pub fn open(path: impl Into<PathBuf>, origin: impl Into<String>) -> Self {
+        let (log, events) = EventLog::open(path.into(), origin.into());
         let mut accounts = HashMap::new();
-        if let Ok(data) = std::fs::read_to_string(&path) {
-            for line in data.lines().filter(|l| !l.trim().is_empty()) {
-                match serde_json::from_str::<Event>(line) {
-                    Ok(Event::AccountRegistered(a)) => {
-                        accounts.insert(key(&a.name), a);
+        for event in events {
+            match event {
+                Event::AccountRegistered(a) => {
+                    accounts.insert(key(&a.name), a);
+                }
+                Event::CertAdded { account, fp } => {
+                    if let Some(a) = accounts.get_mut(&key(&account)) {
+                        a.certfps.push(fp);
                     }
-                    Ok(Event::CertAdded { account, fp }) => {
-                        if let Some(a) = accounts.get_mut(&key(&account)) {
-                            a.certfps.push(fp);
-                        }
+                }
+                Event::CertRemoved { account, fp } => {
+                    if let Some(a) = accounts.get_mut(&key(&account)) {
+                        a.certfps.retain(|c| *c != fp);
                     }
-                    Ok(Event::CertRemoved { account, fp }) => {
-                        if let Some(a) = accounts.get_mut(&key(&account)) {
-                            a.certfps.retain(|c| *c != fp);
-                        }
-                    }
-                    Err(e) => tracing::warn!(%e, "skipping malformed event log line"),
                 }
             }
         }
-        tracing::info!(accounts = accounts.len(), ?path, "account store loaded");
-        Self { accounts, path, scram_iterations: scram::DEFAULT_ITERATIONS }
+        tracing::info!(accounts = accounts.len(), "account store loaded");
+        Self { accounts, log, scram_iterations: scram::DEFAULT_ITERATIONS }
     }
 
     pub fn exists(&self, name: &str) -> bool {
@@ -141,7 +189,7 @@ impl Db {
             scram512: Some(creds.scram512),
             certfps: Vec::new(),
         };
-        self.append(&Event::AccountRegistered(account.clone())).map_err(|_| RegError::Internal)?;
+        self.log.append(Event::AccountRegistered(account.clone())).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
         Ok(())
     }
@@ -197,7 +245,7 @@ impl Db {
         if !self.accounts.contains_key(&k) {
             return Err(CertError::NoAccount);
         }
-        self.append(&Event::CertAdded { account: account.to_string(), fp: fp.clone() }).map_err(|_| CertError::Internal)?;
+        self.log.append(Event::CertAdded { account: account.to_string(), fp: fp.clone() }).map_err(|_| CertError::Internal)?;
         self.accounts.get_mut(&k).unwrap().certfps.push(fp);
         Ok(())
     }
@@ -211,14 +259,9 @@ impl Db {
             Some(a) if !a.certfps.iter().any(|c| *c == fp) => return Ok(false),
             Some(_) => {}
         }
-        self.append(&Event::CertRemoved { account: account.to_string(), fp: fp.clone() }).map_err(|_| CertError::Internal)?;
+        self.log.append(Event::CertRemoved { account: account.to_string(), fp: fp.clone() }).map_err(|_| CertError::Internal)?;
         self.accounts.get_mut(&k).unwrap().certfps.retain(|c| *c != fp);
         Ok(true)
-    }
-
-    fn append(&self, event: &Event) -> std::io::Result<()> {
-        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&self.path)?;
-        writeln!(f, "{}", serde_json::to_string(event).unwrap_or_default())
     }
 }
 

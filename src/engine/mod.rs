@@ -491,7 +491,7 @@ mod tests {
     fn engine_with(name: &str, account: &str, password: &str) -> Engine {
         let path = std::env::temp_dir().join(format!("fedserv-sasl-{name}.jsonl"));
         let _ = std::fs::remove_file(&path);
-        let mut db = Db::open(&path);
+        let mut db = Db::open(&path, "test");
         db.scram_iterations = 4096; // keep the debug-build verifier cheap in tests
         assert!(db.register(account, password, None).is_ok());
         Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".to_string(), guest_nick: "Guest".to_string(), guest_seq: 12345 })], db)
@@ -831,6 +831,23 @@ mod tests {
         let second = ident(&mut e);
         assert!(!second.iter().any(|a| matches!(a, NetAction::Metadata { key, .. } if key == "accountname")), "second identify must not re-login: {second:?}");
         assert!(second.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("already identified"))), "{second:?}");
+    }
+
+    // The event log is the source of truth: state survives a reopen, rebuilt by
+    // folding the log (with its origin/seq metadata) rather than a snapshot.
+    #[test]
+    fn account_store_survives_reopen() {
+        let path = std::env::temp_dir().join("fedserv-reopen.jsonl");
+        let _ = std::fs::remove_file(&path);
+        {
+            let mut db = Db::open(&path, "n1");
+            db.scram_iterations = 4096;
+            db.register("foo", "sesame", None).unwrap();
+            db.certfp_add("foo", "aabbccddeeff00112233445566778899").unwrap();
+        }
+        let db = Db::open(&path, "n1");
+        assert_eq!(db.certfps("foo").len(), 1, "cert replayed from log");
+        assert!(db.authenticate("foo", "sesame").is_some(), "account replayed from log");
     }
 
     // Regression: after a nick change (e.g. a guest rename, then back to your

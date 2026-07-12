@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
         guest_nick: cfg.server.guest_nick.clone(),
         guest_seq: (ts % 100_000) as u32,
     })];
-    let mut db = engine::db::Db::open("fedserv.db.jsonl");
+    let mut db = engine::db::Db::open("fedserv.db.jsonl", &cfg.server.sid);
     db.scram_iterations = cfg.server.scram_iterations;
     let engine = Engine::new(services, db);
 
