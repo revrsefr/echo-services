@@ -71,6 +71,9 @@ pub enum NetAction {
     // Internal only: a password change awaiting the same off-thread derivation.
     // The link layer derives, then calls Engine::complete_password_change.
     DeferPassword { account: String, password: String, agent: String, uid: String },
+    // Internal only: send an email. The link layer pipes it to the configured
+    // mail command off-thread; never serialized to the ircd.
+    SendEmail { to: String, subject: String, body: String },
 }
 
 // How to answer a registration once its credentials have been derived.

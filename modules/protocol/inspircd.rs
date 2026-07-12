@@ -281,7 +281,7 @@ impl Protocol for InspIrcd {
             }
             NetAction::Raw(s) => vec![s.clone()],
             // Internal: the link layer handles these before serialization.
-            NetAction::DeferRegister { .. } | NetAction::DeferPassword { .. } => vec![],
+            NetAction::DeferRegister { .. } | NetAction::DeferPassword { .. } | NetAction::SendEmail { .. } => vec![],
         }
     }
 

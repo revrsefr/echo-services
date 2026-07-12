@@ -1210,6 +1210,40 @@ mod tests {
         assert!(notice(&to_ns(&mut e, "000AAAAAC", "IDENTIFY sesame"), "isn't registered"));
     }
 
+    // RESETPASS emails a code, and that code + a new password completes the reset;
+    // the new password then authenticates and the old one no longer does.
+    #[test]
+    fn nickserv_resetpass() {
+        let mut e = engine_with("nsreset", "alice", "sesame");
+        e.db.set_email_enabled(true);
+        e.db.set_email("alice", Some("alice@example.org".into())).unwrap();
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "someone".into(), host: "h".into() });
+        let to_ns = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() });
+
+        // Request: a code is emailed to the address on file.
+        let out = to_ns(&mut e, "RESETPASS alice");
+        let (to, body) = out.iter().find_map(|a| match a {
+            NetAction::SendEmail { to, body, .. } => Some((to.clone(), body.clone())),
+            _ => None,
+        }).expect("a reset code is emailed");
+        assert_eq!(to, "alice@example.org");
+        let code = body.split("is: ").nth(1).unwrap().split_whitespace().next().unwrap().to_string();
+
+        // Complete: the code + a new password defers the change.
+        let out = to_ns(&mut e, &format!("RESETPASS alice {code} brandnew"));
+        let (account, password, agent, uid) = out.iter().find_map(|a| match a {
+            NetAction::DeferPassword { account, password, agent, uid } => Some((account.clone(), password.clone(), agent.clone(), uid.clone())),
+            _ => None,
+        }).expect("a valid code defers the new password");
+        assert_eq!(password, "brandnew");
+        e.complete_password_change(&account, Db::derive_credentials(&password, 4096), &agent, &uid);
+        assert!(e.db.authenticate("alice", "brandnew").is_some(), "new password works");
+        assert!(e.db.authenticate("alice", "sesame").is_none(), "old password rejected");
+
+        // A used/wrong code is refused.
+        assert!(to_ns(&mut e, "RESETPASS alice 000000 x").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Invalid or expired"))));
+    }
+
     // GHOST renames off a session using a nick the caller owns.
     #[test]
     fn nickserv_ghost() {

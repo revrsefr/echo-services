@@ -12,7 +12,7 @@ use crate::proto::{NetAction, Protocol};
 // One uplink session: connect, handshake + burst, then translate lines forever.
 // The engine is shared with the gossip layer, so it is locked per operation and
 // never held across the registration key-stretching await.
-pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr: &str, mut irc_rx: mpsc::UnboundedReceiver<NetAction>) -> Result<()> {
+pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr: &str, mut irc_rx: mpsc::UnboundedReceiver<NetAction>, email: Option<crate::config::Email>) -> Result<()> {
     let stream = TcpStream::connect(addr).await?;
     let (read, mut write) = stream.into_split();
     let mut lines = BufReader::new(read).lines();
@@ -66,6 +66,10 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
                             action => vec![action],
                         };
                         for act in outs {
+                            if let NetAction::SendEmail { to, subject, body } = act {
+                                dispatch_email(&email, to, subject, body);
+                                continue;
+                            }
                             for out in proto.serialize(&act) {
                                 send(&mut write, &out).await?;
                             }
@@ -76,8 +80,12 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
             // A services-initiated action (e.g. a forced logout after a lost
             // registration conflict), pushed by the engine from the gossip path.
             Some(action) = irc_rx.recv() => {
-                for out in proto.serialize(&action) {
-                    send(&mut write, &out).await?;
+                if let NetAction::SendEmail { to, subject, body } = action {
+                    dispatch_email(&email, to, subject, body);
+                } else {
+                    for out in proto.serialize(&action) {
+                        send(&mut write, &out).await?;
+                    }
                 }
             }
         }
@@ -85,6 +93,33 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
 
     tracing::warn!("uplink closed the connection");
     Ok(())
+}
+
+// Fire off an email if email is configured: pipe an RFC822 message to the mail
+// command on a spawned task, so a slow MTA never stalls the link.
+fn dispatch_email(email: &Option<crate::config::Email>, to: String, subject: String, body: String) {
+    let Some(email) = email.clone() else {
+        return tracing::warn!(%to, "email requested but not configured");
+    };
+    tokio::spawn(async move {
+        let msg = format!("From: {}\r\nTo: {to}\r\nSubject: {subject}\r\n\r\n{body}\r\n", email.from);
+        let child = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(&email.command)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        let mut child = match child {
+            Ok(c) => c,
+            Err(e) => return tracing::warn!(%e, "mail command failed to start"),
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(msg.as_bytes()).await;
+            let _ = stdin.shutdown().await;
+        }
+        let _ = child.wait().await;
+    });
 }
 
 async fn send(write: &mut (impl AsyncWriteExt + Unpin), line: &str) -> Result<()> {

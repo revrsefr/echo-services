@@ -57,6 +57,11 @@ impl ServiceCtx {
         });
     }
 
+    // Send an email (the link layer pipes it to the configured mail command).
+    pub fn send_email(&mut self, to: impl Into<String>, subject: impl Into<String>, body: impl Into<String>) {
+        self.actions.push(NetAction::SendEmail { to: to.into(), subject: subject.into(), body: body.into() });
+    }
+
     // Hand a password change to the engine to finish: its derivation runs off the
     // reactor, then the engine commits it and notices `uid`, sourced from `agent`.
     pub fn defer_password(&mut self, account: impl Into<String>, password: impl Into<String>, agent: impl Into<String>, uid: impl Into<String>) {

@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use argon2::password_hash::rand_core::OsRng;
+use argon2::password_hash::rand_core::{OsRng, RngCore};
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use serde::{Deserialize, Serialize};
@@ -443,6 +443,10 @@ pub struct Db {
     log: EventLog,
     // PBKDF2 cost baked into new SCRAM verifiers; lowered by tests.
     pub(crate) scram_iterations: u32,
+    // Whether outbound email is configured, so email features can gate themselves.
+    email_enabled: bool,
+    // Node-local, non-persisted password-reset codes: account -> (code, expiry).
+    reset_codes: HashMap<String, (String, Instant)>,
 }
 
 fn key(name: &str) -> String {
@@ -482,7 +486,7 @@ impl Db {
             apply(&mut accounts, &mut channels, &mut grouped, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS }
+        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, reset_codes: HashMap::new() }
     }
 
     /// Fold an entry authored by another node into the store — the services-side
@@ -678,6 +682,34 @@ impl Db {
     /// The fingerprints registered to an account (empty if unknown/none).
     pub fn certfps(&self, account: &str) -> &[String] {
         self.accounts.get(&key(account)).map_or(&[], |a| a.certfps.as_slice())
+    }
+
+    /// Whether outbound email is configured.
+    pub fn email_enabled(&self) -> bool {
+        self.email_enabled
+    }
+
+    pub fn set_email_enabled(&mut self, on: bool) {
+        self.email_enabled = on;
+    }
+
+    /// Issue a fresh password-reset code for `account`, valid for 15 minutes.
+    pub fn issue_reset_code(&mut self, account: &str) -> String {
+        let code = gen_code();
+        self.reset_codes.insert(key(account), (code.clone(), Instant::now() + Duration::from_secs(900)));
+        code
+    }
+
+    /// Consume a reset code for `account`: true if it matches and hasn't expired.
+    pub fn take_reset_code(&mut self, account: &str, code: &str) -> bool {
+        let k = key(account);
+        match self.reset_codes.get(&k) {
+            Some((c, deadline)) if c == code && *deadline > Instant::now() => {
+                self.reset_codes.remove(&k);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Set (or clear) `account`'s email.
@@ -1060,6 +1092,13 @@ fn glob_match(pattern: &str, text: &str) -> bool {
         pi += 1;
     }
     pi == p.len()
+}
+
+// A random 6-digit code for email verification / password reset.
+fn gen_code() -> String {
+    let mut b = [0u8; 4];
+    OsRng.fill_bytes(&mut b);
+    format!("{:06}", u32::from_le_bytes(b) % 1_000_000)
 }
 
 fn hash_password(password: &str) -> Option<String> {

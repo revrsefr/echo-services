@@ -9,6 +9,18 @@ pub struct Config {
     pub gossip: Option<Gossip>,
     #[serde(default)]
     pub peer: Vec<Peer>,
+    // Outbound email (password resets). Absent = email features are off.
+    #[serde(default)]
+    pub email: Option<Email>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Email {
+    // Sender address stamped on outgoing mail.
+    pub from: String,
+    // A shell command the message is piped to on stdin, e.g. "sendmail -t" or
+    // "msmtp -t". Run via `sh -c`, so redirection and pipes work.
+    pub command: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]

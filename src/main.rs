@@ -55,6 +55,7 @@ async fn main() -> Result<()> {
     let mut db = engine::db::Db::open("fedserv.db.jsonl", &cfg.server.sid);
     db.scram_iterations = cfg.server.scram_iterations;
     db.set_outbound(gossip_tx.clone());
+    db.set_email_enabled(cfg.email.is_some());
     let engine = Arc::new(Mutex::new(Engine::new(services, db)));
 
     // Channel for services-initiated actions to reach the uplink (drained by the link loop).
@@ -81,5 +82,5 @@ async fn main() -> Result<()> {
 
     let addr = format!("{}:{}", cfg.uplink.host, cfg.uplink.port);
     tracing::info!(server = %cfg.server.name, %addr, "linking to uplink");
-    link::run(proto, engine, &addr, irc_rx).await
+    link::run(proto, engine, &addr, irc_rx, cfg.email.clone()).await
 }
