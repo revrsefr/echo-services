@@ -157,6 +157,46 @@ impl EventLog {
         let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&self.path)?;
         writeln!(f, "{}", serde_json::to_string(entry).unwrap_or_default())
     }
+
+    // How many entries the log currently holds.
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    // Rewrite the log to a minimal snapshot: one AccountRegistered per account,
+    // authored under our origin at fresh sequence numbers. Peers re-converge
+    // because AccountRegistered overwrites and cert replay is idempotent. The
+    // version vector resets to our origin; peers re-advertise theirs on the next
+    // sync. Written to a temp file and renamed, so a crash leaves the old log.
+    fn compact(&mut self, accounts: &HashMap<String, Account>) -> std::io::Result<()> {
+        let mut seq = self.next_seq();
+        let mut snapshot = Vec::with_capacity(accounts.len());
+        for account in accounts.values() {
+            self.lamport += 1;
+            snapshot.push(LogEntry {
+                origin: self.origin.clone(),
+                seq,
+                lamport: self.lamport,
+                event: Event::AccountRegistered(account.clone()),
+            });
+            seq += 1;
+        }
+        let tmp = self.path.with_extension("compact");
+        {
+            let mut f = std::fs::File::create(&tmp)?;
+            for entry in &snapshot {
+                writeln!(f, "{}", serde_json::to_string(entry).unwrap_or_default())?;
+            }
+            f.sync_all()?;
+        }
+        std::fs::rename(&tmp, &self.path)?;
+        self.versions = HashMap::new();
+        if let Some(last) = seq.checked_sub(1) {
+            self.versions.insert(self.origin.clone(), last);
+        }
+        self.entries = snapshot;
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -222,6 +262,20 @@ impl Db {
             apply(&mut self.accounts, event);
         }
         Ok(())
+    }
+
+    /// Rewrite the log to one entry per account, reclaiming churn.
+    pub fn compact(&mut self) -> std::io::Result<()> {
+        let before = self.log.len();
+        self.log.compact(&self.accounts)?;
+        tracing::info!(before, after = self.log.len(), "compacted event log");
+        Ok(())
+    }
+
+    /// Whether the log has grown enough past the live account count to be worth
+    /// compacting.
+    pub fn should_compact(&self) -> bool {
+        self.log.len() > self.accounts.len() * 3 + 64
     }
 
     /// Wire the log to a broadcast channel; each new entry is pushed to peers.
@@ -353,7 +407,9 @@ fn apply(accounts: &mut HashMap<String, Account>, event: Event) {
         }
         Event::CertAdded { account, fp } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {
-                a.certfps.push(fp);
+                if !a.certfps.contains(&fp) {
+                    a.certfps.push(fp); // idempotent: safe to replay over a snapshot
+                }
             }
         }
         Event::CertRemoved { account, fp } => {
@@ -443,5 +499,52 @@ mod tests {
         db.ingest(entry).unwrap();
         assert!(db.exists("bob"), "peer's account is present locally");
         assert!(db.exists("alice"), "local account still there");
+    }
+
+    // Compaction collapses churn to one entry per account and survives a reload.
+    #[test]
+    fn compact_preserves_state_and_shrinks() {
+        let p = tmp("compact");
+        let mut db = Db::open(&p, "local");
+        db.scram_iterations = 4096;
+        db.register("alice", "pw", None).unwrap();
+        db.register("bob", "pw", None).unwrap();
+        for i in 0..10u32 {
+            let fp = format!("{i:032x}");
+            db.certfp_add("alice", &fp).unwrap();
+            db.certfp_del("alice", &fp).unwrap();
+        }
+        let kept = "bb".repeat(16);
+        db.certfp_add("bob", &kept).unwrap();
+
+        let before = db.log.len();
+        db.compact().unwrap();
+        assert!(db.log.len() < before, "log shrank: {before} -> {}", db.log.len());
+        assert_eq!(db.log.len(), 2, "one entry per account");
+
+        drop(db);
+        let db = Db::open(&p, "local");
+        assert!(db.authenticate("alice", "pw").is_some(), "password survives compaction");
+        assert!(db.certfps("alice").is_empty(), "churned certs are gone");
+        assert_eq!(db.certfps("bob"), &[kept][..], "kept cert survives");
+    }
+
+    // A peer with an empty log converges from a node that has already compacted.
+    #[test]
+    fn compacted_node_still_converges() {
+        let mut a = Db::open(tmp("compA"), "A");
+        a.scram_iterations = 4096;
+        a.register("alice", "pw", None).unwrap();
+        let fp = "cc".repeat(16);
+        a.certfp_add("alice", &fp).unwrap();
+        a.compact().unwrap();
+
+        let mut b = Db::open(tmp("compB"), "B");
+        b.scram_iterations = 4096;
+        for entry in a.missing_for(&b.version_vector()) {
+            b.ingest(entry).unwrap();
+        }
+        assert!(b.exists("alice"), "B converges from a compacted node");
+        assert_eq!(b.certfps("alice"), &[fp][..], "certs arrive folded into the snapshot");
     }
 }

@@ -104,6 +104,16 @@ impl Engine {
         self.db.ingest(entry)
     }
 
+    // Compact the log if it has grown past the live account count. Returns
+    // whether it rewrote anything.
+    pub fn maybe_compact(&mut self) -> std::io::Result<bool> {
+        if self.db.should_compact() {
+            self.db.compact()?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     #[cfg(test)]
     pub(crate) fn test_register(&mut self, name: &str) {
         self.db.register(name, "pw", None).unwrap();

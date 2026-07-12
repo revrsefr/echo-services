@@ -51,6 +51,19 @@ async fn main() -> Result<()> {
         tokio::spawn(gossip::run(engine.clone(), gossip, cfg.peer.clone(), cfg.server.sid.clone(), gossip_tx));
     }
 
+    // Periodically fold log churn into a snapshot when it grows past the accounts.
+    {
+        let engine = engine.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1800)).await;
+                if let Err(e) = engine.lock().await.maybe_compact() {
+                    tracing::warn!(%e, "compaction failed");
+                }
+            }
+        });
+    }
+
     let addr = format!("{}:{}", cfg.uplink.host, cfg.uplink.port);
     tracing::info!(server = %cfg.server.name, %addr, "linking to uplink");
     link::run(proto, engine, &addr).await
