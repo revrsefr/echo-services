@@ -15,6 +15,9 @@ impl Service for ChanServ {
     fn gecos(&self) -> &str {
         "Channel Services"
     }
+    fn manages_channels(&self) -> bool {
+        true
+    }
 
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut Db) {
         let me = self.uid.as_str();
@@ -35,7 +38,7 @@ impl Service for ChanServ {
                 };
                 match db.register_channel(chan, account) {
                     Ok(()) => {
-                        ctx.channel_mode(chan, "+r"); // mark the channel registered
+                        ctx.channel_mode(me, chan, "+r"); // mark the channel registered
                         ctx.notice(me, from.uid, format!("\x02{chan}\x02 is now registered and you are its founder. Enjoy!"));
                     }
                     Err(ChanError::Exists) => ctx.notice(me, from.uid, format!("\x02{chan}\x02 is already registered. Try \x02INFO {chan}\x02 to see who owns it.")),
@@ -75,7 +78,7 @@ impl Service for ChanServ {
                 }
                 match db.drop_channel(chan) {
                     Ok(()) => {
-                        ctx.channel_mode(chan, "-r"); // no longer registered
+                        ctx.channel_mode(me, chan, "-r"); // no longer registered
                         ctx.notice(me, from.uid, format!("\x02{chan}\x02 has been dropped and is no longer registered."));
                     }
                     Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
@@ -113,7 +116,7 @@ impl Service for ChanServ {
                 match db.set_mlock(chan, &on, &off) {
                     Ok(()) => {
                         if let Some(info) = db.channel(chan) {
-                            ctx.channel_mode(chan, &info.lock_modes()); // apply it now
+                            ctx.channel_mode(me, chan, &info.lock_modes()); // apply it now
                         }
                         ctx.notice(me, from.uid, format!("Mode lock for \x02{chan}\x02 updated."));
                     }

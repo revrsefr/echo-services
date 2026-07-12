@@ -46,9 +46,10 @@ pub enum NetAction {
     // Force a user's nick (SVSNICK), e.g. renaming to a guest nick on logout.
     // The protocol stamps the new nick's timestamp.
     ForceNick { uid: String, nick: String },
-    // Set channel modes from services, e.g. +r on a registered channel. The
+    // Set channel modes from services, e.g. +r on a registered channel. `from` is
+    // the pseudoclient uid to source it from (empty = the services server). The
     // protocol stamps a timestamp the ircd will accept.
-    ChannelMode { channel: String, modes: String },
+    ChannelMode { from: String, channel: String, modes: String },
     Raw(String),
     // Internal only, never serialized to the wire: a registration whose password
     // still needs its (expensive) key derivation. The link layer runs the

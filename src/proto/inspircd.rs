@@ -122,7 +122,8 @@ impl Protocol for InspIrcd {
             "FMODE" => {
                 let a: Vec<&str> = tokens.collect();
                 match (source.as_deref(), a.first(), a.get(2)) {
-                    (Some(src), Some(chan), Some(modes)) if src != self.sid && chan.starts_with('#') => {
+                    // Our own uids (server SID + pseudoclients) share our SID prefix.
+                    (Some(src), Some(chan), Some(modes)) if !src.starts_with(self.sid.as_str()) && chan.starts_with('#') => {
                         vec![NetEvent::ChannelModeChange { channel: chan.to_string(), modes: modes.to_string() }]
                     }
                     _ => vec![],
@@ -218,10 +219,16 @@ impl Protocol for InspIrcd {
                 vec![self.from_us(format!("SVSNICK {} {} {}", uid, nick, now))]
             }
             // FMODE <chan> <ts> <modes>. The ircd drops an FMODE whose TS is newer
-            // than the channel's, so we send TS 1 to guarantee it applies to the
-            // existing channel. Sourced from our server, which +r requires.
-            NetAction::ChannelMode { channel, modes } => {
-                vec![self.from_us(format!("FMODE {} 1 {}", channel, modes))]
+            // than the channel's, so we send TS 1 to guarantee it applies. Sourced
+            // from the given pseudoclient (e.g. ChanServ) so users see who set it,
+            // or from the services server when `from` is empty.
+            NetAction::ChannelMode { from, channel, modes } => {
+                let cmd = format!("FMODE {} 1 {}", channel, modes);
+                if from.is_empty() {
+                    vec![self.from_us(cmd)]
+                } else {
+                    vec![format!(":{} {}", from, cmd)]
+                }
             }
             NetAction::Raw(s) => vec![s.clone()],
             // Internal: the link layer handles this before serialization.

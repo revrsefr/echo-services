@@ -18,6 +18,11 @@ pub trait Service: Send {
         "services.local"
     }
     fn gecos(&self) -> &str;
+    // Whether this service owns channel modes (ChanServ), so the engine can source
+    // channel mode changes from it.
+    fn manages_channels(&self) -> bool {
+        false
+    }
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut Db);
 }
 
@@ -75,9 +80,10 @@ impl ServiceCtx {
         });
     }
 
-    // Set channel modes from services, e.g. "+r" on a registered channel.
-    pub fn channel_mode(&mut self, channel: &str, modes: &str) {
+    // Set channel modes, sourced from pseudoclient `from` (e.g. ChanServ).
+    pub fn channel_mode(&mut self, from: &str, channel: &str, modes: &str) {
         self.actions.push(NetAction::ChannelMode {
+            from: from.to_string(),
             channel: channel.to_string(),
             modes: modes.to_string(),
         });

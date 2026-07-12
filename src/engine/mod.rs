@@ -73,16 +73,19 @@ pub struct Engine {
     db: Db,
     sasl_sessions: HashMap<String, TimedSession>, // client uid -> in-progress exchange
     reg_limiter: RegLimiter,
+    chan_service: Option<String>, // uid to source channel modes from (ChanServ)
 }
 
 impl Engine {
     pub fn new(services: Vec<Box<dyn Service>>, db: Db) -> Self {
+        let chan_service = services.iter().find(|s| s.manages_channels()).map(|s| s.uid().to_string());
         Self {
             services,
             network: Network::default(),
             db,
             sasl_sessions: HashMap::new(),
             reg_limiter: RegLimiter::new(),
+            chan_service,
         }
     }
 
@@ -174,15 +177,17 @@ impl Engine {
             // creation and on the uplink burst, so registered channels regain the
             // mode after emptying, and after a services relink.
             NetEvent::ChannelCreate { channel } => {
+                let from = self.chan_service.clone().unwrap_or_default();
                 match self.db.channel(&channel) {
-                    Some(info) => vec![NetAction::ChannelMode { channel, modes: info.lock_modes() }],
+                    Some(info) => vec![NetAction::ChannelMode { from, channel, modes: info.lock_modes() }],
                     None => Vec::new(),
                 }
             }
             // Enforce the mode lock: revert any change that broke it.
             NetEvent::ChannelModeChange { channel, modes } => {
+                let from = self.chan_service.clone().unwrap_or_default();
                 match self.db.channel(&channel).and_then(|info| info.enforce(&modes)) {
-                    Some(revert) => vec![NetAction::ChannelMode { channel, modes: revert }],
+                    Some(revert) => vec![NetAction::ChannelMode { from, channel, modes: revert }],
                     None => Vec::new(),
                 }
             }
@@ -191,7 +196,10 @@ impl Engine {
                 let founder = self.db.channel(&channel).map(|c| c.founder.clone());
                 let account = self.network.account_of(&uid).map(str::to_string);
                 match (founder, account) {
-                    (Some(f), Some(a)) if f == a => vec![NetAction::ChannelMode { channel, modes: format!("+o {uid}") }],
+                    (Some(f), Some(a)) if f == a => {
+                        let from = self.chan_service.clone().unwrap_or_default();
+                        vec![NetAction::ChannelMode { from, channel, modes: format!("+o {uid}") }]
+                    }
                     _ => Vec::new(),
                 }
             }
@@ -951,13 +959,13 @@ mod tests {
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         let out = to_cs(&mut e, "000AAAAAB", "REGISTER #room");
         assert!(notice(&out, "now registered"));
-        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes } if channel == "#room" && modes == "+r")), "register sets +r: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#room" && modes == "+r")), "register sets +r: {out:?}");
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "INFO #room"), "alice"));
 
         // Founder sets a mode lock: it applies immediately and shows on view.
         let out = to_cs(&mut e, "000AAAAAB", "MLOCK #room +nt-s");
         assert!(notice(&out, "updated"));
-        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes } if channel == "#room" && modes == "+rnt-s")), "mlock applied: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#room" && modes == "+rnt-s")), "mlock applied: {out:?}");
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "MLOCK #room"), "+nt-s"));
 
         // A different, unidentified user cannot set the lock or drop it.
@@ -968,7 +976,7 @@ mod tests {
         // The founder can, which also clears +r.
         let out = to_cs(&mut e, "000AAAAAB", "DROP #room");
         assert!(notice(&out, "dropped"));
-        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes } if channel == "#room" && modes == "-r")), "drop clears +r: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#room" && modes == "-r")), "drop clears +r: {out:?}");
     }
 
     // A registered channel (re)appearing re-asserts +r; an unregistered one does not.
@@ -982,7 +990,7 @@ mod tests {
         let mut e = Engine::new(vec![Box::new(ns)], db);
 
         let out = e.handle(NetEvent::ChannelCreate { channel: "#reg".into() });
-        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes } if channel == "#reg" && modes == "+r")), "registered channel regains +r: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#reg" && modes == "+r")), "registered channel regains +r: {out:?}");
 
         let out = e.handle(NetEvent::ChannelCreate { channel: "#other".into() });
         assert!(out.is_empty(), "unregistered channel is left alone: {out:?}");
@@ -1001,11 +1009,11 @@ mod tests {
 
         // Creation applies the full lock.
         let out = e.handle(NetEvent::ChannelCreate { channel: "#lk".into() });
-        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes } if channel == "#lk" && modes == "+rnt-s")), "{out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#lk" && modes == "+rnt-s")), "{out:?}");
 
         // Setting a locked-off mode is reverted.
         let out = e.handle(NetEvent::ChannelModeChange { channel: "#lk".into(), modes: "+s".into() });
-        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes } if channel == "#lk" && modes == "-s")), "{out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#lk" && modes == "-s")), "{out:?}");
 
         // An unrelated mode change is left alone.
         assert!(e.handle(NetEvent::ChannelModeChange { channel: "#lk".into(), modes: "+m".into() }).is_empty());
@@ -1026,7 +1034,7 @@ mod tests {
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 
         let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#x".into() });
-        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes } if channel == "#x" && modes == "+o 000AAAAAB")), "founder opped: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#x" && modes == "+o 000AAAAAB")), "founder opped: {out:?}");
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into() });
         assert!(e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#x".into() }).is_empty(), "non-founder not opped");
