@@ -4,7 +4,7 @@ pub mod service;
 pub mod state;
 
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
@@ -33,6 +33,22 @@ enum SaslSession {
     Scram { hash: scram::Hash, step: ScramStep },
 }
 
+// An in-progress exchange with its last-activity stamp, so abandoned sessions
+// can be swept. The ircd does not always tell us a mid-SASL client vanished, so
+// without this the uid-keyed map would grow without bound (a memory-exhaustion
+// DoS: open a connection, send AUTHENTICATE, drop, repeat).
+struct TimedSession {
+    touched: Instant,
+    session: SaslSession,
+}
+
+// How long an idle SASL exchange lives before it is swept. A real exchange
+// completes in well under a second; each step refreshes the stamp.
+const SASL_SESSION_TTL: Duration = Duration::from_secs(60);
+// Hard ceiling on concurrent in-progress exchanges, bounding worst-case memory
+// under a burst faster than the TTL.
+const MAX_SASL_SESSIONS: usize = 4096;
+
 // The SCRAM state advances client-first -> client-final -> ack.
 enum ScramStep {
     ClientFirst,
@@ -53,7 +69,7 @@ pub struct Engine {
     services: Vec<Box<dyn Service>>,
     network: Network,
     db: Db,
-    sasl_sessions: HashMap<String, SaslSession>, // client uid -> in-progress exchange
+    sasl_sessions: HashMap<String, TimedSession>, // client uid -> in-progress exchange
     reg_limiter: RegLimiter,
 }
 
@@ -71,6 +87,18 @@ impl Engine {
     // Cost of a fresh SCRAM verifier; read by the link layer for off-thread derivation.
     pub fn scram_iterations(&self) -> u32 {
         self.db.scram_iterations
+    }
+
+    // Insert or refresh a client's in-progress SASL session, stamped now.
+    fn stash_sasl(&mut self, client: String, session: SaslSession) {
+        self.sasl_sessions.insert(client, TimedSession { touched: Instant::now(), session });
+    }
+
+    // Evict exchanges idle past the TTL. Run before starting a new one so a
+    // dropped-mid-auth client the ircd never reported cannot pile up.
+    fn sweep_sasl(&mut self) {
+        let now = Instant::now();
+        self.sasl_sessions.retain(|_, t| now.duration_since(t.touched) < SASL_SESSION_TTL);
     }
 
     // Sent right after the SERVER line: burst, introduce every service, endburst.
@@ -105,6 +133,7 @@ impl Engine {
             }
             NetEvent::Quit { uid } => {
                 self.network.user_quit(&uid);
+                self.sasl_sessions.remove(&uid); // drop any half-finished exchange
                 Vec::new()
             }
             NetEvent::Privmsg { from, to, text } => self.dispatch(&from, &to, &text),
@@ -130,21 +159,27 @@ impl Engine {
         };
         match mode.as_str() {
             "H" => Vec::new(), // host info
-            "S" => match data.first().map(String::as_str) {
-                Some("PLAIN") => {
-                    self.sasl_sessions.insert(client.clone(), SaslSession::Plain { response: String::new() });
-                    mk("C", vec!["+".to_string()]) // empty challenge -> client sends the payload
+            "S" => {
+                self.sweep_sasl();
+                if self.sasl_sessions.len() >= MAX_SASL_SESSIONS {
+                    return mk("D", vec!["F".to_string()]); // too many in flight
                 }
-                Some(mech) if scram::Hash::from_mech(mech).is_some() => {
-                    let hash = scram::Hash::from_mech(mech).unwrap();
-                    self.sasl_sessions.insert(client.clone(), SaslSession::Scram { hash, step: ScramStep::ClientFirst });
-                    mk("C", vec!["+".to_string()]) // client sends client-first next
+                match data.first().map(String::as_str) {
+                    Some("PLAIN") => {
+                        self.stash_sasl(client.clone(), SaslSession::Plain { response: String::new() });
+                        mk("C", vec!["+".to_string()]) // empty challenge -> client sends the payload
+                    }
+                    Some(mech) if scram::Hash::from_mech(mech).is_some() => {
+                        let hash = scram::Hash::from_mech(mech).unwrap();
+                        self.stash_sasl(client.clone(), SaslSession::Scram { hash, step: ScramStep::ClientFirst });
+                        mk("C", vec!["+".to_string()]) // client sends client-first next
+                    }
+                    _ => mk("D", vec!["F".to_string()]), // unsupported mechanism
                 }
-                _ => mk("D", vec!["F".to_string()]), // unsupported mechanism
-            },
+            }
             "C" => {
                 let chunk = data.first().map(String::as_str).unwrap_or("");
-                match self.sasl_sessions.remove(&client) {
+                match self.sasl_sessions.remove(&client).map(|t| t.session) {
                     None => mk("D", vec!["F".to_string()]),
                     Some(SaslSession::Plain { mut response }) => {
                         // Reassemble the base64 response: append each chunk until
@@ -156,7 +191,7 @@ impl Engine {
                             return mk("D", vec!["F".to_string()]);
                         }
                         if chunk.len() >= MAX_AUTHENTICATE {
-                            self.sasl_sessions.insert(client.clone(), SaslSession::Plain { response });
+                            self.stash_sasl(client.clone(), SaslSession::Plain { response });
                             return Vec::new(); // more chunks still to come
                         }
                         match login_plain(&response, &self.db) {
@@ -199,7 +234,7 @@ impl Engine {
                 };
                 let (server_first, nonce) = scram::server_first(&cf.cnonce, &verifier);
                 let out = challenge(server_first.clone());
-                self.sasl_sessions.insert(client.to_string(), SaslSession::Scram {
+                self.stash_sasl(client.to_string(), SaslSession::Scram {
                     hash,
                     step: ScramStep::ClientFinal {
                         account,
@@ -217,7 +252,7 @@ impl Engine {
                 match scram::verify_final(hash, &verifier, &client_first_bare, &server_first, &gs2_header, &nonce, &msg) {
                     Some(server_final) => {
                         let out = challenge(server_final);
-                        self.sasl_sessions.insert(client.to_string(), SaslSession::Scram { hash, step: ScramStep::Ack { account } });
+                        self.stash_sasl(client.to_string(), SaslSession::Scram { hash, step: ScramStep::Ack { account } });
                         out
                     }
                     None => fail(),
@@ -527,5 +562,45 @@ mod tests {
         sasl(&mut e, "S", "SCRAM-SHA-256");
         let out = sasl(&mut e, "C", &STANDARD.encode("n,,n=ghost,r=cnonce"));
         assert_eq!(datum(&out), ("D", "F"));
+    }
+
+    // Start a SASL exchange for an arbitrary client uid.
+    fn start(e: &mut Engine, client: &str) -> Vec<NetAction> {
+        e.handle(NetEvent::Sasl { client: client.into(), agent: "*".into(), mode: "S".into(), data: vec!["PLAIN".into()] })
+    }
+
+    // A client that starts SASL then vanishes must not linger forever.
+    #[test]
+    fn abandoned_session_swept_after_ttl() {
+        let mut e = engine_with("swept", "foo", "sesame");
+        start(&mut e, "AAA");
+        assert!(e.sasl_sessions.contains_key("AAA"));
+        // Backdate it past the TTL; guarded so a just-booted monotonic clock can't panic.
+        if let Some(stale) = Instant::now().checked_sub(SASL_SESSION_TTL + Duration::from_secs(1)) {
+            e.sasl_sessions.get_mut("AAA").unwrap().touched = stale;
+            start(&mut e, "BBB"); // any new start sweeps first
+            assert!(!e.sasl_sessions.contains_key("AAA"), "stale exchange should be swept");
+            assert!(e.sasl_sessions.contains_key("BBB"));
+        }
+    }
+
+    // The map is hard-capped so a flood of half-open exchanges can't exhaust memory.
+    #[test]
+    fn concurrent_sessions_capped() {
+        let mut e = engine_with("capped", "foo", "sesame");
+        for i in 0..MAX_SASL_SESSIONS {
+            assert_eq!(datum(&start(&mut e, &format!("u{i}"))), ("C", "+"));
+        }
+        assert_eq!(datum(&start(&mut e, "over")), ("D", "F"), "over-cap start must be refused");
+    }
+
+    // A QUIT drops any half-finished exchange for that uid.
+    #[test]
+    fn session_cleared_on_quit() {
+        let mut e = engine_with("quit", "foo", "sesame");
+        start(&mut e, "ZZZ");
+        assert!(e.sasl_sessions.contains_key("ZZZ"));
+        e.handle(NetEvent::Quit { uid: "ZZZ".into() });
+        assert!(!e.sasl_sessions.contains_key("ZZZ"), "quit should drop the exchange");
     }
 }
