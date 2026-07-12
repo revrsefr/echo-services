@@ -28,7 +28,13 @@ const REDIAL: Duration = Duration::from_secs(5); // reconnect backoff for dialed
 #[serde(tag = "t", rename_all = "lowercase")]
 enum Msg {
     Hello { secret: String, origin: String },
-    Digest { versions: HashMap<String, u64> },
+    // A version vector. `reply` asks the peer to answer with its own digest, so a
+    // node that dropped a push can pull back exactly what the peer is missing.
+    Digest {
+        versions: HashMap<String, u64>,
+        #[serde(default)]
+        reply: bool,
+    },
     Entry { entry: LogEntry },
 }
 
@@ -180,7 +186,7 @@ where
         tokio::spawn(async move {
             loop {
                 let versions = engine.lock().await.gossip_digest();
-                if send(&tx, &Msg::Digest { versions }).await.is_err() {
+                if send(&tx, &Msg::Digest { versions, reply: false }).await.is_err() {
                     break;
                 }
                 tokio::time::sleep(TICK).await;
@@ -192,7 +198,7 @@ where
     // propagates in milliseconds instead of waiting for the next digest. Idempotent
     // ingest on the far side absorbs the echo of an entry the peer just sent us.
     let forwarder = {
-        let (tx, mut rx) = (tx.clone(), outbound.subscribe());
+        let (tx, engine, mut rx) = (tx.clone(), engine.clone(), outbound.subscribe());
         tokio::spawn(async move {
             loop {
                 match rx.recv().await {
@@ -201,7 +207,15 @@ where
                             break;
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue, // digest backstop catches up
+                    // We fell behind and dropped pushes the peer now lacks. Ask it
+                    // to reply with its digest so we re-send exactly what it is
+                    // missing, rather than waiting out the timer.
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        let versions = engine.lock().await.gossip_digest();
+                        if send(&tx, &Msg::Digest { versions, reply: true }).await.is_err() {
+                            break;
+                        }
+                    }
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
@@ -212,10 +226,14 @@ where
     let result = loop {
         match reader.next_line().await {
             Ok(Some(line)) => match serde_json::from_str::<Msg>(&line) {
-                Ok(Msg::Digest { versions }) => {
+                Ok(Msg::Digest { versions, reply }) => {
                     let missing = engine.lock().await.gossip_missing(&versions);
                     for entry in missing {
                         let _ = send(&tx, &Msg::Entry { entry }).await;
+                    }
+                    if reply {
+                        let versions = engine.lock().await.gossip_digest();
+                        let _ = send(&tx, &Msg::Digest { versions, reply: false }).await;
                     }
                 }
                 Ok(Msg::Entry { entry }) => {
