@@ -209,3 +209,87 @@ fn login_plain(b64: &str, db: &Db) -> Option<String> {
     let passwd = std::str::from_utf8(parts[2]).ok()?;
     db.authenticate(authcid, passwd).map(str::to_string)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::nickserv::NickServ;
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    fn plain(authzid: &[u8], authcid: &[u8], passwd: &[u8]) -> String {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(authzid);
+        payload.push(0);
+        payload.extend_from_slice(authcid);
+        payload.push(0);
+        payload.extend_from_slice(passwd);
+        STANDARD.encode(payload)
+    }
+
+    fn engine_with(name: &str, account: &str, password: &str) -> Engine {
+        let path = std::env::temp_dir().join(format!("fedserv-sasl-{name}.jsonl"));
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path);
+        assert!(db.register(account, password, None).is_ok());
+        Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".to_string() })], db)
+    }
+
+    fn sasl(engine: &mut Engine, mode: &str, chunk: &str) -> Vec<NetAction> {
+        engine.handle(NetEvent::Sasl {
+            client: "000AAAAAB".to_string(),
+            agent: "*".to_string(),
+            mode: mode.to_string(),
+            data: vec![chunk.to_string()],
+        })
+    }
+
+    fn is_success(out: &[NetAction]) -> bool {
+        out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "foo"))
+            && out.iter().any(|a| matches!(a, NetAction::Sasl { mode, data, .. } if mode == "D" && data.as_slice() == ["S"]))
+    }
+
+    // Single-chunk PLAIN (short response) logs in.
+    #[test]
+    fn plain_single_chunk() {
+        let mut e = engine_with("single", "foo", "sesame");
+        sasl(&mut e, "S", "PLAIN");
+        let out = sasl(&mut e, "C", &plain(b"", b"foo", b"sesame"));
+        assert!(is_success(&out), "{out:?}");
+    }
+
+    // A response that is not a multiple of 400 splits into 400 + remainder.
+    #[test]
+    fn plain_chunked_412() {
+        let pw = "bar".repeat(100);
+        let mut e = engine_with("c412", "foo", &pw);
+        let auth = plain(b"foo", b"foo", pw.as_bytes());
+        assert_eq!(auth.len(), 412);
+        sasl(&mut e, "S", "PLAIN");
+        assert!(sasl(&mut e, "C", &auth[0..400]).is_empty());
+        let out = sasl(&mut e, "C", &auth[400..]);
+        assert!(is_success(&out), "{out:?}");
+    }
+
+    // A response that is an exact multiple of 400 ends with a trailing "+".
+    #[test]
+    fn plain_chunked_800() {
+        let pw = "x".repeat(592);
+        let mut e = engine_with("c800", "foo", &pw);
+        let auth = plain(b"foo", b"foo", pw.as_bytes());
+        assert_eq!(auth.len(), 800);
+        sasl(&mut e, "S", "PLAIN");
+        assert!(sasl(&mut e, "C", &auth[0..400]).is_empty());
+        assert!(sasl(&mut e, "C", &auth[400..800]).is_empty());
+        let out = sasl(&mut e, "C", "+");
+        assert!(is_success(&out), "{out:?}");
+    }
+
+    // Wrong password fails.
+    #[test]
+    fn plain_bad_password() {
+        let mut e = engine_with("bad", "foo", "sesame");
+        sasl(&mut e, "S", "PLAIN");
+        let out = sasl(&mut e, "C", &plain(b"", b"foo", b"wrong"));
+        assert!(out.iter().any(|a| matches!(a, NetAction::Sasl { mode, data, .. } if mode == "D" && data.as_slice() == ["F"])), "{out:?}");
+    }
+}
