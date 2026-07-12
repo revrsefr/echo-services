@@ -7,6 +7,7 @@ use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast;
 
 use super::scram::{self, Hash};
 
@@ -66,11 +67,12 @@ pub struct EventLog {
     lamport: u64,                   // logical clock, ticked on every event
     versions: HashMap<String, u64>, // per-origin highest seq applied (version vector)
     entries: Vec<LogEntry>,         // full log, kept so peers can pull what they lack
+    outbound: Option<broadcast::Sender<LogEntry>>, // push newly committed entries to peers
 }
 
 impl EventLog {
     fn open(path: PathBuf, origin: String) -> (Self, Vec<Event>) {
-        let mut log = Self { path, origin, lamport: 0, versions: HashMap::new(), entries: Vec::new() };
+        let mut log = Self { path, origin, lamport: 0, versions: HashMap::new(), entries: Vec::new(), outbound: None };
         if let Ok(data) = std::fs::read_to_string(&log.path) {
             for line in data.lines().filter(|l| !l.trim().is_empty()) {
                 match serde_json::from_str::<LogEntry>(line) {
@@ -104,6 +106,7 @@ impl EventLog {
         let entry = LogEntry { origin: self.origin.clone(), seq: self.next_seq(), lamport: self.lamport, event };
         self.persist(&entry)?;
         self.versions.insert(entry.origin.clone(), entry.seq);
+        self.notify(&entry);
         self.entries.push(entry);
         Ok(())
     }
@@ -119,8 +122,21 @@ impl EventLog {
         self.lamport = self.lamport.max(entry.lamport) + 1; // Lamport receive rule
         self.versions.insert(entry.origin.clone(), entry.seq);
         let event = entry.event.clone();
+        self.notify(&entry);
         self.entries.push(entry);
         Ok(Some(event))
+    }
+
+    // Push a freshly committed entry to connected peers, if any are wired up.
+    // Best effort: a lagging subscriber just relies on the periodic digest.
+    fn notify(&self, entry: &LogEntry) {
+        if let Some(tx) = &self.outbound {
+            let _ = tx.send(entry.clone());
+        }
+    }
+
+    fn set_outbound(&mut self, tx: broadcast::Sender<LogEntry>) {
+        self.outbound = Some(tx);
     }
 
     // Our version vector: highest seq applied per origin.
@@ -206,6 +222,11 @@ impl Db {
             apply(&mut self.accounts, event);
         }
         Ok(())
+    }
+
+    /// Wire the log to a broadcast channel; each new entry is pushed to peers.
+    pub fn set_outbound(&mut self, tx: broadcast::Sender<LogEntry>) {
+        self.log.set_outbound(tx);
     }
 
     /// Our version vector, advertised to peers so they can send what we lack.

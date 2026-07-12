@@ -40,13 +40,15 @@ async fn main() -> Result<()> {
         guest_nick: cfg.server.guest_nick.clone(),
         guest_seq: (ts % 100_000) as u32,
     })];
+    let (gossip_tx, _) = tokio::sync::broadcast::channel::<engine::db::LogEntry>(1024);
     let mut db = engine::db::Db::open("fedserv.db.jsonl", &cfg.server.sid);
     db.scram_iterations = cfg.server.scram_iterations;
+    db.set_outbound(gossip_tx.clone());
     let engine = Arc::new(Mutex::new(Engine::new(services, db)));
 
     if let Some(gossip) = cfg.gossip.clone() {
         tracing::info!(peers = cfg.peer.len(), "starting gossip");
-        tokio::spawn(gossip::run(engine.clone(), gossip, cfg.peer.clone(), cfg.server.sid.clone()));
+        tokio::spawn(gossip::run(engine.clone(), gossip, cfg.peer.clone(), cfg.server.sid.clone(), gossip_tx));
     }
 
     let addr = format!("{}:{}", cfg.uplink.host, cfg.uplink.port);
