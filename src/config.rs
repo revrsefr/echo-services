@@ -25,10 +25,19 @@ pub struct Server {
     // on the single-threaded link matters more than verifier strength.
     #[serde(default = "default_scram_iterations")]
     pub scram_iterations: u32,
+    // Nick prefix a user is renamed to on NickServ LOGOUT (they keep the ircd's
+    // guest number appended, e.g. Guest12345). Must start with a letter — the
+    // ircd rejects a digit-leading SVSNICK and falls back to the raw uuid.
+    #[serde(default = "default_guest_nick")]
+    pub guest_nick: String,
 }
 
 fn default_protocol() -> u32 {
     1206 // InspIRCd 4 spanning-tree protocol (1205 = insp3)
+}
+
+fn default_guest_nick() -> String {
+    "Guest".to_string()
 }
 
 fn default_scram_iterations() -> u32 {

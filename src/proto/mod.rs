@@ -34,6 +34,9 @@ pub enum NetAction {
     // Publish network state to the uplink: target "*" is server-global (e.g. the
     // advertised SASL mechanism list), otherwise a user uid (e.g. their account).
     Metadata { target: String, key: String, value: String },
+    // Force a user's nick (SVSNICK), e.g. renaming to a guest nick on logout.
+    // The protocol stamps the new nick's timestamp.
+    ForceNick { uid: String, nick: String },
     Raw(String),
     // Internal only, never serialized to the wire: a registration whose password
     // still needs its (expensive) key derivation. The link layer runs the

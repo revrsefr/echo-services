@@ -2,6 +2,7 @@
 // sequence in Network-Links (protocols/inspircd.py); mode/burst details get
 // firmed up against a live insp4 uplink.
 use super::{NetAction, NetEvent, Protocol};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct InspIrcd {
     sid: String,
@@ -162,6 +163,12 @@ impl Protocol for InspIrcd {
             // METADATA <target> <key> :<value> — "*" is server-global metadata.
             NetAction::Metadata { target, key, value } => {
                 vec![self.from_us(format!("METADATA {} {} :{}", target, key, value))]
+            }
+            // SVSNICK <uid> <newnick> <nickts> — the new nick takes the current
+            // time as its TS so it wins any collision resolution.
+            NetAction::ForceNick { uid, nick } => {
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(self.ts);
+                vec![self.from_us(format!("SVSNICK {} {} {}", uid, nick, now))]
             }
             NetAction::Raw(s) => vec![s.clone()],
             // Internal: the link layer handles this before serialization.

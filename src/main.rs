@@ -34,6 +34,8 @@ async fn main() -> Result<()> {
 
     let services: Vec<Box<dyn engine::service::Service>> = vec![Box::new(NickServ {
         uid: format!("{}AAAAAA", cfg.server.sid),
+        guest_nick: cfg.server.guest_nick.clone(),
+        guest_seq: (ts % 100_000) as u32,
     })];
     let mut db = engine::db::Db::open("fedserv.db.jsonl");
     db.scram_iterations = cfg.server.scram_iterations;

@@ -54,4 +54,22 @@ impl ServiceCtx {
             value: account.to_string(),
         });
     }
+
+    // Log a user out: clearing the accountname the ircd turns into RPL_LOGGEDOUT
+    // (901) and drops from account-tag / WHOX. The inverse of `login`.
+    pub fn logout(&mut self, uid: &str) {
+        self.actions.push(NetAction::Metadata {
+            target: uid.to_string(),
+            key: "accountname".to_string(),
+            value: String::new(),
+        });
+    }
+
+    // Force a user's nick (SVSNICK), e.g. to a guest nick after logout.
+    pub fn force_nick(&mut self, uid: &str, nick: &str) {
+        self.actions.push(NetAction::ForceNick {
+            uid: uid.to_string(),
+            nick: nick.to_string(),
+        });
+    }
 }

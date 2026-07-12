@@ -4,6 +4,10 @@ use crate::proto::RegReply;
 
 pub struct NickServ {
     pub uid: String,
+    // Nick prefix assigned on LOGOUT (default "Guest"); a per-session sequence is
+    // appended so successive guests don't collide within a run.
+    pub guest_nick: String,
+    pub guest_seq: u32,
 }
 
 impl Service for NickServ {
@@ -48,11 +52,20 @@ impl Service for NickServ {
                     None => ctx.notice(me, from.uid, "Invalid password."),
                 }
             }
+            Some("LOGOUT") | Some("LOGOFF") => {
+                // Guest nick = prefix + sequence (seeded from the link TS, bumped
+                // per logout). Inlined field access so it stays disjoint from `me`.
+                let guest = format!("{}{}", self.guest_nick, self.guest_seq);
+                self.guest_seq = self.guest_seq.wrapping_add(1);
+                ctx.logout(from.uid);
+                ctx.force_nick(from.uid, &guest);
+                ctx.notice(me, from.uid, format!("You are now logged out. Your nick is now \x02{}\x02.", guest));
+            }
             Some("CERT") => self.cert(from, &args, ctx, db),
             Some("HELP") => ctx.notice(
                 me,
                 from.uid,
-                "Commands: REGISTER <password> [email], IDENTIFY <password>, CERT ADD|DEL|LIST <password> [fingerprint].",
+                "Commands: REGISTER <password> [email], IDENTIFY <password>, LOGOUT, CERT ADD|DEL|LIST <password> [fingerprint].",
             ),
             Some(other) => ctx.notice(me, from.uid, format!("Unknown command: {}. Try HELP.", other)),
             None => {}

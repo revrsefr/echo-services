@@ -468,7 +468,7 @@ mod tests {
         let mut db = Db::open(&path);
         db.scram_iterations = 4096; // keep the debug-build verifier cheap in tests
         assert!(db.register(account, password, None).is_ok());
-        Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".to_string() })], db)
+        Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".to_string(), guest_nick: "Guest".to_string(), guest_seq: 12345 })], db)
     }
 
     fn sasl(engine: &mut Engine, mode: &str, chunk: &str) -> Vec<NetAction> {
@@ -720,5 +720,28 @@ mod tests {
         e.db.certfp_add("foo", fp).unwrap();
         e.db.register("bar", "sesame", None).unwrap();
         assert!(matches!(e.db.certfp_add("bar", fp), Err(db::CertError::InUse)), "a fingerprint maps to one account");
+    }
+
+    // IDENTIFY logs in, LOGOUT clears the accountname (ircd emits RPL_LOGGEDOUT).
+    #[test]
+    fn nickserv_logout_clears_account() {
+        let mut e = engine_with("nslogout", "foo", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into() });
+
+        let login = e.handle(NetEvent::Privmsg {
+            from: "000AAAAAB".into(),
+            to: "42SAAAAAA".into(),
+            text: "IDENTIFY sesame".into(),
+        });
+        assert!(login.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "foo")), "{login:?}");
+
+        let out = e.handle(NetEvent::Privmsg {
+            from: "000AAAAAB".into(),
+            to: "42SAAAAAA".into(),
+            text: "LOGOUT".into(),
+        });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value.is_empty())), "logout clears accountname: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAB" && nick == "Guest12345")), "logout renames to guest nick: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("logged out"))), "{out:?}");
     }
 }
