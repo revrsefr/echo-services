@@ -327,6 +327,34 @@ mod tests {
         assert!(got, "a post-connect write should push to B well under the 10s digest");
     }
 
+    // Two nodes registering the same name before they link must converge on one
+    // owner — no split-brain. Both register "alice" with different passwords, then
+    // the link resolves it deterministically to a single winner on both sides.
+    #[tokio::test]
+    async fn concurrent_registration_converges_to_one_owner() {
+        let (a, atx) = engine("A", "conflict-a");
+        let (b, btx) = engine("B", "conflict-b");
+        a.lock().await.test_register_pw("alice", "from-a");
+        b.lock().await.test_register_pw("alice", "from-b");
+
+        let (ca, cb) = tokio::io::duplex(64 * 1024);
+        let sa = tokio::spawn(session(ca, a.clone(), "s3cret".into(), "A".into(), atx));
+        let sb = tokio::spawn(session(cb, b.clone(), "s3cret".into(), "B".into(), btx));
+
+        let mut converged = false;
+        for _ in 0..100 {
+            let (ha, hb) = (a.lock().await.test_account_hash("alice"), b.lock().await.test_account_hash("alice"));
+            if ha.is_some() && ha == hb {
+                converged = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        sa.abort();
+        sb.abort();
+        assert!(converged, "both nodes must agree on a single owner of the contested name");
+    }
+
     // Accounts federate, but channel registrations stay on the node that made
     // them: A registers both; B receives the account and never the channel.
     #[tokio::test]

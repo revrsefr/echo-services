@@ -128,6 +128,16 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) fn test_register_pw(&mut self, name: &str, pw: &str) {
+        self.db.register(name, pw, None).unwrap();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_account_hash(&self, name: &str) -> Option<String> {
+        self.db.test_hash(name)
+    }
+
+    #[cfg(test)]
     pub(crate) fn test_register_channel(&mut self, name: &str, founder: &str) {
         self.db.register_channel(name, founder).unwrap();
     }

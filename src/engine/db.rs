@@ -17,6 +17,13 @@ pub struct Account {
     pub password_hash: String,
     pub email: Option<String>,
     pub ts: u64,
+    // The node that first registered this account (its "home"). With `ts` it
+    // deterministically resolves a concurrent registration of the same name across
+    // the federation. Named `home` not `origin` so it can't collide with the log
+    // envelope's `origin` when this struct is flattened into a LogEntry. Defaulted
+    // for records written before this existed.
+    #[serde(default)]
+    pub home: String,
     // SCRAM verifiers (`v=1,i=,s=,sk=,sv=`), computed from the password at
     // registration. Absent on accounts registered before SCRAM support.
     #[serde(default)]
@@ -512,6 +519,7 @@ impl Db {
             password_hash: creds.password_hash,
             email,
             ts: now(),
+            home: self.log.origin.clone(),
             scram256: Some(creds.scram256),
             scram512: Some(creds.scram512),
             certfps: Vec::new(),
@@ -527,6 +535,11 @@ impl Db {
     pub fn register(&mut self, name: &str, password: &str, email: Option<String>) -> Result<(), RegError> {
         let creds = Self::derive_credentials(password, self.scram_iterations).ok_or(RegError::Internal)?;
         self.register_prepared(name, creds, email)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_hash(&self, name: &str) -> Option<String> {
+        self.accounts.get(&key(name)).map(|a| a.password_hash.clone())
     }
 
     /// Check credentials; on success return the account's canonical name (its
@@ -743,12 +756,29 @@ impl Db {
     }
 }
 
+// Whether `held` is the rightful owner over a rival `claim` to the same name:
+// the earlier registration wins (lower ts), ties broken by the lower origin. A
+// total order over the fields carried in the account, so it survives compaction
+// (which re-authors the log envelope but keeps account content) and is identical
+// on every node. Strictly less-than, so an equal (idempotent) re-delivery still
+// overwrites with identical content.
+fn owns_over(held: &Account, claim: &Account) -> bool {
+    (held.ts, held.home.as_str()) < (claim.ts, claim.home.as_str())
+}
+
 // Fold one event into the store. Shared by log replay (`open`) and gossip
 // ingest, so both routes reconstruct identical state.
 fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String, ChannelInfo>, event: Event) {
     match event {
         Event::AccountRegistered(a) => {
-            accounts.insert(key(&a.name), a);
+            // Resolve a concurrent registration of the same name deterministically:
+            // keep whichever claim is earlier (lower ts, then lower origin), so every
+            // node converges on the same owner regardless of gossip delivery order.
+            let k = key(&a.name);
+            let keep_existing = accounts.get(&k).is_some_and(|cur| owns_over(cur, &a));
+            if !keep_existing {
+                accounts.insert(k, a);
+            }
         }
         Event::CertAdded { account, fp } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {
@@ -881,6 +911,32 @@ mod tests {
     }
 
     #[test]
+    fn account_conflict_resolves_deterministically() {
+        let alice = |hash: &str, ts: u64, home: &str| Account {
+            name: "alice".into(), password_hash: hash.into(), email: None,
+            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![],
+        };
+        let converge = |first: &Account, second: &Account| {
+            let (mut acc, mut ch) = (HashMap::new(), HashMap::new());
+            apply(&mut acc, &mut ch, Event::AccountRegistered(first.clone()));
+            apply(&mut acc, &mut ch, Event::AccountRegistered(second.clone()));
+            acc["alice"].password_hash.clone()
+        };
+        // Earlier registration wins, regardless of which claim applies first.
+        let early = alice("EARLY", 100, "nodeB");
+        let late = alice("LATE", 200, "nodeA");
+        assert_eq!(converge(&early, &late), "EARLY");
+        assert_eq!(converge(&late, &early), "EARLY", "commutative: same winner in either order");
+        // Same ts: the lower origin wins, in either order.
+        let a = alice("A", 100, "nodeA");
+        let b = alice("B", 100, "nodeB");
+        assert_eq!(converge(&a, &b), "A");
+        assert_eq!(converge(&b, &a), "A", "ts tie broken by lower origin, either order");
+        // Idempotent: re-delivering the winner keeps it.
+        assert_eq!(converge(&a, &a), "A");
+    }
+
+    #[test]
     fn channel_state_is_node_local_but_persists() {
         let path = tmp("scope");
         {
@@ -963,7 +1019,7 @@ mod tests {
         db.register("alice", "pw", None).unwrap();
         let bob = Account {
             name: "bob".into(), password_hash: "x".into(), email: None,
-            ts: 0, scram256: None, scram512: None, certfps: vec![],
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![],
         };
         let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, event: Event::AccountRegistered(bob) };
         db.ingest(entry).unwrap();
