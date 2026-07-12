@@ -16,4 +16,4 @@ stay flat (`crate::proto`, `crate::nickserv`, `crate::chanserv`).
 ## Naming
 
 A service directory holds its pseudoclient file plus, as commands are split out,
-one file per command with the service prefix: `ns_register.rs`, `cs_mode.rs`, etc.
+one file per command: `register.rs`, `mode.rs`, etc.

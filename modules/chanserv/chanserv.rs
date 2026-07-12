@@ -1,6 +1,9 @@
 use crate::engine::db::{ChanError, ChannelInfo, Db};
 use crate::engine::service::{Sender, Service, ServiceCtx};
 
+#[path = "mode.rs"]
+mod mode;
+
 pub struct ChanServ {
     pub uid: String,
 }
@@ -123,30 +126,7 @@ impl Service for ChanServ {
                     Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
                 }
             }
-            Some("MODE") => {
-                let Some(&chan) = args.get(1) else {
-                    ctx.notice(me, from.uid, "Syntax: MODE <#channel> <modes>, e.g. MODE #chan +nt");
-                    return;
-                };
-                if args.len() <= 2 {
-                    ctx.notice(me, from.uid, "Syntax: MODE <#channel> <modes>, e.g. MODE #chan +nt");
-                    return;
-                }
-                let founder = match db.channel(chan) {
-                    Some(info) => info.founder.clone(),
-                    None => {
-                        ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
-                        return;
-                    }
-                };
-                if from.account != Some(founder.as_str()) {
-                    ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can change its modes."));
-                    return;
-                }
-                let modes = args[2..].join(" ");
-                ctx.channel_mode(me, chan, &modes);
-                ctx.notice(me, from.uid, format!("Set \x02{modes}\x02 on \x02{chan}\x02."));
-            }
+            Some("MODE") => mode::handle(me, from, args, ctx, db),
             Some("HELP") => ctx.notice(me, from.uid, "ChanServ registers and looks after channels. Commands: \x02REGISTER\x02 <#channel>, \x02INFO\x02 <#channel>, \x02MODE\x02 <#channel> <modes>, \x02MLOCK\x02 <#channel> [modes], \x02DROP\x02 <#channel>."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
