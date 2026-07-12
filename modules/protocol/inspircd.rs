@@ -236,6 +236,16 @@ impl Protocol for InspIrcd {
             NetAction::Kick { from, channel, uid, reason } => {
                 vec![format!(":{} KICK {} {} :{}", from, channel, uid, reason)]
             }
+            // FTOPIC <chan> <chanTS> <topicTS> <setter> :<topic>. TS 1 so the ircd
+            // always accepts it; sourced from the given pseudoclient.
+            NetAction::Topic { from, channel, topic } => {
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(self.ts);
+                vec![format!(":{} FTOPIC {} 1 {} {} :{}", from, channel, now, from, topic)]
+            }
+            // INVITE <uid> <chan> <chanTS> <expiry>. Expiry 0 = no expiry.
+            NetAction::Invite { from, uid, channel } => {
+                vec![format!(":{} INVITE {} {} 1 0", from, uid, channel)]
+            }
             NetAction::Raw(s) => vec![s.clone()],
             // Internal: the link layer handles this before serialization.
             NetAction::DeferRegister { .. } => vec![],

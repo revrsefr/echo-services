@@ -43,6 +43,8 @@ pub enum Event {
     ChannelMlock { name: String, on: String, off: String },
     ChannelAccessAdd { channel: String, account: String, level: String },
     ChannelAccessDel { channel: String, account: String },
+    ChannelAkickAdd { channel: String, mask: String, reason: String },
+    ChannelAkickDel { channel: String, mask: String },
 }
 
 // An access-list entry: an account and its level ("op" or "voice").
@@ -50,6 +52,13 @@ pub enum Event {
 pub struct ChanAccess {
     pub account: String,
     pub level: String,
+}
+
+// An auto-kick entry: a nick!user@host mask and why it was added.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChanAkick {
+    pub mask: String,
+    pub reason: String,
 }
 
 // A registered channel and who owns it.
@@ -65,6 +74,8 @@ pub struct ChannelInfo {
     pub lock_off: String,
     #[serde(default)]
     pub access: Vec<ChanAccess>,
+    #[serde(default)]
+    pub akick: Vec<ChanAkick>,
 }
 
 impl ChannelInfo {
@@ -83,6 +94,11 @@ impl ChannelInfo {
     /// Whether `account` has operator access (founder or access-list op).
     pub fn is_op(&self, account: &str) -> bool {
         self.join_mode(account) == Some("+o")
+    }
+
+    /// The matching auto-kick entry for `hostmask` (nick!user@host), if any.
+    pub fn akick_match(&self, hostmask: &str) -> Option<&ChanAkick> {
+        self.akick.iter().find(|k| glob_match(&k.mask, hostmask))
     }
 
     /// The mode string services keep applied: +r plus the lock.
@@ -376,6 +392,9 @@ impl Db {
             for a in &c.access {
                 snapshot.push(Event::ChannelAccessAdd { channel: c.name.clone(), account: a.account.clone(), level: a.level.clone() });
             }
+            for k in &c.akick {
+                snapshot.push(Event::ChannelAkickAdd { channel: c.name.clone(), mask: k.mask.clone(), reason: k.reason.clone() });
+            }
         }
         self.log.compact(snapshot)?;
         tracing::info!(before, after = self.log.len(), "compacted event log");
@@ -516,13 +535,18 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new() });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new() });
         Ok(())
     }
 
     /// The registration for `name`, if any.
     pub fn channel(&self, name: &str) -> Option<&ChannelInfo> {
         self.channels.get(&key(name))
+    }
+
+    /// All registered channels, for listing.
+    pub fn channels(&self) -> impl Iterator<Item = &ChannelInfo> {
+        self.channels.values()
     }
 
     /// Set the mode-lock (chars to keep set / unset) for a registered channel.
@@ -571,6 +595,37 @@ impl Db {
         Ok(true)
     }
 
+    /// Add an auto-kick `mask` (with `reason`) to `channel`.
+    pub fn akick_add(&mut self, channel: &str, mask: &str, reason: &str) -> Result<(), ChanError> {
+        let k = key(channel);
+        if !self.channels.contains_key(&k) {
+            return Err(ChanError::NoChannel);
+        }
+        self.log
+            .append(Event::ChannelAkickAdd { channel: channel.to_string(), mask: mask.to_string(), reason: reason.to_string() })
+            .map_err(|_| ChanError::Internal)?;
+        let c = self.channels.get_mut(&k).unwrap();
+        c.akick.retain(|a| !a.mask.eq_ignore_ascii_case(mask));
+        c.akick.push(ChanAkick { mask: mask.to_string(), reason: reason.to_string() });
+        Ok(())
+    }
+
+    /// Remove auto-kick `mask` from `channel`. Ok(false) if not present.
+    pub fn akick_del(&mut self, channel: &str, mask: &str) -> Result<bool, ChanError> {
+        let k = key(channel);
+        let Some(c) = self.channels.get(&k) else {
+            return Err(ChanError::NoChannel);
+        };
+        if !c.akick.iter().any(|a| a.mask.eq_ignore_ascii_case(mask)) {
+            return Ok(false);
+        }
+        self.log
+            .append(Event::ChannelAkickDel { channel: channel.to_string(), mask: mask.to_string() })
+            .map_err(|_| ChanError::Internal)?;
+        self.channels.get_mut(&k).unwrap().akick.retain(|a| !a.mask.eq_ignore_ascii_case(mask));
+        Ok(true)
+    }
+
     /// Unregister `name`.
     pub fn drop_channel(&mut self, name: &str) -> Result<(), ChanError> {
         let k = key(name);
@@ -603,7 +658,7 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             }
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new() });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new() });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
@@ -625,7 +680,49 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
                 c.access.retain(|a| !a.account.eq_ignore_ascii_case(&account));
             }
         }
+        Event::ChannelAkickAdd { channel, mask, reason } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.akick.retain(|k| !k.mask.eq_ignore_ascii_case(&mask));
+                c.akick.push(ChanAkick { mask, reason });
+            }
+        }
+        Event::ChannelAkickDel { channel, mask } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.akick.retain(|k| !k.mask.eq_ignore_ascii_case(&mask));
+            }
+        }
     }
+}
+
+// Case-insensitive glob match supporting `*` (any run) and `?` (one char),
+// used for auto-kick hostmasks. Iterative with backtracking, no allocation.
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let (p, t): (Vec<char>, Vec<char>) = (
+        pattern.chars().flat_map(char::to_lowercase).collect(),
+        text.chars().flat_map(char::to_lowercase).collect(),
+    );
+    let (mut pi, mut ti) = (0, 0);
+    let (mut star, mut mark) = (None, 0);
+    while ti < t.len() {
+        if pi < p.len() && (p[pi] == '?' || p[pi] == t[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < p.len() && p[pi] == '*' {
+            star = Some(pi);
+            mark = ti;
+            pi += 1;
+        } else if let Some(s) = star {
+            pi = s + 1;
+            mark += 1;
+            ti = mark;
+        } else {
+            return false;
+        }
+    }
+    while pi < p.len() && p[pi] == '*' {
+        pi += 1;
+    }
+    pi == p.len()
 }
 
 fn hash_password(password: &str) -> Option<String> {
@@ -651,6 +748,29 @@ mod tests {
 
     fn cert(account: &str, fp: &str) -> Event {
         Event::CertAdded { account: account.into(), fp: fp.into() }
+    }
+
+    #[test]
+    fn glob_matches_hostmasks() {
+        assert!(glob_match("*!*@host.example", "bob!~b@host.example"));
+        assert!(glob_match("bob!*@*", "BOB!~b@1.2.3.4"));
+        assert!(glob_match("*", "anything"));
+        assert!(glob_match("nick?!*@*", "nickX!~x@h"));
+        assert!(!glob_match("*!*@host.example", "bob!~b@other"));
+        assert!(!glob_match("alice!*@*", "bob!~b@h"));
+    }
+
+    #[test]
+    fn akick_add_del_and_match() {
+        let mut db = Db::open(&tmp("akick"), "N1");
+        db.register_channel("#c", "founder").unwrap();
+        db.akick_add("#c", "*!*@bad.host", "spam").unwrap();
+        let info = db.channel("#c").unwrap();
+        assert!(info.akick_match("evil!~e@bad.host").is_some());
+        assert!(info.akick_match("good!~g@ok.host").is_none());
+        assert!(db.akick_del("#c", "*!*@bad.host").unwrap());
+        assert!(!db.akick_del("#c", "*!*@bad.host").unwrap());
+        assert!(db.channel("#c").unwrap().akick.is_empty());
     }
 
     // Locally-authored events get an incrementing per-origin seq and a ticking

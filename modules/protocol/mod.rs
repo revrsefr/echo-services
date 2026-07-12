@@ -52,6 +52,10 @@ pub enum NetAction {
     ChannelMode { from: String, channel: String, modes: String },
     // Kick a user from a channel, sourced from pseudoclient `from`.
     Kick { from: String, channel: String, uid: String, reason: String },
+    // Set a channel's topic, sourced from pseudoclient `from`.
+    Topic { from: String, channel: String, topic: String },
+    // Invite a user to a channel, sourced from pseudoclient `from`.
+    Invite { from: String, uid: String, channel: String },
     Raw(String),
     // Internal only, never serialized to the wire: a registration whose password
     // still needs its (expensive) key derivation. The link layer runs the

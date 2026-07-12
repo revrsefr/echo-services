@@ -194,13 +194,28 @@ impl Engine {
             // Give the founder and access-list members their status on join.
             NetEvent::Join { uid, channel } => {
                 let account = self.network.account_of(&uid).map(str::to_string);
+                let from = self.chan_service.clone().unwrap_or_default();
                 let mode = account.as_deref().and_then(|a| self.db.channel(&channel).and_then(|c| c.join_mode(a)));
                 match mode {
-                    Some(m) => {
-                        let from = self.chan_service.clone().unwrap_or_default();
-                        vec![NetAction::ChannelMode { from, channel, modes: format!("{m} {uid}") }]
+                    // A user with access gets their status mode.
+                    Some(m) => vec![NetAction::ChannelMode { from, channel, modes: format!("{m} {uid}") }],
+                    // Otherwise, enforce the auto-kick list.
+                    None => {
+                        let nick = self.network.nick_of(&uid).unwrap_or("*");
+                        let host = self.network.host_of(&uid).unwrap_or("*");
+                        let hostmask = format!("{nick}!*@{host}");
+                        match self.db.channel(&channel).and_then(|c| c.akick_match(&hostmask)) {
+                            Some(k) => {
+                                let mask = k.mask.clone();
+                                let reason = if k.reason.is_empty() { "You are banned from this channel.".to_string() } else { k.reason.clone() };
+                                vec![
+                                    NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: format!("+b {mask}") },
+                                    NetAction::Kick { from, channel, uid, reason },
+                                ]
+                            }
+                            None => Vec::new(),
+                        }
                     }
-                    None => Vec::new(),
                 }
             }
             NetEvent::Quit { uid } => {
@@ -1031,6 +1046,47 @@ mod tests {
         // A user with no access is refused.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAD".into(), nick: "carol".into(), host: "h2".into() });
         assert!(to_cs(&mut e, "000AAAAAD", "KICK #m alice").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("operator access"))));
+    }
+
+    // ChanServ topic, invite, auto-kick (with enforcement on join), list and status.
+    #[test]
+    fn chanserv_topic_invite_akick() {
+        use crate::chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-cs-tia.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+        let to_cs = |e: &mut Engine, from: &str, text: &str| {
+            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+        };
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h1".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "bad.host".into() });
+
+        // TOPIC and INVITE are sourced from ChanServ.
+        let out = to_cs(&mut e, "000AAAAAB", "TOPIC #c hello there");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Topic { channel, topic, .. } if channel == "#c" && topic == "hello there")), "{out:?}");
+        let out = to_cs(&mut e, "000AAAAAB", "INVITE #c bob");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Invite { uid, channel, .. } if uid == "000AAAAAC" && channel == "#c")), "{out:?}");
+
+        // LIST and STATUS.
+        assert!(to_cs(&mut e, "000AAAAAB", "LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("#c"))));
+        assert!(to_cs(&mut e, "000AAAAAB", "STATUS #c").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("founder"))));
+
+        // AKICK a mask, then a matching join is banned and kicked.
+        assert!(to_cs(&mut e, "000AAAAAB", "AKICK #c ADD *!*@bad.host begone").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Added"))));
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#c".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#c" && modes == "+b *!*@bad.host")), "{out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { channel, uid, reason, .. } if channel == "#c" && uid == "000AAAAAC" && reason == "begone")), "{out:?}");
+
+        // The founder joining is never auto-kicked (they get +o instead).
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes.starts_with("+o"))), "{out:?}");
     }
 
     // A registered channel (re)appearing re-asserts +r; an unregistered one does not.

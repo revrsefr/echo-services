@@ -14,6 +14,16 @@ mod kick;
 mod ban;
 #[path = "unban.rs"]
 mod unban;
+#[path = "topic.rs"]
+mod topic;
+#[path = "invite.rs"]
+mod invite;
+#[path = "akick.rs"]
+mod akick;
+#[path = "list.rs"]
+mod list;
+#[path = "status.rs"]
+mod status;
 
 pub struct ChanServ {
     pub uid: String,
@@ -146,7 +156,12 @@ impl Service for ChanServ {
             Some("KICK") => kick::handle(me, from, args, ctx, net, db),
             Some("BAN") => ban::handle(me, from, args, ctx, net, db),
             Some("UNBAN") => unban::handle(me, from, args, ctx, net, db),
-            Some("HELP") => ctx.notice(me, from.uid, "ChanServ registers and looks after channels. Commands: \x02REGISTER\x02, \x02INFO\x02, \x02ACCESS\x02, \x02OP\x02/\x02DEOP\x02, \x02VOICE\x02/\x02DEVOICE\x02, \x02KICK\x02, \x02BAN\x02/\x02UNBAN\x02, \x02MODE\x02, \x02MLOCK\x02, \x02DROP\x02 — each takes a <#channel>."),
+            Some("TOPIC") => topic::handle(me, from, args, ctx, db),
+            Some("INVITE") => invite::handle(me, from, args, ctx, net, db),
+            Some("AKICK") => akick::handle(me, from, args, ctx, db),
+            Some("STATUS") => status::handle(me, from, args, ctx, net, db),
+            Some("LIST") => list::handle(me, from, args, ctx, db),
+            Some("HELP") => ctx.notice(me, from.uid, "ChanServ registers and looks after channels. Commands: \x02REGISTER\x02, \x02INFO\x02, \x02LIST\x02, \x02ACCESS\x02, \x02STATUS\x02, \x02OP\x02/\x02DEOP\x02, \x02VOICE\x02/\x02DEVOICE\x02, \x02KICK\x02, \x02BAN\x02/\x02UNBAN\x02, \x02AKICK\x02, \x02TOPIC\x02, \x02INVITE\x02, \x02MODE\x02, \x02MLOCK\x02, \x02DROP\x02."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
         }

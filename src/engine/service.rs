@@ -99,4 +99,22 @@ impl ServiceCtx {
             reason: reason.to_string(),
         });
     }
+
+    // Set a channel's topic, sourced from pseudoclient `from`.
+    pub fn topic(&mut self, from: &str, channel: &str, topic: &str) {
+        self.actions.push(NetAction::Topic {
+            from: from.to_string(),
+            channel: channel.to_string(),
+            topic: topic.to_string(),
+        });
+    }
+
+    // Invite a user to a channel, sourced from pseudoclient `from`.
+    pub fn invite(&mut self, from: &str, uid: &str, channel: &str) {
+        self.actions.push(NetAction::Invite {
+            from: from.to_string(),
+            uid: uid.to_string(),
+            channel: channel.to_string(),
+        });
+    }
 }
