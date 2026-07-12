@@ -15,8 +15,10 @@ real network. See https://github.com/progval/irctest
 """
 import os
 import shutil
-from typing import Type
+from typing import Optional, Type
 
+import irctest.cases
+import irctest.runner
 from irctest.basecontrollers import BaseServicesController, DirectoryBasedController
 
 CONFIG = """\
@@ -51,6 +53,22 @@ class FedservController(BaseServicesController, DirectoryBasedController):
             fd.write(CONFIG.format(server_hostname=server_hostname, server_port=server_port))
 
         self.proc = self.execute([binary, "config.toml"], cwd=self.directory)
+
+    def registerUser(
+        self,
+        case: irctest.cases.BaseServerTestCase,
+        username: str,
+        password: Optional[str] = None,
+    ) -> None:
+        # NickServ REGISTER is a single PRIVMSG, so a password that would push
+        # the line past the 512-byte IRC limit can't be registered intact. Like
+        # the reference services controllers, skip rather than silently truncate.
+        assert password
+        if len(password.encode()) > 400:
+            raise irctest.runner.NotImplementedByController(
+                "Passwords too long to REGISTER in a single IRC message"
+            )
+        super().registerUser(case, username, password)
 
 
 def get_irctest_controller_class() -> Type[FedservController]:
