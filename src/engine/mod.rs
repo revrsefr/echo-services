@@ -127,10 +127,14 @@ impl Engine {
     }
 
     pub fn handle(&mut self, event: NetEvent) -> Vec<NetAction> {
-        match event {
+        let out = match event {
             NetEvent::Ping { token, from } => vec![NetAction::Pong { token, from }],
             NetEvent::UserConnect { uid, nick } => {
                 self.network.user_connect(uid, nick);
+                Vec::new()
+            }
+            NetEvent::NickChange { uid, nick } => {
+                self.network.user_nick_change(&uid, nick);
                 Vec::new()
             }
             NetEvent::Quit { uid } => {
@@ -144,6 +148,25 @@ impl Engine {
             }
             NetEvent::Sasl { client, mode, data, .. } => self.sasl(client, mode, data),
             _ => Vec::new(),
+        };
+        self.track_accounts(&out);
+        out
+    }
+
+    // Keep per-user login state in step with the accountname metadata we send:
+    // a non-empty value (SASL/IDENTIFY/REGISTER) logs the uid in, an empty one
+    // (LOGOUT) logs it out. Server-global metadata ("*") is not a login.
+    fn track_accounts(&mut self, actions: &[NetAction]) {
+        for action in actions {
+            if let NetAction::Metadata { target, key, value } = action {
+                if key == "accountname" && target != "*" {
+                    if value.is_empty() {
+                        self.network.clear_account(target);
+                    } else {
+                        self.network.set_account(target, value);
+                    }
+                }
+            }
         }
     }
 
@@ -326,15 +349,18 @@ impl Engine {
             Err(RegError::Exists) => RegOutcome::Exists,
             Err(RegError::Internal) => RegOutcome::Internal,
         };
-        reg_reply(&reply, outcome, account)
+        let out = reg_reply(&reply, outcome, account);
+        self.track_accounts(&out);
+        out
     }
 
     // Route a PRIVMSG addressed to a service (by uid or nick) into that service,
-    // handing it the sender's resolved nick and the account store.
+    // handing it the sender's resolved nick, login state, and the account store.
     fn dispatch(&mut self, from: &str, to: &str, text: &str) -> Vec<NetAction> {
         let nick = self.network.nick_of(from).unwrap_or(from).to_string();
+        let account = self.network.account_of(from).map(str::to_string);
         let mut ctx = ServiceCtx::default();
-        let sender = Sender { uid: from, nick: &nick };
+        let sender = Sender { uid: from, nick: &nick, account: account.as_deref() };
         let Self { services, db, .. } = self;
         for svc in services.iter_mut() {
             if to.eq_ignore_ascii_case(svc.uid()) || to.eq_ignore_ascii_case(svc.nick()) {
@@ -743,5 +769,81 @@ mod tests {
         assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value.is_empty())), "logout clears accountname: {out:?}");
         assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAB" && nick == "Guest12345")), "logout renames to guest nick: {out:?}");
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("logged out"))), "{out:?}");
+    }
+
+    fn logout(e: &mut Engine, uid: &str) -> Vec<NetAction> {
+        e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "LOGOUT".into() })
+    }
+
+    // LOGOUT while not identified must not rename you or clear anything.
+    #[test]
+    fn logout_without_login_is_noop() {
+        let mut e = engine_with("nologin", "foo", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "someone".into() });
+        let out = logout(&mut e, "000AAAAAB");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("not logged in"))), "{out:?}");
+        assert!(!out.iter().any(|a| matches!(a, NetAction::ForceNick { .. })), "must not rename when not logged in: {out:?}");
+    }
+
+    // Regression: a second LOGOUT is a no-op, not another guest rename (the churn
+    // where Guest33294 -> LOGOUT -> Guest33295).
+    #[test]
+    fn logout_twice_renames_only_once() {
+        let mut e = engine_with("twice", "foo", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+
+        let first = logout(&mut e, "000AAAAAB");
+        assert!(first.iter().any(|a| matches!(a, NetAction::ForceNick { .. })), "first logout renames: {first:?}");
+
+        let second = logout(&mut e, "000AAAAAB");
+        assert!(second.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("not logged in"))), "{second:?}");
+        assert!(!second.iter().any(|a| matches!(a, NetAction::ForceNick { .. })), "second logout must not rename again: {second:?}");
+    }
+
+    // A SASL login (before the user is even bursted) is remembered, so a later
+    // LOGOUT from that uid is recognised as logged in.
+    #[test]
+    fn sasl_login_is_tracked_for_logout() {
+        let mut e = engine_with("sasllogout", "foo", "sesame");
+        sasl(&mut e, "S", "PLAIN");
+        let ok = sasl(&mut e, "C", &plain(b"", b"foo", b"sesame"));
+        assert!(is_success(&ok), "{ok:?}");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into() });
+
+        let out = logout(&mut e, "000AAAAAB");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { .. })), "sasl-authed user can log out: {out:?}");
+    }
+
+    // Regression: repeated IDENTIFY while already identified must not re-fire the
+    // login (the 900 loop when the command is spammed).
+    #[test]
+    fn identify_twice_does_not_relogin() {
+        let mut e = engine_with("reident", "foo", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into() });
+        let ident = |e: &mut Engine| e.handle(NetEvent::Privmsg {
+            from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into(),
+        });
+
+        let first = ident(&mut e);
+        assert!(first.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "foo")), "first identify logs in: {first:?}");
+
+        let second = ident(&mut e);
+        assert!(!second.iter().any(|a| matches!(a, NetAction::Metadata { key, .. } if key == "accountname")), "second identify must not re-login: {second:?}");
+        assert!(second.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("already identified"))), "{second:?}");
+    }
+
+    // Regression: after a nick change (e.g. a guest rename, then back to your
+    // real nick), IDENTIFY must authenticate the CURRENT nick, not the one held
+    // at burst time — otherwise you log into the wrong account.
+    #[test]
+    fn identify_uses_current_nick_after_rename() {
+        let mut e = engine_with("renameident", "realnick", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "Guest99999".into() });
+        e.handle(NetEvent::NickChange { uid: "000AAAAAB".into(), nick: "realnick".into() });
+        let out = e.handle(NetEvent::Privmsg {
+            from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into(),
+        });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "realnick")), "must log into the current nick's account: {out:?}");
     }
 }

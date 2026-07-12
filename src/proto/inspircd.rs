@@ -81,6 +81,15 @@ impl Protocol for InspIrcd {
                     _ => vec![],
                 }
             }
+            // :<uid> NICK <newnick> <newts> — keep the sender's current nick
+            // fresh, so nick-based commands (IDENTIFY/REGISTER) act on who they
+            // are now, not their nick at burst time (e.g. after a guest rename).
+            "NICK" => match (source, tokens.next()) {
+                (Some(uid), Some(nick)) if !nick.is_empty() => {
+                    vec![NetEvent::NickChange { uid, nick: nick.to_string() }]
+                }
+                _ => vec![],
+            },
             "QUIT" => vec![NetEvent::Quit { uid: source.unwrap_or_default() }],
             // account-registration relay from an ircd:
             // ACCTREGISTER <reqid> <origin> <kind> <account> <p2> :<p3>

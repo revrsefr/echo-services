@@ -11,6 +11,7 @@ pub enum NetEvent {
     Ping { token: String, from: Option<String> },
     Privmsg { from: String, to: String, text: String },
     UserConnect { uid: String, nick: String },
+    NickChange { uid: String, nick: String },
     Quit { uid: String },
     // An ircd relaying an IRCv3 account-registration request to us as the authority.
     AccountRequest { reqid: String, origin: String, kind: String, account: String, p2: String, p3: String },

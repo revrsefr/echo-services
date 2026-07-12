@@ -1,10 +1,12 @@
 use crate::engine::db::Db;
 use crate::proto::{NetAction, RegReply};
 
-// Who sent the command, resolved by the engine (UID + current nick).
+// Who sent the command, resolved by the engine (UID + current nick + the
+// account they are identified to, if any).
 pub struct Sender<'a> {
     pub uid: &'a str,
     pub nick: &'a str,
+    pub account: Option<&'a str>,
 }
 
 // A pseudo-client (NickServ, ChanServ, ...). Introduced at burst, receives the

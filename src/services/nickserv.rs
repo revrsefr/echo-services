@@ -45,6 +45,11 @@ impl Service for NickServ {
                 };
                 match db.authenticate(from.nick, password) {
                     Some(account) => {
+                        // Already identified to this account: don't re-fire the login.
+                        if from.account == Some(account) {
+                            ctx.notice(me, from.uid, format!("You are already identified for \x02{}\x02.", account));
+                            return;
+                        }
                         let account = account.to_string();
                         ctx.login(from.uid, &account);
                         ctx.notice(me, from.uid, format!("You are now identified for \x02{}\x02.", account));
@@ -53,6 +58,10 @@ impl Service for NickServ {
                 }
             }
             Some("LOGOUT") | Some("LOGOFF") => {
+                if from.account.is_none() {
+                    ctx.notice(me, from.uid, "You are not logged in.");
+                    return;
+                }
                 // Guest nick = prefix + sequence (seeded from the link TS, bumped
                 // per logout). Inlined field access so it stays disjoint from `me`.
                 let guest = format!("{}{}", self.guest_nick, self.guest_seq);
