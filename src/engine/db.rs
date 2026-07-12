@@ -22,6 +22,10 @@ pub struct Account {
     pub scram256: Option<String>,
     #[serde(default)]
     pub scram512: Option<String>,
+    // TLS client-certificate fingerprints (lowercase hex) that may log in to
+    // this account via SASL EXTERNAL. Each fingerprint maps to one account.
+    #[serde(default)]
+    pub certfps: Vec<String>,
 }
 
 // Event-sourced persistence: every change is an Event appended to a JSONL log,
@@ -31,11 +35,29 @@ pub struct Account {
 #[serde(tag = "event")]
 pub enum Event {
     AccountRegistered(Account),
+    CertAdded { account: String, fp: String },
+    CertRemoved { account: String, fp: String },
 }
 
+#[derive(Debug)]
 pub enum RegError {
     Exists,
     Internal,
+}
+
+#[derive(Debug)]
+pub enum CertError {
+    Invalid,    // not a plausible fingerprint
+    InUse,      // already registered (to any account)
+    NoAccount,  // target account does not exist
+    Internal,   // persistence failed
+}
+
+// A fingerprint is hex (hash digest), optionally colon-separated. Bound the
+// length so a junk value can't bloat an account.
+fn valid_fp(fp: &str) -> bool {
+    let hex = fp.chars().filter(|c| *c != ':').count();
+    (32..=128).contains(&hex) && fp.chars().all(|c| c.is_ascii_hexdigit() || c == ':')
 }
 
 // The expensive, password-derived half of an account, computed once at
@@ -72,6 +94,16 @@ impl Db {
                     Ok(Event::AccountRegistered(a)) => {
                         accounts.insert(key(&a.name), a);
                     }
+                    Ok(Event::CertAdded { account, fp }) => {
+                        if let Some(a) = accounts.get_mut(&key(&account)) {
+                            a.certfps.push(fp);
+                        }
+                    }
+                    Ok(Event::CertRemoved { account, fp }) => {
+                        if let Some(a) = accounts.get_mut(&key(&account)) {
+                            a.certfps.retain(|c| *c != fp);
+                        }
+                    }
                     Err(e) => tracing::warn!(%e, "skipping malformed event log line"),
                 }
             }
@@ -107,6 +139,7 @@ impl Db {
             ts: now(),
             scram256: Some(creds.scram256),
             scram512: Some(creds.scram512),
+            certfps: Vec::new(),
         };
         self.append(&Event::AccountRegistered(account.clone())).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
@@ -137,6 +170,50 @@ impl Db {
             _ => None,
         }?;
         Some((account.name.as_str(), verifier))
+    }
+
+    /// The canonical name of the account owning `fp`, if any. Fingerprints are
+    /// globally unique, so this is unambiguous.
+    pub fn certfp_owner(&self, fp: &str) -> Option<&str> {
+        let fp = fp.to_ascii_lowercase();
+        self.accounts.values().find(|a| a.certfps.iter().any(|c| *c == fp)).map(|a| a.name.as_str())
+    }
+
+    /// The fingerprints registered to an account (empty if unknown/none).
+    pub fn certfps(&self, account: &str) -> &[String] {
+        self.accounts.get(&key(account)).map_or(&[], |a| a.certfps.as_slice())
+    }
+
+    /// Register `fp` to `account`. Fingerprints are one-to-one with accounts.
+    pub fn certfp_add(&mut self, account: &str, fp: &str) -> Result<(), CertError> {
+        let fp = fp.to_ascii_lowercase();
+        if !valid_fp(&fp) {
+            return Err(CertError::Invalid);
+        }
+        if self.certfp_owner(&fp).is_some() {
+            return Err(CertError::InUse);
+        }
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return Err(CertError::NoAccount);
+        }
+        self.append(&Event::CertAdded { account: account.to_string(), fp: fp.clone() }).map_err(|_| CertError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().certfps.push(fp);
+        Ok(())
+    }
+
+    /// Remove `fp` from `account`. Ok(false) if the account had no such fingerprint.
+    pub fn certfp_del(&mut self, account: &str, fp: &str) -> Result<bool, CertError> {
+        let fp = fp.to_ascii_lowercase();
+        let k = key(account);
+        match self.accounts.get(&k) {
+            None => return Err(CertError::NoAccount),
+            Some(a) if !a.certfps.iter().any(|c| *c == fp) => return Ok(false),
+            Some(_) => {}
+        }
+        self.append(&Event::CertRemoved { account: account.to_string(), fp: fp.clone() }).map_err(|_| CertError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().certfps.retain(|c| *c != fp);
+        Ok(true)
     }
 
     fn append(&self, event: &Event) -> std::io::Result<()> {

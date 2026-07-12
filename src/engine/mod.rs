@@ -16,7 +16,7 @@ use state::Network;
 
 // SASL mechanisms we offer, strongest first. Advertised to the uplink as the
 // `sasl=` capability value (IRCv3 SASL 3.2 mechanism list) and the set we accept.
-const SASL_MECHS: &str = "SCRAM-SHA-512,SCRAM-SHA-256,PLAIN";
+const SASL_MECHS: &str = "EXTERNAL,SCRAM-SHA-512,SCRAM-SHA-256,PLAIN";
 
 // A client's base64 response is split into chunks of this length; a chunk
 // shorter than this (or a lone "+") marks the end of the response (SASL 3.1).
@@ -31,6 +31,8 @@ enum SaslSession {
     Plain { response: String },
     // SCRAM: which hash, and where we are in the challenge/response.
     Scram { hash: scram::Hash, step: ScramStep },
+    // EXTERNAL: the TLS cert fingerprints the ircd relayed for this client.
+    External { fingerprints: Vec<String> },
 }
 
 // An in-progress exchange with its last-activity stamp, so abandoned sessions
@@ -169,6 +171,12 @@ impl Engine {
                         self.stash_sasl(client.clone(), SaslSession::Plain { response: String::new() });
                         mk("C", vec!["+".to_string()]) // empty challenge -> client sends the payload
                     }
+                    Some("EXTERNAL") => {
+                        // The ircd appends the client's TLS cert fingerprints after the mechanism.
+                        let fingerprints = data.iter().skip(1).map(|f| f.to_ascii_lowercase()).collect();
+                        self.stash_sasl(client.clone(), SaslSession::External { fingerprints });
+                        mk("C", vec!["+".to_string()]) // client sends its authzid (or "+")
+                    }
                     Some(mech) if scram::Hash::from_mech(mech).is_some() => {
                         let hash = scram::Hash::from_mech(mech).unwrap();
                         self.stash_sasl(client.clone(), SaslSession::Scram { hash, step: ScramStep::ClientFirst });
@@ -200,6 +208,7 @@ impl Engine {
                         }
                     }
                     Some(SaslSession::Scram { hash, step }) => self.sasl_scram(&agent, &client, hash, step, chunk),
+                    Some(SaslSession::External { fingerprints }) => self.sasl_external(&agent, &client, fingerprints, chunk),
                 }
             }
             "D" => {
@@ -260,6 +269,27 @@ impl Engine {
             }
             // Client acknowledged our server-final ("+"); apply the login.
             ScramStep::Ack { account } => sasl_success(agent, client, account),
+        }
+    }
+
+    // SASL EXTERNAL: the credential is the client's TLS cert fingerprint, which
+    // the ircd handed us in the S message (already validated at the handshake).
+    // Match it to an account; an authzid, if given, must name that same account.
+    fn sasl_external(&self, agent: &str, client: &str, fingerprints: Vec<String>, chunk: &str) -> Vec<NetAction> {
+        let authzid = if chunk == "+" || chunk.is_empty() {
+            String::new()
+        } else {
+            match STANDARD.decode(chunk).ok().and_then(|b| String::from_utf8(b).ok()) {
+                Some(a) => a,
+                None => return sasl_fail(agent, client),
+            }
+        };
+        match fingerprints.iter().find_map(|fp| self.db.certfp_owner(fp)) {
+            Some(account) if authzid.is_empty() || authzid.eq_ignore_ascii_case(account) => {
+                let account = account.to_string();
+                sasl_success(agent, client, account)
+            }
+            _ => sasl_fail(agent, client),
         }
     }
 
@@ -328,6 +358,11 @@ fn login_plain(b64: &str, db: &Db) -> Option<String> {
     let authcid = std::str::from_utf8(parts[1]).ok()?;
     let passwd = std::str::from_utf8(parts[2]).ok()?;
     db.authenticate(authcid, passwd).map(str::to_string)
+}
+
+// Report SASL failure to the ircd (drives 904).
+fn sasl_fail(agent: &str, client: &str) -> Vec<NetAction> {
+    vec![NetAction::Sasl { agent: agent.to_string(), client: client.to_string(), mode: "D".to_string(), data: vec!["F".to_string()] }]
 }
 
 // The two actions that complete any mechanism: set the account (drives 900),
@@ -602,5 +637,88 @@ mod tests {
         assert!(e.sasl_sessions.contains_key("ZZZ"));
         e.handle(NetEvent::Quit { uid: "ZZZ".into() });
         assert!(!e.sasl_sessions.contains_key("ZZZ"), "quit should drop the exchange");
+    }
+
+    // Drive a SASL step with a multi-field data vector (EXTERNAL carries the
+    // mechanism plus the ircd-supplied fingerprints in one message).
+    fn sasl_multi(e: &mut Engine, mode: &str, data: &[&str]) -> Vec<NetAction> {
+        e.handle(NetEvent::Sasl {
+            client: "000AAAAAB".into(),
+            agent: "*".into(),
+            mode: mode.into(),
+            data: data.iter().map(|s| s.to_string()).collect(),
+        })
+    }
+
+    // EXTERNAL with a registered fingerprint logs in; matching is case-insensitive.
+    #[test]
+    fn external_success_with_registered_cert() {
+        let mut e = engine_with("extok", "foo", "sesame");
+        e.db.certfp_add("foo", "aabbccddeeff00112233445566778899").unwrap();
+        assert_eq!(datum(&sasl_multi(&mut e, "S", &["EXTERNAL", "AABBCCDDEEFF00112233445566778899"])), ("C", "+"));
+        assert!(is_success(&sasl(&mut e, "C", "+")), "empty authzid should log in");
+    }
+
+    // An authzid, if sent, must name the cert's own account.
+    #[test]
+    fn external_authzid_must_match() {
+        let mut e = engine_with("extaz", "foo", "sesame");
+        e.db.certfp_add("foo", "aabbccddeeff00112233445566778899").unwrap();
+        sasl_multi(&mut e, "S", &["EXTERNAL", "aabbccddeeff00112233445566778899"]);
+        assert!(is_success(&sasl(&mut e, "C", &STANDARD.encode("foo"))), "matching authzid ok");
+
+        let mut e = engine_with("extaz2", "foo", "sesame");
+        e.db.certfp_add("foo", "aabbccddeeff00112233445566778899").unwrap();
+        sasl_multi(&mut e, "S", &["EXTERNAL", "aabbccddeeff00112233445566778899"]);
+        assert_eq!(datum(&sasl(&mut e, "C", &STANDARD.encode("bar"))), ("D", "F"), "foreign authzid rejected");
+    }
+
+    // An unknown fingerprint, or no fingerprint at all (plaintext client), fails.
+    #[test]
+    fn external_without_registered_cert_fails() {
+        let mut e = engine_with("extno", "foo", "sesame");
+        sasl_multi(&mut e, "S", &["EXTERNAL", "0011223344556677889900aabbccddee"]);
+        assert_eq!(datum(&sasl(&mut e, "C", "+")), ("D", "F"), "unknown fp rejected");
+
+        sasl_multi(&mut e, "S", &["EXTERNAL"]); // no fingerprint supplied
+        assert_eq!(datum(&sasl(&mut e, "C", "+")), ("D", "F"), "no cert rejected");
+    }
+
+    // End to end: enrol a cert with NickServ CERT ADD, then log in with EXTERNAL.
+    #[test]
+    fn nickserv_cert_add_enables_external() {
+        let mut e = engine_with("nscert", "foo", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into() });
+        let fp = "aabbccddeeff00112233445566778899";
+
+        let out = e.handle(NetEvent::Privmsg {
+            from: "000AAAAAB".into(),
+            to: "42SAAAAAA".into(),
+            text: format!("CERT ADD sesame {fp}"),
+        });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Added"))), "{out:?}");
+
+        sasl_multi(&mut e, "S", &["EXTERNAL", fp]);
+        assert!(is_success(&sasl(&mut e, "C", "+")), "external should work after CERT ADD");
+    }
+
+    // A wrong password can't enrol a cert, and a fingerprint is one account only.
+    #[test]
+    fn cert_add_is_guarded_and_unique() {
+        let mut e = engine_with("certguard", "foo", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into() });
+        let fp = "aabbccddeeff00112233445566778899";
+
+        let bad = e.handle(NetEvent::Privmsg {
+            from: "000AAAAAB".into(),
+            to: "42SAAAAAA".into(),
+            text: format!("CERT ADD wrongpw {fp}"),
+        });
+        assert!(bad.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Invalid password"))), "{bad:?}");
+        assert!(e.db.certfp_owner(fp).is_none(), "bad password must not enrol");
+
+        e.db.certfp_add("foo", fp).unwrap();
+        e.db.register("bar", "sesame", None).unwrap();
+        assert!(matches!(e.db.certfp_add("bar", fp), Err(db::CertError::InUse)), "a fingerprint maps to one account");
     }
 }
