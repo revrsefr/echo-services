@@ -477,11 +477,11 @@ fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAct
                 RegOutcome::Ok => vec![
                     // Registering identifies you to the nick right away (drives 900).
                     NetAction::Metadata { target: uid.clone(), key: "accountname".to_string(), value: nick.clone() },
-                    notice(format!("Nickname \x02{nick}\x02 is now registered.")),
+                    notice(format!("Your nick \x02{nick}\x02 is now registered and you're logged in. Welcome!")),
                 ],
-                RegOutcome::Exists => vec![notice(format!("Nickname \x02{nick}\x02 is already registered."))],
-                RegOutcome::RateLimited => vec![notice("Too many registrations, please wait a moment.".to_string())],
-                RegOutcome::Internal => vec![notice("Registration failed, please try again later.".to_string())],
+                RegOutcome::Exists => vec![notice(format!("\x02{nick}\x02 is already registered. If it's yours, use \x02IDENTIFY <password>\x02."))],
+                RegOutcome::RateLimited => vec![notice("Registrations are busy right now. Please try again in a moment.".to_string())],
+                RegOutcome::Internal => vec![notice("Sorry, that didn't work. Please try again in a moment.".to_string())],
             }
         }
     }

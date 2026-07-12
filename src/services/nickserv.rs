@@ -47,19 +47,19 @@ impl Service for NickServ {
                     Some(account) => {
                         // Already identified to this account: don't re-fire the login.
                         if from.account == Some(account) {
-                            ctx.notice(me, from.uid, format!("You are already identified for \x02{}\x02.", account));
+                            ctx.notice(me, from.uid, format!("You're already identified as \x02{}\x02.", account));
                             return;
                         }
                         let account = account.to_string();
                         ctx.login(from.uid, &account);
-                        ctx.notice(me, from.uid, format!("You are now identified for \x02{}\x02.", account));
+                        ctx.notice(me, from.uid, format!("You're now identified as \x02{}\x02. Welcome back!", account));
                     }
-                    None => ctx.notice(me, from.uid, "Invalid password."),
+                    None => ctx.notice(me, from.uid, "Invalid password. Please try again."),
                 }
             }
             Some("LOGOUT") | Some("LOGOFF") => {
                 if from.account.is_none() {
-                    ctx.notice(me, from.uid, "You are not logged in.");
+                    ctx.notice(me, from.uid, "You're not logged in.");
                     return;
                 }
                 // Guest nick = prefix + sequence (seeded from the link TS, bumped
@@ -68,15 +68,15 @@ impl Service for NickServ {
                 self.guest_seq = self.guest_seq.wrapping_add(1);
                 ctx.logout(from.uid);
                 ctx.force_nick(from.uid, &guest);
-                ctx.notice(me, from.uid, format!("You are now logged out. Your nick is now \x02{}\x02.", guest));
+                ctx.notice(me, from.uid, format!("You're now logged out. Your nick is now \x02{}\x02.", guest));
             }
             Some("CERT") => self.cert(from, &args, ctx, db),
             Some("HELP") => ctx.notice(
                 me,
                 from.uid,
-                "Commands: REGISTER <password> [email], IDENTIFY <password>, LOGOUT, CERT ADD|DEL|LIST <password> [fingerprint].",
+                "NickServ looks after your nickname. Commands: \x02REGISTER\x02 <password> [email], \x02IDENTIFY\x02 <password>, \x02LOGOUT\x02, \x02CERT\x02 ADD|DEL|LIST <password> [fingerprint].",
             ),
-            Some(other) => ctx.notice(me, from.uid, format!("Unknown command: {}. Try HELP.", other)),
+            Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
         }
     }
