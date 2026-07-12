@@ -24,6 +24,8 @@ mod akick;
 mod list;
 #[path = "status.rs"]
 mod status;
+#[path = "set.rs"]
+mod set;
 
 pub struct ChanServ {
     pub uid: String,
@@ -78,6 +80,9 @@ impl Service for ChanServ {
                     Some(info) => {
                         ctx.notice(me, from.uid, format!("Information for \x02{}\x02:", info.name));
                         ctx.notice(me, from.uid, format!("  Founder    : \x02{}\x02", info.founder));
+                        if !info.desc.is_empty() {
+                            ctx.notice(me, from.uid, format!("  Description: {}", info.desc));
+                        }
                         ctx.notice(me, from.uid, format!("  Registered : {}", human_time(info.ts)));
                     }
                     None => ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered.")),
@@ -161,7 +166,8 @@ impl Service for ChanServ {
             Some("AKICK") => akick::handle(me, from, args, ctx, db),
             Some("STATUS") => status::handle(me, from, args, ctx, net, db),
             Some("LIST") => list::handle(me, from, args, ctx, db),
-            Some("HELP") => ctx.notice(me, from.uid, "ChanServ registers and looks after channels. Commands: \x02REGISTER\x02, \x02INFO\x02, \x02LIST\x02, \x02ACCESS\x02, \x02STATUS\x02, \x02OP\x02/\x02DEOP\x02, \x02VOICE\x02/\x02DEVOICE\x02, \x02KICK\x02, \x02BAN\x02/\x02UNBAN\x02, \x02AKICK\x02, \x02TOPIC\x02, \x02INVITE\x02, \x02MODE\x02, \x02MLOCK\x02, \x02DROP\x02."),
+            Some("SET") => set::handle(me, from, args, ctx, db),
+            Some("HELP") => ctx.notice(me, from.uid, "ChanServ registers and looks after channels. Commands: \x02REGISTER\x02, \x02INFO\x02, \x02LIST\x02, \x02SET\x02, \x02ACCESS\x02, \x02STATUS\x02, \x02OP\x02/\x02DEOP\x02, \x02VOICE\x02/\x02DEVOICE\x02, \x02KICK\x02, \x02BAN\x02/\x02UNBAN\x02, \x02AKICK\x02, \x02TOPIC\x02, \x02INVITE\x02, \x02MODE\x02, \x02MLOCK\x02, \x02DROP\x02."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
         }

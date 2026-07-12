@@ -45,6 +45,8 @@ pub enum Event {
     ChannelAccessDel { channel: String, account: String },
     ChannelAkickAdd { channel: String, mask: String, reason: String },
     ChannelAkickDel { channel: String, mask: String },
+    ChannelFounderSet { channel: String, founder: String },
+    ChannelDescSet { channel: String, desc: String },
 }
 
 // An access-list entry: an account and its level ("op" or "voice").
@@ -76,6 +78,9 @@ pub struct ChannelInfo {
     pub access: Vec<ChanAccess>,
     #[serde(default)]
     pub akick: Vec<ChanAkick>,
+    // Free-text description, shown in INFO.
+    #[serde(default)]
+    pub desc: String,
 }
 
 impl ChannelInfo {
@@ -395,6 +400,9 @@ impl Db {
             for k in &c.akick {
                 snapshot.push(Event::ChannelAkickAdd { channel: c.name.clone(), mask: k.mask.clone(), reason: k.reason.clone() });
             }
+            if !c.desc.is_empty() {
+                snapshot.push(Event::ChannelDescSet { channel: c.name.clone(), desc: c.desc.clone() });
+            }
         }
         self.log.compact(snapshot)?;
         tracing::info!(before, after = self.log.len(), "compacted event log");
@@ -535,7 +543,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new() });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new() });
         Ok(())
     }
 
@@ -626,6 +634,32 @@ impl Db {
         Ok(true)
     }
 
+    /// Transfer `channel`'s founder to `account`.
+    pub fn set_founder(&mut self, channel: &str, account: &str) -> Result<(), ChanError> {
+        let k = key(channel);
+        if !self.channels.contains_key(&k) {
+            return Err(ChanError::NoChannel);
+        }
+        self.log
+            .append(Event::ChannelFounderSet { channel: channel.to_string(), founder: account.to_string() })
+            .map_err(|_| ChanError::Internal)?;
+        self.channels.get_mut(&k).unwrap().founder = account.to_string();
+        Ok(())
+    }
+
+    /// Set `channel`'s description (empty clears it).
+    pub fn set_desc(&mut self, channel: &str, desc: &str) -> Result<(), ChanError> {
+        let k = key(channel);
+        if !self.channels.contains_key(&k) {
+            return Err(ChanError::NoChannel);
+        }
+        self.log
+            .append(Event::ChannelDescSet { channel: channel.to_string(), desc: desc.to_string() })
+            .map_err(|_| ChanError::Internal)?;
+        self.channels.get_mut(&k).unwrap().desc = desc.to_string();
+        Ok(())
+    }
+
     /// Unregister `name`.
     pub fn drop_channel(&mut self, name: &str) -> Result<(), ChanError> {
         let k = key(name);
@@ -658,7 +692,7 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             }
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new() });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new() });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
@@ -689,6 +723,16 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::ChannelAkickDel { channel, mask } => {
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.akick.retain(|k| !k.mask.eq_ignore_ascii_case(&mask));
+            }
+        }
+        Event::ChannelFounderSet { channel, founder } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.founder = founder;
+            }
+        }
+        Event::ChannelDescSet { channel, desc } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.desc = desc;
             }
         }
     }

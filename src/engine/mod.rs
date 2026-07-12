@@ -1089,6 +1089,41 @@ mod tests {
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes.starts_with("+o"))), "{out:?}");
     }
 
+    // ChanServ SET: description and founder transfer, founder-gated.
+    #[test]
+    fn chanserv_set() {
+        use crate::chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-cs-set.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register("bob", "hunter2", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+        let to_cs = |e: &mut Engine, from: &str, text: &str| {
+            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+        };
+        let notice = |out: &[NetAction], needle: &str| {
+            out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)))
+        };
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h1".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+
+        // Description is stored and shows in INFO.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c DESC a friendly place"), "updated"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "INFO #c"), "a friendly place"));
+
+        // Transfer to a non-account is refused.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c FOUNDER nobody"), "isn't a registered account"));
+
+        // Transfer to bob works; alice is then no longer the founder.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c FOUNDER bob"), "transferred"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c DESC nope"), "founder can change"));
+    }
+
     // A registered channel (re)appearing re-asserts +r; an unregistered one does not.
     #[test]
     fn channel_create_reasserts_registered_mode() {
