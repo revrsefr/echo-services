@@ -38,6 +38,16 @@ pub enum Event {
     AccountRegistered(Account),
     CertAdded { account: String, fp: String },
     CertRemoved { account: String, fp: String },
+    ChannelRegistered { name: String, founder: String, ts: u64 },
+    ChannelDropped { name: String },
+}
+
+// A registered channel and who owns it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelInfo {
+    pub name: String,
+    pub founder: String,
+    pub ts: u64,
 }
 
 // A durable record: the event plus the metadata a gossip layer needs to address
@@ -163,21 +173,22 @@ impl EventLog {
         self.entries.len()
     }
 
-    // Rewrite the log to a minimal snapshot: one AccountRegistered per account,
-    // authored under our origin at fresh sequence numbers. Peers re-converge
-    // because AccountRegistered overwrites and cert replay is idempotent. The
-    // version vector resets to our origin; peers re-advertise theirs on the next
-    // sync. Written to a temp file and renamed, so a crash leaves the old log.
-    fn compact(&mut self, accounts: &HashMap<String, Account>) -> std::io::Result<()> {
+    // Rewrite the log to a minimal snapshot: one event per live account and
+    // channel, authored under our origin at fresh sequence numbers. Peers
+    // re-converge because the register events overwrite and cert replay is
+    // idempotent. The version vector resets to our origin; peers re-advertise
+    // theirs on the next sync. Written to a temp file and renamed, so a crash
+    // leaves the old log.
+    fn compact(&mut self, events: Vec<Event>) -> std::io::Result<()> {
         let mut seq = self.next_seq();
-        let mut snapshot = Vec::with_capacity(accounts.len());
-        for account in accounts.values() {
+        let mut snapshot = Vec::with_capacity(events.len());
+        for event in events {
             self.lamport += 1;
             snapshot.push(LogEntry {
                 origin: self.origin.clone(),
                 seq,
                 lamport: self.lamport,
-                event: Event::AccountRegistered(account.clone()),
+                event,
             });
             seq += 1;
         }
@@ -213,6 +224,13 @@ pub enum CertError {
     Internal,   // persistence failed
 }
 
+#[derive(Debug)]
+pub enum ChanError {
+    Exists,     // channel already registered
+    NoChannel,  // channel is not registered
+    Internal,   // persistence failed
+}
+
 // A fingerprint is hex (hash digest), optionally colon-separated. Bound the
 // length so a junk value can't bloat an account.
 fn valid_fp(fp: &str) -> bool {
@@ -231,6 +249,7 @@ pub struct Credentials {
 
 pub struct Db {
     accounts: HashMap<String, Account>, // keyed by casefolded name
+    channels: HashMap<String, ChannelInfo>, // keyed by casefolded name
     log: EventLog,
     // PBKDF2 cost baked into new SCRAM verifiers; lowered by tests.
     pub(crate) scram_iterations: u32,
@@ -248,34 +267,40 @@ impl Db {
     pub fn open(path: impl Into<PathBuf>, origin: impl Into<String>) -> Self {
         let (log, events) = EventLog::open(path.into(), origin.into());
         let mut accounts = HashMap::new();
+        let mut channels = HashMap::new();
         for event in events {
-            apply(&mut accounts, event);
+            apply(&mut accounts, &mut channels, event);
         }
-        tracing::info!(accounts = accounts.len(), "account store loaded");
-        Self { accounts, log, scram_iterations: scram::DEFAULT_ITERATIONS }
+        tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
+        Self { accounts, channels, log, scram_iterations: scram::DEFAULT_ITERATIONS }
     }
 
     /// Fold an entry authored by another node into the store — the services-side
     /// of the gossip seam. Idempotent (re-delivered entries are dropped).
     pub fn ingest(&mut self, entry: LogEntry) -> std::io::Result<()> {
         if let Some(event) = self.log.ingest(entry)? {
-            apply(&mut self.accounts, event);
+            apply(&mut self.accounts, &mut self.channels, event);
         }
         Ok(())
     }
 
-    /// Rewrite the log to one entry per account, reclaiming churn.
+    /// Rewrite the log to one entry per account and channel, reclaiming churn.
     pub fn compact(&mut self) -> std::io::Result<()> {
         let before = self.log.len();
-        self.log.compact(&self.accounts)?;
+        let mut snapshot: Vec<Event> = self.accounts.values().cloned().map(Event::AccountRegistered).collect();
+        snapshot.extend(self.channels.values().map(|c| Event::ChannelRegistered {
+            name: c.name.clone(),
+            founder: c.founder.clone(),
+            ts: c.ts,
+        }));
+        self.log.compact(snapshot)?;
         tracing::info!(before, after = self.log.len(), "compacted event log");
         Ok(())
     }
 
-    /// Whether the log has grown enough past the live account count to be worth
-    /// compacting.
+    /// Whether the log has grown enough past the live state to be worth compacting.
     pub fn should_compact(&self) -> bool {
-        self.log.len() > self.accounts.len() * 3 + 64
+        self.log.len() > (self.accounts.len() + self.channels.len()) * 3 + 64
     }
 
     /// Wire the log to a broadcast channel; each new entry is pushed to peers.
@@ -396,11 +421,41 @@ impl Db {
         self.accounts.get_mut(&k).unwrap().certfps.retain(|c| *c != fp);
         Ok(true)
     }
+
+    /// Register `name` to `founder` (an account name).
+    pub fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
+        let k = key(name);
+        if self.channels.contains_key(&k) {
+            return Err(ChanError::Exists);
+        }
+        let ts = now();
+        self.log
+            .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
+            .map_err(|_| ChanError::Internal)?;
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts });
+        Ok(())
+    }
+
+    /// The registration for `name`, if any.
+    pub fn channel(&self, name: &str) -> Option<&ChannelInfo> {
+        self.channels.get(&key(name))
+    }
+
+    /// Unregister `name`.
+    pub fn drop_channel(&mut self, name: &str) -> Result<(), ChanError> {
+        let k = key(name);
+        if !self.channels.contains_key(&k) {
+            return Err(ChanError::NoChannel);
+        }
+        self.log.append(Event::ChannelDropped { name: name.to_string() }).map_err(|_| ChanError::Internal)?;
+        self.channels.remove(&k);
+        Ok(())
+    }
 }
 
-// Fold one event into the account map. Shared by log replay (`open`) and gossip
+// Fold one event into the store. Shared by log replay (`open`) and gossip
 // ingest, so both routes reconstruct identical state.
-fn apply(accounts: &mut HashMap<String, Account>, event: Event) {
+fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String, ChannelInfo>, event: Event) {
     match event {
         Event::AccountRegistered(a) => {
             accounts.insert(key(&a.name), a);
@@ -416,6 +471,12 @@ fn apply(accounts: &mut HashMap<String, Account>, event: Event) {
             if let Some(a) = accounts.get_mut(&key(&account)) {
                 a.certfps.retain(|c| *c != fp);
             }
+        }
+        Event::ChannelRegistered { name, founder, ts } => {
+            channels.insert(key(&name), ChannelInfo { name, founder, ts });
+        }
+        Event::ChannelDropped { name } => {
+            channels.remove(&key(&name));
         }
     }
 }
@@ -546,5 +607,22 @@ mod tests {
         }
         assert!(b.exists("alice"), "B converges from a compacted node");
         assert_eq!(b.certfps("alice"), &[fp][..], "certs arrive folded into the snapshot");
+    }
+
+    // Channels register (case-insensitively unique), persist, and drop.
+    #[test]
+    fn channels_register_drop_and_persist() {
+        let p = tmp("chan");
+        let mut db = Db::open(&p, "local");
+        db.register_channel("#Chat", "alice").unwrap();
+        assert!(matches!(db.register_channel("#chat", "bob"), Err(ChanError::Exists)), "dup is case-insensitive");
+        assert_eq!(db.channel("#CHAT").map(|c| c.founder.as_str()), Some("alice"));
+
+        drop(db);
+        let mut db = Db::open(&p, "local");
+        assert_eq!(db.channel("#chat").map(|c| c.founder.as_str()), Some("alice"), "survives reopen");
+        db.drop_channel("#chat").unwrap();
+        assert!(db.channel("#chat").is_none());
+        assert!(matches!(db.drop_channel("#chat"), Err(ChanError::NoChannel)));
     }
 }

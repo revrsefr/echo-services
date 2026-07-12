@@ -12,6 +12,7 @@ use tokio::sync::Mutex;
 
 use engine::Engine;
 use proto::inspircd::InspIrcd;
+use services::chanserv::ChanServ;
 use services::nickserv::NickServ;
 
 #[tokio::main]
@@ -35,11 +36,16 @@ async fn main() -> Result<()> {
         ts,
     ));
 
-    let services: Vec<Box<dyn engine::service::Service>> = vec![Box::new(NickServ {
-        uid: format!("{}AAAAAA", cfg.server.sid),
-        guest_nick: cfg.server.guest_nick.clone(),
-        guest_seq: (ts % 100_000) as u32,
-    })];
+    let services: Vec<Box<dyn engine::service::Service>> = vec![
+        Box::new(NickServ {
+            uid: format!("{}AAAAAA", cfg.server.sid),
+            guest_nick: cfg.server.guest_nick.clone(),
+            guest_seq: (ts % 100_000) as u32,
+        }),
+        Box::new(ChanServ {
+            uid: format!("{}AAAAAB", cfg.server.sid),
+        }),
+    ];
     let (gossip_tx, _) = tokio::sync::broadcast::channel::<engine::db::LogEntry>(1024);
     let mut db = engine::db::Db::open("fedserv.db.jsonl", &cfg.server.sid);
     db.scram_iterations = cfg.server.scram_iterations;

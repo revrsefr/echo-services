@@ -896,4 +896,42 @@ mod tests {
         });
         assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "realnick")), "must log into the current nick's account: {out:?}");
     }
+
+    // ChanServ: registration needs identification, INFO shows the founder, and
+    // only the founder can drop.
+    #[test]
+    fn chanserv_register_info_drop() {
+        use crate::services::chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-chanserv.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+
+        let to_cs = |e: &mut Engine, from: &str, text: &str| {
+            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+        };
+        let notice = |out: &[NetAction], needle: &str| {
+            out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)))
+        };
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into() });
+
+        // Not identified yet: refused.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "REGISTER #room"), "must be identified"));
+
+        // Identify, then register.
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "REGISTER #room"), "now registered"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "INFO #room"), "alice"));
+
+        // A different, unidentified user cannot drop it.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into() });
+        assert!(notice(&to_cs(&mut e, "000AAAAAC", "DROP #room"), "founder"));
+
+        // The founder can.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "DROP #room"), "dropped"));
+    }
 }
