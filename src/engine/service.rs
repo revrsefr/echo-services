@@ -1,4 +1,5 @@
 use crate::engine::db::Db;
+use crate::engine::state::Network;
 use crate::proto::{NetAction, RegReply};
 
 // Who sent the command, resolved by the engine (UID + current nick + the
@@ -23,7 +24,7 @@ pub trait Service: Send {
     fn manages_channels(&self) -> bool {
         false
     }
-    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut Db);
+    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &Network, db: &mut Db);
 }
 
 #[derive(Default)]
@@ -86,6 +87,16 @@ impl ServiceCtx {
             from: from.to_string(),
             channel: channel.to_string(),
             modes: modes.to_string(),
+        });
+    }
+
+    // Kick a user, sourced from pseudoclient `from`.
+    pub fn kick(&mut self, from: &str, channel: &str, uid: &str, reason: &str) {
+        self.actions.push(NetAction::Kick {
+            from: from.to_string(),
+            channel: channel.to_string(),
+            uid: uid.to_string(),
+            reason: reason.to_string(),
         });
     }
 }

@@ -12,6 +12,7 @@ pub struct Network {
 pub struct User {
     pub uid: String,
     pub nick: String,
+    pub host: String,
 }
 
 #[allow(dead_code)]
@@ -21,8 +22,17 @@ pub struct Channel {
 }
 
 impl Network {
-    pub fn user_connect(&mut self, uid: String, nick: String) {
-        self.users.insert(uid.clone(), User { uid, nick });
+    pub fn user_connect(&mut self, uid: String, nick: String, host: String) {
+        self.users.insert(uid.clone(), User { uid, nick, host });
+    }
+
+    // Resolve a nick to its uid (case-insensitive).
+    pub fn uid_by_nick(&self, nick: &str) -> Option<&str> {
+        self.users.values().find(|u| u.nick.eq_ignore_ascii_case(nick)).map(|u| u.uid.as_str())
+    }
+
+    pub fn host_of(&self, uid: &str) -> Option<&str> {
+        self.users.get(uid).map(|u| u.host.as_str())
     }
 
     pub fn user_nick_change(&mut self, uid: &str, nick: String) {

@@ -10,7 +10,7 @@ pub enum NetEvent {
     EndBurst,
     Ping { token: String, from: Option<String> },
     Privmsg { from: String, to: String, text: String },
-    UserConnect { uid: String, nick: String },
+    UserConnect { uid: String, nick: String, host: String },
     NickChange { uid: String, nick: String },
     // A channel was created or bursted (InspIRCd FJOIN). Subsequent single joins
     // arrive as IJOIN and are not surfaced.
@@ -50,6 +50,8 @@ pub enum NetAction {
     // the pseudoclient uid to source it from (empty = the services server). The
     // protocol stamps a timestamp the ircd will accept.
     ChannelMode { from: String, channel: String, modes: String },
+    // Kick a user from a channel, sourced from pseudoclient `from`.
+    Kick { from: String, channel: String, uid: String, reason: String },
     Raw(String),
     // Internal only, never serialized to the wire: a registration whose password
     // still needs its (expensive) key derivation. The link layer runs the

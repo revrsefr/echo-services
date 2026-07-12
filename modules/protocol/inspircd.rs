@@ -72,11 +72,14 @@ impl Protocol for InspIrcd {
             }
             // UID <uuid> <nickts> <nick> … — track who's online so services can
             // resolve a sender's current nick.
+            // UID <uuid> <nickts> <nick> <realhost> <disphost> … — take the
+            // displayed host for ban masks.
             "UID" => {
                 let a: Vec<&str> = tokens.collect();
                 match (a.first(), a.get(2)) {
                     (Some(uid), Some(nick)) => {
-                        vec![NetEvent::UserConnect { uid: uid.to_string(), nick: nick.to_string() }]
+                        let host = a.get(4).unwrap_or(&"").to_string();
+                        vec![NetEvent::UserConnect { uid: uid.to_string(), nick: nick.to_string(), host }]
                     }
                     _ => vec![],
                 }
@@ -230,6 +233,9 @@ impl Protocol for InspIrcd {
                     vec![format!(":{} {}", from, cmd)]
                 }
             }
+            NetAction::Kick { from, channel, uid, reason } => {
+                vec![format!(":{} KICK {} {} :{}", from, channel, uid, reason)]
+            }
             NetAction::Raw(s) => vec![s.clone()],
             // Internal: the link layer handles this before serialization.
             NetAction::DeferRegister { .. } => vec![],
@@ -273,7 +279,7 @@ mod tests {
     fn parses_uid_burst() {
         let ev = proto().parse(":0IR UID 0IRAAAAAB 1783833000 alice host host user user 0.0.0.0 1783833000 +i :real");
         assert!(
-            matches!(ev.as_slice(), [NetEvent::UserConnect { uid, nick }] if uid == "0IRAAAAAB" && nick == "alice"),
+            matches!(ev.as_slice(), [NetEvent::UserConnect { uid, nick, .. }] if uid == "0IRAAAAAB" && nick == "alice"),
             "{ev:?}"
         );
     }

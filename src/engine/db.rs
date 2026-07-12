@@ -80,6 +80,11 @@ impl ChannelInfo {
             .map(|a| if a.level == "voice" { "+v" } else { "+o" })
     }
 
+    /// Whether `account` has operator access (founder or access-list op).
+    pub fn is_op(&self, account: &str) -> bool {
+        self.join_mode(account) == Some("+o")
+    }
+
     /// The mode string services keep applied: +r plus the lock.
     pub fn lock_modes(&self) -> String {
         let mut s = format!("+r{}", self.lock_on);

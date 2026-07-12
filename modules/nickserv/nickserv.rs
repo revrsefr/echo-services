@@ -1,5 +1,6 @@
 use crate::engine::db::{CertError, Db};
 use crate::engine::service::{Sender, Service, ServiceCtx};
+use crate::engine::state::Network;
 use crate::proto::RegReply;
 
 pub struct NickServ {
@@ -21,7 +22,7 @@ impl Service for NickServ {
         "Nickname Services"
     }
 
-    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut Db) {
+    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, _net: &Network, db: &mut Db) {
         let me = self.uid.as_str();
         match args.first().map(|s| s.to_ascii_uppercase()).as_deref() {
             Some("REGISTER") => {

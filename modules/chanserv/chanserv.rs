@@ -1,10 +1,19 @@
 use crate::engine::db::{ChanError, ChannelInfo, Db};
 use crate::engine::service::{Sender, Service, ServiceCtx};
+use crate::engine::state::Network;
 
 #[path = "mode.rs"]
 mod mode;
 #[path = "access.rs"]
 mod access;
+#[path = "op.rs"]
+mod op;
+#[path = "kick.rs"]
+mod kick;
+#[path = "ban.rs"]
+mod ban;
+#[path = "unban.rs"]
+mod unban;
 
 pub struct ChanServ {
     pub uid: String,
@@ -24,7 +33,7 @@ impl Service for ChanServ {
         true
     }
 
-    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut Db) {
+    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &Network, db: &mut Db) {
         let me = self.uid.as_str();
         match args.first().map(|s| s.to_ascii_uppercase()).as_deref() {
             Some("REGISTER") => {
@@ -130,9 +139,31 @@ impl Service for ChanServ {
             }
             Some("MODE") => mode::handle(me, from, args, ctx, db),
             Some("ACCESS") => access::handle(me, from, args, ctx, db),
-            Some("HELP") => ctx.notice(me, from.uid, "ChanServ registers and looks after channels. Commands: \x02REGISTER\x02 <#channel>, \x02INFO\x02 <#channel>, \x02ACCESS\x02 <#channel>, \x02MODE\x02 <#channel> <modes>, \x02MLOCK\x02 <#channel> [modes], \x02DROP\x02 <#channel>."),
+            Some("OP") => op::handle(me, from, "+o", args, ctx, net, db),
+            Some("DEOP") => op::handle(me, from, "-o", args, ctx, net, db),
+            Some("VOICE") => op::handle(me, from, "+v", args, ctx, net, db),
+            Some("DEVOICE") => op::handle(me, from, "-v", args, ctx, net, db),
+            Some("KICK") => kick::handle(me, from, args, ctx, net, db),
+            Some("BAN") => ban::handle(me, from, args, ctx, net, db),
+            Some("UNBAN") => unban::handle(me, from, args, ctx, net, db),
+            Some("HELP") => ctx.notice(me, from.uid, "ChanServ registers and looks after channels. Commands: \x02REGISTER\x02, \x02INFO\x02, \x02ACCESS\x02, \x02OP\x02/\x02DEOP\x02, \x02VOICE\x02/\x02DEVOICE\x02, \x02KICK\x02, \x02BAN\x02/\x02UNBAN\x02, \x02MODE\x02, \x02MLOCK\x02, \x02DROP\x02 — each takes a <#channel>."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
+        }
+    }
+}
+
+// True if `from` is the founder or an access-list op of `chan`; else notices why.
+fn require_op(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &Db) -> bool {
+    match (from.account, db.channel(chan)) {
+        (_, None) => {
+            ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
+            false
+        }
+        (Some(acc), Some(info)) if info.is_op(acc) => true,
+        _ => {
+            ctx.notice(me, from.uid, format!("You need operator access to \x02{chan}\x02."));
+            false
         }
     }
 }

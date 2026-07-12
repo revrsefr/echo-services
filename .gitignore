@@ -2,3 +2,10 @@
 config.toml
 
 fedserv.db.jsonl
+
+# Local demo/test scaffolding
+/demo-certs
+/demo-start.sh
+/demo-stop.sh
+/test-net
+/test-net-b

@@ -165,8 +165,8 @@ impl Engine {
     pub fn handle(&mut self, event: NetEvent) -> Vec<NetAction> {
         let out = match event {
             NetEvent::Ping { token, from } => vec![NetAction::Pong { token, from }],
-            NetEvent::UserConnect { uid, nick } => {
-                self.network.user_connect(uid, nick);
+            NetEvent::UserConnect { uid, nick, host } => {
+                self.network.user_connect(uid, nick, host);
                 Vec::new()
             }
             NetEvent::NickChange { uid, nick } => {
@@ -427,11 +427,11 @@ impl Engine {
         let account = self.network.account_of(from).map(str::to_string);
         let mut ctx = ServiceCtx::default();
         let sender = Sender { uid: from, nick: &nick, account: account.as_deref() };
-        let Self { services, db, .. } = self;
+        let Self { services, network, db, .. } = self;
         for svc in services.iter_mut() {
             if to.eq_ignore_ascii_case(svc.uid()) || to.eq_ignore_ascii_case(svc.nick()) {
                 let args: Vec<&str> = text.split_whitespace().collect();
-                svc.on_command(&sender, &args, &mut ctx, db);
+                svc.on_command(&sender, &args, &mut ctx, network, db);
                 break;
             }
         }
@@ -780,7 +780,7 @@ mod tests {
     #[test]
     fn nickserv_cert_add_enables_external() {
         let mut e = engine_with("nscert", "foo", "sesame");
-        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() });
         let fp = "aabbccddeeff00112233445566778899";
 
         let out = e.handle(NetEvent::Privmsg {
@@ -798,7 +798,7 @@ mod tests {
     #[test]
     fn cert_add_is_guarded_and_unique() {
         let mut e = engine_with("certguard", "foo", "sesame");
-        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() });
         let fp = "aabbccddeeff00112233445566778899";
 
         let bad = e.handle(NetEvent::Privmsg {
@@ -818,7 +818,7 @@ mod tests {
     #[test]
     fn nickserv_logout_clears_account() {
         let mut e = engine_with("nslogout", "foo", "sesame");
-        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() });
 
         let login = e.handle(NetEvent::Privmsg {
             from: "000AAAAAB".into(),
@@ -845,7 +845,7 @@ mod tests {
     #[test]
     fn logout_without_login_is_noop() {
         let mut e = engine_with("nologin", "foo", "sesame");
-        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "someone".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "someone".into(), host: "host.example".into() });
         let out = logout(&mut e, "000AAAAAB");
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("not logged in"))), "{out:?}");
         assert!(!out.iter().any(|a| matches!(a, NetAction::ForceNick { .. })), "must not rename when not logged in: {out:?}");
@@ -856,7 +856,7 @@ mod tests {
     #[test]
     fn logout_twice_renames_only_once() {
         let mut e = engine_with("twice", "foo", "sesame");
-        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() });
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 
         let first = logout(&mut e, "000AAAAAB");
@@ -875,7 +875,7 @@ mod tests {
         sasl(&mut e, "S", "PLAIN");
         let ok = sasl(&mut e, "C", &plain(b"", b"foo", b"sesame"));
         assert!(is_success(&ok), "{ok:?}");
-        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() });
 
         let out = logout(&mut e, "000AAAAAB");
         assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { .. })), "sasl-authed user can log out: {out:?}");
@@ -886,7 +886,7 @@ mod tests {
     #[test]
     fn identify_twice_does_not_relogin() {
         let mut e = engine_with("reident", "foo", "sesame");
-        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() });
         let ident = |e: &mut Engine| e.handle(NetEvent::Privmsg {
             from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into(),
         });
@@ -922,7 +922,7 @@ mod tests {
     #[test]
     fn identify_uses_current_nick_after_rename() {
         let mut e = engine_with("renameident", "realnick", "sesame");
-        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "Guest99999".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "Guest99999".into(), host: "host.example".into() });
         e.handle(NetEvent::NickChange { uid: "000AAAAAB".into(), nick: "realnick".into() });
         let out = e.handle(NetEvent::Privmsg {
             from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into(),
@@ -950,7 +950,7 @@ mod tests {
         let notice = |out: &[NetAction], needle: &str| {
             out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)))
         };
-        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "host.example".into() });
 
         // Not identified yet: refused.
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "REGISTER #room"), "logged in"));
@@ -977,7 +977,7 @@ mod tests {
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "ACCESS #room"), "helper"));
 
         // A different, unidentified user cannot change modes, access, the lock, or drop it.
-        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "host.example".into() });
         assert!(notice(&to_cs(&mut e, "000AAAAAC", "MODE #room +i"), "founder"));
         assert!(notice(&to_cs(&mut e, "000AAAAAC", "ACCESS #room ADD x op"), "founder"));
         assert!(notice(&to_cs(&mut e, "000AAAAAC", "MLOCK #room +i"), "founder"));
@@ -987,6 +987,50 @@ mod tests {
         let out = to_cs(&mut e, "000AAAAAB", "DROP #room");
         assert!(notice(&out, "dropped"));
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#room" && modes == "-r")), "drop clears +r: {out:?}");
+    }
+
+    // ChanServ moderation: an op can op/kick/ban users; a non-op is refused.
+    #[test]
+    fn chanserv_moderation() {
+        use crate::chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-cs-mod.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#m", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+
+        let to_cs = |e: &mut Engine, from: &str, text: &str| {
+            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+        };
+        // Founder alice identifies; target bob connects with a known host.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h1".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "1.2.3.4".into() });
+
+        // OP a user by nick.
+        let out = to_cs(&mut e, "000AAAAAB", "OP #m bob");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#m" && modes == "+o 000AAAAAC")), "{out:?}");
+
+        // KICK a user by nick, with a reason.
+        let out = to_cs(&mut e, "000AAAAAB", "KICK #m bob rude");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { channel, uid, reason, .. } if channel == "#m" && uid == "000AAAAAC" && reason == "rude")), "{out:?}");
+
+        // BAN sets +b *!*@host and kicks.
+        let out = to_cs(&mut e, "000AAAAAB", "BAN #m bob spam");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#m" && modes == "+b *!*@1.2.3.4")), "{out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAC")), "{out:?}");
+
+        // UNBAN clears it.
+        let out = to_cs(&mut e, "000AAAAAB", "UNBAN #m bob");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#m" && modes == "-b *!*@1.2.3.4")), "{out:?}");
+
+        // A user with no access is refused.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAD".into(), nick: "carol".into(), host: "h2".into() });
+        assert!(to_cs(&mut e, "000AAAAAD", "KICK #m alice").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("operator access"))));
     }
 
     // A registered channel (re)appearing re-asserts +r; an unregistered one does not.
@@ -1040,13 +1084,13 @@ mod tests {
         db.register_channel("#x", "alice").unwrap();
         let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
         let mut e = Engine::new(vec![Box::new(ns)], db);
-        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "host.example".into() });
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 
         let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#x".into() });
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#x" && modes == "+o 000AAAAAB")), "founder opped: {out:?}");
 
-        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "host.example".into() });
         assert!(e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#x".into() }).is_empty(), "non-founder not opped");
     }
 
@@ -1062,7 +1106,7 @@ mod tests {
         db.access_add("#y", "carol", "voice").unwrap();
         let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
         let mut e = Engine::new(vec![Box::new(ns)], db);
-        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "carol".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "carol".into(), host: "host.example".into() });
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 
         let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#y".into() });
