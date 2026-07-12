@@ -18,6 +18,14 @@ mod alist;
 mod set;
 #[path = "drop.rs"]
 mod drop;
+#[path = "group.rs"]
+mod group;
+#[path = "glist.rs"]
+mod glist;
+#[path = "ungroup.rs"]
+mod ungroup;
+#[path = "ghost.rs"]
+mod ghost;
 
 pub struct NickServ {
     pub uid: String,
@@ -52,7 +60,11 @@ impl Service for NickServ {
             Some("ALIST") => alist::handle(me, from, ctx, db),
             Some("SET") => set::handle(me, from, args, ctx, db),
             Some("DROP") => drop::handle(me, from, args, ctx, net, db),
-            Some("HELP") => ctx.notice(me, from.uid, "NickServ looks after your nickname. Commands: \x02REGISTER\x02 <password> [email], \x02IDENTIFY\x02 [account] <password>, \x02INFO\x02 [account], \x02ALIST\x02, \x02SET\x02 PASSWORD|EMAIL, \x02DROP\x02 <password>, \x02LOGOUT\x02, \x02CERT\x02 ADD|DEL|LIST <password> [fingerprint]."),
+            Some("GROUP") => group::handle(me, from, args, ctx, db),
+            Some("GLIST") => glist::handle(me, from, ctx, db),
+            Some("UNGROUP") => ungroup::handle(me, from, args, ctx, db),
+            Some("GHOST") | Some("RECOVER") => ghost::handle(me, &self.guest_nick, &mut self.guest_seq, from, args, ctx, net, db),
+            Some("HELP") => ctx.notice(me, from.uid, "NickServ looks after your nickname. Commands: \x02REGISTER\x02 <password> [email], \x02IDENTIFY\x02 [account] <password>, \x02INFO\x02 [account], \x02ALIST\x02, \x02GROUP\x02/\x02GLIST\x02/\x02UNGROUP\x02, \x02GHOST\x02 <nick> [password], \x02SET\x02 PASSWORD|EMAIL, \x02DROP\x02 <password>, \x02LOGOUT\x02, \x02CERT\x02 ADD|DEL|LIST <password> [fingerprint]."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
         }

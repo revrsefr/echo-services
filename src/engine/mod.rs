@@ -1190,6 +1190,40 @@ mod tests {
         assert!(e.db.channel("#a").is_none(), "founded channel gone");
     }
 
+    // GROUP links a nick to an account so it identifies there too; GLIST lists the
+    // aliases; UNGROUP removes one, after which the nick no longer resolves.
+    #[test]
+    fn nickserv_grouped_nicks() {
+        let mut e = engine_with("nsgroup", "alice", "sesame");
+        let to_ns = |e: &mut Engine, uid: &str, text: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: text.into() });
+        let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
+        // A user on a different nick groups it to alice by password.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "ali".into(), host: "h".into() });
+        assert!(notice(&to_ns(&mut e, "000AAAAAB", "GROUP alice sesame"), "grouped to \x02alice\x02"));
+        // Identifying as the grouped nick logs into alice.
+        let out = to_ns(&mut e, "000AAAAAB", "IDENTIFY sesame");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "alice")), "grouped nick identifies to alice: {out:?}");
+        assert!(notice(&to_ns(&mut e, "000AAAAAB", "GLIST"), "ali"));
+        // Ungroup it; a fresh session on that nick no longer resolves.
+        assert!(notice(&to_ns(&mut e, "000AAAAAB", "UNGROUP ali"), "no longer grouped"));
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "ali".into(), host: "h".into() });
+        assert!(notice(&to_ns(&mut e, "000AAAAAC", "IDENTIFY sesame"), "isn't registered"));
+    }
+
+    // GHOST renames off a session using a nick the caller owns.
+    #[test]
+    fn nickserv_ghost() {
+        let mut e = engine_with("nsghost", "alice", "sesame");
+        let to_ns = |e: &mut Engine, uid: &str, text: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: text.into() });
+        // A ghost sits on nick alice; the owner identifies from another nick.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "owner".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY alice sesame".into() });
+        let out = to_ns(&mut e, "000AAAAAC", "GHOST alice");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, .. } if uid == "000AAAAAB")), "ghost renamed off: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("freed"))), "{out:?}");
+    }
+
     // IDENTIFY accepts the two-arg account+password form: log into a named
     // account even when the current nick differs; a wrong password is refused.
     #[test]

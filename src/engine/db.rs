@@ -48,6 +48,8 @@ pub enum Event {
     AccountEmailSet { account: String, email: Option<String> },
     AccountPasswordSet { account: String, password_hash: String, scram256: String, scram512: String },
     AccountDropped { account: String },
+    NickGrouped { nick: String, account: String },
+    NickUngrouped { nick: String },
     ChannelRegistered { name: String, founder: String, ts: u64 },
     ChannelDropped { name: String },
     ChannelMlock { name: String, on: String, off: String },
@@ -78,7 +80,9 @@ impl Event {
             | Event::CertRemoved { .. }
             | Event::AccountEmailSet { .. }
             | Event::AccountPasswordSet { .. }
-            | Event::AccountDropped { .. } => Scope::Global,
+            | Event::AccountDropped { .. }
+            | Event::NickGrouped { .. }
+            | Event::NickUngrouped { .. } => Scope::Global,
             Event::ChannelRegistered { .. }
             | Event::ChannelDropped { .. }
             | Event::ChannelMlock { .. }
@@ -435,6 +439,7 @@ pub struct Credentials {
 pub struct Db {
     accounts: HashMap<String, Account>, // keyed by casefolded name
     channels: HashMap<String, ChannelInfo>, // keyed by casefolded name
+    grouped: HashMap<String, String>, // casefolded alias nick -> canonical account name
     log: EventLog,
     // PBKDF2 cost baked into new SCRAM verifiers; lowered by tests.
     pub(crate) scram_iterations: u32,
@@ -472,11 +477,12 @@ impl Db {
         let (log, events) = EventLog::open(path.into(), origin.into());
         let mut accounts = HashMap::new();
         let mut channels = HashMap::new();
+        let mut grouped = HashMap::new();
         for event in events {
-            apply(&mut accounts, &mut channels, event);
+            apply(&mut accounts, &mut channels, &mut grouped, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, log, scram_iterations: scram::DEFAULT_ITERATIONS }
+        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS }
     }
 
     /// Fold an entry authored by another node into the store — the services-side
@@ -492,7 +498,7 @@ impl Db {
             _ => None,
         };
         if let Some(event) = self.log.ingest(entry)? {
-            apply(&mut self.accounts, &mut self.channels, event);
+            apply(&mut self.accounts, &mut self.channels, &mut self.grouped, event);
         }
         if let Some((name, prev_home)) = watched {
             match (prev_home, self.account(&name).map(|c| c.home.clone())) {
@@ -526,6 +532,9 @@ impl Db {
                 snapshot.push(Event::ChannelEntryMsgSet { channel: c.name.clone(), msg: c.entrymsg.clone() });
             }
         }
+        for (nick, account) in &self.grouped {
+            snapshot.push(Event::NickGrouped { nick: nick.clone(), account: account.clone() });
+        }
         self.log.compact(snapshot)?;
         tracing::info!(before, after = self.log.len(), "compacted event log");
         Ok(())
@@ -552,7 +561,49 @@ impl Db {
     }
 
     pub fn exists(&self, name: &str) -> bool {
-        self.accounts.contains_key(&key(name))
+        self.resolved_key(name).is_some()
+    }
+
+    // Resolve a name (a registered account, or a nick grouped to one) to the
+    // owning account's storage key.
+    fn resolved_key(&self, name: &str) -> Option<String> {
+        let k = key(name);
+        if self.accounts.contains_key(&k) {
+            return Some(k);
+        }
+        self.grouped.get(&k).map(|acct| key(acct))
+    }
+
+    /// The canonical account name for `name`, whether it is the account itself or
+    /// a nick grouped to it.
+    pub fn resolve_account(&self, name: &str) -> Option<&str> {
+        let k = self.resolved_key(name)?;
+        self.accounts.get(&k).map(|a| a.name.as_str())
+    }
+
+    /// Group alias `nick` to an existing `account`.
+    pub fn group_nick(&mut self, nick: &str, account: &str) -> Result<(), RegError> {
+        if !self.accounts.contains_key(&key(account)) {
+            return Err(RegError::Internal);
+        }
+        self.log.append(Event::NickGrouped { nick: nick.to_string(), account: account.to_string() }).map_err(|_| RegError::Internal)?;
+        self.grouped.insert(key(nick), account.to_string());
+        Ok(())
+    }
+
+    /// Remove grouped alias `nick`. Ok(false) if it wasn't grouped.
+    pub fn ungroup_nick(&mut self, nick: &str) -> Result<bool, RegError> {
+        if !self.grouped.contains_key(&key(nick)) {
+            return Ok(false);
+        }
+        self.log.append(Event::NickUngrouped { nick: nick.to_string() }).map_err(|_| RegError::Internal)?;
+        self.grouped.remove(&key(nick));
+        Ok(true)
+    }
+
+    /// The alias nicks grouped to `account` (not the account name itself).
+    pub fn grouped_nicks(&self, account: &str) -> Vec<String> {
+        self.grouped.iter().filter(|(_, a)| a.eq_ignore_ascii_case(account)).map(|(nick, _)| nick.clone()).collect()
     }
 
     /// Derive the password-bound half of an account. Pure and CPU-heavy (no
@@ -602,13 +653,13 @@ impl Db {
     /// Check credentials; on success return the account's canonical name (its
     /// stored casing), else None.
     pub fn authenticate(&self, name: &str, password: &str) -> Option<&str> {
-        let account = self.accounts.get(&key(name))?;
+        let account = self.accounts.get(&self.resolved_key(name)?)?;
         verify_password(password, &account.password_hash).then_some(account.name.as_str())
     }
 
     /// The account's canonical name and its SCRAM verifier for `mech`, if any.
     pub fn scram_lookup(&self, name: &str, mech: &str) -> Option<(&str, &str)> {
-        let account = self.accounts.get(&key(name))?;
+        let account = self.accounts.get(&self.resolved_key(name)?)?;
         let verifier = match mech {
             "SCRAM-SHA-256" => account.scram256.as_deref(),
             "SCRAM-SHA-512" => account.scram512.as_deref(),
@@ -882,7 +933,7 @@ fn owns_over(held: &Account, claim: &Account) -> bool {
 
 // Fold one event into the store. Shared by log replay (`open`) and gossip
 // ingest, so both routes reconstruct identical state.
-fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String, ChannelInfo>, event: Event) {
+fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String, ChannelInfo>, grouped: &mut HashMap<String, String>, event: Event) {
     match event {
         Event::AccountRegistered(a) => {
             // Resolve a concurrent registration of the same name deterministically:
@@ -920,6 +971,13 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         }
         Event::AccountDropped { account } => {
             accounts.remove(&key(&account));
+            grouped.retain(|_, a| !a.eq_ignore_ascii_case(&account)); // its aliases go too
+        }
+        Event::NickGrouped { nick, account } => {
+            grouped.insert(key(&nick), account);
+        }
+        Event::NickUngrouped { nick } => {
+            grouped.remove(&key(&nick));
         }
         Event::ChannelRegistered { name, founder, ts } => {
             channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new() });
@@ -1052,9 +1110,9 @@ mod tests {
             ts, home: home.into(), scram256: None, scram512: None, certfps: vec![],
         };
         let converge = |first: &Account, second: &Account| {
-            let (mut acc, mut ch) = (HashMap::new(), HashMap::new());
-            apply(&mut acc, &mut ch, Event::AccountRegistered(first.clone()));
-            apply(&mut acc, &mut ch, Event::AccountRegistered(second.clone()));
+            let (mut acc, mut ch, mut gr) = (HashMap::new(), HashMap::new(), HashMap::new());
+            apply(&mut acc, &mut ch, &mut gr, Event::AccountRegistered(first.clone()));
+            apply(&mut acc, &mut ch, &mut gr, Event::AccountRegistered(second.clone()));
             acc["alice"].password_hash.clone()
         };
         // Earlier registration wins, regardless of which claim applies first.
