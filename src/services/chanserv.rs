@@ -34,7 +34,10 @@ impl Service for ChanServ {
                     return;
                 };
                 match db.register_channel(chan, account) {
-                    Ok(()) => ctx.notice(me, from.uid, format!("Channel \x02{chan}\x02 is now registered to \x02{account}\x02.")),
+                    Ok(()) => {
+                        ctx.channel_mode(chan, "+r"); // mark the channel registered
+                        ctx.notice(me, from.uid, format!("Channel \x02{chan}\x02 is now registered to \x02{account}\x02."));
+                    }
                     Err(ChanError::Exists) => ctx.notice(me, from.uid, format!("\x02{chan}\x02 is already registered.")),
                     Err(_) => ctx.notice(me, from.uid, "Registration failed, please try again later."),
                 }
@@ -67,7 +70,10 @@ impl Service for ChanServ {
                     return;
                 }
                 match db.drop_channel(chan) {
-                    Ok(()) => ctx.notice(me, from.uid, format!("Channel \x02{chan}\x02 has been dropped.")),
+                    Ok(()) => {
+                        ctx.channel_mode(chan, "-r"); // no longer registered
+                        ctx.notice(me, from.uid, format!("Channel \x02{chan}\x02 has been dropped."));
+                    }
                     Err(_) => ctx.notice(me, from.uid, "Drop failed, please try again later."),
                 }
             }

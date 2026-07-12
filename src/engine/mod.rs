@@ -922,16 +922,20 @@ mod tests {
         // Not identified yet: refused.
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "REGISTER #room"), "must be identified"));
 
-        // Identify, then register.
+        // Identify, then register: sets +r on the channel.
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        assert!(notice(&to_cs(&mut e, "000AAAAAB", "REGISTER #room"), "now registered"));
+        let out = to_cs(&mut e, "000AAAAAB", "REGISTER #room");
+        assert!(notice(&out, "now registered"));
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes } if channel == "#room" && modes == "+r")), "register sets +r: {out:?}");
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "INFO #room"), "alice"));
 
         // A different, unidentified user cannot drop it.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into() });
         assert!(notice(&to_cs(&mut e, "000AAAAAC", "DROP #room"), "founder"));
 
-        // The founder can.
-        assert!(notice(&to_cs(&mut e, "000AAAAAB", "DROP #room"), "dropped"));
+        // The founder can, which also clears +r.
+        let out = to_cs(&mut e, "000AAAAAB", "DROP #room");
+        assert!(notice(&out, "dropped"));
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes } if channel == "#room" && modes == "-r")), "drop clears +r: {out:?}");
     }
 }

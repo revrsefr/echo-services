@@ -179,6 +179,12 @@ impl Protocol for InspIrcd {
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(self.ts);
                 vec![self.from_us(format!("SVSNICK {} {} {}", uid, nick, now))]
             }
+            // FMODE <chan> <ts> <modes>. The ircd drops an FMODE whose TS is newer
+            // than the channel's, so we send TS 1 to guarantee it applies to the
+            // existing channel. Sourced from our server, which +r requires.
+            NetAction::ChannelMode { channel, modes } => {
+                vec![self.from_us(format!("FMODE {} 1 {}", channel, modes))]
+            }
             NetAction::Raw(s) => vec![s.clone()],
             // Internal: the link layer handles this before serialization.
             NetAction::DeferRegister { .. } => vec![],

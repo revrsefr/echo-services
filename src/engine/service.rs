@@ -74,4 +74,12 @@ impl ServiceCtx {
             nick: nick.to_string(),
         });
     }
+
+    // Set channel modes from services, e.g. "+r" on a registered channel.
+    pub fn channel_mode(&mut self, channel: &str, modes: &str) {
+        self.actions.push(NetAction::ChannelMode {
+            channel: channel.to_string(),
+            modes: modes.to_string(),
+        });
+    }
 }
