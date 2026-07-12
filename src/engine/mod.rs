@@ -68,6 +68,18 @@ enum ScramStep {
     },
 }
 
+// Outcome of an authority-originated account operation (see grpc.rs and the
+// `authority_*` methods below).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorityStatus {
+    Ok,
+    AlreadyExists,
+    NotFound,
+    RateLimited,
+    Invalid,
+    Internal,
+}
+
 pub struct Engine {
     services: Vec<Box<dyn Service>>,
     network: Network,
@@ -125,6 +137,125 @@ impl Engine {
     // A full read of current directory state, for the gRPC Snapshot RPC.
     pub fn directory_snapshot(&self) -> (Vec<db::Account>, Vec<db::ChannelInfo>) {
         (self.db.accounts().cloned().collect(), self.db.channels().cloned().collect())
+    }
+
+    // ── Account authority (see grpc.rs) ─────────────────────────────────────
+    // A trusted caller (e.g. a website backend that already did its own login
+    // check) managing accounts the same way an IRC user does through NickServ,
+    // minus the command syntax. The bearer token on the gRPC side IS the
+    // authorization: unlike the mirrored NickServ commands, these do NOT
+    // re-check the account's own password — Register and Authenticate are the
+    // two exceptions, since the password is the actual input there.
+
+    pub fn authority_pre_check(&mut self, name: &str) -> Result<(), AuthorityStatus> {
+        if self.db.exists(name) {
+            return Err(AuthorityStatus::AlreadyExists);
+        }
+        if !self.reg_limiter.allow() {
+            return Err(AuthorityStatus::RateLimited);
+        }
+        Ok(())
+    }
+
+    pub fn authority_register(&mut self, name: &str, creds: Option<db::Credentials>, email: Option<String>) -> AuthorityStatus {
+        let Some(creds) = creds else { return AuthorityStatus::Internal };
+        let addr = email.clone();
+        let status = match self.db.register_prepared(name, creds, email) {
+            Ok(()) => AuthorityStatus::Ok,
+            Err(RegError::Exists) => AuthorityStatus::AlreadyExists,
+            Err(RegError::Internal) => AuthorityStatus::Internal,
+        };
+        if status == AuthorityStatus::Ok && !self.db.is_verified(name) {
+            if let Some(addr) = addr {
+                let code = self.db.issue_code(name, db::CodeKind::Confirm);
+                let mail = crate::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), name, &code);
+                self.emit_irc(NetAction::SendEmail { to: addr, subject: mail.subject, text: mail.text, html: Some(mail.html) });
+            }
+        }
+        status
+    }
+
+    pub fn authority_authenticate(&self, name: &str, password: &str) -> Option<String> {
+        self.db.authenticate(name, password).map(str::to_string)
+    }
+
+    pub fn authority_set_password(&mut self, account: &str, creds: Option<db::Credentials>) -> AuthorityStatus {
+        let Some(creds) = creds else { return AuthorityStatus::Internal };
+        // set_credentials's only Err is Internal, which here always means "no such account".
+        match self.db.set_credentials(account, creds) {
+            Ok(()) => AuthorityStatus::Ok,
+            Err(_) => AuthorityStatus::NotFound,
+        }
+    }
+
+    pub fn authority_set_email(&mut self, account: &str, email: Option<String>) -> AuthorityStatus {
+        match self.db.set_email(account, email) {
+            Ok(()) => AuthorityStatus::Ok,
+            Err(_) => AuthorityStatus::NotFound,
+        }
+    }
+
+    pub fn authority_confirm(&mut self, account: &str, code: &str) -> AuthorityStatus {
+        if !self.db.exists(account) {
+            return AuthorityStatus::NotFound;
+        }
+        if self.db.is_verified(account) {
+            return AuthorityStatus::Ok; // already confirmed — idempotent, not an error
+        }
+        if !self.db.take_code(account, db::CodeKind::Confirm, code) {
+            return AuthorityStatus::Invalid;
+        }
+        match self.db.verify_account(account) {
+            Ok(()) => AuthorityStatus::Ok,
+            Err(_) => AuthorityStatus::Internal,
+        }
+    }
+
+    // Drop reuses the exact cleanup a peer's gossiped drop already triggers
+    // locally (channel release + session logout) — see `handle_account_gone`.
+    pub fn authority_drop(&mut self, account: &str) -> AuthorityStatus {
+        match self.db.drop_account(account) {
+            Ok(true) => {
+                self.handle_account_gone(account, "was dropped");
+                AuthorityStatus::Ok
+            }
+            Ok(false) => AuthorityStatus::NotFound,
+            Err(_) => AuthorityStatus::Internal,
+        }
+    }
+
+    // Unlike Drop, the account itself is untouched — only its active IRC
+    // sessions are logged out (no channel cleanup, this isn't "account gone").
+    pub fn authority_force_logout(&mut self, account: &str) -> u32 {
+        let victims = self.network.uids_logged_into(account);
+        let n = victims.len() as u32;
+        let ns = self.nick_service.clone();
+        for uid in victims {
+            self.network.clear_account(&uid);
+            self.emit_irc(NetAction::Metadata { target: uid.clone(), key: "accountname".to_string(), value: String::new() });
+            if let Some(ns) = &ns {
+                self.emit_irc(NetAction::Notice { from: ns.clone(), to: uid, text: format!("You have been logged out of \x02{account}\x02.") });
+            }
+        }
+        n
+    }
+
+    pub fn authority_group_nick(&mut self, nick: &str, account: &str) -> AuthorityStatus {
+        if self.db.account(nick).is_some() {
+            return AuthorityStatus::Invalid; // nick is itself a registered account
+        }
+        match self.db.group_nick(nick, account) {
+            Ok(()) => AuthorityStatus::Ok,
+            Err(_) => AuthorityStatus::NotFound, // group_nick's only Err means the account doesn't exist
+        }
+    }
+
+    pub fn authority_ungroup_nick(&mut self, nick: &str) -> AuthorityStatus {
+        match self.db.ungroup_nick(nick) {
+            Ok(true) => AuthorityStatus::Ok,
+            Ok(false) => AuthorityStatus::NotFound,
+            Err(_) => AuthorityStatus::Internal,
+        }
     }
 
     pub fn gossip_ingest(&mut self, entry: LogEntry) -> std::io::Result<()> {
@@ -188,6 +319,13 @@ impl Engine {
     #[cfg(test)]
     pub(crate) fn test_register(&mut self, name: &str) {
         self.db.register(name, "pw", None).unwrap();
+    }
+
+    // Simulate a uid being logged into `account`, for tests that need
+    // `authority_force_logout` to have a live session to clear.
+    #[cfg(test)]
+    pub(crate) fn test_login(&mut self, uid: &str, account: &str) {
+        self.network.set_account(uid, account);
     }
 
     #[cfg(test)]

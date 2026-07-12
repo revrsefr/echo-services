@@ -83,3 +83,58 @@ message ChannelRegistered { string name = 1; string founder = 2; uint64 register
 message ChannelDropped { string name = 1; }
 message ChannelFounderSet { string name = 1; string founder = 2; }
 message ChannelDescSet { string name = 1; string description = 2; }
+
+// Account authority API: the write side, for a trusted caller (e.g. a website's
+// own backend, already having done its own login/session check) to manage
+// accounts the same way an IRC user does through NickServ — registration,
+// credentials, grouping, and forced logout. The bearer token IS the
+// authorization: unlike the NickServ commands these mirror, most calls here do
+// NOT re-check the account's own password (the caller is trusted, the same
+// model as an admin-level override) — Register and Authenticate are the two
+// exceptions, since the password is the actual input/question there.
+// A write committed here replicates to every other fedserv node exactly like
+// an IRC-originated one does — gossip doesn't know or care where it came from.
+service Accounts {
+  rpc Register(RegisterRequest) returns (AccountReply);
+  rpc Authenticate(AuthenticateRequest) returns (AuthenticateReply);
+  rpc SetPassword(SetPasswordRequest) returns (AccountReply);
+  rpc SetEmail(SetEmailRequest) returns (AccountReply);
+  rpc Confirm(ConfirmRequest) returns (AccountReply);
+  rpc Drop(DropRequest) returns (AccountReply);
+  rpc ForceLogout(ForceLogoutRequest) returns (ForceLogoutReply);
+  rpc GroupNick(GroupNickRequest) returns (AccountReply);
+  rpc UngroupNick(UngroupNickRequest) returns (AccountReply);
+}
+
+enum Status {
+  OK = 0;
+  ALREADY_EXISTS = 1;
+  NOT_FOUND = 2;
+  RATE_LIMITED = 3;
+  INVALID = 4;    // bad password/code/input, or a name-shaped invariant violation
+  INTERNAL = 5;
+}
+
+message AccountReply {
+  Status status = 1;
+  string message = 2; // human-readable detail, safe to show a user
+}
+
+message RegisterRequest { string name = 1; string password = 2; string email = 3; }
+
+message AuthenticateRequest { string name = 1; string password = 2; }
+message AuthenticateReply {
+  Status status = 1;
+  string account = 2; // canonical account name (resolves a grouped-nick alias)
+}
+
+message SetPasswordRequest { string account = 1; string password = 2; }
+message SetEmailRequest { string account = 1; string email = 2; } // empty = clear
+message ConfirmRequest { string account = 1; string code = 2; }
+message DropRequest { string account = 1; }
+
+message ForceLogoutRequest { string account = 1; }
+message ForceLogoutReply { Status status = 1; uint32 sessions_cleared = 2; }
+
+message GroupNickRequest { string nick = 1; string account = 2; }
+message UngroupNickRequest { string nick = 1; }

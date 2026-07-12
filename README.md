@@ -43,6 +43,19 @@ SCRAM verifiers, cert fingerprints) and the finer channel-ops-list events
 authenticated, optional server TLS. Omit `[grpc]` in config.toml to run
 without it.
 
+The same port also serves **`Accounts`**, the write side: `Register`,
+`Authenticate`, `SetPassword`, `SetEmail`, `Confirm`, `Drop`, `ForceLogout`,
+`GroupNick`, `UngroupNick` — a trusted caller (e.g. a website's own backend,
+already having done its own login/session check) managing accounts the same
+way an IRC user does through NickServ, minus the command syntax. The bearer
+token *is* the authorization: unlike the NickServ commands these mirror, most
+calls do not re-check the account's own password (an admin-level override, the
+same trust model a JSON-RPC integration to another services package would
+use) — `Register` and `Authenticate` are the two exceptions, since the
+password is the actual input there. A write committed this way replicates to
+every other fedserv node exactly like an IRC-originated one does — gossip
+doesn't know or care where it came from.
+
 ## Config
 
 ```toml

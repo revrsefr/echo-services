@@ -13,19 +13,22 @@ use tonic::transport::{Identity, Server, ServerTlsConfig};
 use tonic::{Request, Response, Status};
 
 use crate::config::Grpc as GrpcCfg;
-use crate::engine::db::{Account, ChannelInfo, Event, LogEntry};
-use crate::engine::Engine;
+use crate::engine::db::{Account, ChannelInfo, Db, Event, LogEntry};
+use crate::engine::{AuthorityStatus, Engine};
 
 pub mod pb {
     tonic::include_proto!("fedserv.v1");
 }
 
+use pb::accounts_server::{Accounts, AccountsServer};
 use pb::directory_server::{Directory, DirectoryServer};
 use pb::replication_event::Kind;
 use pb::{
-    AccountDropped, AccountEmailSet, AccountRecord, AccountRegistered, AccountVerified, ChannelDescSet,
-    ChannelDropped, ChannelFounderSet, ChannelRecord, ChannelRegistered, NickGrouped, NickUngrouped,
-    ReplicationEvent, SnapshotRequest, SnapshotResponse, SubscribeRequest,
+    AccountDropped, AccountEmailSet, AccountRecord, AccountRegistered, AccountReply, AccountVerified,
+    AuthenticateReply, AuthenticateRequest, ChannelDescSet, ChannelDropped, ChannelFounderSet, ChannelRecord,
+    ChannelRegistered, ConfirmRequest, DropRequest, ForceLogoutReply, ForceLogoutRequest, GroupNickRequest,
+    NickGrouped, NickUngrouped, RegisterRequest, ReplicationEvent, SetEmailRequest, SetPasswordRequest,
+    SnapshotRequest, SnapshotResponse, Status as PbStatus, SubscribeRequest, UngroupNickRequest,
 };
 
 type Shared = Arc<Mutex<Engine>>;
@@ -34,29 +37,42 @@ type Shared = Arc<Mutex<Engine>>;
 // blocking the broadcast (matches the gossip outbound channel's own sizing).
 const SUBSCRIBER_BUFFER: usize = 1024;
 
+// Every RPC (both services) needs `authorization: Bearer <token>` matching the
+// configured secret. Constant-time compare — same posture as password/secret
+// checks elsewhere in this codebase, cheap insurance against a timing side-channel.
+fn authorize<T>(req: &Request<T>, token: &str) -> Result<(), Status> {
+    let got = req
+        .metadata()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or("");
+    if got.as_bytes().ct_eq(token.as_bytes()).into() {
+        Ok(())
+    } else {
+        Err(Status::unauthenticated("bad or missing bearer token"))
+    }
+}
+
+fn status_of(s: AuthorityStatus) -> PbStatus {
+    match s {
+        AuthorityStatus::Ok => PbStatus::Ok,
+        AuthorityStatus::AlreadyExists => PbStatus::AlreadyExists,
+        AuthorityStatus::NotFound => PbStatus::NotFound,
+        AuthorityStatus::RateLimited => PbStatus::RateLimited,
+        AuthorityStatus::Invalid => PbStatus::Invalid,
+        AuthorityStatus::Internal => PbStatus::Internal,
+    }
+}
+
+fn reply(s: AuthorityStatus, message: impl Into<String>) -> AccountReply {
+    AccountReply { status: status_of(s) as i32, message: message.into() }
+}
+
 struct DirectoryService {
     engine: Shared,
     outbound: broadcast::Sender<LogEntry>,
     token: String,
-}
-
-impl DirectoryService {
-    // Every RPC needs `authorization: Bearer <token>` matching the configured
-    // secret. Constant-time compare — same posture as password/secret checks
-    // elsewhere in this codebase, cheap insurance against a timing side-channel.
-    fn authorize<T>(&self, req: &Request<T>) -> Result<(), Status> {
-        let got = req
-            .metadata()
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .unwrap_or("");
-        if got.as_bytes().ct_eq(self.token.as_bytes()).into() {
-            Ok(())
-        } else {
-            Err(Status::unauthenticated("bad or missing bearer token"))
-        }
-    }
 }
 
 fn account_record(a: &Account) -> AccountRecord {
@@ -119,7 +135,7 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
 #[tonic::async_trait]
 impl Directory for DirectoryService {
     async fn snapshot(&self, req: Request<SnapshotRequest>) -> Result<Response<SnapshotResponse>, Status> {
-        self.authorize(&req)?;
+        authorize(&req, &self.token)?;
         let (accounts, channels) = self.engine.lock().await.directory_snapshot();
         Ok(Response::new(SnapshotResponse {
             accounts: accounts.iter().map(account_record).collect(),
@@ -130,7 +146,7 @@ impl Directory for DirectoryService {
     type SubscribeStream = Pin<Box<dyn Stream<Item = Result<ReplicationEvent, Status>> + Send + 'static>>;
 
     async fn subscribe(&self, req: Request<SubscribeRequest>) -> Result<Response<Self::SubscribeStream>, Status> {
-        self.authorize(&req)?;
+        authorize(&req, &self.token)?;
         let mut rx = self.outbound.subscribe();
         let (tx, out) = tokio::sync::mpsc::channel(SUBSCRIBER_BUFFER);
         tokio::spawn(async move {
@@ -159,6 +175,110 @@ impl Directory for DirectoryService {
     }
 }
 
+struct AccountsService {
+    engine: Shared,
+    token: String,
+}
+
+#[tonic::async_trait]
+impl Accounts for AccountsService {
+    async fn register(&self, req: Request<RegisterRequest>) -> Result<Response<AccountReply>, Status> {
+        authorize(&req, &self.token)?;
+        let msg = req.into_inner();
+        if msg.name.is_empty() || msg.password.is_empty() {
+            return Ok(Response::new(reply(AuthorityStatus::Invalid, "name and password are required")));
+        }
+        // Cheap checks (exists / rate limit) before paying for derivation.
+        if let Err(status) = self.engine.lock().await.authority_pre_check(&msg.name) {
+            return Ok(Response::new(reply(status, "cannot register that name right now")));
+        }
+        // Expensive Argon2/SCRAM derivation runs off the shared engine lock, same
+        // as an IRC-originated REGISTER (see link.rs's DeferRegister handling).
+        let iterations = self.engine.lock().await.scram_iterations();
+        let password = msg.password.clone();
+        let creds = tokio::task::spawn_blocking(move || Db::derive_credentials(&password, iterations)).await.unwrap_or(None);
+        let email = if msg.email.is_empty() { None } else { Some(msg.email) };
+        let status = self.engine.lock().await.authority_register(&msg.name, creds, email);
+        Ok(Response::new(reply(status, describe(status))))
+    }
+
+    async fn authenticate(&self, req: Request<AuthenticateRequest>) -> Result<Response<AuthenticateReply>, Status> {
+        authorize(&req, &self.token)?;
+        let msg = req.into_inner();
+        match self.engine.lock().await.authority_authenticate(&msg.name, &msg.password) {
+            Some(account) => Ok(Response::new(AuthenticateReply { status: PbStatus::Ok as i32, account })),
+            None => Ok(Response::new(AuthenticateReply { status: PbStatus::Invalid as i32, account: String::new() })),
+        }
+    }
+
+    async fn set_password(&self, req: Request<SetPasswordRequest>) -> Result<Response<AccountReply>, Status> {
+        authorize(&req, &self.token)?;
+        let msg = req.into_inner();
+        if msg.password.is_empty() {
+            return Ok(Response::new(reply(AuthorityStatus::Invalid, "password is required")));
+        }
+        let iterations = self.engine.lock().await.scram_iterations();
+        let password = msg.password.clone();
+        let creds = tokio::task::spawn_blocking(move || Db::derive_credentials(&password, iterations)).await.unwrap_or(None);
+        let status = self.engine.lock().await.authority_set_password(&msg.account, creds);
+        Ok(Response::new(reply(status, describe(status))))
+    }
+
+    async fn set_email(&self, req: Request<SetEmailRequest>) -> Result<Response<AccountReply>, Status> {
+        authorize(&req, &self.token)?;
+        let msg = req.into_inner();
+        let email = if msg.email.is_empty() { None } else { Some(msg.email) };
+        let status = self.engine.lock().await.authority_set_email(&msg.account, email);
+        Ok(Response::new(reply(status, describe(status))))
+    }
+
+    async fn confirm(&self, req: Request<ConfirmRequest>) -> Result<Response<AccountReply>, Status> {
+        authorize(&req, &self.token)?;
+        let msg = req.into_inner();
+        let status = self.engine.lock().await.authority_confirm(&msg.account, &msg.code);
+        Ok(Response::new(reply(status, describe(status))))
+    }
+
+    async fn drop(&self, req: Request<DropRequest>) -> Result<Response<AccountReply>, Status> {
+        authorize(&req, &self.token)?;
+        let msg = req.into_inner();
+        let status = self.engine.lock().await.authority_drop(&msg.account);
+        Ok(Response::new(reply(status, describe(status))))
+    }
+
+    async fn force_logout(&self, req: Request<ForceLogoutRequest>) -> Result<Response<ForceLogoutReply>, Status> {
+        authorize(&req, &self.token)?;
+        let msg = req.into_inner();
+        let cleared = self.engine.lock().await.authority_force_logout(&msg.account);
+        Ok(Response::new(ForceLogoutReply { status: PbStatus::Ok as i32, sessions_cleared: cleared }))
+    }
+
+    async fn group_nick(&self, req: Request<GroupNickRequest>) -> Result<Response<AccountReply>, Status> {
+        authorize(&req, &self.token)?;
+        let msg = req.into_inner();
+        let status = self.engine.lock().await.authority_group_nick(&msg.nick, &msg.account);
+        Ok(Response::new(reply(status, describe(status))))
+    }
+
+    async fn ungroup_nick(&self, req: Request<UngroupNickRequest>) -> Result<Response<AccountReply>, Status> {
+        authorize(&req, &self.token)?;
+        let msg = req.into_inner();
+        let status = self.engine.lock().await.authority_ungroup_nick(&msg.nick);
+        Ok(Response::new(reply(status, describe(status))))
+    }
+}
+
+fn describe(s: AuthorityStatus) -> &'static str {
+    match s {
+        AuthorityStatus::Ok => "ok",
+        AuthorityStatus::AlreadyExists => "that name is already registered",
+        AuthorityStatus::NotFound => "no such account",
+        AuthorityStatus::RateLimited => "too many requests right now, try again shortly",
+        AuthorityStatus::Invalid => "invalid request",
+        AuthorityStatus::Internal => "internal error",
+    }
+}
+
 // Start the listener, if configured. Absent [grpc] in config.toml = no-op, same
 // pattern as gossip being optional.
 pub async fn run(engine: Shared, cfg: GrpcCfg, outbound: broadcast::Sender<LogEntry>) {
@@ -167,7 +287,8 @@ pub async fn run(engine: Shared, cfg: GrpcCfg, outbound: broadcast::Sender<LogEn
         Err(e) => return tracing::error!(%e, bind = %cfg.bind, "bad grpc bind address"),
     };
     let has_tls = cfg.tls.is_some();
-    let svc = DirectoryService { engine, outbound, token: cfg.token };
+    let accounts_svc = AccountsService { engine: engine.clone(), token: cfg.token.clone() };
+    let directory_svc = DirectoryService { engine, outbound, token: cfg.token };
     let mut server = Server::builder();
     if let Some(tls) = &cfg.tls {
         let (cert, key) = match (std::fs::read(&tls.cert), std::fs::read(&tls.key)) {
@@ -180,8 +301,13 @@ pub async fn run(engine: Shared, cfg: GrpcCfg, outbound: broadcast::Sender<LogEn
             Err(e) => return tracing::error!(%e, "grpc TLS setup failed"),
         };
     }
-    tracing::info!(%addr, tls = has_tls, "grpc directory API listening");
-    if let Err(e) = server.add_service(DirectoryServer::new(svc)).serve(addr).await {
+    tracing::info!(%addr, tls = has_tls, "grpc directory + accounts API listening");
+    if let Err(e) = server
+        .add_service(DirectoryServer::new(directory_svc))
+        .add_service(AccountsServer::new(accounts_svc))
+        .serve(addr)
+        .await
+    {
         tracing::error!(%e, "grpc server exited");
     }
 }
@@ -307,5 +433,198 @@ mod tests {
             Some(Kind::AccountRegistered(a)) => assert_eq!(a.name, "bob"),
             other => panic!("expected AccountRegistered, got {other:?}"),
         }
+    }
+
+    fn accounts_svc(engine: Shared) -> AccountsService {
+        AccountsService { engine, token: "t".into() }
+    }
+
+    #[tokio::test]
+    async fn register_then_authenticate_round_trips() {
+        let (engine, _tx) = engine_with("acct-register");
+        let svc = accounts_svc(engine);
+
+        let reg = svc
+            .register(authed(RegisterRequest { name: "carol".into(), password: "hunter2".into(), email: String::new() }, "t"))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(reg.status, PbStatus::Ok as i32);
+
+        // Registering again is rejected, not silently overwritten.
+        let dup = svc
+            .register(authed(RegisterRequest { name: "carol".into(), password: "other".into(), email: String::new() }, "t"))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(dup.status, PbStatus::AlreadyExists as i32);
+
+        let ok = svc
+            .authenticate(authed(AuthenticateRequest { name: "carol".into(), password: "hunter2".into() }, "t"))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(ok.status, PbStatus::Ok as i32);
+        assert_eq!(ok.account, "carol");
+
+        let bad = svc
+            .authenticate(authed(AuthenticateRequest { name: "carol".into(), password: "wrong".into() }, "t"))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(bad.status, PbStatus::Invalid as i32);
+    }
+
+    #[tokio::test]
+    async fn register_rejects_a_bad_bearer_token() {
+        let (engine, _tx) = engine_with("acct-auth");
+        let svc = accounts_svc(engine);
+        let err = svc
+            .register(authed(RegisterRequest { name: "dave".into(), password: "x".into(), email: String::new() }, "wrong"))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
+    }
+
+    #[tokio::test]
+    async fn set_password_replaces_credentials() {
+        let (engine, _tx) = engine_with("acct-setpw");
+        let svc = accounts_svc(engine);
+        svc.register(authed(RegisterRequest { name: "erin".into(), password: "first".into(), email: String::new() }, "t")).await.unwrap();
+
+        let status = svc
+            .set_password(authed(SetPasswordRequest { account: "erin".into(), password: "second".into() }, "t"))
+            .await
+            .unwrap()
+            .into_inner()
+            .status;
+        assert_eq!(status, PbStatus::Ok as i32);
+
+        let old = svc.authenticate(authed(AuthenticateRequest { name: "erin".into(), password: "first".into() }, "t")).await.unwrap().into_inner();
+        assert_eq!(old.status, PbStatus::Invalid as i32, "the old password must stop working");
+        let new = svc.authenticate(authed(AuthenticateRequest { name: "erin".into(), password: "second".into() }, "t")).await.unwrap().into_inner();
+        assert_eq!(new.status, PbStatus::Ok as i32);
+
+        let missing = svc
+            .set_password(authed(SetPasswordRequest { account: "nobody".into(), password: "x".into() }, "t"))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(missing.status, PbStatus::NotFound as i32);
+    }
+
+    #[tokio::test]
+    async fn set_email_updates_and_clears() {
+        let (engine, _tx) = engine_with("acct-setemail");
+        let svc = accounts_svc(engine.clone());
+        svc.register(authed(RegisterRequest { name: "frank".into(), password: "x".into(), email: String::new() }, "t")).await.unwrap();
+
+        svc.set_email(authed(SetEmailRequest { account: "frank".into(), email: "frank@example.com".into() }, "t")).await.unwrap();
+        assert_eq!(engine.lock().await.directory_snapshot().0[0].email.as_deref(), Some("frank@example.com"));
+
+        svc.set_email(authed(SetEmailRequest { account: "frank".into(), email: String::new() }, "t")).await.unwrap();
+        assert_eq!(engine.lock().await.directory_snapshot().0[0].email, None, "empty string clears the email");
+    }
+
+    // Full round trip through the real confirmation-email pipeline: register with
+    // email confirmation on, capture the code fedserv actually emails out (never
+    // returned by the RPC — proving the caller can't skip owning the inbox), then
+    // confirm with it.
+    #[tokio::test]
+    async fn confirm_completes_with_the_real_emailed_code() {
+        let path = std::env::temp_dir().join("fedserv-grpc-acct-confirm.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let (tx, _) = broadcast::channel(1024);
+        let mut db = Db::open(&path, "A");
+        db.scram_iterations = 4096;
+        db.set_outbound(tx);
+        db.set_email_enabled(true);
+        let ns = NickServ { uid: "AAAAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let engine: Shared = Arc::new(Mutex::new(Engine::new(vec![Box::new(ns)], db)));
+
+        let (irc_tx, mut irc_rx) = tokio::sync::mpsc::unbounded_channel();
+        engine.lock().await.set_irc_out(irc_tx);
+
+        let svc = accounts_svc(engine.clone());
+        let reg = svc
+            .register(authed(RegisterRequest { name: "gina".into(), password: "x".into(), email: "gina@example.com".into() }, "t"))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(reg.status, PbStatus::Ok as i32);
+        assert!(!engine.lock().await.directory_snapshot().0[0].verified, "unverified until confirmed");
+
+        let mail_text = loop {
+            match irc_rx.try_recv() {
+                Ok(crate::proto::NetAction::SendEmail { text, .. }) => break text,
+                Ok(_) => continue,
+                Err(_) => panic!("no confirmation email was queued"),
+            }
+        };
+        let code = mail_text.split("CONFIRM ").nth(1).and_then(|s| s.split_whitespace().next()).expect("code in email body").to_string();
+
+        let bad = svc.confirm(authed(ConfirmRequest { account: "gina".into(), code: "000000".into() }, "t")).await.unwrap().into_inner();
+        assert_eq!(bad.status, PbStatus::Invalid as i32);
+
+        let ok = svc.confirm(authed(ConfirmRequest { account: "gina".into(), code }, "t")).await.unwrap().into_inner();
+        assert_eq!(ok.status, PbStatus::Ok as i32);
+        assert!(engine.lock().await.directory_snapshot().0[0].verified);
+    }
+
+    #[tokio::test]
+    async fn drop_releases_channels_and_logs_out_sessions() {
+        let (engine, _tx) = engine_with("acct-drop");
+        let svc = accounts_svc(engine.clone());
+        svc.register(authed(RegisterRequest { name: "hank".into(), password: "x".into(), email: String::new() }, "t")).await.unwrap();
+        {
+            let mut e = engine.lock().await;
+            e.test_login("UID1", "hank");
+        }
+
+        let status = svc.drop(authed(DropRequest { account: "hank".into() }, "t")).await.unwrap().into_inner().status;
+        assert_eq!(status, PbStatus::Ok as i32);
+        assert!(engine.lock().await.directory_snapshot().0.is_empty());
+
+        // Dropping again is a clean NotFound, not a crash or false success.
+        let again = svc.drop(authed(DropRequest { account: "hank".into() }, "t")).await.unwrap().into_inner();
+        assert_eq!(again.status, PbStatus::NotFound as i32);
+    }
+
+    #[tokio::test]
+    async fn force_logout_clears_active_sessions_only() {
+        let (engine, _tx) = engine_with("acct-logout");
+        let svc = accounts_svc(engine.clone());
+        svc.register(authed(RegisterRequest { name: "iris".into(), password: "x".into(), email: String::new() }, "t")).await.unwrap();
+        {
+            let mut e = engine.lock().await;
+            e.test_login("UID1", "iris");
+            e.test_login("UID2", "iris");
+        }
+
+        let resp = svc.force_logout(authed(ForceLogoutRequest { account: "iris".into() }, "t")).await.unwrap().into_inner();
+        assert_eq!(resp.status, PbStatus::Ok as i32);
+        assert_eq!(resp.sessions_cleared, 2);
+        // The account itself must still exist — only sessions were cleared.
+        assert_eq!(engine.lock().await.directory_snapshot().0.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn group_and_ungroup_nick() {
+        let (engine, _tx) = engine_with("acct-group");
+        let svc = accounts_svc(engine.clone());
+        svc.register(authed(RegisterRequest { name: "jack".into(), password: "x".into(), email: String::new() }, "t")).await.unwrap();
+
+        let grouped = svc.group_nick(authed(GroupNickRequest { nick: "jackalt".into(), account: "jack".into() }, "t")).await.unwrap().into_inner();
+        assert_eq!(grouped.status, PbStatus::Ok as i32);
+
+        // A nick that is itself a registered account can't be grouped to another.
+        svc.register(authed(RegisterRequest { name: "realaccount".into(), password: "x".into(), email: String::new() }, "t")).await.unwrap();
+        let refused = svc.group_nick(authed(GroupNickRequest { nick: "realaccount".into(), account: "jack".into() }, "t")).await.unwrap().into_inner();
+        assert_eq!(refused.status, PbStatus::Invalid as i32);
+
+        let ungrouped = svc.ungroup_nick(authed(UngroupNickRequest { nick: "jackalt".into() }, "t")).await.unwrap().into_inner();
+        assert_eq!(ungrouped.status, PbStatus::Ok as i32);
+        let missing = svc.ungroup_nick(authed(UngroupNickRequest { nick: "jackalt".into() }, "t")).await.unwrap().into_inner();
+        assert_eq!(missing.status, PbStatus::NotFound as i32);
     }
 }
