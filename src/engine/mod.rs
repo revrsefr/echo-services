@@ -127,6 +127,16 @@ impl Engine {
         self.db.exists(name)
     }
 
+    #[cfg(test)]
+    pub(crate) fn test_register_channel(&mut self, name: &str, founder: &str) {
+        self.db.register_channel(name, founder).unwrap();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_has_channel(&self, name: &str) -> bool {
+        self.db.channel(name).is_some()
+    }
+
     // Insert or refresh a client's in-progress SASL session, stamped now.
     fn stash_sasl(&mut self, client: String, session: SaslSession) {
         self.sasl_sessions.insert(client, TimedSession { touched: Instant::now(), session });

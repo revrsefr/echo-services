@@ -327,6 +327,38 @@ mod tests {
         assert!(got, "a post-connect write should push to B well under the 10s digest");
     }
 
+    // Accounts federate, but channel registrations stay on the node that made
+    // them: A registers both; B receives the account and never the channel.
+    #[tokio::test]
+    async fn channels_stay_node_local() {
+        let (a, atx) = engine("A", "local-a");
+        let (b, btx) = engine("B", "local-b");
+        a.lock().await.test_register("alice");
+        a.lock().await.test_register_channel("#secret", "alice");
+
+        let (ca, cb) = tokio::io::duplex(64 * 1024);
+        let sa = tokio::spawn(session(ca, a.clone(), "s3cret".into(), "A".into(), atx));
+        let sb = tokio::spawn(session(cb, b.clone(), "s3cret".into(), "B".into(), btx));
+
+        // Wait for the account to converge (proves the link works), then assert
+        // the channel never crossed it.
+        let mut got_account = false;
+        for _ in 0..100 {
+            if b.lock().await.test_has_account("alice") {
+                got_account = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        // Give any (erroneous) channel replication ample time to arrive too.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let leaked_channel = b.lock().await.test_has_channel("#secret");
+        sa.abort();
+        sb.abort();
+        assert!(got_account, "the account should federate");
+        assert!(!leaked_channel, "the channel must NOT federate to a node that never saw it registered");
+    }
+
     // A wrong secret is rejected before any state is exchanged.
     #[tokio::test]
     async fn bad_secret_is_rejected() {

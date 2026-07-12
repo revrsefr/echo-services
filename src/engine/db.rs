@@ -50,6 +50,34 @@ pub enum Event {
     ChannelEntryMsgSet { channel: String, msg: String },
 }
 
+// Whether an event replicates across the federation. Account identity is Global
+// (one owner, gossiped everywhere); channel state is Local (scoped to the one
+// network that authored it, so a node can't be handed ownership of a channel it
+// never saw registered). Exhaustive on purpose: a new event must pick a side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    Global,
+    Local,
+}
+
+impl Event {
+    fn scope(&self) -> Scope {
+        match self {
+            Event::AccountRegistered(_) | Event::CertAdded { .. } | Event::CertRemoved { .. } => Scope::Global,
+            Event::ChannelRegistered { .. }
+            | Event::ChannelDropped { .. }
+            | Event::ChannelMlock { .. }
+            | Event::ChannelAccessAdd { .. }
+            | Event::ChannelAccessDel { .. }
+            | Event::ChannelAkickAdd { .. }
+            | Event::ChannelAkickDel { .. }
+            | Event::ChannelFounderSet { .. }
+            | Event::ChannelDescSet { .. }
+            | Event::ChannelEntryMsgSet { .. } => Scope::Local,
+        }
+    }
+}
+
 // An access-list entry: an account and its level ("op" or "voice").
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChanAccess {
@@ -203,8 +231,12 @@ impl EventLog {
         (log, events)
     }
 
-    // Roll the clock and version vector forward over an entry.
+    // Roll the clock and version vector forward over an entry. Local (channel)
+    // entries carry no gossip identity, so they never touch the vector or clock.
     fn absorb(&mut self, entry: &LogEntry) {
+        if entry.event.scope() != Scope::Global {
+            return;
+        }
         self.lamport = self.lamport.max(entry.lamport);
         self.versions.entry(entry.origin.clone()).and_modify(|s| *s = (*s).max(entry.seq)).or_insert(entry.seq);
     }
@@ -214,14 +246,22 @@ impl EventLog {
         self.versions.get(&self.origin).map_or(0, |s| s + 1)
     }
 
-    // Stamp a locally-authored event with the next seq + a ticked Lamport clock,
-    // then persist it.
+    // Persist a locally-authored event. Global events get the next seq + a ticked
+    // Lamport clock and are pushed to peers; local (channel) events are written
+    // for restart but never gossiped and carry no version-vector identity.
     fn append(&mut self, event: Event) -> std::io::Result<()> {
-        self.lamport += 1;
-        let entry = LogEntry { origin: self.origin.clone(), seq: self.next_seq(), lamport: self.lamport, event };
+        let global = event.scope() == Scope::Global;
+        let entry = if global {
+            self.lamport += 1;
+            LogEntry { origin: self.origin.clone(), seq: self.next_seq(), lamport: self.lamport, event }
+        } else {
+            LogEntry { origin: self.origin.clone(), seq: 0, lamport: 0, event }
+        };
         self.persist(&entry)?;
-        self.versions.insert(entry.origin.clone(), entry.seq);
-        self.notify(&entry);
+        if global {
+            self.versions.insert(entry.origin.clone(), entry.seq);
+            self.notify(&entry);
+        }
         self.entries.push(entry);
         Ok(())
     }
@@ -230,6 +270,12 @@ impl EventLog {
     // event to fold into state, or None if already applied (idempotent, so
     // re-delivery converges). Assumes per-origin in-order delivery.
     fn ingest(&mut self, entry: LogEntry) -> std::io::Result<Option<Event>> {
+        // A node never accepts another node's channel state — only global (account)
+        // identity replicates. This is the guarantee: you can't be handed ownership
+        // of a channel that was registered on a network you're not part of.
+        if entry.event.scope() != Scope::Global {
+            return Ok(None);
+        }
         if self.versions.get(&entry.origin).is_some_and(|&s| entry.seq <= s) {
             return Ok(None); // already have it
         }
@@ -259,10 +305,12 @@ impl EventLog {
         self.versions.clone()
     }
 
-    // Entries a peer is missing, given the version vector it advertised.
+    // Global entries a peer is missing, given the version vector it advertised.
+    // Local (channel) entries are never offered — they don't leave the node.
     fn missing_for(&self, peer: &HashMap<String, u64>) -> Vec<LogEntry> {
         self.entries
             .iter()
+            .filter(|e| e.event.scope() == Scope::Global)
             .filter(|e| peer.get(&e.origin).map_or(true, |&s| e.seq > s))
             .cloned()
             .collect()
@@ -286,16 +334,19 @@ impl EventLog {
     // leaves the old log.
     fn compact(&mut self, events: Vec<Event>) -> std::io::Result<()> {
         let mut seq = self.next_seq();
+        let mut last_global = None;
         let mut snapshot = Vec::with_capacity(events.len());
         for event in events {
-            self.lamport += 1;
-            snapshot.push(LogEntry {
-                origin: self.origin.clone(),
-                seq,
-                lamport: self.lamport,
-                event,
-            });
-            seq += 1;
+            let entry = if event.scope() == Scope::Global {
+                self.lamport += 1;
+                let e = LogEntry { origin: self.origin.clone(), seq, lamport: self.lamport, event };
+                last_global = Some(seq);
+                seq += 1;
+                e
+            } else {
+                LogEntry { origin: self.origin.clone(), seq: 0, lamport: 0, event }
+            };
+            snapshot.push(entry);
         }
         let tmp = self.path.with_extension("compact");
         {
@@ -307,7 +358,7 @@ impl EventLog {
         }
         std::fs::rename(&tmp, &self.path)?;
         self.versions = HashMap::new();
-        if let Some(last) = seq.checked_sub(1) {
+        if let Some(last) = last_global {
             self.versions.insert(self.origin.clone(), last);
         }
         self.entries = snapshot;
@@ -827,6 +878,28 @@ mod tests {
         assert!(glob_match("nick?!*@*", "nickX!~x@h"));
         assert!(!glob_match("*!*@host.example", "bob!~b@other"));
         assert!(!glob_match("alice!*@*", "bob!~b@h"));
+    }
+
+    #[test]
+    fn channel_state_is_node_local_but_persists() {
+        let path = tmp("scope");
+        {
+            let mut db = Db::open(&path, "N1");
+            db.register("alice", "pw", None).unwrap(); // global
+            db.register_channel("#c", "alice").unwrap(); // local
+            db.set_mlock("#c", "nt", "").unwrap(); // local
+            // Only the account advances the version vector.
+            assert_eq!(db.version_vector().get("N1"), Some(&0), "channels don't advance the vector");
+            // A fresh peer is offered the account, never the channel.
+            let missing = db.missing_for(&HashMap::new());
+            assert_eq!(missing.len(), 1, "only the global account entry is offered: {missing:?}");
+            assert!(matches!(missing[0].event, Event::AccountRegistered(_)));
+        }
+        // Reopen: node-local channel state replays from disk unchanged.
+        let db = Db::open(&path, "N1");
+        assert!(db.exists("alice"));
+        assert_eq!(db.channel("#c").map(|c| c.lock_on.clone()), Some("nt".to_string()), "channel state persists locally");
+        assert_eq!(db.version_vector().get("N1"), Some(&0), "vector unchanged after replay");
     }
 
     #[test]
