@@ -10,3 +10,17 @@ name = "services.example.net"
 sid = "42S"                # 3 chars, unique on the network
 description = "Federated Services"
 protocol = 1206            # InspIRCd link protocol version (1206 = insp4, 1205 = insp3)
+
+# Node-to-node replication. Omit this section (and [[peer]]) to run a single node.
+# [gossip]
+# bind = "0.0.0.0:16700"   # where peers reach us; omit for a dial-only node
+# secret = "shared-secret" # both nodes must present the same secret
+#
+# [gossip.tls]             # omit for a plaintext link; see scripts/gen-certs.sh
+# cert = "certs/node.crt"
+# key  = "certs/node.key"
+# ca   = "certs/ca.crt"    # a peer must present a certificate signed by this CA
+#
+# [[peer]]                 # one block per other node
+# addr = "other-node:16700"
+# name = "other-node"      # TLS name to expect; must match the peer certificate
