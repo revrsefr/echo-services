@@ -1,5 +1,5 @@
 use crate::engine::db::Db;
-use crate::proto::NetAction;
+use crate::proto::{NetAction, RegReply};
 
 // Who sent the command, resolved by the engine (UID + current nick).
 pub struct Sender<'a> {
@@ -30,6 +30,17 @@ impl ServiceCtx {
             from: from.to_string(),
             to: to.to_string(),
             text: text.into(),
+        });
+    }
+
+    // Hand a registration to the engine to finish: its password derivation runs
+    // off the reactor, then the engine commits it and answers `reply`.
+    pub fn defer_register(&mut self, account: impl Into<String>, password: impl Into<String>, email: Option<String>, reply: RegReply) {
+        self.actions.push(NetAction::DeferRegister {
+            account: account.into(),
+            password: password.into(),
+            email,
+            reply,
         });
     }
 

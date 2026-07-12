@@ -1,5 +1,6 @@
-use crate::engine::db::{Db, RegError};
+use crate::engine::db::Db;
 use crate::engine::service::{Sender, Service, ServiceCtx};
+use crate::proto::RegReply;
 
 pub struct NickServ {
     pub uid: String,
@@ -26,15 +27,12 @@ impl Service for NickServ {
                     return;
                 };
                 let email = args.get(2).map(|s| s.to_string());
-                match db.register(from.nick, password, email) {
-                    Ok(()) => {
-                        // Registering identifies you to the nick right away (drives 900).
-                        ctx.login(from.uid, from.nick);
-                        ctx.notice(me, from.uid, format!("Nickname \x02{}\x02 is now registered.", from.nick));
-                    }
-                    Err(RegError::Exists) => ctx.notice(me, from.uid, format!("Nickname \x02{}\x02 is already registered.", from.nick)),
-                    Err(RegError::Internal) => ctx.notice(me, from.uid, "Registration failed, please try again later."),
-                }
+                // The engine derives the password off-thread, commits, and answers.
+                ctx.defer_register(from.nick, *password, email, RegReply::NickServ {
+                    agent: me.to_string(),
+                    uid: from.uid.to_string(),
+                    nick: from.nick.to_string(),
+                });
             }
             Some("IDENTIFY") => {
                 let Some(password) = args.get(1) else {

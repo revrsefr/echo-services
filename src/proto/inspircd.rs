@@ -164,6 +164,8 @@ impl Protocol for InspIrcd {
                 vec![self.from_us(format!("METADATA {} {} :{}", target, key, value))]
             }
             NetAction::Raw(s) => vec![s.clone()],
+            // Internal: the link layer handles this before serialization.
+            NetAction::DeferRegister { .. } => vec![],
         }
     }
 

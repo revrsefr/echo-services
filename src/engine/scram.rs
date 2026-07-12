@@ -13,6 +13,7 @@ use argon2::password_hash::rand_core::{OsRng, RngCore};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256, Sha512};
+use subtle::ConstantTimeEq;
 
 // Provisioning cost. High on purpose: the client bears the Hi() work each login,
 // the server only at REGISTER, and the verifier must not be a weaker
@@ -227,7 +228,8 @@ pub fn verify_final(
         return None;
     }
     let client_key = xor(&proof, &client_signature);
-    if h(hash, &client_key) != v.stored_key {
+    // Constant-time: StoredKey is a secret, so leak nothing through compare timing.
+    if h(hash, &client_key).ct_eq(&v.stored_key).unwrap_u8() != 1 {
         return None;
     }
     let server_signature = hmac(hash, &v.server_key, auth_message.as_bytes());

@@ -4,10 +4,11 @@ pub mod service;
 pub mod state;
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
-use crate::proto::{NetAction, NetEvent};
+use crate::proto::{NetAction, NetEvent, RegReply};
 use db::{Db, RegError};
 use scram::Verifier;
 use service::{Sender, Service, ServiceCtx};
@@ -53,11 +54,23 @@ pub struct Engine {
     network: Network,
     db: Db,
     sasl_sessions: HashMap<String, SaslSession>, // client uid -> in-progress exchange
+    reg_limiter: RegLimiter,
 }
 
 impl Engine {
     pub fn new(services: Vec<Box<dyn Service>>, db: Db) -> Self {
-        Self { services, network: Network::default(), db, sasl_sessions: HashMap::new() }
+        Self {
+            services,
+            network: Network::default(),
+            db,
+            sasl_sessions: HashMap::new(),
+            reg_limiter: RegLimiter::new(),
+        }
+    }
+
+    // Cost of a fresh SCRAM verifier; read by the link layer for off-thread derivation.
+    pub fn scram_iterations(&self) -> u32 {
+        self.db.scram_iterations
     }
 
     // Sent right after the SERVER line: burst, introduce every service, endburst.
@@ -215,26 +228,40 @@ impl Engine {
         }
     }
 
-    // Authority side of the IRCv3 account-registration relay: create the account
-    // (same store as classic NickServ REGISTER) and answer the requesting ircd.
+    // Authority side of the IRCv3 account-registration relay. Hands the work to
+    // the link layer (which derives the password off-thread) via DeferRegister.
     fn account_request(&mut self, reqid: String, kind: String, account: String, p2: String, p3: String) -> Vec<NetAction> {
         if !kind.eq_ignore_ascii_case("REGISTER") {
             return Vec::new(); // VERIFY / RESEND / STATUS: later
         }
         let email = if p2.is_empty() || p2 == "*" { None } else { Some(p2) };
-        let (status, code, message) = match self.db.register(&account, &p3, email) {
-            Ok(()) => ("success", "*", "Account registered."),
-            Err(RegError::Exists) => ("error", "ACCOUNT_EXISTS", "That account name is already registered."),
-            Err(RegError::Internal) => ("error", "TEMPORARILY_UNAVAILABLE", "Registration is unavailable, try again later."),
+        vec![NetAction::DeferRegister { account, password: p3, email, reply: RegReply::Relay { reqid, kind } }]
+    }
+
+    // Cheap gate run before the expensive derivation: reject an already-taken name
+    // outright, and rate-limit the rest so a REGISTER flood can't pin CPU. Returns
+    // the rejection response if refused, or None to proceed (spending a token).
+    pub fn pre_register_check(&mut self, account: &str, reply: &RegReply) -> Option<Vec<NetAction>> {
+        if self.db.exists(account) {
+            return Some(reg_reply(reply, RegOutcome::Exists, account));
+        }
+        if !self.reg_limiter.allow() {
+            return Some(reg_reply(reply, RegOutcome::RateLimited, account));
+        }
+        None
+    }
+
+    // Commit credentials the link layer derived off-thread, then answer `reply`.
+    pub fn complete_register(&mut self, account: &str, creds: Option<db::Credentials>, email: Option<String>, reply: RegReply) -> Vec<NetAction> {
+        let Some(creds) = creds else {
+            return reg_reply(&reply, RegOutcome::Internal, account);
         };
-        vec![NetAction::AccountResponse {
-            reqid,
-            kind,
-            account,
-            status: status.to_string(),
-            code: code.to_string(),
-            message: message.to_string(),
-        }]
+        let outcome = match self.db.register_prepared(account, creds, email) {
+            Ok(()) => RegOutcome::Ok,
+            Err(RegError::Exists) => RegOutcome::Exists,
+            Err(RegError::Internal) => RegOutcome::Internal,
+        };
+        reg_reply(&reply, outcome, account)
     }
 
     // Route a PRIVMSG addressed to a service (by uid or nick) into that service,
@@ -275,6 +302,79 @@ fn sasl_success(agent: &str, client: &str, account: String) -> Vec<NetAction> {
         NetAction::Metadata { target: client.to_string(), key: "accountname".to_string(), value: account },
         NetAction::Sasl { agent: agent.to_string(), client: client.to_string(), mode: "D".to_string(), data: vec!["S".to_string()] },
     ]
+}
+
+// Outcome of a registration attempt, rendered to the right wire response below.
+enum RegOutcome {
+    Ok,
+    Exists,
+    RateLimited,
+    Internal,
+}
+
+// Render a registration outcome for whichever origin asked (relay or NickServ),
+// so both the pre-check rejection and the post-derivation result share one place.
+fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAction> {
+    match reply {
+        RegReply::Relay { reqid, kind } => {
+            let (status, code, message) = match outcome {
+                RegOutcome::Ok => ("success", "*", "Account registered."),
+                RegOutcome::Exists => ("error", "ACCOUNT_EXISTS", "That account name is already registered."),
+                RegOutcome::RateLimited => ("error", "TEMPORARILY_UNAVAILABLE", "Too many registrations, please wait a moment."),
+                RegOutcome::Internal => ("error", "TEMPORARILY_UNAVAILABLE", "Registration is unavailable, try again later."),
+            };
+            vec![NetAction::AccountResponse {
+                reqid: reqid.clone(),
+                kind: kind.clone(),
+                account: account.to_string(),
+                status: status.to_string(),
+                code: code.to_string(),
+                message: message.to_string(),
+            }]
+        }
+        RegReply::NickServ { agent, uid, nick } => {
+            let notice = |text: String| NetAction::Notice { from: agent.clone(), to: uid.clone(), text };
+            match outcome {
+                RegOutcome::Ok => vec![
+                    // Registering identifies you to the nick right away (drives 900).
+                    NetAction::Metadata { target: uid.clone(), key: "accountname".to_string(), value: nick.clone() },
+                    notice(format!("Nickname \x02{nick}\x02 is now registered.")),
+                ],
+                RegOutcome::Exists => vec![notice(format!("Nickname \x02{nick}\x02 is already registered."))],
+                RegOutcome::RateLimited => vec![notice("Too many registrations, please wait a moment.".to_string())],
+                RegOutcome::Internal => vec![notice("Registration failed, please try again later.".to_string())],
+            }
+        }
+    }
+}
+
+// Token bucket bounding how often the expensive registration derivation may run,
+// so a REGISTER flood degrades to a trickle instead of pinning a core. Global on
+// purpose: it caps total work regardless of which user or server relayed it.
+struct RegLimiter {
+    tokens: f64,
+    last: Instant,
+}
+
+const REG_BURST: f64 = 8.0; // registrations allowed back-to-back from a full bucket
+const REG_REFILL_PER_SEC: f64 = 0.5; // steady-state: one every two seconds
+
+impl RegLimiter {
+    fn new() -> Self {
+        Self { tokens: REG_BURST, last: Instant::now() }
+    }
+
+    fn allow(&mut self) -> bool {
+        let now = Instant::now();
+        self.tokens = (self.tokens + now.duration_since(self.last).as_secs_f64() * REG_REFILL_PER_SEC).min(REG_BURST);
+        self.last = now;
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 #[cfg(test)]

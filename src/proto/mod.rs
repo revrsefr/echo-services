@@ -35,6 +35,19 @@ pub enum NetAction {
     // advertised SASL mechanism list), otherwise a user uid (e.g. their account).
     Metadata { target: String, key: String, value: String },
     Raw(String),
+    // Internal only, never serialized to the wire: a registration whose password
+    // still needs its (expensive) key derivation. The link layer runs the
+    // derivation off-thread, then calls Engine::complete_register.
+    DeferRegister { account: String, password: String, email: Option<String>, reply: RegReply },
+}
+
+// How to answer a registration once its credentials have been derived.
+#[derive(Debug, Clone)]
+pub enum RegReply {
+    // IRCv3 account-registration relay: answer the requesting ircd.
+    Relay { reqid: String, kind: String },
+    // NickServ REGISTER: NOTICE the requesting user, logging them in on success.
+    NickServ { agent: String, uid: String, nick: String },
 }
 
 pub trait Protocol: Send {

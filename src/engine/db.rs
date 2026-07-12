@@ -38,6 +38,15 @@ pub enum RegError {
     Internal,
 }
 
+// The expensive, password-derived half of an account, computed once at
+// registration. Split out from `register` so the derivation (argon2 + two SCRAM
+// verifiers, ~1s at the default cost) can run off the reactor via spawn_blocking.
+pub struct Credentials {
+    password_hash: String,
+    scram256: String,
+    scram512: String,
+}
+
 pub struct Db {
     accounts: HashMap<String, Account>, // keyed by casefolded name
     path: PathBuf,
@@ -75,22 +84,41 @@ impl Db {
         self.accounts.contains_key(&key(name))
     }
 
-    pub fn register(&mut self, name: &str, password: &str, email: Option<String>) -> Result<(), RegError> {
+    /// Derive the password-bound half of an account. Pure and CPU-heavy (no
+    /// `&self`), so a caller can run it on a blocking thread; the cheap
+    /// `register_prepared` then commits the result.
+    pub fn derive_credentials(password: &str, iterations: u32) -> Option<Credentials> {
+        Some(Credentials {
+            password_hash: hash_password(password)?,
+            scram256: scram::make_verifier(Hash::Sha256, password, iterations),
+            scram512: scram::make_verifier(Hash::Sha512, password, iterations),
+        })
+    }
+
+    /// Commit pre-derived credentials as a new account. Cheap: no key stretching.
+    pub fn register_prepared(&mut self, name: &str, creds: Credentials, email: Option<String>) -> Result<(), RegError> {
         if self.exists(name) {
             return Err(RegError::Exists);
         }
-        let password_hash = hash_password(password).ok_or(RegError::Internal)?;
         let account = Account {
             name: name.to_string(),
-            password_hash,
+            password_hash: creds.password_hash,
             email,
             ts: now(),
-            scram256: Some(scram::make_verifier(Hash::Sha256, password, self.scram_iterations)),
-            scram512: Some(scram::make_verifier(Hash::Sha512, password, self.scram_iterations)),
+            scram256: Some(creds.scram256),
+            scram512: Some(creds.scram512),
         };
         self.append(&Event::AccountRegistered(account.clone())).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
         Ok(())
+    }
+
+    /// Register synchronously, deriving and committing in one call. A test helper;
+    /// the live paths derive off-thread via `derive_credentials` + `register_prepared`.
+    #[cfg(test)]
+    pub fn register(&mut self, name: &str, password: &str, email: Option<String>) -> Result<(), RegError> {
+        let creds = Self::derive_credentials(password, self.scram_iterations).ok_or(RegError::Internal)?;
+        self.register_prepared(name, creds, email)
     }
 
     /// Check credentials; on success return the account's canonical name (its
