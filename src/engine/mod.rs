@@ -995,6 +995,12 @@ mod tests {
         });
         assert!(bad.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Invalid password"))), "{bad:?}");
         assert!(!bad.iter().any(|a| matches!(a, NetAction::Metadata { .. })), "wrong password must not log in: {bad:?}");
+
+        // An unregistered account says so, rather than "Invalid password".
+        let missing = e.handle(NetEvent::Privmsg {
+            from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY ghost whatever".into(),
+        });
+        assert!(missing.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't registered"))), "{missing:?}");
     }
 
     // ChanServ: registration needs identification, INFO shows the founder, and

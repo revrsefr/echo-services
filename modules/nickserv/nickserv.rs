@@ -50,6 +50,12 @@ impl Service for NickServ {
                         return;
                     }
                 };
+                // Distinguish an unregistered account from a wrong password, so a
+                // failed login says which it was.
+                if !db.exists(account_name) {
+                    ctx.notice(me, from.uid, format!("\x02{account_name}\x02 isn't registered."));
+                    return;
+                }
                 match db.authenticate(account_name, password) {
                     Some(account) => {
                         // Already identified to this account: don't re-fire the login.
