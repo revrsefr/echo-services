@@ -10,6 +10,10 @@ mod identify;
 mod logout;
 #[path = "cert.rs"]
 mod cert;
+#[path = "info.rs"]
+mod info;
+#[path = "alist.rs"]
+mod alist;
 
 pub struct NickServ {
     pub uid: String,
@@ -40,7 +44,9 @@ impl Service for NickServ {
             Some("IDENTIFY") | Some("ID") => identify::handle(me, from, args, ctx, db),
             Some("LOGOUT") | Some("LOGOFF") => logout::handle(me, &self.guest_nick, &mut self.guest_seq, from, ctx),
             Some("CERT") => cert::handle(me, from, args, ctx, db),
-            Some("HELP") => ctx.notice(me, from.uid, "NickServ looks after your nickname. Commands: \x02REGISTER\x02 <password> [email], \x02IDENTIFY\x02 [account] <password>, \x02LOGOUT\x02, \x02CERT\x02 ADD|DEL|LIST <password> [fingerprint]."),
+            Some("INFO") => info::handle(me, from, args, ctx, db),
+            Some("ALIST") => alist::handle(me, from, ctx, db),
+            Some("HELP") => ctx.notice(me, from.uid, "NickServ looks after your nickname. Commands: \x02REGISTER\x02 <password> [email], \x02IDENTIFY\x02 [account] <password>, \x02INFO\x02 [account], \x02ALIST\x02, \x02LOGOUT\x02, \x02CERT\x02 ADD|DEL|LIST <password> [fingerprint]."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
         }

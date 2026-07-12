@@ -12,7 +12,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         return;
     }
     match net.last_seen(nick) {
-        Some(s) => ctx.notice(me, from.uid, format!("\x02{}\x02 was last seen {} ({}).", s.nick, super::human_time(s.ts), s.what)),
+        Some(s) => ctx.notice(me, from.uid, format!("\x02{}\x02 was last seen {} ({}).", s.nick, crate::engine::db::human_time(s.ts), s.what)),
         None => ctx.notice(me, from.uid, format!("I have no record of \x02{nick}\x02.")),
     }
 }

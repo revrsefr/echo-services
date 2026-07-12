@@ -1103,6 +1103,35 @@ mod tests {
         assert!(released, "the user must be told which channels were released");
     }
 
+    // NickServ INFO shows registration details (email only to the owner); ALIST
+    // lists the channels the account founds or has access on.
+    #[test]
+    fn nickserv_info_and_alist() {
+        use crate::chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-nsinfo.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "test");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#a", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+        let to_ns = |e: &mut Engine, text: &str| {
+            e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() })
+        };
+        let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+
+        let info = to_ns(&mut e, "INFO");
+        assert!(notice(&info, "Information for \x02alice\x02"));
+        assert!(notice(&info, "Registered"));
+        assert!(notice(&info, "Email"), "owner sees their email line: {info:?}");
+        assert!(notice(&to_ns(&mut e, "INFO ghost"), "isn't registered"));
+        assert!(notice(&to_ns(&mut e, "ALIST"), "#a"));
+    }
+
     // IDENTIFY accepts the two-arg account+password form: log into a named
     // account even when the current nick differs; a wrong password is refused.
     #[test]
