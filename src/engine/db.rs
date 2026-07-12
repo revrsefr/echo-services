@@ -648,6 +648,15 @@ impl Db {
         self.channels.values()
     }
 
+    /// Names of channels founded by `account` (case-insensitive).
+    pub fn channels_owned_by(&self, account: &str) -> Vec<String> {
+        self.channels
+            .values()
+            .filter(|c| c.founder.eq_ignore_ascii_case(account))
+            .map(|c| c.name.clone())
+            .collect()
+    }
+
     /// Set the mode-lock (chars to keep set / unset) for a registered channel.
     pub fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError> {
         let k = key(name);

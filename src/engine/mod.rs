@@ -124,26 +124,47 @@ impl Engine {
 
     pub fn gossip_ingest(&mut self, entry: LogEntry) -> std::io::Result<()> {
         // If ingesting a peer's registration took an account name away from a
-        // local session (it lost the conflict), log that session out.
+        // local session (it lost the conflict), clean up after the loser.
         if let Some(account) = self.db.ingest(entry)? {
-            self.logout_lost_sessions(&account);
+            self.handle_account_takeover(&account);
         }
         Ok(())
     }
 
     // A registration conflict resolved against this node: the name `account` is now
-    // owned by another node. Any local session logged into it authenticated against
-    // the old owner's credential, which no longer exists — force them out and say why.
-    fn logout_lost_sessions(&mut self, account: &str) {
-        for uid in self.network.uids_logged_into(account) {
+    // owned by another node. Log out any local session on it (its credential is
+    // gone) and drop the channels it had registered locally — their founder
+    // identity now belongs to another node, so they can't silently transfer.
+    fn handle_account_takeover(&mut self, account: &str) {
+        let victims = self.network.uids_logged_into(account);
+        let orphaned = self.db.channels_owned_by(account);
+        for chan in &orphaned {
+            let _ = self.db.drop_channel(chan);
+        }
+        let (cs, ns) = (self.chan_service.clone(), self.nick_service.clone());
+        // Release the registered mode on each dropped channel.
+        for chan in &orphaned {
+            if let Some(cs) = &cs {
+                self.emit_irc(NetAction::ChannelMode { from: cs.clone(), channel: chan.clone(), modes: "-r".to_string() });
+            }
+        }
+        // Log out and inform each local session that held the name.
+        for uid in victims {
             self.network.clear_account(&uid);
             self.emit_irc(NetAction::Metadata { target: uid.clone(), key: "accountname".to_string(), value: String::new() });
-            if let Some(ns) = &self.nick_service {
+            if let Some(ns) = &ns {
                 self.emit_irc(NetAction::Notice {
                     from: ns.clone(),
-                    to: uid,
+                    to: uid.clone(),
                     text: format!("Your registration of \x02{account}\x02 collided with another network and it now belongs elsewhere. You have been logged out; please register a different name."),
                 });
+                if !orphaned.is_empty() {
+                    self.emit_irc(NetAction::Notice {
+                        from: ns.clone(),
+                        to: uid,
+                        text: format!("Channels you had registered as \x02{account}\x02 were released: {}.", orphaned.join(", ")),
+                    });
+                }
             }
         }
     }
@@ -1033,13 +1054,22 @@ mod tests {
     // notifies them over the services-initiated outbound path.
     #[test]
     fn lost_conflict_logs_out_local_session() {
-        let mut e = engine_with("lostconf", "alice", "sesame");
+        use crate::chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-lostconf.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "test");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 12345 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         e.set_irc_out(tx);
-        // A local user logs into alice.
+        // A local user logs into alice and registers a channel as founder.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() });
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         assert_eq!(e.network.account_of("000AAAAAB"), Some("alice"), "logged in before the conflict");
+        e.db.register_channel("#hers", "alice").unwrap();
 
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
@@ -1049,20 +1079,24 @@ mod tests {
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(winner));
         e.gossip_ingest(entry).unwrap();
 
-        // The local session is logged out...
+        // The local session is logged out and its orphaned channel is dropped.
         assert!(e.network.account_of("000AAAAAB").is_none(), "session cleared after losing the name");
-        // ...and the outbound path got a logout (empty accountname) plus a notice.
-        let mut logout = false;
-        let mut notice = false;
+        assert!(e.db.channel("#hers").is_none(), "orphaned channel dropped");
+        // The outbound path got a logout, a notice, a -r on the channel, and a release notice.
+        let (mut logout, mut notice, mut unreg, mut released) = (false, false, false, false);
         while let Ok(a) = rx.try_recv() {
             match a {
                 NetAction::Metadata { target, key, value } if target == "000AAAAAB" && key == "accountname" && value.is_empty() => logout = true,
                 NetAction::Notice { to, text, .. } if to == "000AAAAAB" && text.contains("collided") => notice = true,
+                NetAction::Notice { to, text, .. } if to == "000AAAAAB" && text.contains("released") => released = true,
+                NetAction::ChannelMode { channel, modes, .. } if channel == "#hers" && modes == "-r" => unreg = true,
                 _ => {}
             }
         }
         assert!(logout, "a logout must be pushed to the uplink");
         assert!(notice, "the user must be told why");
+        assert!(unreg, "the orphaned channel must be de-registered (-r)");
+        assert!(released, "the user must be told which channels were released");
     }
 
     // IDENTIFY accepts the two-arg account+password form: log into a named
