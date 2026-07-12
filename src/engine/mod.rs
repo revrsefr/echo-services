@@ -548,11 +548,8 @@ impl Engine {
         if ok && !self.db.is_verified(account) {
             if let (Some(addr), RegReply::NickServ { agent, uid, .. }) = (addr, &reply) {
                 let code = self.db.issue_code(account, db::CodeKind::Confirm);
-                out.push(NetAction::SendEmail {
-                    to: addr,
-                    subject: format!("Confirm your {account} registration"),
-                    body: format!("Welcome! Confirm your account {account} with:\n  /msg NickServ CONFIRM {code}\nThe code expires in 15 minutes."),
-                });
+                let mail = crate::email::confirm(self.db.email_brand(), account, &code);
+                out.push(NetAction::SendEmail { to: addr, subject: mail.subject, text: mail.text, html: Some(mail.html) });
                 out.push(NetAction::Notice { from: agent.clone(), to: uid.clone(), text: "A confirmation code has been emailed to you. Confirm with \x02CONFIRM <code>\x02.".to_string() });
             }
         }
@@ -1237,7 +1234,7 @@ mod tests {
         // Request: a code is emailed to the address on file.
         let out = to_ns(&mut e, "RESETPASS alice");
         let (to, body) = out.iter().find_map(|a| match a {
-            NetAction::SendEmail { to, body, .. } => Some((to.clone(), body.clone())),
+            NetAction::SendEmail { to, text, .. } => Some((to.clone(), text.clone())),
             _ => None,
         }).expect("a reset code is emailed");
         assert_eq!(to, "alice@example.org");
@@ -1279,7 +1276,7 @@ mod tests {
         let out = e.complete_register(&account, Db::derive_credentials(&password, 4096), email, reply);
         assert!(!e.db.is_verified("newbie"), "registering with email starts unverified");
         let body = out.iter().find_map(|a| match a {
-            NetAction::SendEmail { body, .. } => Some(body.clone()),
+            NetAction::SendEmail { text, .. } => Some(text.clone()),
             _ => None,
         }).expect("a confirm code is emailed");
         let code = body.split("CONFIRM ").nth(1).unwrap().split_whitespace().next().unwrap().to_string();

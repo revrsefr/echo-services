@@ -58,8 +58,8 @@ impl ServiceCtx {
     }
 
     // Send an email (the link layer pipes it to the configured mail command).
-    pub fn send_email(&mut self, to: impl Into<String>, subject: impl Into<String>, body: impl Into<String>) {
-        self.actions.push(NetAction::SendEmail { to: to.into(), subject: subject.into(), body: body.into() });
+    pub fn send_email(&mut self, to: impl Into<String>, subject: impl Into<String>, text: impl Into<String>, html: Option<String>) {
+        self.actions.push(NetAction::SendEmail { to: to.into(), subject: subject.into(), text: text.into(), html });
     }
 
     // Hand a password change to the engine to finish: its derivation runs off the

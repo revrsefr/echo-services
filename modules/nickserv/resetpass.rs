@@ -19,11 +19,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             };
             let code = db.issue_code(&canonical, CodeKind::Reset);
-            ctx.send_email(
-                email,
-                format!("Password reset for {canonical}"),
-                format!("Your password reset code for {canonical} is: {code}\nIt expires in 15 minutes. Reset with:\n  /msg NickServ RESETPASS {canonical} {code} <newpassword>"),
-            );
+            let mail = crate::email::reset(db.email_brand(), &canonical, &code);
+            ctx.send_email(email, mail.subject, mail.text, Some(mail.html));
             ctx.notice(me, from.uid, format!("A reset code has been emailed to the address on file for \x02{canonical}\x02."));
         }
         (Some(&name), Some(&code), Some(&newpass)) => {

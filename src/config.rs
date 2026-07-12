@@ -21,6 +21,13 @@ pub struct Email {
     // A shell command the message is piped to on stdin, e.g. "sendmail -t" or
     // "msmtp -t". Run via `sh -c`, so redirection and pipes work.
     pub command: String,
+    // Display name shown in email templates (header/footer).
+    #[serde(default = "default_brand")]
+    pub brand: String,
+}
+
+fn default_brand() -> String {
+    "Network Services".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone)]

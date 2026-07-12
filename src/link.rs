@@ -66,8 +66,8 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
                             action => vec![action],
                         };
                         for act in outs {
-                            if let NetAction::SendEmail { to, subject, body } = act {
-                                dispatch_email(&email, to, subject, body);
+                            if let NetAction::SendEmail { to, subject, text, html } = act {
+                                dispatch_email(&email, to, subject, text, html);
                                 continue;
                             }
                             for out in proto.serialize(&act) {
@@ -80,8 +80,8 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
             // A services-initiated action (e.g. a forced logout after a lost
             // registration conflict), pushed by the engine from the gossip path.
             Some(action) = irc_rx.recv() => {
-                if let NetAction::SendEmail { to, subject, body } = action {
-                    dispatch_email(&email, to, subject, body);
+                if let NetAction::SendEmail { to, subject, text, html } = action {
+                    dispatch_email(&email, to, subject, text, html);
                 } else {
                     for out in proto.serialize(&action) {
                         send(&mut write, &out).await?;
@@ -96,13 +96,25 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
 }
 
 // Fire off an email if email is configured: pipe an RFC822 message to the mail
-// command on a spawned task, so a slow MTA never stalls the link.
-fn dispatch_email(email: &Option<crate::config::Email>, to: String, subject: String, body: String) {
+// command on a spawned task, so a slow MTA never stalls the link. With an HTML
+// body it's sent as multipart/alternative (HTML + plaintext fallback).
+fn dispatch_email(email: &Option<crate::config::Email>, to: String, subject: String, text: String, html: Option<String>) {
     let Some(email) = email.clone() else {
         return tracing::warn!(%to, "email requested but not configured");
     };
     tokio::spawn(async move {
-        let msg = format!("From: {}\r\nTo: {to}\r\nSubject: {subject}\r\n\r\n{body}\r\n", email.from);
+        let headers = format!("From: {}\r\nTo: {to}\r\nSubject: {subject}\r\nMIME-Version: 1.0\r\n", email.from);
+        let msg = match html {
+            Some(html) => {
+                let b = "fedserv-alt-boundary-x9";
+                format!(
+                    "{headers}Content-Type: multipart/alternative; boundary=\"{b}\"\r\n\r\n\
+                     --{b}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{text}\r\n\
+                     --{b}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n{html}\r\n--{b}--\r\n"
+                )
+            }
+            None => format!("{headers}Content-Type: text/plain; charset=utf-8\r\n\r\n{text}\r\n"),
+        };
         let child = tokio::process::Command::new("sh")
             .arg("-c")
             .arg(&email.command)

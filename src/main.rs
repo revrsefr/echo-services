@@ -1,5 +1,6 @@
 // Core lives in src/; pluggable modules live in ../modules/.
 mod config;
+mod email;
 mod engine;
 mod gossip;
 mod link;
@@ -56,6 +57,9 @@ async fn main() -> Result<()> {
     db.scram_iterations = cfg.server.scram_iterations;
     db.set_outbound(gossip_tx.clone());
     db.set_email_enabled(cfg.email.is_some());
+    if let Some(email) = &cfg.email {
+        db.set_email_brand(&email.brand);
+    }
     let engine = Arc::new(Mutex::new(Engine::new(services, db)));
 
     // Channel for services-initiated actions to reach the uplink (drained by the link loop).

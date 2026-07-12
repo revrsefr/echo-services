@@ -456,6 +456,8 @@ pub struct Db {
     pub(crate) scram_iterations: u32,
     // Whether outbound email is configured, so email features can gate themselves.
     email_enabled: bool,
+    // Display name for email templates.
+    email_brand: String,
     // Node-local, non-persisted email codes: account -> (purpose, code, expiry).
     codes: HashMap<String, (CodeKind, String, Instant)>,
 }
@@ -504,7 +506,7 @@ impl Db {
             apply(&mut accounts, &mut channels, &mut grouped, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, codes: HashMap::new() }
+        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), codes: HashMap::new() }
     }
 
     /// Fold an entry authored by another node into the store — the services-side
@@ -729,6 +731,15 @@ impl Db {
 
     pub fn set_email_enabled(&mut self, on: bool) {
         self.email_enabled = on;
+    }
+
+    /// Display name used in email templates.
+    pub fn email_brand(&self) -> &str {
+        &self.email_brand
+    }
+
+    pub fn set_email_brand(&mut self, brand: &str) {
+        self.email_brand = brand.to_string();
     }
 
     /// Issue a fresh emailed code for `account` and purpose, valid for 15 minutes.
