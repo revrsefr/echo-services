@@ -32,4 +32,15 @@ impl ServiceCtx {
             text: text.into(),
         });
     }
+
+    // Log a user into an account: sets the accountname the ircd turns into
+    // RPL_LOGGEDIN (900) and exposes to account-tag / WHOX, the same login the
+    // SASL agent applies. Used after a successful REGISTER / IDENTIFY.
+    pub fn login(&mut self, uid: &str, account: &str) {
+        self.actions.push(NetAction::Metadata {
+            target: uid.to_string(),
+            key: "accountname".to_string(),
+            value: account.to_string(),
+        });
+    }
 }

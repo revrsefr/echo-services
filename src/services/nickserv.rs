@@ -27,7 +27,11 @@ impl Service for NickServ {
                 };
                 let email = args.get(2).map(|s| s.to_string());
                 match db.register(from.nick, password, email) {
-                    Ok(()) => ctx.notice(me, from.uid, format!("Nickname \x02{}\x02 is now registered.", from.nick)),
+                    Ok(()) => {
+                        // Registering identifies you to the nick right away (drives 900).
+                        ctx.login(from.uid, from.nick);
+                        ctx.notice(me, from.uid, format!("Nickname \x02{}\x02 is now registered.", from.nick));
+                    }
                     Err(RegError::Exists) => ctx.notice(me, from.uid, format!("Nickname \x02{}\x02 is already registered.", from.nick)),
                     Err(RegError::Internal) => ctx.notice(me, from.uid, "Registration failed, please try again later."),
                 }
@@ -37,10 +41,13 @@ impl Service for NickServ {
                     ctx.notice(me, from.uid, "Syntax: IDENTIFY <password>");
                     return;
                 };
-                if db.verify(from.nick, password) {
-                    ctx.notice(me, from.uid, format!("You are now identified for \x02{}\x02.", from.nick));
-                } else {
-                    ctx.notice(me, from.uid, "Invalid password.");
+                match db.authenticate(from.nick, password) {
+                    Some(account) => {
+                        let account = account.to_string();
+                        ctx.login(from.uid, &account);
+                        ctx.notice(me, from.uid, format!("You are now identified for \x02{}\x02.", account));
+                    }
+                    None => ctx.notice(me, from.uid, "Invalid password."),
                 }
             }
             Some("HELP") => {

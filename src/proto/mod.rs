@@ -31,6 +31,9 @@ pub enum NetAction {
     AccountResponse { reqid: String, kind: String, account: String, status: String, code: String, message: String },
     // A SASL exchange step back to the ircd, sourced from our SASL agent. mode = C/D.
     Sasl { agent: String, client: String, mode: String, data: Vec<String> },
+    // Publish network state to the uplink: target "*" is server-global (e.g. the
+    // advertised SASL mechanism list), otherwise a user uid (e.g. their account).
+    Metadata { target: String, key: String, value: String },
     Raw(String),
 }
 

@@ -76,11 +76,11 @@ impl Db {
         Ok(())
     }
 
-    pub fn verify(&self, name: &str, password: &str) -> bool {
-        match self.accounts.get(&key(name)) {
-            Some(a) => verify_password(password, &a.password_hash),
-            None => false,
-        }
+    /// Check credentials; on success return the account's canonical name (its
+    /// stored casing), else None.
+    pub fn authenticate(&self, name: &str, password: &str) -> Option<&str> {
+        let account = self.accounts.get(&key(name))?;
+        verify_password(password, &account.password_hash).then_some(account.name.as_str())
     }
 
     fn append(&self, event: &Event) -> std::io::Result<()> {

@@ -9,11 +9,30 @@ use db::{Db, RegError};
 use service::{Sender, Service, ServiceCtx};
 use state::Network;
 
+// SASL mechanisms we offer. Advertised to the uplink as the `sasl=` capability
+// value (IRCv3 SASL 3.2 mechanism list) and the set we accept in the exchange.
+const SASL_MECHS: &str = "PLAIN";
+
+// A client's base64 response is split into chunks of this length; a chunk
+// shorter than this (or a lone "+") marks the end of the response (SASL 3.1).
+const MAX_AUTHENTICATE: usize = 400;
+
+// Upper bound on a reassembled response, to cap a pre-auth client's buffer.
+const MAX_SASL_RESPONSE: usize = 8 * 1024;
+
+// A client's in-progress SASL exchange: the chosen mechanism and the base64
+// response reassembled from the uplink's fixed-size AUTHENTICATE chunks.
+#[derive(Default)]
+struct SaslSession {
+    mech: String,
+    response: String,
+}
+
 pub struct Engine {
     services: Vec<Box<dyn Service>>,
     network: Network,
     db: Db,
-    sasl_sessions: HashMap<String, String>, // client uid -> in-progress mechanism
+    sasl_sessions: HashMap<String, SaslSession>, // client uid -> in-progress exchange
 }
 
 impl Engine {
@@ -33,6 +52,13 @@ impl Engine {
                 gecos: svc.gecos().to_string(),
             });
         }
+        // Advertise our SASL mechanisms so the uplink can offer `sasl=PLAIN` to
+        // clients in CAP LS (IRCv3 SASL 3.2).
+        out.push(NetAction::Metadata {
+            target: "*".to_string(),
+            key: "saslmechlist".to_string(),
+            value: SASL_MECHS.to_string(),
+        });
         out.push(NetAction::EndBurst);
         out
     }
@@ -57,10 +83,10 @@ impl Engine {
         }
     }
 
-    // SASL agent side of the exchange the ircd relays to us (modes H/S/C/D).
-    // PLAIN only for now: verify the credentials against the account store. NOTE:
-    // this proves the password; wiring the account login (metadata) + advertising
-    // the mechanism list to the ircd are the remaining integration steps.
+    // SASL agent side of the exchange the ircd relays to us (modes H/S/C/D),
+    // per IRCv3 SASL 3.2. PLAIN only: on a valid client response we set the
+    // client's account (drives 900) then report success (drives 903); a bad
+    // credential or unknown mechanism reports failure (drives 904).
     fn sasl(&mut self, client: String, mode: String, data: Vec<String>) -> Vec<NetAction> {
         let agent = match self.services.first() {
             Some(s) => s.uid().to_string(),
@@ -73,15 +99,54 @@ impl Engine {
             "H" => Vec::new(), // host info
             "S" => match data.first().map(String::as_str) {
                 Some("PLAIN") => {
-                    self.sasl_sessions.insert(client.clone(), "PLAIN".to_string());
+                    self.sasl_sessions.insert(
+                        client.clone(),
+                        SaslSession { mech: "PLAIN".to_string(), response: String::new() },
+                    );
                     mk("C", vec!["+".to_string()]) // empty challenge -> client sends the payload
                 }
                 _ => mk("D", vec!["F".to_string()]), // unsupported mechanism
             },
             "C" => {
-                let is_plain = self.sasl_sessions.remove(&client).as_deref() == Some("PLAIN");
-                let ok = is_plain && verify_plain(&data, &self.db);
-                mk("D", vec![if ok { "S".to_string() } else { "F".to_string() }])
+                // Reassemble the base64 response: append each chunk until one is
+                // shorter than a full chunk (or a lone "+"), which ends it.
+                let chunk = data.first().map(String::as_str).unwrap_or("");
+                let overflowed = match self.sasl_sessions.get_mut(&client) {
+                    Some(s) => {
+                        if chunk != "+" {
+                            s.response.push_str(chunk);
+                        }
+                        s.response.len() > MAX_SASL_RESPONSE
+                    }
+                    None => return mk("D", vec!["F".to_string()]),
+                };
+                if overflowed {
+                    self.sasl_sessions.remove(&client);
+                    return mk("D", vec!["F".to_string()]);
+                }
+                if chunk.len() >= MAX_AUTHENTICATE {
+                    return Vec::new(); // more chunks still to come
+                }
+                let session = self.sasl_sessions.remove(&client).unwrap_or_default();
+                let account = (session.mech == "PLAIN")
+                    .then(|| login_plain(&session.response, &self.db))
+                    .flatten();
+                match account {
+                    Some(account) => vec![
+                        NetAction::Metadata {
+                            target: client.clone(),
+                            key: "accountname".to_string(),
+                            value: account,
+                        },
+                        NetAction::Sasl {
+                            agent: agent.clone(),
+                            client: client.clone(),
+                            mode: "D".to_string(),
+                            data: vec!["S".to_string()],
+                        },
+                    ],
+                    None => mk("D", vec!["F".to_string()]),
+                }
             }
             "D" => {
                 self.sasl_sessions.remove(&client);
@@ -131,17 +196,16 @@ impl Engine {
     }
 }
 
-// Decode a SASL PLAIN payload (authzid \0 authcid \0 passwd) and verify it.
-fn verify_plain(data: &[String], db: &Db) -> bool {
+// Decode a SASL PLAIN payload (authzid \0 authcid \0 passwd) and authenticate
+// it, returning the canonical account name on success.
+fn login_plain(b64: &str, db: &Db) -> Option<String> {
     use base64::{engine::general_purpose::STANDARD, Engine};
-    let Some(b64) = data.first() else { return false };
-    let Ok(raw) = STANDARD.decode(b64) else { return false };
+    let raw = STANDARD.decode(b64).ok()?;
     let parts: Vec<&[u8]> = raw.split(|&b| b == 0).collect();
     if parts.len() != 3 {
-        return false;
+        return None;
     }
-    match (std::str::from_utf8(parts[1]), std::str::from_utf8(parts[2])) {
-        (Ok(authcid), Ok(passwd)) => db.verify(authcid, passwd),
-        _ => false,
-    }
+    let authcid = std::str::from_utf8(parts[1]).ok()?;
+    let passwd = std::str::from_utf8(parts[2]).ok()?;
+    db.authenticate(authcid, passwd).map(str::to_string)
 }

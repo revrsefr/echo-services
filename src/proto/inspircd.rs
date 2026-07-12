@@ -159,6 +159,10 @@ impl Protocol for InspIrcd {
                 }
                 vec![self.from_us(line)]
             }
+            // METADATA <target> <key> :<value> — "*" is server-global metadata.
+            NetAction::Metadata { target, key, value } => {
+                vec![self.from_us(format!("METADATA {} {} :{}", target, key, value))]
+            }
             NetAction::Raw(s) => vec![s.clone()],
         }
     }
