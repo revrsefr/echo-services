@@ -21,6 +21,9 @@ impl Service for NickServ {
     fn gecos(&self) -> &str {
         "Nickname Services"
     }
+    fn manages_accounts(&self) -> bool {
+        true
+    }
 
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, _net: &Network, db: &mut Db) {
         let me = self.uid.as_str();

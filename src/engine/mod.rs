@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use tokio::sync::mpsc;
 
 use crate::proto::{NetAction, NetEvent, RegReply};
 use db::{Db, LogEntry, RegError};
@@ -74,11 +75,14 @@ pub struct Engine {
     sasl_sessions: HashMap<String, TimedSession>, // client uid -> in-progress exchange
     reg_limiter: RegLimiter,
     chan_service: Option<String>, // uid to source channel modes from (ChanServ)
+    nick_service: Option<String>, // uid of the account service (NickServ), for its notices
+    irc_out: Option<mpsc::UnboundedSender<NetAction>>, // services-initiated actions -> the uplink
 }
 
 impl Engine {
     pub fn new(services: Vec<Box<dyn Service>>, db: Db) -> Self {
         let chan_service = services.iter().find(|s| s.manages_channels()).map(|s| s.uid().to_string());
+        let nick_service = services.iter().find(|s| s.manages_accounts()).map(|s| s.uid().to_string());
         Self {
             services,
             network: Network::default(),
@@ -86,6 +90,21 @@ impl Engine {
             sasl_sessions: HashMap::new(),
             reg_limiter: RegLimiter::new(),
             chan_service,
+            nick_service,
+            irc_out: None,
+        }
+    }
+
+    // Wire the channel the link layer drains, so the engine can push actions to the
+    // uplink that no ircd event asked for (here: a forced logout after losing a
+    // registration conflict).
+    pub fn set_irc_out(&mut self, tx: mpsc::UnboundedSender<NetAction>) {
+        self.irc_out = Some(tx);
+    }
+
+    fn emit_irc(&self, action: NetAction) {
+        if let Some(tx) = &self.irc_out {
+            let _ = tx.send(action); // unbounded: never blocks; only fails if the link is down
         }
     }
 
@@ -104,7 +123,29 @@ impl Engine {
     }
 
     pub fn gossip_ingest(&mut self, entry: LogEntry) -> std::io::Result<()> {
-        self.db.ingest(entry)
+        // If ingesting a peer's registration took an account name away from a
+        // local session (it lost the conflict), log that session out.
+        if let Some(account) = self.db.ingest(entry)? {
+            self.logout_lost_sessions(&account);
+        }
+        Ok(())
+    }
+
+    // A registration conflict resolved against this node: the name `account` is now
+    // owned by another node. Any local session logged into it authenticated against
+    // the old owner's credential, which no longer exists — force them out and say why.
+    fn logout_lost_sessions(&mut self, account: &str) {
+        for uid in self.network.uids_logged_into(account) {
+            self.network.clear_account(&uid);
+            self.emit_irc(NetAction::Metadata { target: uid.clone(), key: "accountname".to_string(), value: String::new() });
+            if let Some(ns) = &self.nick_service {
+                self.emit_irc(NetAction::Notice {
+                    from: ns.clone(),
+                    to: uid,
+                    text: format!("Your registration of \x02{account}\x02 collided with another network and it now belongs elsewhere. You have been logged out; please register a different name."),
+                });
+            }
+        }
     }
 
     // Compact the log if it has grown past the live account count. Returns
@@ -986,6 +1027,42 @@ mod tests {
             from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into(),
         });
         assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "realnick")), "must log into the current nick's account: {out:?}");
+    }
+
+    // Losing a registration conflict logs out the local session on that name and
+    // notifies them over the services-initiated outbound path.
+    #[test]
+    fn lost_conflict_logs_out_local_session() {
+        let mut e = engine_with("lostconf", "alice", "sesame");
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        e.set_irc_out(tx);
+        // A local user logs into alice.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        assert_eq!(e.network.account_of("000AAAAAB"), Some("alice"), "logged in before the conflict");
+
+        // An earlier claim from another node wins and takes the name over.
+        let winner = db::Account {
+            name: "alice".into(), password_hash: "OTHER".into(), email: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![],
+        };
+        let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(winner));
+        e.gossip_ingest(entry).unwrap();
+
+        // The local session is logged out...
+        assert!(e.network.account_of("000AAAAAB").is_none(), "session cleared after losing the name");
+        // ...and the outbound path got a logout (empty accountname) plus a notice.
+        let mut logout = false;
+        let mut notice = false;
+        while let Ok(a) = rx.try_recv() {
+            match a {
+                NetAction::Metadata { target, key, value } if target == "000AAAAAB" && key == "accountname" && value.is_empty() => logout = true,
+                NetAction::Notice { to, text, .. } if to == "000AAAAAB" && text.contains("collided") => notice = true,
+                _ => {}
+            }
+        }
+        assert!(logout, "a logout must be pushed to the uplink");
+        assert!(notice, "the user must be told why");
     }
 
     // IDENTIFY accepts the two-arg account+password form: log into a named

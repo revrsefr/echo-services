@@ -57,6 +57,10 @@ async fn main() -> Result<()> {
     db.set_outbound(gossip_tx.clone());
     let engine = Arc::new(Mutex::new(Engine::new(services, db)));
 
+    // Channel for services-initiated actions to reach the uplink (drained by the link loop).
+    let (irc_tx, irc_rx) = tokio::sync::mpsc::unbounded_channel();
+    engine.lock().await.set_irc_out(irc_tx);
+
     if let Some(gossip) = cfg.gossip.clone() {
         tracing::info!(peers = cfg.peer.len(), "starting gossip");
         tokio::spawn(gossip::run(engine.clone(), gossip, cfg.peer.clone(), cfg.server.sid.clone(), gossip_tx));
@@ -77,5 +81,5 @@ async fn main() -> Result<()> {
 
     let addr = format!("{}:{}", cfg.uplink.host, cfg.uplink.port);
     tracing::info!(server = %cfg.server.name, %addr, "linking to uplink");
-    link::run(proto, engine, &addr).await
+    link::run(proto, engine, &addr, irc_rx).await
 }

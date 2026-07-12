@@ -206,6 +206,13 @@ pub struct LogEntry {
     event: Event,
 }
 
+#[cfg(test)]
+impl LogEntry {
+    pub(crate) fn for_test(origin: &str, seq: u64, lamport: u64, event: Event) -> Self {
+        LogEntry { origin: origin.to_string(), seq, lamport, event }
+    }
+}
+
 // Append-only log, the sole persistent source of truth: `open` replays it,
 // `append` stamps and writes a locally-authored entry, and `ingest` folds in an
 // entry authored by another node. The version vector (highest seq applied per
@@ -439,12 +446,25 @@ impl Db {
     }
 
     /// Fold an entry authored by another node into the store — the services-side
-    /// of the gossip seam. Idempotent (re-delivered entries are dropped).
-    pub fn ingest(&mut self, entry: LogEntry) -> std::io::Result<()> {
+    /// of the gossip seam. Idempotent (re-delivered entries are dropped). Returns
+    /// the account name if this ingest changed its owner (a registration conflict
+    /// resolved against the local claim), so the caller can log out stale sessions.
+    pub fn ingest(&mut self, entry: LogEntry) -> std::io::Result<Option<String>> {
+        // Record the current owner of an incoming account before applying, to see
+        // if this ingest transfers ownership away from us.
+        let contested = match &entry.event {
+            Event::AccountRegistered(a) => self.accounts.get(&key(&a.name)).map(|cur| (a.name.clone(), cur.home.clone())),
+            _ => None,
+        };
         if let Some(event) = self.log.ingest(entry)? {
             apply(&mut self.accounts, &mut self.channels, event);
         }
-        Ok(())
+        if let Some((name, prev_home)) = contested {
+            if self.accounts.get(&key(&name)).is_some_and(|cur| cur.home != prev_home) {
+                return Ok(Some(name)); // ownership moved to another node
+            }
+        }
+        Ok(None)
     }
 
     /// Rewrite the log to one entry per account and channel, reclaiming churn.

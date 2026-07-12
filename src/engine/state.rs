@@ -81,6 +81,15 @@ impl Network {
         self.accounts.get(uid).map(String::as_str)
     }
 
+    // Uids of every live session currently identified to `account`.
+    pub fn uids_logged_into(&self, account: &str) -> Vec<String> {
+        self.accounts
+            .iter()
+            .filter(|(_, a)| a.eq_ignore_ascii_case(account))
+            .map(|(uid, _)| uid.clone())
+            .collect()
+    }
+
     pub fn set_account(&mut self, uid: &str, account: &str) {
         self.accounts.insert(uid.to_string(), account.to_string());
     }

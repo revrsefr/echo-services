@@ -24,6 +24,11 @@ pub trait Service: Send {
     fn manages_channels(&self) -> bool {
         false
     }
+    // Whether this is the account service (NickServ), so the engine can source
+    // account-related notices from it.
+    fn manages_accounts(&self) -> bool {
+        false
+    }
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &Network, db: &mut Db);
 }
 
