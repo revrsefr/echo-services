@@ -90,6 +90,11 @@ impl Protocol for InspIrcd {
                 }
                 _ => vec![],
             },
+            // FJOIN <chan> <ts> <modes> [params] :<members> — channel create/burst.
+            "FJOIN" => match tokens.next() {
+                Some(chan) if !chan.is_empty() => vec![NetEvent::ChannelCreate { channel: chan.to_string() }],
+                _ => vec![],
+            },
             "QUIT" => vec![NetEvent::Quit { uid: source.unwrap_or_default() }],
             // account-registration relay from an ircd:
             // ACCTREGISTER <reqid> <origin> <kind> <account> <p2> :<p3>
@@ -229,6 +234,16 @@ mod tests {
         let ev = proto().parse(":0IR UID 0IRAAAAAB 1783833000 alice host host user user 0.0.0.0 1783833000 +i :real");
         assert!(
             matches!(ev.as_slice(), [NetEvent::UserConnect { uid, nick }] if uid == "0IRAAAAAB" && nick == "alice"),
+            "{ev:?}"
+        );
+    }
+
+    // FJOIN (channel create/burst) surfaces as ChannelCreate for the channel.
+    #[test]
+    fn parses_fjoin_as_channel_create() {
+        let ev = proto().parse(":0IR FJOIN #chan 1783845132 +tn :o,0IRAAAAAB:0");
+        assert!(
+            matches!(ev.as_slice(), [NetEvent::ChannelCreate { channel }] if channel == "#chan"),
             "{ev:?}"
         );
     }

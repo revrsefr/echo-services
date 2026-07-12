@@ -170,6 +170,16 @@ impl Engine {
                 self.network.user_nick_change(&uid, nick);
                 Vec::new()
             }
+            // A registered channel just (re)appeared: re-assert +r. Fires on
+            // creation and on the uplink burst, so registered channels regain the
+            // mode after emptying, and after a services relink.
+            NetEvent::ChannelCreate { channel } => {
+                if self.db.channel(&channel).is_some() {
+                    vec![NetAction::ChannelMode { channel, modes: "+r".to_string() }]
+                } else {
+                    Vec::new()
+                }
+            }
             NetEvent::Quit { uid } => {
                 self.network.user_quit(&uid);
                 self.sasl_sessions.remove(&uid); // drop any half-finished exchange
@@ -937,5 +947,22 @@ mod tests {
         let out = to_cs(&mut e, "000AAAAAB", "DROP #room");
         assert!(notice(&out, "dropped"));
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes } if channel == "#room" && modes == "-r")), "drop clears +r: {out:?}");
+    }
+
+    // A registered channel (re)appearing re-asserts +r; an unregistered one does not.
+    #[test]
+    fn channel_create_reasserts_registered_mode() {
+        let path = std::env::temp_dir().join("fedserv-chancreate.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.register_channel("#reg", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let mut e = Engine::new(vec![Box::new(ns)], db);
+
+        let out = e.handle(NetEvent::ChannelCreate { channel: "#reg".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes } if channel == "#reg" && modes == "+r")), "registered channel regains +r: {out:?}");
+
+        let out = e.handle(NetEvent::ChannelCreate { channel: "#other".into() });
+        assert!(out.is_empty(), "unregistered channel is left alone: {out:?}");
     }
 }
