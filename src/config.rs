@@ -24,10 +24,17 @@ pub struct Email {
     // Display name shown in email templates (header/footer).
     #[serde(default = "default_brand")]
     pub brand: String,
+    // Accent colour (any CSS colour) for the email template.
+    #[serde(default = "default_accent")]
+    pub accent: String,
 }
 
 fn default_brand() -> String {
     "Network Services".to_string()
+}
+
+fn default_accent() -> String {
+    "#4f46e5".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone)]
