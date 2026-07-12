@@ -17,9 +17,13 @@ pub enum NetEvent {
     ChannelCreate { channel: String },
     // A user joined a channel (an FJOIN member or an IJOIN), for auto-op.
     Join { uid: String, channel: String },
+    // A user left a channel (PART) or was removed (KICK), for membership tracking.
+    Part { uid: String, channel: String },
     // A channel's modes changed (FMODE), for enforcing mode locks. Our own
     // changes are filtered out by the protocol layer.
     ChannelModeChange { channel: String, modes: String },
+    // A channel's key (+k/-k) changed, tracked so GETKEY can report it.
+    ChannelKey { channel: String, key: Option<String> },
     Quit { uid: String },
     // An ircd relaying an IRCv3 account-registration request to us as the authority.
     AccountRequest { reqid: String, origin: String, kind: String, account: String, p2: String, p3: String },

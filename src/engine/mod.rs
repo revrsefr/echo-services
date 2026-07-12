@@ -191,32 +191,55 @@ impl Engine {
                     None => Vec::new(),
                 }
             }
-            // Give the founder and access-list members their status on join.
+            // On join: record membership, enforce the auto-kick list, give access
+            // members their status mode, and send the entry message.
             NetEvent::Join { uid, channel } => {
+                self.network.channel_join(&channel, &uid);
                 let account = self.network.account_of(&uid).map(str::to_string);
                 let from = self.chan_service.clone().unwrap_or_default();
                 let mode = account.as_deref().and_then(|a| self.db.channel(&channel).and_then(|c| c.join_mode(a)));
+                let entrymsg = self.db.channel(&channel).map(|c| c.entrymsg.clone()).filter(|m| !m.is_empty());
+                let mut out = Vec::new();
                 match mode {
-                    // A user with access gets their status mode.
-                    Some(m) => vec![NetAction::ChannelMode { from, channel, modes: format!("{m} {uid}") }],
-                    // Otherwise, enforce the auto-kick list.
+                    // A user with access gets their status mode, plus the entry message.
+                    Some(m) => {
+                        if let Some(msg) = entrymsg {
+                            out.push(NetAction::Notice { from: from.clone(), to: uid.clone(), text: msg });
+                        }
+                        out.push(NetAction::ChannelMode { from, channel, modes: format!("{m} {uid}") });
+                    }
+                    // No access: an auto-kick match is banned and kicked, else greeted.
                     None => {
-                        let nick = self.network.nick_of(&uid).unwrap_or("*");
-                        let host = self.network.host_of(&uid).unwrap_or("*");
+                        let nick = self.network.nick_of(&uid).unwrap_or("*").to_string();
+                        let host = self.network.host_of(&uid).unwrap_or("*").to_string();
                         let hostmask = format!("{nick}!*@{host}");
-                        match self.db.channel(&channel).and_then(|c| c.akick_match(&hostmask)) {
-                            Some(k) => {
-                                let mask = k.mask.clone();
-                                let reason = if k.reason.is_empty() { "You are banned from this channel.".to_string() } else { k.reason.clone() };
-                                vec![
-                                    NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: format!("+b {mask}") },
-                                    NetAction::Kick { from, channel, uid, reason },
-                                ]
+                        let akick = self.db.channel(&channel).and_then(|c| c.akick_match(&hostmask)).map(|k| {
+                            let reason = if k.reason.is_empty() { "You are banned from this channel.".to_string() } else { k.reason.clone() };
+                            (k.mask.clone(), reason)
+                        });
+                        match akick {
+                            Some((mask, reason)) => {
+                                self.network.channel_part(&channel, &uid);
+                                out.push(NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: format!("+b {mask}") });
+                                out.push(NetAction::Kick { from, channel, uid, reason });
                             }
-                            None => Vec::new(),
+                            None => {
+                                if let Some(msg) = entrymsg {
+                                    out.push(NetAction::Notice { from, to: uid, text: msg });
+                                }
+                            }
                         }
                     }
                 }
+                out
+            }
+            NetEvent::Part { uid, channel } => {
+                self.network.channel_part(&channel, &uid);
+                Vec::new()
+            }
+            NetEvent::ChannelKey { channel, key } => {
+                self.network.set_channel_key(&channel, key);
+                Vec::new()
             }
             NetEvent::Quit { uid } => {
                 self.network.user_quit(&uid);
@@ -1122,6 +1145,61 @@ mod tests {
         // Transfer to bob works; alice is then no longer the founder.
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c FOUNDER bob"), "transferred"));
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c DESC nope"), "founder can change"));
+    }
+
+    // ChanServ entrymsg, enforce, getkey, seen, clone and the xop lists.
+    #[test]
+    fn chanserv_extended() {
+        use crate::chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-cs-ext.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register("carol", "pw", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+        let to_cs = |e: &mut Engine, from: &str, text: &str| {
+            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+        };
+        let notice = |out: &[NetAction], needle: &str| {
+            out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)))
+        };
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h1".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+
+        // ENTRYMSG: set it, then a joining user is noticed it.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "ENTRYMSG #c welcome aboard"), "updated"));
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "guest".into(), host: "h2".into() });
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#c".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "000AAAAAC" && text == "welcome aboard")), "{out:?}");
+
+        // XOP: AOP add shows in the AOP list and grants op access.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "AOP #c ADD carol"), "Added"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "AOP #c LIST"), "carol"));
+
+        // ENFORCE: alice present gets +o, the akick-matching guest is kicked.
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into() });
+        to_cs(&mut e, "000AAAAAB", "AKICK #c ADD *!*@h2 out");
+        let out = to_cs(&mut e, "000AAAAAB", "ENFORCE #c");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+o 000AAAAAB")), "{out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAC")), "{out:?}");
+
+        // GETKEY: reflects a tracked key change.
+        e.handle(NetEvent::ChannelKey { channel: "#c".into(), key: Some("s3cret".into()) });
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "GETKEY #c"), "s3cret"));
+
+        // SEEN: an online user vs one who quit.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "SEEN alice"), "currently online"));
+        e.handle(NetEvent::Quit { uid: "000AAAAAC".into() });
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "SEEN guest"), "last seen"));
+
+        // CLONE: copy #c's settings (incl. the AOP) into a second owned channel.
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "REGISTER #d".into() });
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "CLONE #c #d"), "Copied"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "AOP #d LIST"), "carol"));
     }
 
     // A registered channel (re)appearing re-asserts +r; an unregistered one does not.

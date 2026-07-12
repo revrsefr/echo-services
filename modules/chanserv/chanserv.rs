@@ -26,6 +26,18 @@ mod list;
 mod status;
 #[path = "set.rs"]
 mod set;
+#[path = "entrymsg.rs"]
+mod entrymsg;
+#[path = "getkey.rs"]
+mod getkey;
+#[path = "seen.rs"]
+mod seen;
+#[path = "enforce.rs"]
+mod enforce;
+#[path = "clone.rs"]
+mod clone;
+#[path = "xop.rs"]
+mod xop;
 
 pub struct ChanServ {
     pub uid: String,
@@ -167,9 +179,32 @@ impl Service for ChanServ {
             Some("STATUS") => status::handle(me, from, args, ctx, net, db),
             Some("LIST") => list::handle(me, from, args, ctx, db),
             Some("SET") => set::handle(me, from, args, ctx, db),
-            Some("HELP") => ctx.notice(me, from.uid, "ChanServ registers and looks after channels. Commands: \x02REGISTER\x02, \x02INFO\x02, \x02LIST\x02, \x02SET\x02, \x02ACCESS\x02, \x02STATUS\x02, \x02OP\x02/\x02DEOP\x02, \x02VOICE\x02/\x02DEVOICE\x02, \x02KICK\x02, \x02BAN\x02/\x02UNBAN\x02, \x02AKICK\x02, \x02TOPIC\x02, \x02INVITE\x02, \x02MODE\x02, \x02MLOCK\x02, \x02DROP\x02."),
+            Some("ENTRYMSG") => entrymsg::handle(me, from, args, ctx, db),
+            Some("GETKEY") => getkey::handle(me, from, args, ctx, net, db),
+            Some("SEEN") => seen::handle(me, from, args, ctx, net),
+            Some("ENFORCE") => enforce::handle(me, from, args, ctx, net, db),
+            Some("CLONE") => clone::handle(me, from, args, ctx, db),
+            Some("AOP") => xop::handle(me, from, "AOP", "op", args, ctx, db),
+            Some("SOP") => xop::handle(me, from, "SOP", "op", args, ctx, db),
+            Some("VOP") => xop::handle(me, from, "VOP", "voice", args, ctx, db),
+            Some("HELP") => ctx.notice(me, from.uid, "ChanServ registers and looks after channels. Commands: \x02REGISTER\x02, \x02INFO\x02, \x02LIST\x02, \x02SET\x02, \x02ACCESS\x02, \x02AOP\x02/\x02SOP\x02/\x02VOP\x02, \x02STATUS\x02, \x02OP\x02/\x02DEOP\x02, \x02VOICE\x02/\x02DEVOICE\x02, \x02KICK\x02, \x02BAN\x02/\x02UNBAN\x02, \x02AKICK\x02, \x02ENFORCE\x02, \x02TOPIC\x02, \x02ENTRYMSG\x02, \x02INVITE\x02, \x02GETKEY\x02, \x02SEEN\x02, \x02CLONE\x02, \x02MODE\x02, \x02MLOCK\x02, \x02DROP\x02."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
+        }
+    }
+}
+
+// True if `from` is the channel's founder; otherwise notices why and returns false.
+fn require_founder(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &Db) -> bool {
+    match db.channel(chan) {
+        None => {
+            ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
+            false
+        }
+        Some(info) if from.account == Some(info.founder.as_str()) => true,
+        _ => {
+            ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can do that."));
+            false
         }
     }
 }

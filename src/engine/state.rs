@@ -1,12 +1,14 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // Live network view, rebuilt from the uplink's burst each connect (ephemeral —
 // unlike the account store, which persists).
 #[derive(Default)]
 pub struct Network {
     pub users: HashMap<String, User>, // keyed by UID
-    pub channels: HashMap<String, Channel>,
+    channels: HashMap<String, Channel>, // keyed by lowercase name
     accounts: HashMap<String, String>, // UID -> logged-in account, until logout/quit
+    seen: HashMap<String, Seen>,       // lowercase nick -> last activity
 }
 
 pub struct User {
@@ -15,10 +17,26 @@ pub struct User {
     pub host: String,
 }
 
-#[allow(dead_code)]
+// A channel's live membership and current key (+k), tracked from the burst.
+#[derive(Default)]
 pub struct Channel {
-    pub name: String,
+    pub members: HashSet<String>, // uids
+    pub key: Option<String>,
+}
+
+// The last time a nick was seen, and doing what.
+pub struct Seen {
+    pub nick: String,
     pub ts: u64,
+    pub what: String,
+}
+
+fn now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+fn lc(s: &str) -> String {
+    s.to_ascii_lowercase()
 }
 
 impl Network {
@@ -37,13 +55,20 @@ impl Network {
 
     pub fn user_nick_change(&mut self, uid: &str, nick: String) {
         if let Some(user) = self.users.get_mut(uid) {
+            self.seen.insert(lc(&nick), Seen { nick: nick.clone(), ts: now(), what: format!("changing nick from {}", user.nick) });
             user.nick = nick;
         }
     }
 
     pub fn user_quit(&mut self, uid: &str) {
+        if let Some(u) = self.users.get(uid) {
+            self.seen.insert(lc(&u.nick), Seen { nick: u.nick.clone(), ts: now(), what: "quitting".to_string() });
+        }
         self.users.remove(uid);
         self.accounts.remove(uid);
+        for c in self.channels.values_mut() {
+            c.members.remove(uid);
+        }
     }
 
     pub fn nick_of(&self, uid: &str) -> Option<&str> {
@@ -62,5 +87,40 @@ impl Network {
 
     pub fn clear_account(&mut self, uid: &str) {
         self.accounts.remove(uid);
+    }
+
+    // A user joined a channel: record membership and last-seen.
+    pub fn channel_join(&mut self, channel: &str, uid: &str) {
+        self.channels.entry(lc(channel)).or_default().members.insert(uid.to_string());
+        if let Some(nick) = self.nick_of(uid) {
+            self.seen.insert(lc(nick), Seen { nick: nick.to_string(), ts: now(), what: format!("joining {channel}") });
+        }
+    }
+
+    // A user left a channel (part/kick): drop membership and record last-seen.
+    pub fn channel_part(&mut self, channel: &str, uid: &str) {
+        if let Some(c) = self.channels.get_mut(&lc(channel)) {
+            c.members.remove(uid);
+        }
+        if let Some(nick) = self.nick_of(uid) {
+            self.seen.insert(lc(nick), Seen { nick: nick.to_string(), ts: now(), what: format!("leaving {channel}") });
+        }
+    }
+
+    // Uids currently in `channel`.
+    pub fn channel_members(&self, channel: &str) -> impl Iterator<Item = &str> {
+        self.channels.get(&lc(channel)).into_iter().flat_map(|c| c.members.iter().map(String::as_str))
+    }
+
+    pub fn set_channel_key(&mut self, channel: &str, key: Option<String>) {
+        self.channels.entry(lc(channel)).or_default().key = key;
+    }
+
+    pub fn channel_key(&self, channel: &str) -> Option<&str> {
+        self.channels.get(&lc(channel)).and_then(|c| c.key.as_deref())
+    }
+
+    pub fn last_seen(&self, nick: &str) -> Option<&Seen> {
+        self.seen.get(&lc(nick))
     }
 }

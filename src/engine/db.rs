@@ -47,6 +47,7 @@ pub enum Event {
     ChannelAkickDel { channel: String, mask: String },
     ChannelFounderSet { channel: String, founder: String },
     ChannelDescSet { channel: String, desc: String },
+    ChannelEntryMsgSet { channel: String, msg: String },
 }
 
 // An access-list entry: an account and its level ("op" or "voice").
@@ -81,6 +82,9 @@ pub struct ChannelInfo {
     // Free-text description, shown in INFO.
     #[serde(default)]
     pub desc: String,
+    // Message noticed to users as they join.
+    #[serde(default)]
+    pub entrymsg: String,
 }
 
 impl ChannelInfo {
@@ -403,6 +407,9 @@ impl Db {
             if !c.desc.is_empty() {
                 snapshot.push(Event::ChannelDescSet { channel: c.name.clone(), desc: c.desc.clone() });
             }
+            if !c.entrymsg.is_empty() {
+                snapshot.push(Event::ChannelEntryMsgSet { channel: c.name.clone(), msg: c.entrymsg.clone() });
+            }
         }
         self.log.compact(snapshot)?;
         tracing::info!(before, after = self.log.len(), "compacted event log");
@@ -543,7 +550,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new() });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new() });
         Ok(())
     }
 
@@ -660,6 +667,19 @@ impl Db {
         Ok(())
     }
 
+    /// Set `channel`'s entry message (empty clears it).
+    pub fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError> {
+        let k = key(channel);
+        if !self.channels.contains_key(&k) {
+            return Err(ChanError::NoChannel);
+        }
+        self.log
+            .append(Event::ChannelEntryMsgSet { channel: channel.to_string(), msg: msg.to_string() })
+            .map_err(|_| ChanError::Internal)?;
+        self.channels.get_mut(&k).unwrap().entrymsg = msg.to_string();
+        Ok(())
+    }
+
     /// Unregister `name`.
     pub fn drop_channel(&mut self, name: &str) -> Result<(), ChanError> {
         let k = key(name);
@@ -692,7 +712,7 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             }
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new() });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new() });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
@@ -733,6 +753,11 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::ChannelDescSet { channel, desc } => {
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.desc = desc;
+            }
+        }
+        Event::ChannelEntryMsgSet { channel, msg } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.entrymsg = msg;
             }
         }
     }

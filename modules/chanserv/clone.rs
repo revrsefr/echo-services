@@ -1,0 +1,32 @@
+use crate::engine::db::Db;
+use crate::engine::service::{Sender, ServiceCtx};
+
+// CLONE <source> <target>: copy a channel's settings (mode lock, access,
+// auto-kick, description, entry message) into another. Founder of both.
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut Db) {
+    let (Some(&src), Some(&dest)) = (args.get(1), args.get(2)) else {
+        ctx.notice(me, from.uid, "Syntax: CLONE <source> <target>");
+        return;
+    };
+    let (Some(sinfo), Some(dinfo)) = (db.channel(src).cloned(), db.channel(dest).cloned()) else {
+        ctx.notice(me, from.uid, "Both channels must be registered.");
+        return;
+    };
+    if from.account != Some(sinfo.founder.as_str()) || from.account != Some(dinfo.founder.as_str()) {
+        ctx.notice(me, from.uid, "You must be the founder of both channels.");
+        return;
+    }
+    let _ = db.set_mlock(dest, &sinfo.lock_on, &sinfo.lock_off);
+    for a in &sinfo.access {
+        let _ = db.access_add(dest, &a.account, &a.level);
+    }
+    for k in &sinfo.akick {
+        let _ = db.akick_add(dest, &k.mask, &k.reason);
+    }
+    let _ = db.set_desc(dest, &sinfo.desc);
+    let _ = db.set_entrymsg(dest, &sinfo.entrymsg);
+    if let Some(info) = db.channel(dest) {
+        ctx.channel_mode(me, dest, &info.lock_modes());
+    }
+    ctx.notice(me, from.uid, format!("Copied \x02{src}\x02's settings to \x02{dest}\x02."));
+}

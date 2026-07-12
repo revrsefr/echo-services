@@ -96,17 +96,24 @@ impl Protocol for InspIrcd {
             // FJOIN <chan> <ts> <modes> [params] :<members> — channel create/burst.
             // Each member is "<prefixes>,<uid>"; surface a Join for each.
             "FJOIN" => {
-                let chan = tokens.next().unwrap_or("").to_string();
+                // Mode section is everything before the " :<members>" trailing.
+                let head: Vec<&str> = rest.split(" :").next().unwrap_or(rest).split_whitespace().collect();
+                let chan = head.get(1).copied().unwrap_or("");
                 if chan.is_empty() {
                     vec![]
                 } else {
-                    let mut out = vec![NetEvent::ChannelCreate { channel: chan.clone() }];
+                    let mut out = vec![NetEvent::ChannelCreate { channel: chan.to_string() }];
+                    if let Some(modes) = head.get(3) {
+                        if let Some(key) = scan_key(modes, head.get(4..).unwrap_or(&[])) {
+                            out.push(NetEvent::ChannelKey { channel: chan.to_string(), key });
+                        }
+                    }
                     // Members are "<prefixes>,<uid>[:<membid>]"; take the uid.
                     for m in trailing(rest).split_whitespace() {
                         if let Some((_, member)) = m.split_once(',') {
                             let uid = member.split(':').next().unwrap_or("");
                             if !uid.is_empty() {
-                                out.push(NetEvent::Join { uid: uid.to_string(), channel: chan.clone() });
+                                out.push(NetEvent::Join { uid: uid.to_string(), channel: chan.to_string() });
                             }
                         }
                     }
@@ -120,6 +127,23 @@ impl Protocol for InspIrcd {
                 }
                 _ => vec![],
             },
+            // :<uid> PART <chan> [:reason] — a user leaving a channel.
+            "PART" => match (source.as_deref(), tokens.next()) {
+                (Some(uid), Some(chan)) if chan.starts_with('#') => {
+                    vec![NetEvent::Part { uid: uid.to_string(), channel: chan.to_string() }]
+                }
+                _ => vec![],
+            },
+            // :<src> KICK <chan> <uid> :<reason> — a user removed from a channel.
+            "KICK" => {
+                let chan = tokens.next().unwrap_or("");
+                match tokens.next() {
+                    Some(uid) if chan.starts_with('#') => {
+                        vec![NetEvent::Part { uid: uid.to_string(), channel: chan.to_string() }]
+                    }
+                    _ => vec![],
+                }
+            }
             // :<src> FMODE <chan> <ts> <modes> [params] — a channel mode change.
             // Skip changes we made ourselves so enforcement can't loop.
             "FMODE" => {
@@ -127,7 +151,11 @@ impl Protocol for InspIrcd {
                 match (source.as_deref(), a.first(), a.get(2)) {
                     // Our own uids (server SID + pseudoclients) share our SID prefix.
                     (Some(src), Some(chan), Some(modes)) if !src.starts_with(self.sid.as_str()) && chan.starts_with('#') => {
-                        vec![NetEvent::ChannelModeChange { channel: chan.to_string(), modes: modes.to_string() }]
+                        let mut out = vec![NetEvent::ChannelModeChange { channel: chan.to_string(), modes: modes.to_string() }];
+                        if let Some(key) = scan_key(modes, a.get(3..).unwrap_or(&[])) {
+                            out.push(NetEvent::ChannelKey { channel: chan.to_string(), key });
+                        }
+                        out
                     }
                     _ => vec![],
                 }
@@ -255,6 +283,38 @@ impl Protocol for InspIrcd {
     fn sid(&self) -> &str {
         &self.sid
     }
+}
+
+// Whether a channel mode consumes a parameter, for standard InspIRCd chanmodes.
+// List and prefix modes take one on both set and unset; the key takes one on
+// both; the rest that take one do so only on set.
+fn takes_param(m: char, adding: bool) -> bool {
+    match m {
+        'b' | 'e' | 'I' | 'q' | 'a' | 'o' | 'h' | 'v' | 'k' => true,
+        'l' | 'L' | 'f' | 'j' | 'J' | 'F' | 'H' => adding,
+        _ => false,
+    }
+}
+
+// Walk a mode change and its params for a key (+k/-k). Returns Some(Some(key))
+// when a key is set, Some(None) when cleared, None when `k` isn't in the change.
+fn scan_key(modes: &str, params: &[&str]) -> Option<Option<String>> {
+    let mut adding = true;
+    let mut pi = 0;
+    let mut result = None;
+    for m in modes.chars() {
+        match m {
+            '+' => adding = true,
+            '-' => adding = false,
+            'k' => {
+                result = Some(if adding { params.get(pi).map(|s| s.to_string()) } else { None });
+                pi += 1;
+            }
+            c if takes_param(c, adding) => pi += 1,
+            _ => {}
+        }
+    }
+    result
 }
 
 // The IRC "trailing" argument: everything after the first " :", else the last word.
