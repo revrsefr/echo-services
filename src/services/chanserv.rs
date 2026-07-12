@@ -1,4 +1,4 @@
-use crate::engine::db::{ChanError, Db};
+use crate::engine::db::{ChanError, ChannelInfo, Db};
 use crate::engine::service::{Sender, Service, ServiceCtx};
 
 pub struct ChanServ {
@@ -81,11 +81,89 @@ impl Service for ChanServ {
                     Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
                 }
             }
-            Some("HELP") => ctx.notice(me, from.uid, "ChanServ registers and looks after channels. Commands: \x02REGISTER\x02 <#channel>, \x02INFO\x02 <#channel>, \x02DROP\x02 <#channel>."),
+            Some("MLOCK") => {
+                let Some(&chan) = args.get(1) else {
+                    ctx.notice(me, from.uid, "Syntax: MLOCK <#channel> [modes], e.g. MLOCK #chan +nt-s");
+                    return;
+                };
+                // No modes given: show the current lock.
+                if args.len() <= 2 {
+                    match db.channel(chan) {
+                        None => ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered.")),
+                        Some(info) if info.lock_on.is_empty() && info.lock_off.is_empty() => {
+                            ctx.notice(me, from.uid, format!("\x02{}\x02 has no mode lock set.", info.name));
+                        }
+                        Some(info) => ctx.notice(me, from.uid, format!("Mode lock for \x02{}\x02: \x02{}\x02", info.name, show_mlock(info))),
+                    }
+                    return;
+                }
+                // Setting the lock: founder only.
+                let founder = match db.channel(chan) {
+                    Some(info) => info.founder.clone(),
+                    None => {
+                        ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
+                        return;
+                    }
+                };
+                if from.account != Some(founder.as_str()) {
+                    ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can set its mode lock."));
+                    return;
+                }
+                let (on, off) = parse_mlock(&args[2..].concat());
+                match db.set_mlock(chan, &on, &off) {
+                    Ok(()) => {
+                        if let Some(info) = db.channel(chan) {
+                            ctx.channel_mode(chan, &info.lock_modes()); // apply it now
+                        }
+                        ctx.notice(me, from.uid, format!("Mode lock for \x02{chan}\x02 updated."));
+                    }
+                    Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+                }
+            }
+            Some("HELP") => ctx.notice(me, from.uid, "ChanServ registers and looks after channels. Commands: \x02REGISTER\x02 <#channel>, \x02INFO\x02 <#channel>, \x02MLOCK\x02 <#channel> [modes], \x02DROP\x02 <#channel>."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
         }
     }
+}
+
+// Parse a mode spec like "+nt-s" into (locked-on, locked-off) mode chars. `r` is
+// implicit for a registered channel and is ignored here.
+fn parse_mlock(spec: &str) -> (String, String) {
+    let (mut on, mut off) = (String::new(), String::new());
+    let mut adding = true;
+    for ch in spec.chars() {
+        match ch {
+            '+' => adding = true,
+            '-' => adding = false,
+            'r' => {}
+            m if m.is_ascii_alphabetic() => {
+                on.retain(|c| c != m);
+                off.retain(|c| c != m);
+                if adding {
+                    on.push(m);
+                } else {
+                    off.push(m);
+                }
+            }
+            _ => {}
+        }
+    }
+    (on, off)
+}
+
+// Render a channel's lock as "+on-off" for display.
+fn show_mlock(info: &ChannelInfo) -> String {
+    let mut s = String::new();
+    if !info.lock_on.is_empty() {
+        s.push('+');
+        s.push_str(&info.lock_on);
+    }
+    if !info.lock_off.is_empty() {
+        s.push('-');
+        s.push_str(&info.lock_off);
+    }
+    s
 }
 
 // Format a Unix timestamp (seconds) as "YYYY-MM-DD HH:MM:SS UTC", using Howard

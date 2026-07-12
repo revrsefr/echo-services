@@ -15,6 +15,9 @@ pub enum NetEvent {
     // A channel was created or bursted (InspIRCd FJOIN). Subsequent single joins
     // arrive as IJOIN and are not surfaced.
     ChannelCreate { channel: String },
+    // A channel's modes changed (FMODE), for enforcing mode locks. Our own
+    // changes are filtered out by the protocol layer.
+    ChannelModeChange { channel: String, modes: String },
     Quit { uid: String },
     // An ircd relaying an IRCv3 account-registration request to us as the authority.
     AccountRequest { reqid: String, origin: String, kind: String, account: String, p2: String, p3: String },

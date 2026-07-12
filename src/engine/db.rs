@@ -40,6 +40,7 @@ pub enum Event {
     CertRemoved { account: String, fp: String },
     ChannelRegistered { name: String, founder: String, ts: u64 },
     ChannelDropped { name: String },
+    ChannelMlock { name: String, on: String, off: String },
 }
 
 // A registered channel and who owns it.
@@ -48,6 +49,57 @@ pub struct ChannelInfo {
     pub name: String,
     pub founder: String,
     pub ts: u64,
+    // Mode-lock: chars services keep set / unset (besides the implicit +r).
+    #[serde(default)]
+    pub lock_on: String,
+    #[serde(default)]
+    pub lock_off: String,
+}
+
+impl ChannelInfo {
+    /// The mode string services keep applied: +r plus the lock.
+    pub fn lock_modes(&self) -> String {
+        let mut s = format!("+r{}", self.lock_on);
+        if !self.lock_off.is_empty() {
+            s.push('-');
+            s.push_str(&self.lock_off);
+        }
+        s
+    }
+
+    /// Given a mode change, the modes to send back to restore the lock, if it was
+    /// violated. +r is always locked on. Only simple (paramless) modes are checked.
+    pub fn enforce(&self, change: &str) -> Option<String> {
+        let (mut readd, mut reremove) = (String::new(), String::new());
+        let mut adding = true;
+        for ch in change.chars() {
+            match ch {
+                '+' => adding = true,
+                '-' => adding = false,
+                m if m.is_ascii_alphabetic() => {
+                    if (m == 'r' || self.lock_on.contains(m)) && !adding && !readd.contains(m) {
+                        readd.push(m);
+                    } else if self.lock_off.contains(m) && adding && !reremove.contains(m) {
+                        reremove.push(m);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if readd.is_empty() && reremove.is_empty() {
+            return None;
+        }
+        let mut s = String::new();
+        if !readd.is_empty() {
+            s.push('+');
+            s.push_str(&readd);
+        }
+        if !reremove.is_empty() {
+            s.push('-');
+            s.push_str(&reremove);
+        }
+        Some(s)
+    }
 }
 
 // A durable record: the event plus the metadata a gossip layer needs to address
@@ -288,11 +340,12 @@ impl Db {
     pub fn compact(&mut self) -> std::io::Result<()> {
         let before = self.log.len();
         let mut snapshot: Vec<Event> = self.accounts.values().cloned().map(Event::AccountRegistered).collect();
-        snapshot.extend(self.channels.values().map(|c| Event::ChannelRegistered {
-            name: c.name.clone(),
-            founder: c.founder.clone(),
-            ts: c.ts,
-        }));
+        for c in self.channels.values() {
+            snapshot.push(Event::ChannelRegistered { name: c.name.clone(), founder: c.founder.clone(), ts: c.ts });
+            if !c.lock_on.is_empty() || !c.lock_off.is_empty() {
+                snapshot.push(Event::ChannelMlock { name: c.name.clone(), on: c.lock_on.clone(), off: c.lock_off.clone() });
+            }
+        }
         self.log.compact(snapshot)?;
         tracing::info!(before, after = self.log.len(), "compacted event log");
         Ok(())
@@ -432,13 +485,28 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new() });
         Ok(())
     }
 
     /// The registration for `name`, if any.
     pub fn channel(&self, name: &str) -> Option<&ChannelInfo> {
         self.channels.get(&key(name))
+    }
+
+    /// Set the mode-lock (chars to keep set / unset) for a registered channel.
+    pub fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError> {
+        let k = key(name);
+        if !self.channels.contains_key(&k) {
+            return Err(ChanError::NoChannel);
+        }
+        self.log
+            .append(Event::ChannelMlock { name: name.to_string(), on: on.to_string(), off: off.to_string() })
+            .map_err(|_| ChanError::Internal)?;
+        let c = self.channels.get_mut(&k).unwrap();
+        c.lock_on = on.to_string();
+        c.lock_off = off.to_string();
+        Ok(())
     }
 
     /// Unregister `name`.
@@ -473,10 +541,16 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             }
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new() });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
+        }
+        Event::ChannelMlock { name, on, off } => {
+            if let Some(c) = channels.get_mut(&key(&name)) {
+                c.lock_on = on;
+                c.lock_off = off;
+            }
         }
     }
 }
@@ -624,5 +698,25 @@ mod tests {
         db.drop_channel("#chat").unwrap();
         assert!(db.channel("#chat").is_none());
         assert!(matches!(db.drop_channel("#chat"), Err(ChanError::NoChannel)));
+    }
+
+    // Mode lock persists, renders the applied string, and detects violations.
+    #[test]
+    fn mode_lock_persists_and_enforces() {
+        let p = tmp("mlock");
+        let mut db = Db::open(&p, "local");
+        db.register_channel("#chan", "alice").unwrap();
+        db.set_mlock("#chan", "nt", "s").unwrap();
+
+        let info = db.channel("#chan").unwrap();
+        assert_eq!(info.lock_modes(), "+rnt-s");
+        assert_eq!(info.enforce("-nt"), Some("+nt".to_string())); // locked-on removed
+        assert_eq!(info.enforce("+s"), Some("-s".to_string()));   // locked-off added
+        assert_eq!(info.enforce("-r"), Some("+r".to_string()));   // +r always locked
+        assert_eq!(info.enforce("+m"), None);                     // unrelated mode ignored
+
+        drop(db);
+        let db = Db::open(&p, "local");
+        assert_eq!(db.channel("#chan").unwrap().lock_modes(), "+rnt-s", "survives reopen");
     }
 }

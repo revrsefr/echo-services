@@ -174,10 +174,16 @@ impl Engine {
             // creation and on the uplink burst, so registered channels regain the
             // mode after emptying, and after a services relink.
             NetEvent::ChannelCreate { channel } => {
-                if self.db.channel(&channel).is_some() {
-                    vec![NetAction::ChannelMode { channel, modes: "+r".to_string() }]
-                } else {
-                    Vec::new()
+                match self.db.channel(&channel) {
+                    Some(info) => vec![NetAction::ChannelMode { channel, modes: info.lock_modes() }],
+                    None => Vec::new(),
+                }
+            }
+            // Enforce the mode lock: revert any change that broke it.
+            NetEvent::ChannelModeChange { channel, modes } => {
+                match self.db.channel(&channel).and_then(|info| info.enforce(&modes)) {
+                    Some(revert) => vec![NetAction::ChannelMode { channel, modes: revert }],
+                    None => Vec::new(),
                 }
             }
             NetEvent::Quit { uid } => {
@@ -939,8 +945,15 @@ mod tests {
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes } if channel == "#room" && modes == "+r")), "register sets +r: {out:?}");
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "INFO #room"), "alice"));
 
-        // A different, unidentified user cannot drop it.
+        // Founder sets a mode lock: it applies immediately and shows on view.
+        let out = to_cs(&mut e, "000AAAAAB", "MLOCK #room +nt-s");
+        assert!(notice(&out, "updated"));
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes } if channel == "#room" && modes == "+rnt-s")), "mlock applied: {out:?}");
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "MLOCK #room"), "+nt-s"));
+
+        // A different, unidentified user cannot set the lock or drop it.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into() });
+        assert!(notice(&to_cs(&mut e, "000AAAAAC", "MLOCK #room +i"), "founder"));
         assert!(notice(&to_cs(&mut e, "000AAAAAC", "DROP #room"), "founder"));
 
         // The founder can, which also clears +r.
@@ -964,5 +977,28 @@ mod tests {
 
         let out = e.handle(NetEvent::ChannelCreate { channel: "#other".into() });
         assert!(out.is_empty(), "unregistered channel is left alone: {out:?}");
+    }
+
+    // A channel's mode lock is applied on creation and enforced on violation.
+    #[test]
+    fn mode_lock_is_applied_and_enforced() {
+        let path = std::env::temp_dir().join("fedserv-mlock-engine.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.register_channel("#lk", "alice").unwrap();
+        db.set_mlock("#lk", "nt", "s").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let mut e = Engine::new(vec![Box::new(ns)], db);
+
+        // Creation applies the full lock.
+        let out = e.handle(NetEvent::ChannelCreate { channel: "#lk".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes } if channel == "#lk" && modes == "+rnt-s")), "{out:?}");
+
+        // Setting a locked-off mode is reverted.
+        let out = e.handle(NetEvent::ChannelModeChange { channel: "#lk".into(), modes: "+s".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes } if channel == "#lk" && modes == "-s")), "{out:?}");
+
+        // An unrelated mode change is left alone.
+        assert!(e.handle(NetEvent::ChannelModeChange { channel: "#lk".into(), modes: "+m".into() }).is_empty());
     }
 }

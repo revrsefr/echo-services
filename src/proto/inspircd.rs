@@ -95,6 +95,17 @@ impl Protocol for InspIrcd {
                 Some(chan) if !chan.is_empty() => vec![NetEvent::ChannelCreate { channel: chan.to_string() }],
                 _ => vec![],
             },
+            // :<src> FMODE <chan> <ts> <modes> [params] — a channel mode change.
+            // Skip changes we made ourselves so enforcement can't loop.
+            "FMODE" => {
+                let a: Vec<&str> = tokens.collect();
+                match (source.as_deref(), a.first(), a.get(2)) {
+                    (Some(src), Some(chan), Some(modes)) if src != self.sid && chan.starts_with('#') => {
+                        vec![NetEvent::ChannelModeChange { channel: chan.to_string(), modes: modes.to_string() }]
+                    }
+                    _ => vec![],
+                }
+            }
             "QUIT" => vec![NetEvent::Quit { uid: source.unwrap_or_default() }],
             // account-registration relay from an ircd:
             // ACCTREGISTER <reqid> <origin> <kind> <account> <p2> :<p3>
@@ -246,5 +257,17 @@ mod tests {
             matches!(ev.as_slice(), [NetEvent::ChannelCreate { channel }] if channel == "#chan"),
             "{ev:?}"
         );
+    }
+
+    // A peer FMODE surfaces as a mode change; our own (sid 42S) is filtered out.
+    #[test]
+    fn parses_fmode_and_filters_own() {
+        let ev = proto().parse(":0IRAAAAAB FMODE #chan 1783845132 +m");
+        assert!(
+            matches!(ev.as_slice(), [NetEvent::ChannelModeChange { channel, modes }] if channel == "#chan" && modes == "+m"),
+            "{ev:?}"
+        );
+        let ev = proto().parse(":42S FMODE #chan 1783845132 -m");
+        assert!(!ev.iter().any(|e| matches!(e, NetEvent::ChannelModeChange { .. })), "own change filtered: {ev:?}");
     }
 }
