@@ -24,3 +24,14 @@ protocol = 1206            # InspIRCd link protocol version (1206 = insp4, 1205 
 # [[peer]]                 # one block per other node
 # addr = "other-node:16700"
 # name = "other-node"      # TLS name to expect; must match the peer certificate
+
+# Directory replication (gRPC) — lets a website mirror the account/channel
+# directory (identity + metadata only, never credentials; see proto/fedserv.proto).
+# Omit this section to run without it.
+# [grpc]
+# bind = "127.0.0.1:50051" # a private network hop is the expected deployment
+# token = "shared-secret"  # every RPC must send `authorization: Bearer <token>`
+#
+# [grpc.tls]                # omit for plaintext (fine on a private/loopback hop)
+# cert = "certs/node.crt"
+# key  = "certs/node.key"

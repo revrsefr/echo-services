@@ -1,0 +1,85 @@
+// Directory replication API: lets a website (e.g. a Django backend) mirror the
+// account/channel directory this node owns, without touching IRC at all.
+//
+// Deliberately excludes anything credential-shaped (password hashes, SCRAM
+// verifiers, TLS cert fingerprints) — a subscriber gets identity and metadata
+// only, never a way to authenticate as an account. Channel events are the
+// events already scoped Local to this node (see Scope in engine/db.rs), so a
+// website only ever sees its own network's channels, matching what gossip
+// federates.
+syntax = "proto3";
+package fedserv.v1;
+
+service Directory {
+  // One-shot full read of current state, for a subscriber's initial load.
+  rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
+
+  // Live feed of directory changes from the moment of the call onward. A
+  // dropped stream should be followed by a fresh Snapshot (this is at-least-
+  // once delivery, not a resumable cursor) — appliers should be idempotent,
+  // keyed by account/channel name.
+  rpc Subscribe(SubscribeRequest) returns (stream ReplicationEvent);
+}
+
+message SnapshotRequest {}
+
+message AccountRecord {
+  string name = 1;
+  string email = 2;          // empty = none on file
+  bool verified = 3;
+  uint64 registered_at = 4;  // unix seconds
+  string home = 5;           // origin node sid that first registered it
+}
+
+message ChannelRecord {
+  string name = 1;
+  string founder = 2;        // account name
+  uint64 registered_at = 3;
+  string description = 4;
+}
+
+message SnapshotResponse {
+  repeated AccountRecord accounts = 1;
+  repeated ChannelRecord channels = 2;
+}
+
+message SubscribeRequest {}
+
+// The gossip envelope (origin/seq/lamport) is carried alongside the payload so
+// a subscriber can log/dedupe by (origin, seq) if it wants to, even though the
+// stream itself is not resumable by cursor in this version.
+message ReplicationEvent {
+  string origin = 1;
+  uint64 seq = 2;
+  uint64 lamport = 3;
+
+  oneof kind {
+    AccountRegistered account_registered = 10;
+    AccountEmailSet account_email_set = 11;
+    AccountVerified account_verified = 12;
+    AccountDropped account_dropped = 13;
+    NickGrouped nick_grouped = 14;
+    NickUngrouped nick_ungrouped = 15;
+    ChannelRegistered channel_registered = 20;
+    ChannelDropped channel_dropped = 21;
+    ChannelFounderSet channel_founder_set = 22;
+    ChannelDescSet channel_desc_set = 23;
+  }
+}
+
+message AccountRegistered {
+  string name = 1;
+  string email = 2;
+  bool verified = 3;
+  uint64 registered_at = 4;
+  string home = 5;
+}
+message AccountEmailSet { string account = 1; string email = 2; }
+message AccountVerified { string account = 1; }
+message AccountDropped { string account = 1; }
+message NickGrouped { string nick = 1; string account = 2; }
+message NickUngrouped { string nick = 1; }
+message ChannelRegistered { string name = 1; string founder = 2; uint64 registered_at = 3; }
+message ChannelDropped { string name = 1; }
+message ChannelFounderSet { string name = 1; string founder = 2; }
+message ChannelDescSet { string name = 1; string description = 2; }

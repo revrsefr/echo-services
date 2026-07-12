@@ -236,6 +236,24 @@ impl LogEntry {
     }
 }
 
+// Read-only accessors for consumers outside this module (the gRPC replication
+// layer subscribes to the same broadcast channel gossip does, and translates
+// each entry to a wire message).
+impl LogEntry {
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+    pub fn seq(&self) -> u64 {
+        self.seq
+    }
+    pub fn lamport(&self) -> u64 {
+        self.lamport
+    }
+    pub fn event(&self) -> &Event {
+        &self.event
+    }
+}
+
 // Append-only log, the sole persistent source of truth: `open` replays it,
 // `append` stamps and writes a locally-authored entry, and `ingest` folds in an
 // entry authored by another node. The version vector (highest seq applied per
@@ -884,6 +902,11 @@ impl Db {
     /// All registered channels, for listing.
     pub fn channels(&self) -> impl Iterator<Item = &ChannelInfo> {
         self.channels.values()
+    }
+
+    /// All registered accounts, for a directory snapshot (see the gRPC layer).
+    pub fn accounts(&self) -> impl Iterator<Item = &Account> {
+        self.accounts.values()
     }
 
     /// Names of channels founded by `account` (case-insensitive).

@@ -30,6 +30,19 @@ propagates in milliseconds. Ingest is idempotent, so re-delivery and reconnect
 after a split both converge. The log is compacted to one entry per account as it
 grows. An account registered on any node works on all of them.
 
+## Directory API (gRPC)
+
+**`src/grpc.rs`** exposes the account/channel directory over gRPC (see
+`proto/fedserv.proto`) so a website can mirror it without touching IRC: a
+one-shot `Snapshot` for the initial load, then `Subscribe` for a live stream of
+every change from that point on. It subscribes to the same committed-entry
+channel gossip does, so a change reaches a subscriber in the same push, no
+polling. Deliberately excludes anything credential-shaped (password hashes,
+SCRAM verifiers, cert fingerprints) and the finer channel-ops-list events
+(access/akick/mlock/entrymsg) — identity and metadata only. Bearer-token
+authenticated, optional server TLS. Omit `[grpc]` in config.toml to run
+without it.
+
 ## Config
 
 ```toml
@@ -68,6 +81,7 @@ cargo run -- config.toml
 ## Status
 
 Links to an InspIRCd uplink and runs NickServ (REGISTER, IDENTIFY, LOGOUT, CERT,
-and SASL PLAIN / SCRAM-SHA-256/512 / EXTERNAL) over an event-sourced account store
-replicated between nodes by gossip, with an optional mutually authenticated TLS
-peer link. Next: ChanServ.
+and SASL PLAIN / SCRAM-SHA-256/512 / EXTERNAL) and ChanServ over an event-sourced
+account store replicated between nodes by gossip, with an optional mutually
+authenticated TLS peer link, plus a gRPC directory API for websites to mirror
+the account/channel directory (bearer-token authenticated, optional TLS).

@@ -122,6 +122,11 @@ impl Engine {
         self.db.missing_for(peer)
     }
 
+    // A full read of current directory state, for the gRPC Snapshot RPC.
+    pub fn directory_snapshot(&self) -> (Vec<db::Account>, Vec<db::ChannelInfo>) {
+        (self.db.accounts().cloned().collect(), self.db.channels().cloned().collect())
+    }
+
     pub fn gossip_ingest(&mut self, entry: LogEntry) -> std::io::Result<()> {
         // If ingesting a peer's entry removed an account a local session relied on
         // (lost a conflict, or dropped elsewhere), clean up after it.

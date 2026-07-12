@@ -3,6 +3,7 @@ mod config;
 mod email;
 mod engine;
 mod gossip;
+mod grpc;
 mod link;
 #[path = "../modules/protocol/mod.rs"]
 mod proto;
@@ -70,7 +71,14 @@ async fn main() -> Result<()> {
 
     if let Some(gossip) = cfg.gossip.clone() {
         tracing::info!(peers = cfg.peer.len(), "starting gossip");
-        tokio::spawn(gossip::run(engine.clone(), gossip, cfg.peer.clone(), cfg.server.sid.clone(), gossip_tx));
+        tokio::spawn(gossip::run(engine.clone(), gossip, cfg.peer.clone(), cfg.server.sid.clone(), gossip_tx.clone()));
+    }
+
+    // Directory replication for websites (Django, etc.) — subscribes to the same
+    // committed-entry stream gossip does, so a website sees the account/channel
+    // directory update in real time without touching IRC at all.
+    if let Some(grpc_cfg) = cfg.grpc.clone() {
+        tokio::spawn(grpc::run(engine.clone(), grpc_cfg, gossip_tx));
     }
 
     // Periodically fold log churn into a snapshot when it grows past the accounts.

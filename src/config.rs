@@ -12,6 +12,28 @@ pub struct Config {
     // Outbound email (password resets). Absent = email features are off.
     #[serde(default)]
     pub email: Option<Email>,
+    // Directory replication (gRPC), for websites mirroring the account/channel
+    // directory. Absent = the RPC server does not start.
+    #[serde(default)]
+    pub grpc: Option<Grpc>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Grpc {
+    // Address to accept client connections on, e.g. "127.0.0.1:50051".
+    pub bind: String,
+    // Bearer token every RPC must present (`authorization: Bearer <token>`).
+    pub token: String,
+    // Optional server-side TLS (no client cert required, unlike gossip's mTLS —
+    // a subscriber is a website backend, not a federation peer).
+    #[serde(default)]
+    pub tls: Option<ServerTls>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ServerTls {
+    pub cert: String, // certificate chain (PEM)
+    pub key: String,  // private key (PEM)
 }
 
 #[derive(Debug, Deserialize, Clone)]

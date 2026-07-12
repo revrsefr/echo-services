@@ -20,3 +20,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio-rustls = "0.26.4"
 rustls-pemfile = "2.2.0"
+tonic = { version = "0.12", features = ["tls"] }
+prost = "0.13"
+tokio-stream = "0.1"
+
+[build-dependencies]
+tonic-build = "0.12"
