@@ -25,21 +25,21 @@ impl Service for ChanServ {
                     return;
                 };
                 if !chan.starts_with('#') {
-                    ctx.notice(me, from.uid, "Channel names start with #.");
+                    ctx.notice(me, from.uid, "Channel names start with \x02#\x02.");
                     return;
                 }
                 // The founder is the account the sender is identified to.
                 let Some(account) = from.account else {
-                    ctx.notice(me, from.uid, "You must be identified to register a channel.");
+                    ctx.notice(me, from.uid, "You need to be logged in to register a channel. Identify to NickServ first.");
                     return;
                 };
                 match db.register_channel(chan, account) {
                     Ok(()) => {
                         ctx.channel_mode(chan, "+r"); // mark the channel registered
-                        ctx.notice(me, from.uid, format!("Channel \x02{chan}\x02 is now registered to \x02{account}\x02."));
+                        ctx.notice(me, from.uid, format!("\x02{chan}\x02 is now registered and you are its founder. Enjoy!"));
                     }
-                    Err(ChanError::Exists) => ctx.notice(me, from.uid, format!("\x02{chan}\x02 is already registered.")),
-                    Err(_) => ctx.notice(me, from.uid, "Registration failed, please try again later."),
+                    Err(ChanError::Exists) => ctx.notice(me, from.uid, format!("\x02{chan}\x02 is already registered. Try \x02INFO {chan}\x02 to see who owns it.")),
+                    Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
                 }
             }
             Some("INFO") => {
@@ -48,8 +48,12 @@ impl Service for ChanServ {
                     return;
                 };
                 match db.channel(chan) {
-                    Some(info) => ctx.notice(me, from.uid, format!("\x02{}\x02 is registered to \x02{}\x02 (since {}).", info.name, info.founder, info.ts)),
-                    None => ctx.notice(me, from.uid, format!("\x02{chan}\x02 is not registered.")),
+                    Some(info) => {
+                        ctx.notice(me, from.uid, format!("Information for \x02{}\x02:", info.name));
+                        ctx.notice(me, from.uid, format!("  Founder    : \x02{}\x02", info.founder));
+                        ctx.notice(me, from.uid, format!("  Registered : {}", human_time(info.ts)));
+                    }
+                    None => ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered.")),
                 }
             }
             Some("DROP") => {
@@ -61,25 +65,55 @@ impl Service for ChanServ {
                 let founder = match db.channel(chan) {
                     Some(info) => info.founder.clone(),
                     None => {
-                        ctx.notice(me, from.uid, format!("\x02{chan}\x02 is not registered."));
+                        ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
                         return;
                     }
                 };
                 if from.account != Some(founder.as_str()) {
-                    ctx.notice(me, from.uid, "Only the channel founder can drop it.");
+                    ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can drop it."));
                     return;
                 }
                 match db.drop_channel(chan) {
                     Ok(()) => {
                         ctx.channel_mode(chan, "-r"); // no longer registered
-                        ctx.notice(me, from.uid, format!("Channel \x02{chan}\x02 has been dropped."));
+                        ctx.notice(me, from.uid, format!("\x02{chan}\x02 has been dropped and is no longer registered."));
                     }
-                    Err(_) => ctx.notice(me, from.uid, "Drop failed, please try again later."),
+                    Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
                 }
             }
-            Some("HELP") => ctx.notice(me, from.uid, "Commands: REGISTER <#channel>, INFO <#channel>, DROP <#channel>."),
-            Some(other) => ctx.notice(me, from.uid, format!("Unknown command: {other}. Try HELP.")),
+            Some("HELP") => ctx.notice(me, from.uid, "ChanServ registers and looks after channels. Commands: \x02REGISTER\x02 <#channel>, \x02INFO\x02 <#channel>, \x02DROP\x02 <#channel>."),
+            Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
         }
+    }
+}
+
+// Format a Unix timestamp (seconds) as "YYYY-MM-DD HH:MM:SS UTC", using Howard
+// Hinnant's civil-from-days algorithm so no date crate is needed.
+fn human_time(ts: u64) -> String {
+    let days = (ts / 86400) as i64;
+    let rem = ts % 86400;
+    let (hh, mm, ss) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let z = days + 719468;
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = y + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02} {hh:02}:{mm:02}:{ss:02} UTC")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::human_time;
+
+    #[test]
+    fn formats_unix_time_as_utc() {
+        assert_eq!(human_time(0), "1970-01-01 00:00:00 UTC");
+        assert_eq!(human_time(1783844590), "2026-07-12 08:23:10 UTC");
     }
 }

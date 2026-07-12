@@ -930,7 +930,7 @@ mod tests {
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into() });
 
         // Not identified yet: refused.
-        assert!(notice(&to_cs(&mut e, "000AAAAAB", "REGISTER #room"), "must be identified"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "REGISTER #room"), "logged in"));
 
         // Identify, then register: sets +r on the channel.
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
