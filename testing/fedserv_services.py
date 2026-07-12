@@ -32,6 +32,8 @@ name = "My.Little.Services"
 sid = "42S"
 description = "Federated Services"
 protocol = 1206
+# Cheap verifiers so registration doesn't stall the link during the test run.
+scram_iterations = 4096
 """
 
 

@@ -35,7 +35,8 @@ async fn main() -> Result<()> {
     let services: Vec<Box<dyn engine::service::Service>> = vec![Box::new(NickServ {
         uid: format!("{}AAAAAA", cfg.server.sid),
     })];
-    let db = engine::db::Db::open("fedserv.db.jsonl");
+    let mut db = engine::db::Db::open("fedserv.db.jsonl");
+    db.scram_iterations = cfg.server.scram_iterations;
     let engine = Engine::new(services, db);
 
     let addr = format!("{}:{}", cfg.uplink.host, cfg.uplink.port);

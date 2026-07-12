@@ -20,10 +20,19 @@ pub struct Server {
     pub description: String,
     #[serde(default = "default_protocol")]
     pub protocol: u32,
+    // PBKDF2 cost baked into new SCRAM verifiers at registration. High by
+    // default for offline-attack resistance; lower it if registration latency
+    // on the single-threaded link matters more than verifier strength.
+    #[serde(default = "default_scram_iterations")]
+    pub scram_iterations: u32,
 }
 
 fn default_protocol() -> u32 {
     1206 // InspIRCd 4 spanning-tree protocol (1205 = insp3)
+}
+
+fn default_scram_iterations() -> u32 {
+    crate::engine::scram::DEFAULT_ITERATIONS
 }
 
 impl Config {

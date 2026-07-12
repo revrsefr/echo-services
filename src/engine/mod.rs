@@ -1,17 +1,21 @@
 pub mod db;
+pub mod scram;
 pub mod service;
 pub mod state;
 
 use std::collections::HashMap;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+
 use crate::proto::{NetAction, NetEvent};
 use db::{Db, RegError};
+use scram::Verifier;
 use service::{Sender, Service, ServiceCtx};
 use state::Network;
 
-// SASL mechanisms we offer. Advertised to the uplink as the `sasl=` capability
-// value (IRCv3 SASL 3.2 mechanism list) and the set we accept in the exchange.
-const SASL_MECHS: &str = "PLAIN";
+// SASL mechanisms we offer, strongest first. Advertised to the uplink as the
+// `sasl=` capability value (IRCv3 SASL 3.2 mechanism list) and the set we accept.
+const SASL_MECHS: &str = "SCRAM-SHA-512,SCRAM-SHA-256,PLAIN";
 
 // A client's base64 response is split into chunks of this length; a chunk
 // shorter than this (or a lone "+") marks the end of the response (SASL 3.1).
@@ -20,12 +24,28 @@ const MAX_AUTHENTICATE: usize = 400;
 // Upper bound on a reassembled response, to cap a pre-auth client's buffer.
 const MAX_SASL_RESPONSE: usize = 8 * 1024;
 
-// A client's in-progress SASL exchange: the chosen mechanism and the base64
-// response reassembled from the uplink's fixed-size AUTHENTICATE chunks.
-#[derive(Default)]
-struct SaslSession {
-    mech: String,
-    response: String,
+// A client's in-progress SASL exchange.
+enum SaslSession {
+    // PLAIN: the base64 response reassembled from the uplink's chunks.
+    Plain { response: String },
+    // SCRAM: which hash, and where we are in the challenge/response.
+    Scram { hash: scram::Hash, step: ScramStep },
+}
+
+// The SCRAM state advances client-first -> client-final -> ack.
+enum ScramStep {
+    ClientFirst,
+    ClientFinal {
+        account: String,
+        verifier: Verifier,
+        client_first_bare: String,
+        server_first: String,
+        gs2_header: String,
+        nonce: String,
+    },
+    Ack {
+        account: String,
+    },
 }
 
 pub struct Engine {
@@ -83,10 +103,10 @@ impl Engine {
         }
     }
 
-    // SASL agent side of the exchange the ircd relays to us (modes H/S/C/D),
-    // per IRCv3 SASL 3.2. PLAIN only: on a valid client response we set the
-    // client's account (drives 900) then report success (drives 903); a bad
-    // credential or unknown mechanism reports failure (drives 904).
+    // SASL agent side of the exchange the ircd relays to us (modes H/S/C/D), per
+    // IRCv3 SASL 3.2. On success we set the client's account (drives 900) then
+    // report success (drives 903); a bad credential or unknown mechanism reports
+    // failure (drives 904). PLAIN and SCRAM-SHA-256/512 are supported.
     fn sasl(&mut self, client: String, mode: String, data: Vec<String>) -> Vec<NetAction> {
         let agent = match self.services.first() {
             Some(s) => s.uid().to_string(),
@@ -99,53 +119,39 @@ impl Engine {
             "H" => Vec::new(), // host info
             "S" => match data.first().map(String::as_str) {
                 Some("PLAIN") => {
-                    self.sasl_sessions.insert(
-                        client.clone(),
-                        SaslSession { mech: "PLAIN".to_string(), response: String::new() },
-                    );
+                    self.sasl_sessions.insert(client.clone(), SaslSession::Plain { response: String::new() });
                     mk("C", vec!["+".to_string()]) // empty challenge -> client sends the payload
+                }
+                Some(mech) if scram::Hash::from_mech(mech).is_some() => {
+                    let hash = scram::Hash::from_mech(mech).unwrap();
+                    self.sasl_sessions.insert(client.clone(), SaslSession::Scram { hash, step: ScramStep::ClientFirst });
+                    mk("C", vec!["+".to_string()]) // client sends client-first next
                 }
                 _ => mk("D", vec!["F".to_string()]), // unsupported mechanism
             },
             "C" => {
-                // Reassemble the base64 response: append each chunk until one is
-                // shorter than a full chunk (or a lone "+"), which ends it.
                 let chunk = data.first().map(String::as_str).unwrap_or("");
-                let overflowed = match self.sasl_sessions.get_mut(&client) {
-                    Some(s) => {
-                        if chunk != "+" {
-                            s.response.push_str(chunk);
-                        }
-                        s.response.len() > MAX_SASL_RESPONSE
-                    }
-                    None => return mk("D", vec!["F".to_string()]),
-                };
-                if overflowed {
-                    self.sasl_sessions.remove(&client);
-                    return mk("D", vec!["F".to_string()]);
-                }
-                if chunk.len() >= MAX_AUTHENTICATE {
-                    return Vec::new(); // more chunks still to come
-                }
-                let session = self.sasl_sessions.remove(&client).unwrap_or_default();
-                let account = (session.mech == "PLAIN")
-                    .then(|| login_plain(&session.response, &self.db))
-                    .flatten();
-                match account {
-                    Some(account) => vec![
-                        NetAction::Metadata {
-                            target: client.clone(),
-                            key: "accountname".to_string(),
-                            value: account,
-                        },
-                        NetAction::Sasl {
-                            agent: agent.clone(),
-                            client: client.clone(),
-                            mode: "D".to_string(),
-                            data: vec!["S".to_string()],
-                        },
-                    ],
+                match self.sasl_sessions.remove(&client) {
                     None => mk("D", vec!["F".to_string()]),
+                    Some(SaslSession::Plain { mut response }) => {
+                        // Reassemble the base64 response: append each chunk until
+                        // one is shorter than a full chunk (or a lone "+").
+                        if chunk != "+" {
+                            response.push_str(chunk);
+                        }
+                        if response.len() > MAX_SASL_RESPONSE {
+                            return mk("D", vec!["F".to_string()]);
+                        }
+                        if chunk.len() >= MAX_AUTHENTICATE {
+                            self.sasl_sessions.insert(client.clone(), SaslSession::Plain { response });
+                            return Vec::new(); // more chunks still to come
+                        }
+                        match login_plain(&response, &self.db) {
+                            Some(account) => sasl_success(&agent, &client, account),
+                            None => mk("D", vec!["F".to_string()]),
+                        }
+                    }
+                    Some(SaslSession::Scram { hash, step }) => self.sasl_scram(&agent, &client, hash, step, chunk),
                 }
             }
             "D" => {
@@ -153,6 +159,59 @@ impl Engine {
                 Vec::new()
             }
             _ => Vec::new(),
+        }
+    }
+
+    // One SCRAM step. The client's messages arrive base64-encoded in the C data
+    // (except the final empty "+" acknowledgement).
+    fn sasl_scram(&mut self, agent: &str, client: &str, hash: scram::Hash, step: ScramStep, chunk: &str) -> Vec<NetAction> {
+        let fail = || vec![NetAction::Sasl {
+            agent: agent.to_string(), client: client.to_string(), mode: "D".to_string(), data: vec!["F".to_string()],
+        }];
+        let challenge = |msg: String| vec![NetAction::Sasl {
+            agent: agent.to_string(), client: client.to_string(), mode: "C".to_string(), data: vec![STANDARD.encode(msg)],
+        }];
+        let decode = |chunk: &str| STANDARD.decode(chunk).ok().and_then(|b| String::from_utf8(b).ok());
+
+        match step {
+            ScramStep::ClientFirst => {
+                let Some(cf) = decode(chunk).as_deref().and_then(scram::parse_client_first) else {
+                    return fail();
+                };
+                let Some((account, verifier)) = self.db.scram_lookup(&cf.username, hash.mech()) else {
+                    return fail();
+                };
+                let (account, Some(verifier)) = (account.to_string(), scram::parse_verifier(verifier)) else {
+                    return fail();
+                };
+                let (server_first, nonce) = scram::server_first(&cf.cnonce, &verifier);
+                let out = challenge(server_first.clone());
+                self.sasl_sessions.insert(client.to_string(), SaslSession::Scram {
+                    hash,
+                    step: ScramStep::ClientFinal {
+                        account,
+                        verifier,
+                        client_first_bare: cf.client_first_bare,
+                        server_first,
+                        gs2_header: cf.gs2_header,
+                        nonce,
+                    },
+                });
+                out
+            }
+            ScramStep::ClientFinal { account, verifier, client_first_bare, server_first, gs2_header, nonce } => {
+                let Some(msg) = decode(chunk) else { return fail() };
+                match scram::verify_final(hash, &verifier, &client_first_bare, &server_first, &gs2_header, &nonce, &msg) {
+                    Some(server_final) => {
+                        let out = challenge(server_final);
+                        self.sasl_sessions.insert(client.to_string(), SaslSession::Scram { hash, step: ScramStep::Ack { account } });
+                        out
+                    }
+                    None => fail(),
+                }
+            }
+            // Client acknowledged our server-final ("+"); apply the login.
+            ScramStep::Ack { account } => sasl_success(agent, client, account),
         }
     }
 
@@ -199,7 +258,6 @@ impl Engine {
 // Decode a SASL PLAIN payload (authzid \0 authcid \0 passwd) and authenticate
 // it, returning the canonical account name on success.
 fn login_plain(b64: &str, db: &Db) -> Option<String> {
-    use base64::{engine::general_purpose::STANDARD, Engine};
     let raw = STANDARD.decode(b64).ok()?;
     let parts: Vec<&[u8]> = raw.split(|&b| b == 0).collect();
     if parts.len() != 3 {
@@ -210,11 +268,19 @@ fn login_plain(b64: &str, db: &Db) -> Option<String> {
     db.authenticate(authcid, passwd).map(str::to_string)
 }
 
+// The two actions that complete any mechanism: set the account (drives 900),
+// then report SASL success (drives 903).
+fn sasl_success(agent: &str, client: &str, account: String) -> Vec<NetAction> {
+    vec![
+        NetAction::Metadata { target: client.to_string(), key: "accountname".to_string(), value: account },
+        NetAction::Sasl { agent: agent.to_string(), client: client.to_string(), mode: "D".to_string(), data: vec!["S".to_string()] },
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::services::nickserv::NickServ;
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     fn plain(authzid: &[u8], authcid: &[u8], passwd: &[u8]) -> String {
         let mut payload = Vec::new();
@@ -230,6 +296,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("fedserv-sasl-{name}.jsonl"));
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path);
+        db.scram_iterations = 4096; // keep the debug-build verifier cheap in tests
         assert!(db.register(account, password, None).is_ok());
         Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".to_string() })], db)
     }
@@ -291,5 +358,74 @@ mod tests {
         sasl(&mut e, "S", "PLAIN");
         let out = sasl(&mut e, "C", &plain(b"", b"foo", b"wrong"));
         assert!(out.iter().any(|a| matches!(a, NetAction::Sasl { mode, data, .. } if mode == "D" && data.as_slice() == ["F"])), "{out:?}");
+    }
+
+    // The single reply datum of a C/D action (SCRAM messages are single-chunk).
+    fn datum(out: &[NetAction]) -> (&str, &str) {
+        match out.first() {
+            Some(NetAction::Sasl { mode, data, .. }) => (mode.as_str(), data[0].as_str()),
+            other => panic!("expected a SASL action, got {other:?}"),
+        }
+    }
+
+    // Drive a full SCRAM exchange through the engine, playing the client, and
+    // return the final actions. `login_pw` may differ from the registered one.
+    fn scram_exchange(mech: &str, login_pw: &str) -> Vec<NetAction> {
+        use scram::Hash;
+        let hash = Hash::from_mech(mech).unwrap();
+        let mut e = engine_with("scram", "foo", "sesame");
+
+        assert_eq!(datum(&sasl(&mut e, "S", mech)), ("C", "+"));
+
+        let client_first_bare = "n=foo,r=cnonce";
+        let client_first = format!("n,,{client_first_bare}");
+        let first_out = sasl(&mut e, "C", &STANDARD.encode(&client_first));
+        let (mode, b64) = datum(&first_out);
+        assert_eq!(mode, "C");
+        let server_first = String::from_utf8(STANDARD.decode(b64).unwrap()).unwrap();
+
+        // Reconstruct salt/iterations from server-first and forge the proof.
+        let salt = STANDARD.decode(server_first.split(",s=").nth(1).unwrap().split(',').next().unwrap()).unwrap();
+        let iters: u32 = server_first.rsplit(",i=").next().unwrap().parse().unwrap();
+        let full_nonce = server_first.split("r=").nth(1).unwrap().split(',').next().unwrap();
+
+        let salted = scram::hi(hash, login_pw.as_bytes(), &salt, iters);
+        let client_key = scram::hmac(hash, &salted, b"Client Key");
+        let stored_key = scram::h(hash, &client_key);
+        let without_proof = format!("c=biws,r={full_nonce}");
+        let auth = format!("{client_first_bare},{server_first},{without_proof}");
+        let proof = scram::xor(&client_key, &scram::hmac(hash, &stored_key, auth.as_bytes()));
+        let client_final = format!("{without_proof},p={}", STANDARD.encode(&proof));
+
+        let final_out = sasl(&mut e, "C", &STANDARD.encode(&client_final));
+        // On success the engine sends server-final (C v=...); the client then acks.
+        match datum(&final_out) {
+            ("C", _) => sasl(&mut e, "C", "+"),
+            _ => final_out,
+        }
+    }
+
+    #[test]
+    fn scram_sha256_success() {
+        assert!(is_success(&scram_exchange("SCRAM-SHA-256", "sesame")));
+    }
+
+    #[test]
+    fn scram_sha512_success() {
+        assert!(is_success(&scram_exchange("SCRAM-SHA-512", "sesame")));
+    }
+
+    #[test]
+    fn scram_bad_password() {
+        let out = scram_exchange("SCRAM-SHA-256", "millet");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Sasl { mode, data, .. } if mode == "D" && data.as_slice() == ["F"])), "{out:?}");
+    }
+
+    #[test]
+    fn scram_unknown_user_fails() {
+        let mut e = engine_with("scramnouser", "foo", "sesame");
+        sasl(&mut e, "S", "SCRAM-SHA-256");
+        let out = sasl(&mut e, "C", &STANDARD.encode("n,,n=ghost,r=cnonce"));
+        assert_eq!(datum(&out), ("D", "F"));
     }
 }

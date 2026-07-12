@@ -8,12 +8,20 @@ use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use serde::{Deserialize, Serialize};
 
+use super::scram::{self, Hash};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
     pub name: String,
     pub password_hash: String,
     pub email: Option<String>,
     pub ts: u64,
+    // SCRAM verifiers (`v=1,i=,s=,sk=,sv=`), computed from the password at
+    // registration. Absent on accounts registered before SCRAM support.
+    #[serde(default)]
+    pub scram256: Option<String>,
+    #[serde(default)]
+    pub scram512: Option<String>,
 }
 
 // Event-sourced persistence: every change is an Event appended to a JSONL log,
@@ -33,6 +41,8 @@ pub enum RegError {
 pub struct Db {
     accounts: HashMap<String, Account>, // keyed by casefolded name
     path: PathBuf,
+    // PBKDF2 cost baked into new SCRAM verifiers; lowered by tests.
+    pub(crate) scram_iterations: u32,
 }
 
 fn key(name: &str) -> String {
@@ -58,7 +68,7 @@ impl Db {
             }
         }
         tracing::info!(accounts = accounts.len(), ?path, "account store loaded");
-        Self { accounts, path }
+        Self { accounts, path, scram_iterations: scram::DEFAULT_ITERATIONS }
     }
 
     pub fn exists(&self, name: &str) -> bool {
@@ -70,7 +80,14 @@ impl Db {
             return Err(RegError::Exists);
         }
         let password_hash = hash_password(password).ok_or(RegError::Internal)?;
-        let account = Account { name: name.to_string(), password_hash, email, ts: now() };
+        let account = Account {
+            name: name.to_string(),
+            password_hash,
+            email,
+            ts: now(),
+            scram256: Some(scram::make_verifier(Hash::Sha256, password, self.scram_iterations)),
+            scram512: Some(scram::make_verifier(Hash::Sha512, password, self.scram_iterations)),
+        };
         self.append(&Event::AccountRegistered(account.clone())).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
         Ok(())
@@ -81,6 +98,17 @@ impl Db {
     pub fn authenticate(&self, name: &str, password: &str) -> Option<&str> {
         let account = self.accounts.get(&key(name))?;
         verify_password(password, &account.password_hash).then_some(account.name.as_str())
+    }
+
+    /// The account's canonical name and its SCRAM verifier for `mech`, if any.
+    pub fn scram_lookup(&self, name: &str, mech: &str) -> Option<(&str, &str)> {
+        let account = self.accounts.get(&key(name))?;
+        let verifier = match mech {
+            "SCRAM-SHA-256" => account.scram256.as_deref(),
+            "SCRAM-SHA-512" => account.scram512.as_deref(),
+            _ => None,
+        }?;
+        Some((account.name.as_str(), verifier))
     }
 
     fn append(&self, event: &Event) -> std::io::Result<()> {
