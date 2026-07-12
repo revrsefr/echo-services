@@ -41,6 +41,15 @@ pub enum Event {
     ChannelRegistered { name: String, founder: String, ts: u64 },
     ChannelDropped { name: String },
     ChannelMlock { name: String, on: String, off: String },
+    ChannelAccessAdd { channel: String, account: String, level: String },
+    ChannelAccessDel { channel: String, account: String },
+}
+
+// An access-list entry: an account and its level ("op" or "voice").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChanAccess {
+    pub account: String,
+    pub level: String,
 }
 
 // A registered channel and who owns it.
@@ -54,9 +63,23 @@ pub struct ChannelInfo {
     pub lock_on: String,
     #[serde(default)]
     pub lock_off: String,
+    #[serde(default)]
+    pub access: Vec<ChanAccess>,
 }
 
 impl ChannelInfo {
+    /// The status mode to give `account` on join, if any: +o for the founder and
+    /// access-list ops, +v for voices.
+    pub fn join_mode(&self, account: &str) -> Option<&'static str> {
+        if self.founder.eq_ignore_ascii_case(account) {
+            return Some("+o");
+        }
+        self.access
+            .iter()
+            .find(|a| a.account.eq_ignore_ascii_case(account))
+            .map(|a| if a.level == "voice" { "+v" } else { "+o" })
+    }
+
     /// The mode string services keep applied: +r plus the lock.
     pub fn lock_modes(&self) -> String {
         let mut s = format!("+r{}", self.lock_on);
@@ -345,6 +368,9 @@ impl Db {
             if !c.lock_on.is_empty() || !c.lock_off.is_empty() {
                 snapshot.push(Event::ChannelMlock { name: c.name.clone(), on: c.lock_on.clone(), off: c.lock_off.clone() });
             }
+            for a in &c.access {
+                snapshot.push(Event::ChannelAccessAdd { channel: c.name.clone(), account: a.account.clone(), level: a.level.clone() });
+            }
         }
         self.log.compact(snapshot)?;
         tracing::info!(before, after = self.log.len(), "compacted event log");
@@ -485,7 +511,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new() });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new() });
         Ok(())
     }
 
@@ -507,6 +533,37 @@ impl Db {
         c.lock_on = on.to_string();
         c.lock_off = off.to_string();
         Ok(())
+    }
+
+    /// Grant `account` a level ("op"/"voice") on `channel`.
+    pub fn access_add(&mut self, channel: &str, account: &str, level: &str) -> Result<(), ChanError> {
+        let k = key(channel);
+        if !self.channels.contains_key(&k) {
+            return Err(ChanError::NoChannel);
+        }
+        self.log
+            .append(Event::ChannelAccessAdd { channel: channel.to_string(), account: account.to_string(), level: level.to_string() })
+            .map_err(|_| ChanError::Internal)?;
+        let c = self.channels.get_mut(&k).unwrap();
+        c.access.retain(|a| !a.account.eq_ignore_ascii_case(account));
+        c.access.push(ChanAccess { account: account.to_string(), level: level.to_string() });
+        Ok(())
+    }
+
+    /// Remove `account` from `channel`'s access list. Ok(false) if not present.
+    pub fn access_del(&mut self, channel: &str, account: &str) -> Result<bool, ChanError> {
+        let k = key(channel);
+        let Some(c) = self.channels.get(&k) else {
+            return Err(ChanError::NoChannel);
+        };
+        if !c.access.iter().any(|a| a.account.eq_ignore_ascii_case(account)) {
+            return Ok(false);
+        }
+        self.log
+            .append(Event::ChannelAccessDel { channel: channel.to_string(), account: account.to_string() })
+            .map_err(|_| ChanError::Internal)?;
+        self.channels.get_mut(&k).unwrap().access.retain(|a| !a.account.eq_ignore_ascii_case(account));
+        Ok(true)
     }
 
     /// Unregister `name`.
@@ -541,7 +598,7 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             }
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new() });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new() });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
@@ -550,6 +607,17 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             if let Some(c) = channels.get_mut(&key(&name)) {
                 c.lock_on = on;
                 c.lock_off = off;
+            }
+        }
+        Event::ChannelAccessAdd { channel, account, level } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.access.retain(|a| !a.account.eq_ignore_ascii_case(&account));
+                c.access.push(ChanAccess { account, level });
+            }
+        }
+        Event::ChannelAccessDel { channel, account } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.access.retain(|a| !a.account.eq_ignore_ascii_case(&account));
             }
         }
     }
@@ -718,5 +786,29 @@ mod tests {
         drop(db);
         let db = Db::open(&p, "local");
         assert_eq!(db.channel("#chan").unwrap().lock_modes(), "+rnt-s", "survives reopen");
+    }
+
+    // Access list drives join modes, is case-insensitive, and persists.
+    #[test]
+    fn access_list_grants_join_modes() {
+        let p = tmp("access");
+        let mut db = Db::open(&p, "local");
+        db.register_channel("#c", "boss").unwrap();
+        db.access_add("#c", "alice", "op").unwrap();
+        db.access_add("#c", "bob", "voice").unwrap();
+
+        let info = db.channel("#c").unwrap();
+        assert_eq!(info.join_mode("boss"), Some("+o"));  // founder
+        assert_eq!(info.join_mode("ALICE"), Some("+o")); // op, case-insensitive
+        assert_eq!(info.join_mode("bob"), Some("+v"));   // voice
+        assert_eq!(info.join_mode("nobody"), None);
+
+        assert!(db.access_del("#c", "alice").unwrap());
+        assert!(!db.access_del("#c", "alice").unwrap());
+
+        drop(db);
+        let db = Db::open(&p, "local");
+        assert_eq!(db.channel("#c").unwrap().join_mode("bob"), Some("+v"), "survives reopen");
+        assert_eq!(db.channel("#c").unwrap().join_mode("alice"), None, "removal survives reopen");
     }
 }

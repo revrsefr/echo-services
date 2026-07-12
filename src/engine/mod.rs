@@ -191,16 +191,16 @@ impl Engine {
                     None => Vec::new(),
                 }
             }
-            // Auto-op the founder when they join their registered channel.
+            // Give the founder and access-list members their status on join.
             NetEvent::Join { uid, channel } => {
-                let founder = self.db.channel(&channel).map(|c| c.founder.clone());
                 let account = self.network.account_of(&uid).map(str::to_string);
-                match (founder, account) {
-                    (Some(f), Some(a)) if f == a => {
+                let mode = account.as_deref().and_then(|a| self.db.channel(&channel).and_then(|c| c.join_mode(a)));
+                match mode {
+                    Some(m) => {
                         let from = self.chan_service.clone().unwrap_or_default();
-                        vec![NetAction::ChannelMode { from, channel, modes: format!("+o {uid}") }]
+                        vec![NetAction::ChannelMode { from, channel, modes: format!("{m} {uid}") }]
                     }
-                    _ => Vec::new(),
+                    None => Vec::new(),
                 }
             }
             NetEvent::Quit { uid } => {
@@ -972,9 +972,14 @@ mod tests {
         let out = to_cs(&mut e, "000AAAAAB", "MODE #room +S");
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#room" && modes == "+S")), "MODE applies: {out:?}");
 
-        // A different, unidentified user cannot change modes, set the lock, or drop it.
+        // Founder manages the access list.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "ACCESS #room ADD helper op"), "Added"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "ACCESS #room"), "helper"));
+
+        // A different, unidentified user cannot change modes, access, the lock, or drop it.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into() });
         assert!(notice(&to_cs(&mut e, "000AAAAAC", "MODE #room +i"), "founder"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAC", "ACCESS #room ADD x op"), "founder"));
         assert!(notice(&to_cs(&mut e, "000AAAAAC", "MLOCK #room +i"), "founder"));
         assert!(notice(&to_cs(&mut e, "000AAAAAC", "DROP #room"), "founder"));
 
@@ -1043,5 +1048,24 @@ mod tests {
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into() });
         assert!(e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#x".into() }).is_empty(), "non-founder not opped");
+    }
+
+    // An access-list voice gets +v on join.
+    #[test]
+    fn access_voice_on_join() {
+        let path = std::env::temp_dir().join("fedserv-access-join.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("carol", "sesame", None).unwrap();
+        db.register_channel("#y", "boss").unwrap();
+        db.access_add("#y", "carol", "voice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let mut e = Engine::new(vec![Box::new(ns)], db);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "carol".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#y".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#y" && modes == "+v 000AAAAAB")), "{out:?}");
     }
 }

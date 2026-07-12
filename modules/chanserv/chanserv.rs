@@ -3,6 +3,8 @@ use crate::engine::service::{Sender, Service, ServiceCtx};
 
 #[path = "mode.rs"]
 mod mode;
+#[path = "access.rs"]
+mod access;
 
 pub struct ChanServ {
     pub uid: String,
@@ -127,7 +129,8 @@ impl Service for ChanServ {
                 }
             }
             Some("MODE") => mode::handle(me, from, args, ctx, db),
-            Some("HELP") => ctx.notice(me, from.uid, "ChanServ registers and looks after channels. Commands: \x02REGISTER\x02 <#channel>, \x02INFO\x02 <#channel>, \x02MODE\x02 <#channel> <modes>, \x02MLOCK\x02 <#channel> [modes], \x02DROP\x02 <#channel>."),
+            Some("ACCESS") => access::handle(me, from, args, ctx, db),
+            Some("HELP") => ctx.notice(me, from.uid, "ChanServ registers and looks after channels. Commands: \x02REGISTER\x02 <#channel>, \x02INFO\x02 <#channel>, \x02ACCESS\x02 <#channel>, \x02MODE\x02 <#channel> <modes>, \x02MLOCK\x02 <#channel> [modes], \x02DROP\x02 <#channel>."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
         }
