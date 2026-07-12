@@ -74,6 +74,11 @@ impl Service for ChanServ {
                     ctx.notice(me, from.uid, "You need to be logged in to register a channel. Identify to NickServ first.");
                     return;
                 };
+                // You can only register a channel you actually control right now.
+                if !net.is_op(chan, from.uid) {
+                    ctx.notice(me, from.uid, format!("You must be a channel operator (\x02@\x02) in \x02{chan}\x02 to register it."));
+                    return;
+                }
                 match db.register_channel(chan, account) {
                     Ok(()) => {
                         ctx.channel_mode(me, chan, "+r"); // mark the channel registered

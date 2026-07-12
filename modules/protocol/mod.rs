@@ -15,10 +15,13 @@ pub enum NetEvent {
     // A channel was created or bursted (InspIRCd FJOIN). Subsequent single joins
     // arrive as IJOIN and are not surfaced.
     ChannelCreate { channel: String },
-    // A user joined a channel (an FJOIN member or an IJOIN), for auto-op.
-    Join { uid: String, channel: String },
+    // A user joined a channel (an FJOIN member or an IJOIN), for auto-op. `op` is
+    // whether they hold channel-operator status at that point (an FJOIN prefix).
+    Join { uid: String, channel: String, op: bool },
     // A user left a channel (PART) or was removed (KICK), for membership tracking.
     Part { uid: String, channel: String },
+    // A user's channel-operator status changed (FMODE +o/-o), for live op tracking.
+    ChannelOp { channel: String, uid: String, op: bool },
     // A channel's modes changed (FMODE), for enforcing mode locks. Our own
     // changes are filtered out by the protocol layer.
     ChannelModeChange { channel: String, modes: String },

@@ -17,10 +17,11 @@ pub struct User {
     pub host: String,
 }
 
-// A channel's live membership and current key (+k), tracked from the burst.
+// A channel's live membership, ops, and current key (+k), tracked from the burst.
 #[derive(Default)]
 pub struct Channel {
     pub members: HashSet<String>, // uids
+    pub ops: HashSet<String>,     // uids holding channel-operator status
     pub key: Option<String>,
 }
 
@@ -68,6 +69,7 @@ impl Network {
         self.accounts.remove(uid);
         for c in self.channels.values_mut() {
             c.members.remove(uid);
+            c.ops.remove(uid);
         }
     }
 
@@ -98,9 +100,13 @@ impl Network {
         self.accounts.remove(uid);
     }
 
-    // A user joined a channel: record membership and last-seen.
-    pub fn channel_join(&mut self, channel: &str, uid: &str) {
-        self.channels.entry(lc(channel)).or_default().members.insert(uid.to_string());
+    // A user joined a channel: record membership (and op status) and last-seen.
+    pub fn channel_join(&mut self, channel: &str, uid: &str, op: bool) {
+        let c = self.channels.entry(lc(channel)).or_default();
+        c.members.insert(uid.to_string());
+        if op {
+            c.ops.insert(uid.to_string());
+        }
         if let Some(nick) = self.nick_of(uid) {
             self.seen.insert(lc(nick), Seen { nick: nick.to_string(), ts: now(), what: format!("joining {channel}") });
         }
@@ -110,10 +116,26 @@ impl Network {
     pub fn channel_part(&mut self, channel: &str, uid: &str) {
         if let Some(c) = self.channels.get_mut(&lc(channel)) {
             c.members.remove(uid);
+            c.ops.remove(uid);
         }
         if let Some(nick) = self.nick_of(uid) {
             self.seen.insert(lc(nick), Seen { nick: nick.to_string(), ts: now(), what: format!("leaving {channel}") });
         }
+    }
+
+    // Set or clear a user's channel-operator status (FMODE +o/-o).
+    pub fn set_op(&mut self, channel: &str, uid: &str, op: bool) {
+        let c = self.channels.entry(lc(channel)).or_default();
+        if op {
+            c.ops.insert(uid.to_string());
+        } else {
+            c.ops.remove(uid);
+        }
+    }
+
+    // Whether `uid` currently holds operator status in `channel`.
+    pub fn is_op(&self, channel: &str, uid: &str) -> bool {
+        self.channels.get(&lc(channel)).is_some_and(|c| c.ops.contains(uid))
     }
 
     // Uids currently in `channel`.

@@ -108,22 +108,23 @@ impl Protocol for InspIrcd {
                             out.push(NetEvent::ChannelKey { channel: chan.to_string(), key });
                         }
                     }
-                    // Members are "<prefixes>,<uid>[:<membid>]"; take the uid.
+                    // Members are "<prefixes>,<uid>[:<membid>]"; the prefixes are the
+                    // status mode letters, so 'o' means they join opped.
                     for m in trailing(rest).split_whitespace() {
-                        if let Some((_, member)) = m.split_once(',') {
+                        if let Some((prefix, member)) = m.split_once(',') {
                             let uid = member.split(':').next().unwrap_or("");
                             if !uid.is_empty() {
-                                out.push(NetEvent::Join { uid: uid.to_string(), channel: chan.to_string() });
+                                out.push(NetEvent::Join { uid: uid.to_string(), channel: chan.to_string(), op: prefix.contains('o') });
                             }
                         }
                     }
                     out
                 }
             }
-            // :<uid> IJOIN <chan> — a single user joining an existing channel.
+            // :<uid> IJOIN <chan> — a single user joining an existing channel (not opped).
             "IJOIN" => match (source.as_deref(), tokens.next()) {
                 (Some(uid), Some(chan)) if chan.starts_with('#') => {
-                    vec![NetEvent::Join { uid: uid.to_string(), channel: chan.to_string() }]
+                    vec![NetEvent::Join { uid: uid.to_string(), channel: chan.to_string(), op: false }]
                 }
                 _ => vec![],
             },
@@ -151,9 +152,13 @@ impl Protocol for InspIrcd {
                 match (source.as_deref(), a.first(), a.get(2)) {
                     // Our own uids (server SID + pseudoclients) share our SID prefix.
                     (Some(src), Some(chan), Some(modes)) if !src.starts_with(self.sid.as_str()) && chan.starts_with('#') => {
+                        let params = a.get(3..).unwrap_or(&[]);
                         let mut out = vec![NetEvent::ChannelModeChange { channel: chan.to_string(), modes: modes.to_string() }];
-                        if let Some(key) = scan_key(modes, a.get(3..).unwrap_or(&[])) {
+                        if let Some(key) = scan_key(modes, params) {
                             out.push(NetEvent::ChannelKey { channel: chan.to_string(), key });
+                        }
+                        for (op, uid) in scan_ops(modes, params) {
+                            out.push(NetEvent::ChannelOp { channel: chan.to_string(), uid, op });
                         }
                         out
                     }
@@ -317,6 +322,29 @@ fn scan_key(modes: &str, params: &[&str]) -> Option<Option<String>> {
     result
 }
 
+// Walk a mode change and its params for op grants/revokes (+o/-o). Returns
+// (is_op, uid) per `o` in the change, using the same param cursor as scan_key.
+fn scan_ops(modes: &str, params: &[&str]) -> Vec<(bool, String)> {
+    let mut adding = true;
+    let mut pi = 0;
+    let mut out = Vec::new();
+    for m in modes.chars() {
+        match m {
+            '+' => adding = true,
+            '-' => adding = false,
+            'o' => {
+                if let Some(p) = params.get(pi) {
+                    out.push((adding, p.to_string()));
+                }
+                pi += 1;
+            }
+            c if takes_param(c, adding) => pi += 1,
+            _ => {}
+        }
+    }
+    out
+}
+
 // The IRC "trailing" argument: everything after the first " :", else the last word.
 fn trailing(rest: &str) -> String {
     match rest.find(" :") {
@@ -387,6 +415,6 @@ mod tests {
         assert_eq!(joins, ["0IRAAAAAB", "0IRAAAAAC"]);
 
         let ev = proto().parse(":0IRAAAAAD IJOIN #chan");
-        assert!(matches!(ev.as_slice(), [NetEvent::Join { uid, channel }] if uid == "0IRAAAAAD" && channel == "#chan"), "{ev:?}");
+        assert!(matches!(ev.as_slice(), [NetEvent::Join { uid, channel, op: false }] if uid == "0IRAAAAAD" && channel == "#chan"), "{ev:?}");
     }
 }

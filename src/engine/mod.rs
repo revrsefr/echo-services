@@ -275,8 +275,8 @@ impl Engine {
             }
             // On join: record membership, enforce the auto-kick list, give access
             // members their status mode, and send the entry message.
-            NetEvent::Join { uid, channel } => {
-                self.network.channel_join(&channel, &uid);
+            NetEvent::Join { uid, channel, op } => {
+                self.network.channel_join(&channel, &uid, op);
                 let account = self.network.account_of(&uid).map(str::to_string);
                 let from = self.chan_service.clone().unwrap_or_default();
                 let mode = account.as_deref().and_then(|a| self.db.channel(&channel).and_then(|c| c.join_mode(a)));
@@ -317,6 +317,10 @@ impl Engine {
             }
             NetEvent::Part { uid, channel } => {
                 self.network.channel_part(&channel, &uid);
+                Vec::new()
+            }
+            NetEvent::ChannelOp { channel, uid, op } => {
+                self.network.set_op(&channel, &uid, op);
                 Vec::new()
             }
             NetEvent::ChannelKey { channel, key } => {
@@ -1149,8 +1153,10 @@ mod tests {
         // Not identified yet: refused.
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "REGISTER #room"), "logged in"));
 
-        // Identify, then register: sets +r on the channel.
+        // Identify, then register. Registration needs operator status in the channel.
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "REGISTER #room"), "channel operator"), "op required to register");
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: true });
         let out = to_cs(&mut e, "000AAAAAB", "REGISTER #room");
         assert!(notice(&out, "now registered"));
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#room" && modes == "+r")), "register sets +r: {out:?}");
@@ -1259,12 +1265,12 @@ mod tests {
 
         // AKICK a mask, then a matching join is banned and kicked.
         assert!(to_cs(&mut e, "000AAAAAB", "AKICK #c ADD *!*@bad.host begone").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Added"))));
-        let out = e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#c".into() });
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#c".into(), op: false });
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#c" && modes == "+b *!*@bad.host")), "{out:?}");
         assert!(out.iter().any(|a| matches!(a, NetAction::Kick { channel, uid, reason, .. } if channel == "#c" && uid == "000AAAAAC" && reason == "begone")), "{out:?}");
 
         // The founder joining is never auto-kicked (they get +o instead).
-        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into() });
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false });
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes.starts_with("+o"))), "{out:?}");
     }
 
@@ -1329,7 +1335,7 @@ mod tests {
         // ENTRYMSG: set it, then a joining user is noticed it.
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "ENTRYMSG #c welcome aboard"), "updated"));
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "guest".into(), host: "h2".into() });
-        let out = e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#c".into() });
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#c".into(), op: false });
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "000AAAAAC" && text == "welcome aboard")), "{out:?}");
 
         // XOP: AOP add shows in the AOP list and grants op access.
@@ -1337,7 +1343,7 @@ mod tests {
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "AOP #c LIST"), "carol"));
 
         // ENFORCE: alice present gets +o, the akick-matching guest is kicked.
-        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into() });
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false });
         to_cs(&mut e, "000AAAAAB", "AKICK #c ADD *!*@h2 out");
         let out = to_cs(&mut e, "000AAAAAB", "ENFORCE #c");
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+o 000AAAAAB")), "{out:?}");
@@ -1353,6 +1359,7 @@ mod tests {
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "SEEN guest"), "last seen"));
 
         // CLONE: copy #c's settings (incl. the AOP) into a second owned channel.
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#d".into(), op: true });
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "REGISTER #d".into() });
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "CLONE #c #d"), "Copied"));
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "AOP #d LIST"), "carol"));
@@ -1412,11 +1419,11 @@ mod tests {
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "host.example".into() });
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 
-        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#x".into() });
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#x".into(), op: false });
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#x" && modes == "+o 000AAAAAB")), "founder opped: {out:?}");
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "host.example".into() });
-        assert!(e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#x".into() }).is_empty(), "non-founder not opped");
+        assert!(e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#x".into(), op: false }).is_empty(), "non-founder not opped");
     }
 
     // An access-list voice gets +v on join.
@@ -1434,7 +1441,7 @@ mod tests {
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "carol".into(), host: "host.example".into() });
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 
-        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#y".into() });
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#y".into(), op: false });
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#y" && modes == "+v 000AAAAAB")), "{out:?}");
     }
 }
