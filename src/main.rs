@@ -1,11 +1,14 @@
 mod config;
 mod engine;
+mod gossip;
 mod link;
 mod proto;
 mod services;
 
 use anyhow::Result;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
 
 use engine::Engine;
 use proto::inspircd::InspIrcd;
@@ -39,7 +42,12 @@ async fn main() -> Result<()> {
     })];
     let mut db = engine::db::Db::open("fedserv.db.jsonl", &cfg.server.sid);
     db.scram_iterations = cfg.server.scram_iterations;
-    let engine = Engine::new(services, db);
+    let engine = Arc::new(Mutex::new(Engine::new(services, db)));
+
+    if let Some(gossip) = cfg.gossip.clone() {
+        tracing::info!(peers = cfg.peer.len(), "starting gossip");
+        tokio::spawn(gossip::run(engine.clone(), gossip, cfg.peer.clone(), cfg.server.sid.clone()));
+    }
 
     let addr = format!("{}:{}", cfg.uplink.host, cfg.uplink.port);
     tracing::info!(server = %cfg.server.name, %addr, "linking to uplink");

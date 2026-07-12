@@ -4,6 +4,24 @@ use serde::Deserialize;
 pub struct Config {
     pub uplink: Uplink,
     pub server: Server,
+    // Node-to-node replication. Absent = single node, no gossip.
+    #[serde(default)]
+    pub gossip: Option<Gossip>,
+    #[serde(default)]
+    pub peer: Vec<Peer>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Gossip {
+    // Address to accept peer connections on. Absent = dial-only node.
+    pub bind: Option<String>,
+    // Shared secret both nodes must present.
+    pub secret: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Peer {
+    pub addr: String,
 }
 
 #[derive(Debug, Deserialize)]

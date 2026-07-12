@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 use crate::proto::{NetAction, NetEvent, RegReply};
-use db::{Db, RegError};
+use db::{Db, LogEntry, RegError};
 use scram::Verifier;
 use service::{Sender, Service, ServiceCtx};
 use state::Network;
@@ -89,6 +89,29 @@ impl Engine {
     // Cost of a fresh SCRAM verifier; read by the link layer for off-thread derivation.
     pub fn scram_iterations(&self) -> u32 {
         self.db.scram_iterations
+    }
+
+    // Gossip pass-throughs to the account store, used by the replication layer.
+    pub fn gossip_digest(&self) -> HashMap<String, u64> {
+        self.db.version_vector()
+    }
+
+    pub fn gossip_missing(&self, peer: &HashMap<String, u64>) -> Vec<LogEntry> {
+        self.db.missing_for(peer)
+    }
+
+    pub fn gossip_ingest(&mut self, entry: LogEntry) -> std::io::Result<()> {
+        self.db.ingest(entry)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_register(&mut self, name: &str) {
+        self.db.register(name, "pw", None).unwrap();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_has_account(&self, name: &str) -> bool {
+        self.db.exists(name)
     }
 
     // Insert or refresh a client's in-progress SASL session, stamped now.

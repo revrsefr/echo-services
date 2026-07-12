@@ -65,26 +65,31 @@ pub struct EventLog {
     origin: String,
     lamport: u64,                   // logical clock, ticked on every event
     versions: HashMap<String, u64>, // per-origin highest seq applied (version vector)
+    entries: Vec<LogEntry>,         // full log, kept so peers can pull what they lack
 }
 
 impl EventLog {
     fn open(path: PathBuf, origin: String) -> (Self, Vec<Event>) {
-        let mut events = Vec::new();
-        let mut lamport = 0;
-        let mut versions: HashMap<String, u64> = HashMap::new();
-        if let Ok(data) = std::fs::read_to_string(&path) {
+        let mut log = Self { path, origin, lamport: 0, versions: HashMap::new(), entries: Vec::new() };
+        if let Ok(data) = std::fs::read_to_string(&log.path) {
             for line in data.lines().filter(|l| !l.trim().is_empty()) {
                 match serde_json::from_str::<LogEntry>(line) {
                     Ok(entry) => {
-                        lamport = lamport.max(entry.lamport);
-                        versions.entry(entry.origin.clone()).and_modify(|s| *s = (*s).max(entry.seq)).or_insert(entry.seq);
-                        events.push(entry.event);
+                        log.absorb(&entry);
+                        log.entries.push(entry);
                     }
                     Err(e) => tracing::warn!(%e, "skipping malformed event log line"),
                 }
             }
         }
-        (Self { path, origin, lamport, versions }, events)
+        let events = log.entries.iter().map(|e| e.event.clone()).collect();
+        (log, events)
+    }
+
+    // Roll the clock and version vector forward over an entry.
+    fn absorb(&mut self, entry: &LogEntry) {
+        self.lamport = self.lamport.max(entry.lamport);
+        self.versions.entry(entry.origin.clone()).and_modify(|s| *s = (*s).max(entry.seq)).or_insert(entry.seq);
     }
 
     // Seq the next locally-authored event will carry (0-based, per our origin).
@@ -99,13 +104,13 @@ impl EventLog {
         let entry = LogEntry { origin: self.origin.clone(), seq: self.next_seq(), lamport: self.lamport, event };
         self.persist(&entry)?;
         self.versions.insert(entry.origin.clone(), entry.seq);
+        self.entries.push(entry);
         Ok(())
     }
 
     // Ingest an entry authored by another node — the gossip seam. Returns the
     // event to fold into state, or None if already applied (idempotent, so
     // re-delivery converges). Assumes per-origin in-order delivery.
-    #[allow(dead_code)]
     fn ingest(&mut self, entry: LogEntry) -> std::io::Result<Option<Event>> {
         if self.versions.get(&entry.origin).is_some_and(|&s| entry.seq <= s) {
             return Ok(None); // already have it
@@ -113,7 +118,23 @@ impl EventLog {
         self.persist(&entry)?;
         self.lamport = self.lamport.max(entry.lamport) + 1; // Lamport receive rule
         self.versions.insert(entry.origin.clone(), entry.seq);
-        Ok(Some(entry.event))
+        let event = entry.event.clone();
+        self.entries.push(entry);
+        Ok(Some(event))
+    }
+
+    // Our version vector: highest seq applied per origin.
+    fn version_vector(&self) -> HashMap<String, u64> {
+        self.versions.clone()
+    }
+
+    // Entries a peer is missing, given the version vector it advertised.
+    fn missing_for(&self, peer: &HashMap<String, u64>) -> Vec<LogEntry> {
+        self.entries
+            .iter()
+            .filter(|e| peer.get(&e.origin).map_or(true, |&s| e.seq > s))
+            .cloned()
+            .collect()
     }
 
     fn persist(&self, entry: &LogEntry) -> std::io::Result<()> {
@@ -180,12 +201,21 @@ impl Db {
 
     /// Fold an entry authored by another node into the store — the services-side
     /// of the gossip seam. Idempotent (re-delivered entries are dropped).
-    #[allow(dead_code)]
     pub fn ingest(&mut self, entry: LogEntry) -> std::io::Result<()> {
         if let Some(event) = self.log.ingest(entry)? {
             apply(&mut self.accounts, event);
         }
         Ok(())
+    }
+
+    /// Our version vector, advertised to peers so they can send what we lack.
+    pub fn version_vector(&self) -> HashMap<String, u64> {
+        self.log.version_vector()
+    }
+
+    /// The log entries a peer is missing, given the version vector it sent.
+    pub fn missing_for(&self, peer: &HashMap<String, u64>) -> Vec<LogEntry> {
+        self.log.missing_for(peer)
     }
 
     pub fn exists(&self, name: &str) -> bool {
