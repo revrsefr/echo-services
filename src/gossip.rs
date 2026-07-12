@@ -9,8 +9,11 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+use tokio_rustls::rustls::{self, ClientConfig, RootCertStore, ServerConfig};
+use tokio_rustls::{TlsAcceptor, TlsConnector};
 
-use crate::config::{Gossip, Peer};
+use crate::config::{Gossip, Peer, Tls};
 use crate::engine::db::LogEntry;
 use crate::engine::Engine;
 
@@ -29,28 +32,43 @@ enum Msg {
     Entry { entry: LogEntry },
 }
 
-// Start the listener (if bound) and a dialer per configured peer.
+// Start the listener (if bound) and a dialer per configured peer. When TLS is
+// configured, every peer link is mutually authenticated against the CA.
 pub async fn run(engine: Shared, cfg: Gossip, peers: Vec<Peer>, origin: String, outbound: Outbound) {
+    let tls = match cfg.tls.as_ref().map(build_tls).transpose() {
+        Ok(t) => t,
+        Err(e) => return tracing::error!(%e, "gossip TLS setup failed"),
+    };
+    let acceptor = tls.as_ref().map(|(a, _)| a.clone());
+    let connector = tls.as_ref().map(|(_, c)| c.clone());
     if let Some(bind) = cfg.bind.clone() {
-        tokio::spawn(listen(bind, engine.clone(), cfg.secret.clone(), origin.clone(), outbound.clone()));
+        tokio::spawn(listen(bind, engine.clone(), cfg.secret.clone(), origin.clone(), outbound.clone(), acceptor));
     }
     for peer in peers {
-        tokio::spawn(dial(peer.addr, engine.clone(), cfg.secret.clone(), origin.clone(), outbound.clone()));
+        tokio::spawn(dial(peer, engine.clone(), cfg.secret.clone(), origin.clone(), outbound.clone(), connector.clone()));
     }
 }
 
-async fn listen(bind: String, engine: Shared, secret: String, origin: String, outbound: Outbound) {
+async fn listen(bind: String, engine: Shared, secret: String, origin: String, outbound: Outbound, acceptor: Option<TlsAcceptor>) {
     let listener = match TcpListener::bind(&bind).await {
         Ok(l) => l,
         Err(e) => return tracing::error!(%e, %bind, "gossip bind failed"),
     };
-    tracing::info!(%bind, "gossip listening");
+    tracing::info!(%bind, tls = acceptor.is_some(), "gossip listening");
     loop {
         if let Ok((stream, addr)) = listener.accept().await {
             tracing::info!(%addr, "gossip peer accepted");
-            let (engine, secret, origin, outbound) = (engine.clone(), secret.clone(), origin.clone(), outbound.clone());
+            let (engine, secret, origin, outbound, acceptor) =
+                (engine.clone(), secret.clone(), origin.clone(), outbound.clone(), acceptor.clone());
             tokio::spawn(async move {
-                if let Err(e) = session(stream, engine, secret, origin, outbound).await {
+                let served = match acceptor {
+                    Some(acc) => match acc.accept(stream).await {
+                        Ok(tls) => session(tls, engine, secret, origin, outbound).await,
+                        Err(e) => return tracing::debug!(%e, %addr, "gossip tls accept failed"),
+                    },
+                    None => session(stream, engine, secret, origin, outbound).await,
+                };
+                if let Err(e) = served {
                     tracing::debug!(%e, "gossip session ended");
                 }
             });
@@ -58,19 +76,66 @@ async fn listen(bind: String, engine: Shared, secret: String, origin: String, ou
     }
 }
 
-async fn dial(addr: String, engine: Shared, secret: String, origin: String, outbound: Outbound) {
+async fn dial(peer: Peer, engine: Shared, secret: String, origin: String, outbound: Outbound, connector: Option<TlsConnector>) {
     loop {
-        match TcpStream::connect(&addr).await {
+        match TcpStream::connect(&peer.addr).await {
             Ok(stream) => {
-                tracing::info!(%addr, "gossip dialed peer");
-                if let Err(e) = session(stream, engine.clone(), secret.clone(), origin.clone(), outbound.clone()).await {
-                    tracing::debug!(%e, %addr, "gossip session ended");
+                tracing::info!(addr = %peer.addr, "gossip dialed peer");
+                let served = match &connector {
+                    Some(conn) => match ServerName::try_from(peer.name.clone()) {
+                        Ok(name) => match conn.connect(name, stream).await {
+                            Ok(tls) => session(tls, engine.clone(), secret.clone(), origin.clone(), outbound.clone()).await,
+                            Err(e) => Err(anyhow::anyhow!("tls connect: {e}")),
+                        },
+                        Err(e) => Err(anyhow::anyhow!("bad peer TLS name {:?}: {e}", peer.name)),
+                    },
+                    None => session(stream, engine.clone(), secret.clone(), origin.clone(), outbound.clone()).await,
+                };
+                if let Err(e) = served {
+                    tracing::debug!(%e, addr = %peer.addr, "gossip session ended");
                 }
             }
-            Err(e) => tracing::debug!(%e, %addr, "gossip dial failed"),
+            Err(e) => tracing::debug!(%e, addr = %peer.addr, "gossip dial failed"),
         }
         tokio::time::sleep(REDIAL).await;
     }
+}
+
+// Build a mutual-TLS acceptor + connector from PEM files: we present our cert and
+// require the peer to present one signed by the configured CA.
+fn build_tls(tls: &Tls) -> anyhow::Result<(TlsAcceptor, TlsConnector)> {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let certs = load_certs(&tls.cert)?;
+    let key = load_key(&tls.key)?;
+    let roots = load_roots(&tls.ca)?;
+
+    let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots.clone())).build()?;
+    let server = ServerConfig::builder()
+        .with_client_cert_verifier(verifier)
+        .with_single_cert(certs.clone(), key.clone_key())?;
+    let client = ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_client_auth_cert(certs, key)?;
+
+    Ok((TlsAcceptor::from(Arc::new(server)), TlsConnector::from(Arc::new(client))))
+}
+
+fn load_certs(path: &str) -> anyhow::Result<Vec<CertificateDer<'static>>> {
+    let data = std::fs::read(path)?;
+    Ok(rustls_pemfile::certs(&mut &data[..]).collect::<Result<Vec<_>, _>>()?)
+}
+
+fn load_key(path: &str) -> anyhow::Result<PrivateKeyDer<'static>> {
+    let data = std::fs::read(path)?;
+    rustls_pemfile::private_key(&mut &data[..])?.ok_or_else(|| anyhow::anyhow!("no private key in {path}"))
+}
+
+fn load_roots(path: &str) -> anyhow::Result<RootCertStore> {
+    let mut roots = RootCertStore::empty();
+    for cert in load_certs(path)? {
+        roots.add(cert)?;
+    }
+    Ok(roots)
 }
 
 // One peer connection: authenticate, then run anti-entropy until it drops.
@@ -261,5 +326,56 @@ mod tests {
         })
         .await;
         assert!(!b.lock().await.test_has_account("alice"), "no state should cross a bad handshake");
+    }
+
+    // Generate a CA + node cert with openssl into a temp dir; None if unavailable.
+    fn gen_certs() -> Option<String> {
+        use std::process::Command;
+        let dir = std::env::temp_dir().join(format!("fedserv-tls-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).ok()?;
+        let d = dir.to_str()?.to_string();
+        let run = |args: &[&str]| Command::new("openssl").args(args).status().map(|s| s.success()).unwrap_or(false);
+        let ok = run(&["req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
+            "-keyout", &format!("{d}/ca.key"), "-out", &format!("{d}/ca.crt"), "-days", "1", "-subj", "/CN=fedserv-ca"])
+            && run(&["req", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
+            "-keyout", &format!("{d}/node.key"), "-out", &format!("{d}/node.csr"), "-subj", "/CN=fedserv"]);
+        if !ok {
+            return None;
+        }
+        std::fs::write(format!("{d}/ext"), "subjectAltName=DNS:fedserv,IP:127.0.0.1\n").ok()?;
+        run(&["x509", "-req", "-in", &format!("{d}/node.csr"), "-CA", &format!("{d}/ca.crt"),
+            "-CAkey", &format!("{d}/ca.key"), "-CAcreateserial", "-out", &format!("{d}/node.crt"),
+            "-days", "1", "-extfile", &format!("{d}/ext")])
+            .then_some(d)
+    }
+
+    // Convergence over a mutually authenticated TLS link. Skips if openssl is absent.
+    #[tokio::test]
+    async fn tls_link_converges() {
+        let Some(d) = gen_certs() else { return };
+        let tls = Tls { cert: format!("{d}/node.crt"), key: format!("{d}/node.key"), ca: format!("{d}/ca.crt") };
+        let (acceptor, connector) = build_tls(&tls).expect("tls config");
+
+        let (a, atx) = engine("A", "tls-a");
+        let (b, btx) = engine("B", "tls-b");
+        a.lock().await.test_register("alice");
+
+        let (sside, cside) = tokio::io::duplex(64 * 1024);
+        let name = ServerName::try_from("fedserv").unwrap();
+        let (server, client) = tokio::join!(acceptor.accept(sside), connector.connect(name, cside));
+        let sa = tokio::spawn(session(server.expect("tls accept"), a.clone(), "s3cret".into(), "A".into(), atx));
+        let sb = tokio::spawn(session(client.expect("tls connect"), b.clone(), "s3cret".into(), "B".into(), btx));
+
+        let mut converged = false;
+        for _ in 0..100 {
+            if b.lock().await.test_has_account("alice") {
+                converged = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        sa.abort();
+        sb.abort();
+        assert!(converged, "B should converge over the TLS link");
     }
 }

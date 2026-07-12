@@ -17,11 +17,28 @@ pub struct Gossip {
     pub bind: Option<String>,
     // Shared secret both nodes must present.
     pub secret: String,
+    // Mutual-TLS for the peer link. Absent = plaintext.
+    #[serde(default)]
+    pub tls: Option<Tls>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Tls {
+    pub cert: String, // our certificate chain (PEM)
+    pub key: String,  // our private key (PEM)
+    pub ca: String,   // CA bundle that must have signed a peer's certificate (PEM)
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Peer {
     pub addr: String,
+    // TLS server name to expect from this peer; must match its certificate.
+    #[serde(default = "default_peer_name")]
+    pub name: String,
+}
+
+fn default_peer_name() -> String {
+    "fedserv".to_string()
 }
 
 #[derive(Debug, Deserialize)]
