@@ -1307,7 +1307,7 @@ mod tests {
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), password_hash: "OTHER".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![],
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(winner));
         e.gossip_ingest(entry).unwrap();
@@ -1589,6 +1589,39 @@ mod tests {
         e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         assert!(notice(&bs(&mut e, "000AAAAAC", "BOT ADD Bendy bot serv.host A Helper"), "added"));
         assert!(notice(&bs(&mut e, "000AAAAAC", "BOT LIST"), "Bendy"));
+    }
+
+    // MemoServ delivers a memo to an offline account and notifies them on login.
+    #[test]
+    fn memoserv_delivers_and_notifies_on_login() {
+        use fedserv_memoserv::MemoServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-memoserv.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "password1", None).unwrap();
+        db.register("bob", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(MemoServ { uid: "42SAAAAAE".into() }),
+            ],
+            db,
+        );
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let ms = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAE".into(), text: t.into() });
+        let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        // alice identifies and sends bob (offline) a memo.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        assert!(notice(&ms(&mut e, "000AAAAAB", "SEND bob Hello from alice"), "Memo sent"));
+
+        // bob logs in later and is told he has a new memo, then reads it.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h".into() });
+        assert!(notice(&ns(&mut e, "000AAAAAC", "IDENTIFY password1"), "new memo"));
+        assert!(notice(&ms(&mut e, "000AAAAAC", "READ NEW"), "Hello from alice"));
     }
 
     // Channel SUSPEND is oper-gated and freezes founder management until lifted.

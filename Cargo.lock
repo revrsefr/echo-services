@@ -289,6 +289,7 @@ dependencies = [
  "fedserv-chanserv",
  "fedserv-example",
  "fedserv-inspircd",
+ "fedserv-memoserv",
  "fedserv-nickserv",
  "hmac",
  "pbkdf2",
@@ -335,6 +336,13 @@ dependencies = [
 
 [[package]]
 name = "fedserv-inspircd"
+version = "0.0.1"
+dependencies = [
+ "fedserv-api",
+]
+
+[[package]]
+name = "fedserv-memoserv"
 version = "0.0.1"
 dependencies = [
  "fedserv-api",

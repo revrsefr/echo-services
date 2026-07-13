@@ -65,6 +65,8 @@ pub enum NetAction {
     // Force a user into a channel (SVSJOIN), e.g. applying an account's auto-join
     // list on identify. `key` is empty for keyless channels.
     ForceJoin { uid: String, channel: String, key: String },
+    // Remove one of our pseudo-clients (e.g. a deleted bot) from the network.
+    QuitUser { uid: String, reason: String },
     // Set channel modes from services, e.g. +r on a registered channel. `from` is
     // the pseudoclient uid to source it from (empty = the services server). The
     // protocol stamps a timestamp the ircd will accept.
@@ -308,6 +310,15 @@ pub struct ChanAkickView {
     pub reason: String,
 }
 
+// A memo left for an account (MemoServ).
+#[derive(Debug, Clone)]
+pub struct MemoView {
+    pub from: String,
+    pub text: String,
+    pub ts: u64,
+    pub read: bool,
+}
+
 // A service bot registered with BotServ.
 #[derive(Debug, Clone)]
 pub struct BotView {
@@ -509,6 +520,12 @@ pub trait Store {
     fn bot_add(&mut self, nick: &str, user: &str, host: &str, gecos: &str) -> Result<(), ChanError>;
     fn bot_del(&mut self, nick: &str) -> Result<bool, ChanError>;
     fn bots(&self) -> Vec<BotView>;
+    // MemoServ: per-account memos (index is a 0-based position in memo_list).
+    fn memo_send(&mut self, account: &str, from: &str, text: &str) -> Result<(), RegError>;
+    fn memo_list(&self, account: &str) -> Vec<MemoView>;
+    fn memo_read(&mut self, account: &str, index: usize) -> Option<MemoView>;
+    fn memo_del(&mut self, account: &str, index: usize) -> bool;
+    fn unread_memos(&self, account: &str) -> usize;
     fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError>;
     fn set_founder(&mut self, channel: &str, account: &str) -> Result<(), ChanError>;
     fn access_add(&mut self, channel: &str, account: &str, level: &str) -> Result<(), ChanError>;

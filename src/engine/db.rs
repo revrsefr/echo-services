@@ -15,7 +15,7 @@ use super::scram::{self, Hash};
 // fedserv-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use fedserv_api::{
-    AccountView, AjoinView, BotView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, RegError, Store,
+    AccountView, AjoinView, BotView, MemoView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, RegError, Store,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +52,9 @@ pub struct Account {
     // Services suspension, if any (login blocked while set and unexpired).
     #[serde(default)]
     pub suspension: Option<Suspension>,
+    // Memos left for this account (MemoServ), oldest first.
+    #[serde(default)]
+    pub memos: Vec<Memo>,
 }
 
 fn verified_default() -> bool {
@@ -75,6 +78,9 @@ pub enum Event {
     AjoinRemoved { account: String, channel: String },
     AccountSuspended { account: String, by: String, reason: String, ts: u64, expires: Option<u64> },
     AccountUnsuspended { account: String },
+    MemoSent { account: String, from: String, text: String, ts: u64 },
+    MemoRead { account: String, index: usize },
+    MemoDeleted { account: String, index: usize },
     NickGrouped { nick: String, account: String },
     NickUngrouped { nick: String },
     ChannelRegistered { name: String, founder: String, ts: u64 },
@@ -119,6 +125,9 @@ impl Event {
             | Event::AjoinRemoved { .. }
             | Event::AccountSuspended { .. }
             | Event::AccountUnsuspended { .. }
+            | Event::MemoSent { .. }
+            | Event::MemoRead { .. }
+            | Event::MemoDeleted { .. }
             | Event::NickGrouped { .. }
             | Event::NickUngrouped { .. } => Scope::Global,
             Event::ChannelRegistered { .. }
@@ -164,6 +173,16 @@ pub struct Suspension {
     pub ts: u64,
     #[serde(default)]
     pub expires: Option<u64>,
+}
+
+// A memo left for an account (MemoServ).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Memo {
+    pub from: String,
+    pub text: String,
+    pub ts: u64,
+    #[serde(default)]
+    pub read: bool,
 }
 
 // A service bot: a pseudo-client BotServ can assign to sit in channels.
@@ -762,6 +781,7 @@ impl Db {
             verified,
             ajoin: Vec::new(),
             suspension: None,
+            memos: Vec::new(),
         };
         self.log.append(Event::AccountRegistered(account.clone())).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
@@ -1314,6 +1334,58 @@ impl Db {
         self.bots.values()
     }
 
+    /// Append a memo to an account's mailbox.
+    pub fn memo_send(&mut self, account: &str, from: &str, text: &str) -> Result<(), RegError> {
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return Err(RegError::Internal);
+        }
+        let ts = now();
+        self.log.append(Event::MemoSent { account: account.to_string(), from: from.to_string(), text: text.to_string(), ts }).map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().memos.push(Memo { from: from.to_string(), text: text.to_string(), ts, read: false });
+        Ok(())
+    }
+
+    /// An account's memos, oldest first.
+    pub fn memo_list(&self, account: &str) -> Vec<MemoView> {
+        self.accounts.get(&key(account)).map_or(Vec::new(), |a| {
+            a.memos.iter().map(|m| MemoView { from: m.from.clone(), text: m.text.clone(), ts: m.ts, read: m.read }).collect()
+        })
+    }
+
+    /// Read one memo by index (marks it read), returning its contents.
+    pub fn memo_read(&mut self, account: &str, index: usize) -> Option<MemoView> {
+        let k = key(account);
+        let view = self.accounts.get(&k).and_then(|a| a.memos.get(index)).map(|m| MemoView { from: m.from.clone(), text: m.text.clone(), ts: m.ts, read: m.read })?;
+        if !view.read {
+            let _ = self.log.append(Event::MemoRead { account: account.to_string(), index });
+            if let Some(m) = self.accounts.get_mut(&k).and_then(|a| a.memos.get_mut(index)) {
+                m.read = true;
+            }
+        }
+        Some(view)
+    }
+
+    /// Delete one memo by index. Returns whether it existed.
+    pub fn memo_del(&mut self, account: &str, index: usize) -> bool {
+        let k = key(account);
+        if !self.accounts.get(&k).is_some_and(|a| index < a.memos.len()) {
+            return false;
+        }
+        let _ = self.log.append(Event::MemoDeleted { account: account.to_string(), index });
+        if let Some(a) = self.accounts.get_mut(&k) {
+            if index < a.memos.len() {
+                a.memos.remove(index);
+            }
+        }
+        true
+    }
+
+    /// How many unread memos an account has.
+    pub fn unread_memos(&self, account: &str) -> usize {
+        self.accounts.get(&key(account)).map_or(0, |a| a.memos.iter().filter(|m| !m.read).count())
+    }
+
     /// Set `channel`'s entry message (empty clears it).
     pub fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError> {
         let k = key(channel);
@@ -1416,6 +1488,23 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::AccountUnsuspended { account } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {
                 a.suspension = None;
+            }
+        }
+        Event::MemoSent { account, from, text, ts } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.memos.push(Memo { from, text, ts, read: false });
+            }
+        }
+        Event::MemoRead { account, index } => {
+            if let Some(m) = accounts.get_mut(&key(&account)).and_then(|a| a.memos.get_mut(index)) {
+                m.read = true;
+            }
+        }
+        Event::MemoDeleted { account, index } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                if index < a.memos.len() {
+                    a.memos.remove(index);
+                }
             }
         }
         Event::NickGrouped { nick, account } => {
@@ -1704,6 +1793,21 @@ impl Store for Db {
     fn bots(&self) -> Vec<BotView> {
         Db::bots(self).map(|b| BotView { nick: b.nick.clone(), user: b.user.clone(), host: b.host.clone(), gecos: b.gecos.clone() }).collect()
     }
+    fn memo_send(&mut self, account: &str, from: &str, text: &str) -> Result<(), RegError> {
+        Db::memo_send(self, account, from, text)
+    }
+    fn memo_list(&self, account: &str) -> Vec<MemoView> {
+        Db::memo_list(self, account)
+    }
+    fn memo_read(&mut self, account: &str, index: usize) -> Option<MemoView> {
+        Db::memo_read(self, account, index)
+    }
+    fn memo_del(&mut self, account: &str, index: usize) -> bool {
+        Db::memo_del(self, account, index)
+    }
+    fn unread_memos(&self, account: &str) -> usize {
+        Db::unread_memos(self, account)
+    }
     fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError> {
         Db::set_entrymsg(self, channel, msg)
     }
@@ -1780,7 +1884,7 @@ mod tests {
     fn account_conflict_resolves_deterministically() {
         let alice = |hash: &str, ts: u64, home: &str| Account {
             name: "alice".into(), password_hash: hash.into(), email: None,
-            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None,
+            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![],
         };
         let converge = |first: &Account, second: &Account| {
             let (mut acc, mut ch, mut gr, mut bo) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new());
@@ -1958,6 +2062,30 @@ mod tests {
         assert_eq!(db.bots().next().unwrap().nick, "Botty");
     }
 
+    // Memos send, mark read on read, delete (shifting indices), and replay.
+    #[test]
+    fn memos_send_read_delete_and_persist() {
+        let p = tmp("memos");
+        {
+            let mut db = Db::open(&p, "N1");
+            db.scram_iterations = 4096;
+            db.register("alice", "password1", None).unwrap();
+            assert_eq!(db.unread_memos("alice"), 0);
+            db.memo_send("alice", "bob", "hello there").unwrap();
+            db.memo_send("alice", "carol", "second").unwrap();
+            assert_eq!(db.unread_memos("alice"), 2);
+            let m = db.memo_read("alice", 0).unwrap();
+            assert_eq!(m.from, "bob");
+            assert_eq!(db.unread_memos("alice"), 1, "reading marks it read");
+            assert!(db.memo_del("alice", 0));
+            assert_eq!(db.memo_list("alice").len(), 1);
+            assert_eq!(db.memo_list("alice")[0].text, "second", "delete shifts indices");
+        }
+        let db = Db::open(&p, "N1");
+        assert_eq!(db.memo_list("alice").len(), 1, "memos replay from the log");
+        assert_eq!(db.unread_memos("alice"), 1);
+    }
+
     // A wrong code is tolerated a few times, then the code is burned so it can't
     // be ground down online even though it is short.
     #[test]
@@ -2032,7 +2160,7 @@ mod tests {
         db.register("alice", "pw", None).unwrap();
         let bob = Account {
             name: "bob".into(), password_hash: "x".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![],
         };
         let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, event: Event::AccountRegistered(bob) };
         db.ingest(entry).unwrap();

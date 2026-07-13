@@ -58,6 +58,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             for entry in db.ajoin_list(&account) {
                 ctx.force_join(from.uid, &entry.channel, &entry.key);
             }
+            // Let them know about waiting memos.
+            let unread = db.unread_memos(&account);
+            if unread > 0 {
+                ctx.notice(me, from.uid, format!("You have \x02{unread}\x02 new memo(s). Read them with \x02/msg MemoServ READ NEW\x02."));
+            }
         }
         None => {
             db.note_auth(account_name, false);

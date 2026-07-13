@@ -16,6 +16,7 @@ use tokio::sync::Mutex;
 use engine::Engine;
 use fedserv_botserv::BotServ;
 use fedserv_chanserv::ChanServ;
+use fedserv_memoserv::MemoServ;
 use fedserv_example::ExampleServ;
 use fedserv_inspircd::InspIrcd;
 use fedserv_nickserv::NickServ;
@@ -61,6 +62,11 @@ async fn main() -> Result<()> {
     if enabled("botserv") {
         services.push(Box::new(BotServ {
             uid: format!("{}AAAAAD", cfg.server.sid),
+        }));
+    }
+    if enabled("memoserv") {
+        services.push(Box::new(MemoServ {
+            uid: format!("{}AAAAAE", cfg.server.sid),
         }));
     }
     if enabled("example") {
