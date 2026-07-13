@@ -115,6 +115,10 @@ pub struct Engine {
     trigger_cache: HashMap<String, CachedTriggers>,
     // Kicker bans (times-to-ban) awaiting BANEXPIRE removal. Swept on each event.
     pending_unbans: Vec<PendingUnban>,
+    // Shared, namespaced stat counters any service contributes to (via
+    // ServiceCtx::count) plus engine-internal events; exposed over the gRPC
+    // Stats API. Ordered so a snapshot is stable.
+    stats: std::collections::BTreeMap<String, u64>,
 }
 
 struct CachedBadwords {
@@ -172,7 +176,24 @@ impl Engine {
             badword_cache: HashMap::new(),
             trigger_cache: HashMap::new(),
             pending_unbans: Vec::new(),
+            stats: std::collections::BTreeMap::new(),
         }
+    }
+
+    // Increment a shared stat counter.
+    pub fn bump(&mut self, key: &str) {
+        *self.stats.entry(key.to_string()).or_insert(0) += 1;
+    }
+
+    // The shared counters plus live gauges derived from the store, for the gRPC
+    // Stats API. Any service's counters ride in here alongside these.
+    pub fn stats_snapshot(&self) -> std::collections::BTreeMap<String, u64> {
+        let mut m = self.stats.clone();
+        m.insert("accounts.total".to_string(), self.db.accounts().count() as u64);
+        m.insert("channels.total".to_string(), self.db.channels().count() as u64);
+        m.insert("bots.total".to_string(), self.db.bots().count() as u64);
+        m.insert("opers.total".to_string(), self.opers.len() as u64);
+        m
     }
 
     // Wall-clock seconds, overridable in tests so the time-based FLOOD kicker is
@@ -648,6 +669,7 @@ impl Engine {
                 // access + a personal greet, the assigned bot displays it.
                 if let Some(g) = greet {
                     out.push(g);
+                    self.bump("botserv.greet");
                 }
                 out
             }
@@ -974,14 +996,25 @@ impl Engine {
                 }
             }
         } else {
-            let Self { services, network, db, .. } = self;
-            for svc in services.iter_mut() {
-                if to.eq_ignore_ascii_case(svc.uid()) || to.eq_ignore_ascii_case(svc.nick()) {
-                    let args: Vec<&str> = text.split_whitespace().collect();
-                    svc.on_command(&sender, &args, &mut ctx, network, db);
-                    break;
+            let mut matched: Option<String> = None;
+            {
+                let Self { services, network, db, .. } = self;
+                for svc in services.iter_mut() {
+                    if to.eq_ignore_ascii_case(svc.uid()) || to.eq_ignore_ascii_case(svc.nick()) {
+                        let args: Vec<&str> = text.split_whitespace().collect();
+                        svc.on_command(&sender, &args, &mut ctx, network, db);
+                        matched = Some(svc.nick().to_ascii_lowercase());
+                        break;
+                    }
                 }
             }
+            if let Some(nick) = matched {
+                self.bump(&format!("{nick}.command"));
+            }
+        }
+        // Fold any counters the command recorded into the shared registry.
+        for key in std::mem::take(&mut ctx.stats) {
+            self.bump(&key);
         }
         // A command may have changed the bot registry (BotServ BOT ADD/DEL).
         let mut out = ctx.actions;
@@ -1091,6 +1124,7 @@ impl Engine {
                 w
             };
             if !already {
+                self.bump("botserv.warn");
                 return vec![NetAction::Notice { from: botuid, to: from.to_string(), text: format!("Please mind the channel rules — {reason} Next time you'll be kicked.") }];
             }
         }
@@ -1109,6 +1143,7 @@ impl Engine {
                 if let Some(host) = self.network.host_of(from).map(str::to_string) {
                     let mask = format!("*!*@{host}");
                     out.push(NetAction::ChannelMode { from: botuid.clone(), channel: channel.to_string(), modes: format!("+b {mask}") });
+                    self.bump("botserv.ban");
                     if ban_expire > 0 {
                         let at = self.now_secs() + ban_expire as u64;
                         self.pending_unbans.push(PendingUnban { at, from: botuid.clone(), channel: channel.to_string(), mask });
@@ -1117,6 +1152,7 @@ impl Engine {
             }
         }
         out.push(NetAction::Kick { from: botuid, channel: channel.to_string(), uid: from.to_string(), reason: reason.to_string() });
+        self.bump("botserv.kick");
         out
     }
 
@@ -1142,6 +1178,7 @@ impl Engine {
         let response = cached.responses.get(idx)?.clone();
         let nick = self.network.nick_of(from).unwrap_or(from);
         let response = response.replace("$nick", nick);
+        self.bump("botserv.trigger");
         Some(NetAction::Privmsg { from: botuid, to: channel.to_string(), text: response })
     }
 
@@ -2474,6 +2511,27 @@ mod tests {
         );
         // A non-matching line is ignored.
         assert!(!say(&mut e, "goodbye all").iter().any(|a| matches!(a, NetAction::Privmsg { .. })), "no response on miss");
+    }
+
+    // The shared stats registry gathers per-service command counts, BotServ
+    // events, and live gauges — the same pipe every module reports through.
+    #[test]
+    fn stats_registry_collects_across_services() {
+        let (mut e, _p) = kicker_fixture("bsstats");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        // The fixture already ran a NickServ IDENTIFY and BotServ BOT ADD/ASSIGN.
+        bs(&mut e, "KICK #c CAPS ON");
+        say(&mut e, "SHOUTING LOUDLY NOW"); // one kick
+
+        let s = e.stats_snapshot();
+        assert!(s.get("nickserv.command").copied().unwrap_or(0) >= 1, "nickserv counted: {s:?}");
+        assert!(s.get("botserv.command").copied().unwrap_or(0) >= 2, "botserv commands counted");
+        assert_eq!(s.get("botserv.kick").copied(), Some(1), "one kick counted");
+        // Live gauges derived from the store.
+        assert_eq!(s.get("channels.total").copied(), Some(1));
+        assert_eq!(s.get("bots.total").copied(), Some(1));
+        assert!(s.contains_key("accounts.total"));
     }
 
     // DONTKICKVOICES exempts voiced users; removing the voice makes them kickable.

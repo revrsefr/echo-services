@@ -168,6 +168,10 @@ pub struct Sender<'a> {
 #[derive(Default)]
 pub struct ServiceCtx {
     pub actions: Vec<NetAction>,
+    // Namespaced stat counters to bump (e.g. "nickserv.register"). The engine
+    // folds these into the shared registry after the command runs — so every
+    // service reports its own stats through one shared pipe.
+    pub stats: Vec<String>,
 }
 
 impl ServiceCtx {
@@ -177,6 +181,12 @@ impl ServiceCtx {
             to: to.to_string(),
             text: text.into(),
         });
+    }
+
+    // Record a stat counter bump (namespaced, e.g. "chanserv.register"). Folded
+    // into the engine's shared registry, which the gRPC Stats API exposes.
+    pub fn count(&mut self, key: impl Into<String>) {
+        self.stats.push(key.into());
     }
 
     // A channel/target message sourced from one of our pseudo-clients (e.g. a

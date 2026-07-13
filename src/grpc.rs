@@ -23,12 +23,14 @@ pub mod pb {
 use pb::accounts_server::{Accounts, AccountsServer};
 use pb::directory_server::{Directory, DirectoryServer};
 use pb::replication_event::Kind;
+use pb::stats_server::{Stats, StatsServer};
 use pb::{
     AccountDropped, AccountEmailSet, AccountRecord, AccountRegistered, AccountReply, AccountVerified,
     AuthenticateReply, AuthenticateRequest, ChannelDescSet, ChannelDropped, ChannelFounderSet, ChannelRecord,
     ChannelRegistered, ConfirmRequest, DropRequest, ForceLogoutReply, ForceLogoutRequest, GroupNickRequest,
     NickGrouped, NickUngrouped, RegisterRequest, ReplicationEvent, SetEmailRequest, SetPasswordRequest,
-    SnapshotRequest, SnapshotResponse, Status as PbStatus, SubscribeRequest, UngroupNickRequest,
+    SnapshotRequest, SnapshotResponse, Status as PbStatus, StatsRequest, StatsResponse, SubscribeRequest,
+    UngroupNickRequest,
 };
 
 type Shared = Arc<Mutex<Engine>>;
@@ -298,6 +300,25 @@ fn describe(s: AuthorityStatus) -> &'static str {
     }
 }
 
+// Read-only stats: the shared counter registry plus live gauges, for dashboards.
+struct StatsService {
+    engine: Shared,
+    token: String,
+}
+
+#[tonic::async_trait]
+impl Stats for StatsService {
+    async fn get(&self, req: Request<StatsRequest>) -> Result<Response<StatsResponse>, Status> {
+        authorize(&req, &self.token)?;
+        let counters = self.engine.lock().await.stats_snapshot().into_iter().collect();
+        let collected_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        Ok(Response::new(StatsResponse { counters, collected_at }))
+    }
+}
+
 // Start the listener, if configured. Absent [grpc] in config.toml = no-op, same
 // pattern as gossip being optional.
 pub async fn run(engine: Shared, cfg: GrpcCfg, outbound: broadcast::Sender<LogEntry>) {
@@ -307,6 +328,7 @@ pub async fn run(engine: Shared, cfg: GrpcCfg, outbound: broadcast::Sender<LogEn
     };
     let has_tls = cfg.tls.is_some();
     let accounts_svc = AccountsService { engine: engine.clone(), token: cfg.token.clone() };
+    let stats_svc = StatsService { engine: engine.clone(), token: cfg.token.clone() };
     let directory_svc = DirectoryService { engine, outbound, token: cfg.token };
     let mut server = Server::builder();
     if let Some(tls) = &cfg.tls {
@@ -320,10 +342,11 @@ pub async fn run(engine: Shared, cfg: GrpcCfg, outbound: broadcast::Sender<LogEn
             Err(e) => return tracing::error!(%e, "grpc TLS setup failed"),
         };
     }
-    tracing::info!(%addr, tls = has_tls, "grpc directory + accounts API listening");
+    tracing::info!(%addr, tls = has_tls, "grpc directory + accounts + stats API listening");
     if let Err(e) = server
         .add_service(DirectoryServer::new(directory_svc))
         .add_service(AccountsServer::new(accounts_svc))
+        .add_service(StatsServer::new(stats_svc))
         .serve(addr)
         .await
     {

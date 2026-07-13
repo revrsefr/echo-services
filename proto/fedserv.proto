@@ -138,3 +138,15 @@ message ForceLogoutReply { Status status = 1; uint32 sessions_cleared = 2; }
 
 message GroupNickRequest { string nick = 1; string account = 2; }
 message UngroupNickRequest { string nick = 1; }
+
+// Stats API: a flat, namespaced counter map any service contributes to
+// (e.g. "nickserv.command", "botserv.kick", "channels.total"). Read-only.
+service Stats {
+  rpc Get(StatsRequest) returns (StatsResponse);
+}
+
+message StatsRequest {}
+message StatsResponse {
+  map<string, uint64> counters = 1;
+  uint64 collected_at = 2; // unix seconds when this snapshot was taken
+}
