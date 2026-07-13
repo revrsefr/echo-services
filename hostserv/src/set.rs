@@ -21,7 +21,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
     match db.set_vhost(account, host, from.nick) {
         Ok(()) => {
             for uid in net.uids_logged_into(account) {
-                ctx.set_host(&uid, host);
+                ctx.apply_vhost(&uid, host);
             }
             ctx.notice(me, from.uid, format!("Vhost \x02{host}\x02 assigned to \x02{account}\x02."));
         }

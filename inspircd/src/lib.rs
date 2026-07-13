@@ -275,6 +275,10 @@ impl Protocol for InspIrcd {
                 let target = uid.get(..3).unwrap_or(uid.as_str());
                 vec![self.from_us(format!("ENCAP {} CHGHOST {} {}", target, uid, host))]
             }
+            NetAction::SetIdent { uid, ident } => {
+                let target = uid.get(..3).unwrap_or(uid.as_str());
+                vec![self.from_us(format!("ENCAP {} CHGIDENT {} {}", target, uid, ident))]
+            }
             NetAction::ForceNick { uid, nick } => {
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(self.ts);
                 vec![self.from_us(format!("SVSNICK {} {} {}", uid, nick, now))]
@@ -453,11 +457,13 @@ mod tests {
         assert!(ev.iter().any(|e| matches!(e, NetEvent::ChannelVoice { uid, voice: true, .. } if uid == "0IRAAAAAD")), "join voice: {ev:?}");
     }
 
-    // A vhost is set by ENCAP'ing the target's own server with CHGHOST.
+    // A vhost is set by ENCAP'ing the target's own server with CHGHOST / CHGIDENT.
     #[test]
     fn serializes_set_host() {
         let lines = proto().serialize(&NetAction::SetHost { uid: "0IRAAAAAB".into(), host: "cool.example".into() });
         assert_eq!(lines, vec![":42S ENCAP 0IR CHGHOST 0IRAAAAAB cool.example".to_string()]);
+        let lines = proto().serialize(&NetAction::SetIdent { uid: "0IRAAAAAB".into(), ident: "cool".into() });
+        assert_eq!(lines, vec![":42S ENCAP 0IR CHGIDENT 0IRAAAAAB cool".to_string()]);
     }
 
     #[test]

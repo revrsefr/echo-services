@@ -64,9 +64,18 @@ fn require_oper(me: &str, from: &Sender, ctx: &mut ServiceCtx) -> bool {
     false
 }
 
-// Whether `host` is a syntactically valid vhost: a hostname of dot-separated
-// labels using letters, digits and hyphens, not too long.
-pub(crate) fn valid_vhost(host: &str) -> bool {
+// Whether `spec` is a valid vhost: an optional `ident@` (letters, digits, a few
+// punctuation) followed by a hostname of dot-separated alphanumeric/hyphen labels.
+pub(crate) fn valid_vhost(spec: &str) -> bool {
+    let (ident, host) = match spec.split_once('@') {
+        Some((i, h)) => (Some(i), h),
+        None => (None, spec),
+    };
+    if let Some(i) = ident {
+        if i.is_empty() || i.len() > 12 || !i.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.') {
+            return false;
+        }
+    }
     if host.is_empty() || host.len() > 64 || !host.contains('.') {
         return false;
     }

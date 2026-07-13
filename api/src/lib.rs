@@ -66,6 +66,8 @@ pub enum NetAction {
     ForceNick { uid: String, nick: String },
     // Set a user's displayed host (a vhost), or restore it.
     SetHost { uid: String, host: String },
+    // Set a user's displayed ident/username (the `ident@` part of a vhost).
+    SetIdent { uid: String, ident: String },
     // Force a user into a channel (SVSJOIN), e.g. applying an account's auto-join
     // list on identify. `key` is empty for keyless channels.
     ForceJoin { uid: String, channel: String, key: String },
@@ -263,6 +265,18 @@ impl ServiceCtx {
             uid: uid.to_string(),
             host: host.to_string(),
         });
+    }
+
+    // Apply a vhost spec to a user: `ident@host` sets both the ident and host,
+    // a bare `host` just the host.
+    pub fn apply_vhost(&mut self, uid: &str, spec: &str) {
+        match spec.split_once('@') {
+            Some((ident, host)) => {
+                self.actions.push(NetAction::SetIdent { uid: uid.to_string(), ident: ident.to_string() });
+                self.set_host(uid, host);
+            }
+            None => self.set_host(uid, spec),
+        }
     }
 
     // Force a user into a channel (SVSJOIN), e.g. an account's auto-join list.

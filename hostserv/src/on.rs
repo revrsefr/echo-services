@@ -8,7 +8,7 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &dyn Store) {
     };
     match db.vhost(account) {
         Some(v) => {
-            ctx.set_host(from.uid, &v.host);
+            ctx.apply_vhost(from.uid, &v.host);
             ctx.notice(me, from.uid, format!("Your vhost \x02{}\x02 is now active.", v.host));
         }
         None => ctx.notice(me, from.uid, "You have no vhost assigned."),
