@@ -227,7 +227,7 @@ impl Protocol for InspIrcd {
     }
 
     fn serialize(&mut self, action: &NetAction) -> Vec<String> {
-        match action {
+        let lines = match action {
             NetAction::Burst => vec![self.sourced(format!("BURST {}", self.ts))],
             NetAction::EndBurst => vec![self.sourced("ENDBURST".to_string())],
             NetAction::Pong { token, from } => {
@@ -321,7 +321,12 @@ impl Protocol for InspIrcd {
             NetAction::Raw(s) => vec![s.clone()],
             // Internal: the link layer handles these before serialization.
             NetAction::DeferRegister { .. } | NetAction::DeferPassword { .. } | NetAction::SendEmail { .. } => vec![],
-        }
+        };
+        // A trailing parameter can carry free-form text (message bodies, kick
+        // reasons, topics, metadata). Strip CR/LF/NUL at this single choke-point
+        // so no such text — whatever its origin — can smuggle a second command
+        // onto the s2s link.
+        lines.into_iter().map(|l| l.replace(['\r', '\n', '\0'], "")).collect()
     }
 
     fn sid(&self) -> &str {
@@ -465,6 +470,19 @@ mod tests {
         assert_eq!(lines, vec![":42S ENCAP 0IR CHGHOST 0IRAAAAAB cool.example".to_string()]);
         let lines = proto().serialize(&NetAction::SetIdent { uid: "0IRAAAAAB".into(), ident: "cool".into() });
         assert_eq!(lines, vec![":42S ENCAP 0IR CHGIDENT 0IRAAAAAB cool".to_string()]);
+    }
+
+    // Free-form text with embedded line breaks must not smuggle a second line
+    // onto the link: the serializer strips CR/LF/NUL from every outbound line.
+    #[test]
+    fn strips_crlf_from_trailing_text() {
+        let lines = proto().serialize(&NetAction::Notice {
+            from: "42SAAAAAA".into(),
+            to: "0IRAAAAAB".into(),
+            text: "hi\r\nKILL 0IRAAAAAB :pwned".into(),
+        });
+        assert_eq!(lines, vec![":42SAAAAAA NOTICE 0IRAAAAAB :hiKILL 0IRAAAAAB :pwned".to_string()]);
+        assert!(!lines[0].contains('\n') && !lines[0].contains('\r'));
     }
 
     #[test]
