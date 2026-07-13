@@ -1,0 +1,8 @@
+[package]
+name = "fedserv-botserv"
+version = "0.0.1"
+edition = "2021"
+description = "BotServ: registers and manages service bots that sit in channels."
+
+[dependencies]
+fedserv-api = { path = "../api" }

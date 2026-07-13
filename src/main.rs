@@ -14,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 use engine::Engine;
+use fedserv_botserv::BotServ;
 use fedserv_chanserv::ChanServ;
 use fedserv_example::ExampleServ;
 use fedserv_inspircd::InspIrcd;
@@ -55,6 +56,11 @@ async fn main() -> Result<()> {
     if enabled("chanserv") {
         services.push(Box::new(ChanServ {
             uid: format!("{}AAAAAB", cfg.server.sid),
+        }));
+    }
+    if enabled("botserv") {
+        services.push(Box::new(BotServ {
+            uid: format!("{}AAAAAD", cfg.server.sid),
         }));
     }
     if enabled("example") {

@@ -1557,6 +1557,40 @@ mod tests {
         assert!(out.is_empty(), "no enforcement when SECUREOPS is off: {out:?}");
     }
 
+    // BotServ BOT ADD/LIST is oper-gated (Priv::Admin) and the bot is remembered.
+    #[test]
+    fn botserv_bot_add_list_is_oper_gated() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-botserv.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "rando".into(), host: "h".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "staff".into(), host: "h".into() });
+
+        // A non-oper cannot add a bot.
+        assert!(notice(&bs(&mut e, "000AAAAAB", "BOT ADD Bendy bot serv.host Helper"), "Access denied"));
+        // The admin oper identifies, adds a bot, and sees it listed.
+        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        assert!(notice(&bs(&mut e, "000AAAAAC", "BOT ADD Bendy bot serv.host A Helper"), "added"));
+        assert!(notice(&bs(&mut e, "000AAAAAC", "BOT LIST"), "Bendy"));
+    }
+
     // Channel SUSPEND is oper-gated and freezes founder management until lifted.
     #[test]
     fn channel_suspend_is_oper_gated_and_freezes_management() {

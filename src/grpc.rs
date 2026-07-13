@@ -135,7 +135,9 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::ChannelSettingsSet { .. }
         | Event::ChannelTopicSet { .. }
         | Event::ChannelSuspended { .. }
-        | Event::ChannelUnsuspended { .. } => return None,
+        | Event::ChannelUnsuspended { .. }
+        | Event::BotAdded(_)
+        | Event::BotRemoved { .. } => return None,
     };
     Some(ReplicationEvent { origin: entry.origin().to_string(), seq: entry.seq(), lamport: entry.lamport(), kind: Some(kind) })
 }

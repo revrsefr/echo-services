@@ -285,6 +285,7 @@ dependencies = [
  "argon2",
  "base64",
  "fedserv-api",
+ "fedserv-botserv",
  "fedserv-chanserv",
  "fedserv-example",
  "fedserv-inspircd",
@@ -310,6 +311,13 @@ dependencies = [
 [[package]]
 name = "fedserv-api"
 version = "0.0.1"
+
+[[package]]
+name = "fedserv-botserv"
+version = "0.0.1"
+dependencies = [
+ "fedserv-api",
+]
 
 [[package]]
 name = "fedserv-chanserv"

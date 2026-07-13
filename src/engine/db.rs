@@ -15,7 +15,7 @@ use super::scram::{self, Hash};
 // fedserv-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use fedserv_api::{
-    AccountView, AjoinView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, RegError, Store,
+    AccountView, AjoinView, BotView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, RegError, Store,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +91,8 @@ pub enum Event {
     ChannelTopicSet { channel: String, topic: String },
     ChannelSuspended { channel: String, by: String, reason: String, ts: u64, expires: Option<u64> },
     ChannelUnsuspended { channel: String },
+    BotAdded(Bot),
+    BotRemoved { nick: String },
 }
 
 // Whether an event replicates across the federation. Account identity is Global
@@ -132,7 +134,9 @@ impl Event {
             | Event::ChannelSettingsSet { .. }
             | Event::ChannelTopicSet { .. }
             | Event::ChannelSuspended { .. }
-            | Event::ChannelUnsuspended { .. } => Scope::Local,
+            | Event::ChannelUnsuspended { .. }
+            | Event::BotAdded(_)
+            | Event::BotRemoved { .. } => Scope::Local,
         }
     }
 }
@@ -160,6 +164,15 @@ pub struct Suspension {
     pub ts: u64,
     #[serde(default)]
     pub expires: Option<u64>,
+}
+
+// A service bot: a pseudo-client BotServ can assign to sit in channels.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Bot {
+    pub nick: String,
+    pub user: String,
+    pub host: String,
+    pub gecos: String,
 }
 
 // An auto-join entry: a channel this account is joined to on identify, with an
@@ -538,6 +551,8 @@ pub struct Db {
     codes: HashMap<String, PendingCode>,
     // Node-local, non-persisted brute-force throttle for password authentication.
     auth_fails: HashMap<String, AuthThrottle>,
+    // Registered service bots (BotServ), keyed by casefolded nick.
+    bots: HashMap<String, Bot>,
 }
 
 // A pending emailed code and how many wrong guesses remain before it is burned.
@@ -575,11 +590,12 @@ impl Db {
         let mut accounts = HashMap::new();
         let mut channels = HashMap::new();
         let mut grouped = HashMap::new();
+        let mut bots = HashMap::new();
         for event in events {
-            apply(&mut accounts, &mut channels, &mut grouped, event);
+            apply(&mut accounts, &mut channels, &mut grouped, &mut bots, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new() }
+        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), bots }
     }
 
     /// Fold an entry authored by another node into the store — the services-side
@@ -595,7 +611,7 @@ impl Db {
             _ => None,
         };
         if let Some(event) = self.log.ingest(entry)? {
-            apply(&mut self.accounts, &mut self.channels, &mut self.grouped, event);
+            apply(&mut self.accounts, &mut self.channels, &mut self.grouped, &mut self.bots, event);
         }
         if let Some((name, prev_home)) = watched {
             match (prev_home, self.account(&name).map(|c| c.home.clone())) {
@@ -640,6 +656,9 @@ impl Db {
         }
         for (nick, account) in &self.grouped {
             snapshot.push(Event::NickGrouped { nick: nick.clone(), account: account.clone() });
+        }
+        for b in self.bots.values() {
+            snapshot.push(Event::BotAdded(b.clone()));
         }
         self.log.compact(snapshot)?;
         tracing::info!(before, after = self.log.len(), "compacted event log");
@@ -1267,6 +1286,34 @@ impl Db {
         self.channels.get(&key(channel)).and_then(|c| c.suspension.as_ref()).map(|s| SuspensionView { by: s.by.clone(), reason: s.reason.clone(), ts: s.ts, expires: s.expires })
     }
 
+    /// Register a service bot.
+    pub fn bot_add(&mut self, nick: &str, user: &str, host: &str, gecos: &str) -> Result<(), ChanError> {
+        let k = key(nick);
+        if self.bots.contains_key(&k) {
+            return Err(ChanError::Exists);
+        }
+        let bot = Bot { nick: nick.to_string(), user: user.to_string(), host: host.to_string(), gecos: gecos.to_string() };
+        self.log.append(Event::BotAdded(bot.clone())).map_err(|_| ChanError::Internal)?;
+        self.bots.insert(k, bot);
+        Ok(())
+    }
+
+    /// Delete a service bot. Returns whether it existed.
+    pub fn bot_del(&mut self, nick: &str) -> Result<bool, ChanError> {
+        let k = key(nick);
+        if !self.bots.contains_key(&k) {
+            return Ok(false);
+        }
+        self.log.append(Event::BotRemoved { nick: nick.to_string() }).map_err(|_| ChanError::Internal)?;
+        self.bots.remove(&k);
+        Ok(true)
+    }
+
+    /// All registered bots.
+    pub fn bots(&self) -> impl Iterator<Item = &Bot> {
+        self.bots.values()
+    }
+
     /// Set `channel`'s entry message (empty clears it).
     pub fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError> {
         let k = key(channel);
@@ -1304,7 +1351,7 @@ fn owns_over(held: &Account, claim: &Account) -> bool {
 
 // Fold one event into the store. Shared by log replay (`open`) and gossip
 // ingest, so both routes reconstruct identical state.
-fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String, ChannelInfo>, grouped: &mut HashMap<String, String>, event: Event) {
+fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String, ChannelInfo>, grouped: &mut HashMap<String, String>, bots: &mut HashMap<String, Bot>, event: Event) {
     match event {
         Event::AccountRegistered(a) => {
             // Resolve a concurrent registration of the same name deterministically:
@@ -1440,6 +1487,12 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.suspension = None;
             }
+        }
+        Event::BotAdded(b) => {
+            bots.insert(key(&b.nick), b);
+        }
+        Event::BotRemoved { nick } => {
+            bots.remove(&key(&nick));
         }
         Event::ChannelEntryMsgSet { channel, msg } => {
             if let Some(c) = channels.get_mut(&key(&channel)) {
@@ -1642,6 +1695,15 @@ impl Store for Db {
     fn channel_suspension(&self, channel: &str) -> Option<SuspensionView> {
         Db::channel_suspension(self, channel)
     }
+    fn bot_add(&mut self, nick: &str, user: &str, host: &str, gecos: &str) -> Result<(), ChanError> {
+        Db::bot_add(self, nick, user, host, gecos)
+    }
+    fn bot_del(&mut self, nick: &str) -> Result<bool, ChanError> {
+        Db::bot_del(self, nick)
+    }
+    fn bots(&self) -> Vec<BotView> {
+        Db::bots(self).map(|b| BotView { nick: b.nick.clone(), user: b.user.clone(), host: b.host.clone(), gecos: b.gecos.clone() }).collect()
+    }
     fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError> {
         Db::set_entrymsg(self, channel, msg)
     }
@@ -1721,9 +1783,9 @@ mod tests {
             ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None,
         };
         let converge = |first: &Account, second: &Account| {
-            let (mut acc, mut ch, mut gr) = (HashMap::new(), HashMap::new(), HashMap::new());
-            apply(&mut acc, &mut ch, &mut gr, Event::AccountRegistered(first.clone()));
-            apply(&mut acc, &mut ch, &mut gr, Event::AccountRegistered(second.clone()));
+            let (mut acc, mut ch, mut gr, mut bo) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new());
+            apply(&mut acc, &mut ch, &mut gr, &mut bo, Event::AccountRegistered(first.clone()));
+            apply(&mut acc, &mut ch, &mut gr, &mut bo, Event::AccountRegistered(second.clone()));
             acc["alice"].password_hash.clone()
         };
         // Earlier registration wins, regardless of which claim applies first.
@@ -1872,6 +1934,28 @@ mod tests {
         let db = Db::open(&p, "N1");
         assert!(db.is_channel_suspended("#c"), "survives compaction + reopen");
         assert_eq!(db.channel_suspension("#c").unwrap().by, "oper");
+    }
+
+    // The bot registry adds (case-insensitively unique), deletes, and replays.
+    #[test]
+    fn bots_add_del_and_persist() {
+        let p = tmp("bots");
+        {
+            let mut db = Db::open(&p, "N1");
+            assert_eq!(db.bots().count(), 0);
+            db.bot_add("Bendy", "bot", "services.host", "A helper").unwrap();
+            assert!(matches!(db.bot_add("bendy", "x", "y", "z"), Err(ChanError::Exists)), "dup is case-insensitive");
+            assert_eq!(db.bots().count(), 1);
+            assert!(db.bot_del("BENDY").unwrap(), "case-insensitive delete");
+            assert!(!db.bot_del("bendy").unwrap(), "already gone");
+        }
+        {
+            let mut db = Db::open(&p, "N1");
+            db.bot_add("Botty", "b", "h", "g").unwrap();
+        }
+        let db = Db::open(&p, "N1");
+        assert_eq!(db.bots().count(), 1, "bots replay from the log");
+        assert_eq!(db.bots().next().unwrap().nick, "Botty");
     }
 
     // A wrong code is tolerated a few times, then the code is burned so it can't

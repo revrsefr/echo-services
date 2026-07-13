@@ -308,6 +308,15 @@ pub struct ChanAkickView {
     pub reason: String,
 }
 
+// A service bot registered with BotServ.
+#[derive(Debug, Clone)]
+pub struct BotView {
+    pub nick: String,
+    pub user: String,
+    pub host: String,
+    pub gecos: String,
+}
+
 // A services suspension on an account: who, why, when, and an optional expiry
 // (absolute unix seconds; None = until manually lifted).
 #[derive(Debug, Clone)]
@@ -496,6 +505,10 @@ pub trait Store {
     fn unsuspend_channel(&mut self, channel: &str) -> Result<bool, ChanError>;
     fn is_channel_suspended(&self, channel: &str) -> bool;
     fn channel_suspension(&self, channel: &str) -> Option<SuspensionView>;
+    // BotServ registry (oper-only at the command layer).
+    fn bot_add(&mut self, nick: &str, user: &str, host: &str, gecos: &str) -> Result<(), ChanError>;
+    fn bot_del(&mut self, nick: &str) -> Result<bool, ChanError>;
+    fn bots(&self) -> Vec<BotView>;
     fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError>;
     fn set_founder(&mut self, channel: &str, account: &str) -> Result<(), ChanError>;
     fn access_add(&mut self, channel: &str, account: &str, level: &str) -> Result<(), ChanError>;
