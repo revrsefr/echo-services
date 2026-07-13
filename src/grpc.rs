@@ -139,6 +139,8 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::ChannelTopicSet { .. }
         | Event::ChannelSuspended { .. }
         | Event::ChannelUnsuspended { .. }
+        | Event::ChannelBotAssigned { .. }
+        | Event::ChannelBotUnassigned { .. }
         | Event::BotAdded(_)
         | Event::BotRemoved { .. } => return None,
     };

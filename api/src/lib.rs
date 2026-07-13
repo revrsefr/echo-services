@@ -67,6 +67,9 @@ pub enum NetAction {
     ForceJoin { uid: String, channel: String, key: String },
     // Remove one of our pseudo-clients (e.g. a deleted bot) from the network.
     QuitUser { uid: String, reason: String },
+    // A services pseudo-client (a bot) joins / parts a channel.
+    ServiceJoin { uid: String, channel: String },
+    ServicePart { uid: String, channel: String },
     // Set channel modes from services, e.g. +r on a registered channel. `from` is
     // the pseudoclient uid to source it from (empty = the services server). The
     // protocol stamps a timestamp the ircd will accept.
@@ -368,6 +371,8 @@ pub struct ChannelView {
     pub suspended: bool,
     // Last known topic (for KEEPTOPIC / TOPICLOCK).
     pub topic: String,
+    // BotServ bot assigned to this channel, if any.
+    pub assigned_bot: Option<String>,
 }
 
 // A single ChanServ SET option, named for the typed `set_channel_setting` call.
@@ -520,6 +525,8 @@ pub trait Store {
     fn bot_add(&mut self, nick: &str, user: &str, host: &str, gecos: &str) -> Result<(), ChanError>;
     fn bot_del(&mut self, nick: &str) -> Result<bool, ChanError>;
     fn bots(&self) -> Vec<BotView>;
+    fn assign_bot(&mut self, channel: &str, bot: &str) -> Result<(), ChanError>;
+    fn unassign_bot(&mut self, channel: &str) -> Result<bool, ChanError>;
     // MemoServ: per-account memos (index is a 0-based position in memo_list).
     fn memo_send(&mut self, account: &str, from: &str, text: &str) -> Result<(), RegError>;
     fn memo_list(&self, account: &str) -> Vec<MemoView>;

@@ -262,6 +262,8 @@ impl Protocol for InspIrcd {
             // SVSNICK <uid> <newnick> <nickts> — the new nick takes the current
             // time as its TS so it wins any collision resolution.
             NetAction::QuitUser { uid, reason } => vec![format!(":{} QUIT :{}", uid, reason)],
+            NetAction::ServiceJoin { uid, channel } => vec![format!(":{} IJOIN {}", uid, channel)],
+            NetAction::ServicePart { uid, channel } => vec![format!(":{} PART {}", uid, channel)],
             NetAction::ForceNick { uid, nick } => {
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(self.ts);
                 vec![self.from_us(format!("SVSNICK {} {} {}", uid, nick, now))]

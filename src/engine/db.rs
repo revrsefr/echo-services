@@ -97,6 +97,8 @@ pub enum Event {
     ChannelTopicSet { channel: String, topic: String },
     ChannelSuspended { channel: String, by: String, reason: String, ts: u64, expires: Option<u64> },
     ChannelUnsuspended { channel: String },
+    ChannelBotAssigned { channel: String, bot: String },
+    ChannelBotUnassigned { channel: String },
     BotAdded(Bot),
     BotRemoved { nick: String },
 }
@@ -144,6 +146,8 @@ impl Event {
             | Event::ChannelTopicSet { .. }
             | Event::ChannelSuspended { .. }
             | Event::ChannelUnsuspended { .. }
+            | Event::ChannelBotAssigned { .. }
+            | Event::ChannelBotUnassigned { .. }
             | Event::BotAdded(_)
             | Event::BotRemoved { .. } => Scope::Local,
         }
@@ -257,6 +261,9 @@ pub struct ChannelInfo {
     // Services suspension, if any (channel frozen while set and unexpired).
     #[serde(default)]
     pub suspension: Option<Suspension>,
+    // BotServ bot assigned to sit in this channel, if any (its nick).
+    #[serde(default)]
+    pub assigned_bot: Option<String>,
 }
 
 impl ChannelInfo {
@@ -671,6 +678,9 @@ impl Db {
             }
             if let Some(s) = &c.suspension {
                 snapshot.push(Event::ChannelSuspended { channel: c.name.clone(), by: s.by.clone(), reason: s.reason.clone(), ts: s.ts, expires: s.expires });
+            }
+            if let Some(bot) = &c.assigned_bot {
+                snapshot.push(Event::ChannelBotAssigned { channel: c.name.clone(), bot: bot.clone() });
             }
         }
         for (nick, account) in &self.grouped {
@@ -1102,7 +1112,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None });
         Ok(())
     }
 
@@ -1334,6 +1344,30 @@ impl Db {
         self.bots.values()
     }
 
+    /// Assign a bot to a channel.
+    pub fn assign_bot(&mut self, channel: &str, bot: &str) -> Result<(), ChanError> {
+        let k = key(channel);
+        if !self.channels.contains_key(&k) {
+            return Err(ChanError::NoChannel);
+        }
+        self.log.append(Event::ChannelBotAssigned { channel: channel.to_string(), bot: bot.to_string() }).map_err(|_| ChanError::Internal)?;
+        self.channels.get_mut(&k).unwrap().assigned_bot = Some(bot.to_string());
+        Ok(())
+    }
+
+    /// Unassign a channel's bot. Returns whether one was assigned.
+    pub fn unassign_bot(&mut self, channel: &str) -> Result<bool, ChanError> {
+        let k = key(channel);
+        match self.channels.get(&k) {
+            None => return Err(ChanError::NoChannel),
+            Some(c) if c.assigned_bot.is_none() => return Ok(false),
+            Some(_) => {}
+        }
+        self.log.append(Event::ChannelBotUnassigned { channel: channel.to_string() }).map_err(|_| ChanError::Internal)?;
+        self.channels.get_mut(&k).unwrap().assigned_bot = None;
+        Ok(true)
+    }
+
     /// Append a memo to an account's mailbox.
     pub fn memo_send(&mut self, account: &str, from: &str, text: &str) -> Result<(), RegError> {
         let k = key(account);
@@ -1514,7 +1548,7 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             grouped.remove(&key(&nick));
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
@@ -1575,6 +1609,16 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::ChannelUnsuspended { channel } => {
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.suspension = None;
+            }
+        }
+        Event::ChannelBotAssigned { channel, bot } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.assigned_bot = Some(bot);
+            }
+        }
+        Event::ChannelBotUnassigned { channel } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.assigned_bot = None;
             }
         }
         Event::BotAdded(b) => {
@@ -1793,6 +1837,12 @@ impl Store for Db {
     fn bots(&self) -> Vec<BotView> {
         Db::bots(self).map(|b| BotView { nick: b.nick.clone(), user: b.user.clone(), host: b.host.clone(), gecos: b.gecos.clone() }).collect()
     }
+    fn assign_bot(&mut self, channel: &str, bot: &str) -> Result<(), ChanError> {
+        Db::assign_bot(self, channel, bot)
+    }
+    fn unassign_bot(&mut self, channel: &str) -> Result<bool, ChanError> {
+        Db::unassign_bot(self, channel)
+    }
     fn memo_send(&mut self, account: &str, from: &str, text: &str) -> Result<(), RegError> {
         Db::memo_send(self, account, from, text)
     }
@@ -1847,6 +1897,7 @@ fn channel_view(c: &ChannelInfo) -> ChannelView {
         topiclock: c.settings.topiclock,
         topic: c.topic.clone(),
         suspended: c.suspension.as_ref().is_some_and(|s| s.expires.is_none_or(|e| e > now())),
+        assigned_bot: c.assigned_bot.clone(),
     }
 }
 

@@ -94,6 +94,7 @@ pub struct Engine {
     sid: String, // our services SID, for minting bot uids
     bot_uids: HashMap<String, String>, // casefolded bot nick -> live uid (per connection)
     next_bot_index: u32,
+    bot_channels: std::collections::HashSet<(String, String)>, // (bot nick lc, channel) the bot has joined
 }
 
 impl Engine {
@@ -113,6 +114,7 @@ impl Engine {
             sid: String::new(),
             bot_uids: HashMap::new(),
             next_bot_index: 0,
+            bot_channels: std::collections::HashSet::new(),
         }
     }
 
@@ -158,6 +160,28 @@ impl Engine {
         for k in removed {
             if let Some(uid) = self.bot_uids.remove(&k) {
                 out.push(NetAction::QuitUser { uid, reason: "Bot removed".to_string() });
+            }
+            self.bot_channels.retain(|(b, _)| *b != k); // its channel memberships go with it
+        }
+        // Join assigned channels, part unassigned ones (for still-live bots).
+        let assigned: Vec<(String, String)> = self.db.channels()
+            .filter_map(|c| c.assigned_bot.as_ref().map(|b| (b.to_ascii_lowercase(), c.name.clone())))
+            .collect();
+        let desired: std::collections::HashSet<(String, String)> =
+            assigned.into_iter().filter(|(b, _)| self.bot_uids.contains_key(b)).collect();
+        for (bot_lc, chan) in &desired {
+            if !self.bot_channels.contains(&(bot_lc.clone(), chan.clone())) {
+                if let Some(uid) = self.bot_uids.get(bot_lc) {
+                    out.push(NetAction::ServiceJoin { uid: uid.clone(), channel: chan.clone() });
+                    self.bot_channels.insert((bot_lc.clone(), chan.clone()));
+                }
+            }
+        }
+        let to_part: Vec<(String, String)> = self.bot_channels.iter().filter(|bc| !desired.contains(*bc)).cloned().collect();
+        for (bot_lc, chan) in to_part {
+            self.bot_channels.remove(&(bot_lc.clone(), chan.clone()));
+            if let Some(uid) = self.bot_uids.get(&bot_lc) {
+                out.push(NetAction::ServicePart { uid: uid.clone(), channel: chan });
             }
         }
         out
@@ -426,6 +450,7 @@ impl Engine {
     pub fn startup_actions(&mut self) -> Vec<NetAction> {
         // Fresh link: forget bot uids minted on any previous connection.
         self.bot_uids.clear();
+        self.bot_channels.clear();
         self.next_bot_index = 0;
         let mut out = vec![NetAction::Burst];
         for svc in &self.services {
@@ -1672,6 +1697,46 @@ mod tests {
         // A registered bot is introduced at burst.
         bs(&mut e, "000AAAAAC", "BOT ADD Roger svc host Bot");
         assert!(e.startup_actions().iter().any(|a| matches!(a, NetAction::IntroduceUser { nick, .. } if nick == "Roger")), "introduced at burst");
+    }
+
+    // ASSIGN puts the bot in the channel; UNASSIGN takes it out.
+    #[test]
+    fn botserv_assign_joins_and_unassign_parts() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bsassign.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("staff", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "staff".into(), host: "h".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAC", "IDENTIFY password1");
+        bs(&mut e, "000AAAAAC", "BOT ADD Bendy bot serv.host Helper"); // goes live
+
+        // The founder assigns the bot: it joins the channel.
+        let out = bs(&mut e, "000AAAAAB", "ASSIGN #c Bendy");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, .. } if channel == "#c")), "joins on assign: {out:?}");
+        // Unassigning parts it.
+        let out = bs(&mut e, "000AAAAAB", "UNASSIGN #c");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ServicePart { channel, .. } if channel == "#c")), "parts on unassign: {out:?}");
     }
 
     // MemoServ delivers a memo to an offline account and notifies them on login.
