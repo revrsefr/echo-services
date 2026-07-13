@@ -29,6 +29,16 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
-        _ => ctx.notice(me, from.uid, "Syntax: SET PASSWORD <newpassword> | SET EMAIL [address]"),
+        Some("GREET") => {
+            // A bot shows this when you join a greet-enabled channel; no arg clears it.
+            let greet = if args.len() > 2 { args[2..].join(" ") } else { String::new() };
+            let cleared = greet.is_empty();
+            match db.set_greet(account, &greet) {
+                Ok(()) if cleared => ctx.notice(me, from.uid, "Your greet has been cleared."),
+                Ok(()) => ctx.notice(me, from.uid, format!("Your greet is now: {greet}")),
+                Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+            }
+        }
+        _ => ctx.notice(me, from.uid, "Syntax: SET PASSWORD <newpassword> | SET EMAIL [address] | SET GREET [message]"),
     }
 }

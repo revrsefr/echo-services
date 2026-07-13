@@ -12,6 +12,10 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     };
     ctx.notice(me, from.uid, format!("Information for \x02{}\x02:", acct.name));
     ctx.notice(me, from.uid, format!("  Registered : {}", human_time(acct.ts)));
+    // A greet is public — the bot shows it in-channel to everyone anyway.
+    if !acct.greet.is_empty() {
+        ctx.notice(me, from.uid, format!("  Greet      : {}", acct.greet));
+    }
     let is_owner = from.account == Some(acct.name.as_str());
     if is_owner || from.privs.has(Priv::Auspex) {
         if let Some(s) = db.suspension(&acct.name) {

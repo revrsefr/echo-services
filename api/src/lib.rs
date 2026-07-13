@@ -307,6 +307,9 @@ pub struct AccountView {
     pub email: Option<String>,
     pub ts: u64,
     pub verified: bool,
+    // Personal greet shown by a bot when this account joins a greet-enabled
+    // channel (empty = none).
+    pub greet: String,
 }
 
 // One channel access-list entry (account -> level, e.g. "op" / "voice").
@@ -383,6 +386,8 @@ pub struct ChannelView {
     pub topic: String,
     // BotServ bot assigned to this channel, if any.
     pub assigned_bot: Option<String>,
+    // BotServ: whether members' personal greets are shown on join.
+    pub bot_greet: bool,
 }
 
 // A single ChanServ SET option, named for the typed `set_channel_setting` call.
@@ -394,6 +399,8 @@ pub enum ChanSetting {
     SecureOps,
     KeepTopic,
     TopicLock,
+    // BotServ: show members' personal greets on join.
+    BotGreet,
 }
 
 impl ChannelView {
@@ -507,6 +514,7 @@ pub trait Store {
     fn note_auth(&mut self, account: &str, success: bool);
     fn verify_account(&mut self, account: &str) -> Result<(), RegError>;
     fn set_email(&mut self, account: &str, email: Option<String>) -> Result<(), RegError>;
+    fn set_greet(&mut self, account: &str, greet: &str) -> Result<(), RegError>;
     fn group_nick(&mut self, nick: &str, account: &str) -> Result<(), RegError>;
     fn ungroup_nick(&mut self, nick: &str) -> Result<bool, RegError>;
     fn drop_account(&mut self, account: &str) -> Result<bool, RegError>;

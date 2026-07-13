@@ -55,6 +55,9 @@ pub struct Account {
     // Memos left for this account (MemoServ), oldest first.
     #[serde(default)]
     pub memos: Vec<Memo>,
+    // Personal greet a bot shows when this account joins a greet-enabled channel.
+    #[serde(default)]
+    pub greet: String,
 }
 
 fn verified_default() -> bool {
@@ -71,6 +74,7 @@ pub enum Event {
     CertAdded { account: String, fp: String },
     CertRemoved { account: String, fp: String },
     AccountEmailSet { account: String, email: Option<String> },
+    AccountGreetSet { account: String, greet: String },
     AccountPasswordSet { account: String, password_hash: String, scram256: String, scram512: String },
     AccountDropped { account: String },
     AccountVerified { account: String },
@@ -120,6 +124,7 @@ impl Event {
             | Event::CertAdded { .. }
             | Event::CertRemoved { .. }
             | Event::AccountEmailSet { .. }
+            | Event::AccountGreetSet { .. }
             | Event::AccountPasswordSet { .. }
             | Event::AccountDropped { .. }
             | Event::AccountVerified { .. }
@@ -229,6 +234,9 @@ pub struct ChanSettings {
     // Revert topic changes made by users without op-level access.
     #[serde(default)]
     pub topiclock: bool,
+    // BotServ: show members' personal greets when they join.
+    #[serde(default)]
+    pub bot_greet: bool,
 }
 
 // A registered channel and who owns it.
@@ -792,6 +800,7 @@ impl Db {
             ajoin: Vec::new(),
             suspension: None,
             memos: Vec::new(),
+            greet: String::new(),
         };
         self.log.append(Event::AccountRegistered(account.clone())).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
@@ -958,6 +967,17 @@ impl Db {
         }
         self.log.append(Event::AccountEmailSet { account: account.to_string(), email: email.clone() }).map_err(|_| RegError::Internal)?;
         self.accounts.get_mut(&k).unwrap().email = email;
+        Ok(())
+    }
+
+    /// Set (or clear, when empty) `account`'s personal greet.
+    pub fn set_greet(&mut self, account: &str, greet: &str) -> Result<(), RegError> {
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return Err(RegError::Internal);
+        }
+        self.log.append(Event::AccountGreetSet { account: account.to_string(), greet: greet.to_string() }).map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().greet = greet.to_string();
         Ok(())
     }
 
@@ -1260,6 +1280,7 @@ impl Db {
             ChanSetting::SecureOps => settings.secureops = on,
             ChanSetting::KeepTopic => settings.keeptopic = on,
             ChanSetting::TopicLock => settings.topiclock = on,
+            ChanSetting::BotGreet => settings.bot_greet = on,
         }
         self.log
             .append(Event::ChannelSettingsSet { channel: channel.to_string(), settings })
@@ -1486,6 +1507,11 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
                 a.email = email;
             }
         }
+        Event::AccountGreetSet { account, greet } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.greet = greet;
+            }
+        }
         Event::AccountPasswordSet { account, password_hash, scram256, scram512 } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {
                 a.password_hash = password_hash;
@@ -1703,6 +1729,7 @@ impl Store for Db {
             email: a.email.clone(),
             ts: a.ts,
             verified: a.verified,
+            greet: a.greet.clone(),
         })
     }
     fn resolve_account(&self, name: &str) -> Option<&str> {
@@ -1758,6 +1785,9 @@ impl Store for Db {
     }
     fn set_email(&mut self, account: &str, email: Option<String>) -> Result<(), RegError> {
         Db::set_email(self, account, email)
+    }
+    fn set_greet(&mut self, account: &str, greet: &str) -> Result<(), RegError> {
+        Db::set_greet(self, account, greet)
     }
     fn group_nick(&mut self, nick: &str, account: &str) -> Result<(), RegError> {
         Db::group_nick(self, nick, account)
@@ -1898,6 +1928,7 @@ fn channel_view(c: &ChannelInfo) -> ChannelView {
         topic: c.topic.clone(),
         suspended: c.suspension.as_ref().is_some_and(|s| s.expires.is_none_or(|e| e > now())),
         assigned_bot: c.assigned_bot.clone(),
+        bot_greet: c.settings.bot_greet,
     }
 }
 
@@ -1935,7 +1966,7 @@ mod tests {
     fn account_conflict_resolves_deterministically() {
         let alice = |hash: &str, ts: u64, home: &str| Account {
             name: "alice".into(), password_hash: hash.into(), email: None,
-            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![],
+            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(),
         };
         let converge = |first: &Account, second: &Account| {
             let (mut acc, mut ch, mut gr, mut bo) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new());
@@ -2211,7 +2242,7 @@ mod tests {
         db.register("alice", "pw", None).unwrap();
         let bob = Account {
             name: "bob".into(), password_hash: "x".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![],
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(),
         };
         let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, event: Event::AccountRegistered(bob) };
         db.ingest(entry).unwrap();

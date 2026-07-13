@@ -529,6 +529,8 @@ impl Engine {
                 let from = self.chan_service.clone().unwrap_or_default();
                 let mode = account.as_deref().and_then(|a| self.db.channel(&channel).and_then(|c| c.join_mode(a)));
                 let entrymsg = self.db.channel(&channel).map(|c| c.entrymsg.clone()).filter(|m| !m.is_empty());
+                // Computed before the match below moves `channel` into its actions.
+                let greet = self.greet_on_join(&channel, account.as_deref());
                 let mut out = Vec::new();
                 // SECUREOPS: a user who arrives opped (FJOIN prefix) but lacks op-level
                 // access loses it, unless we're about to grant it to them anyway.
@@ -565,6 +567,11 @@ impl Engine {
                             }
                         }
                     }
+                }
+                // GREET: if the channel shows greets and this member has channel
+                // access + a personal greet, the assigned bot displays it.
+                if let Some(g) = greet {
+                    out.push(g);
                 }
                 out
             }
@@ -870,6 +877,24 @@ impl Engine {
         let mut out = ctx.actions;
         out.extend(self.reconcile_bots());
         out
+    }
+
+    // The greet a channel's bot shows when a member logged into `account` joins:
+    // only when greets are enabled for the channel, the member holds channel
+    // access, and has set a non-empty personal greet.
+    fn greet_on_join(&self, channel: &str, account: Option<&str>) -> Option<NetAction> {
+        let acc = account?;
+        let c = self.db.channel(channel)?;
+        if !c.settings.bot_greet || c.join_mode(acc).is_none() {
+            return None;
+        }
+        let bot = c.assigned_bot.clone()?;
+        let greet = self.db.account(acc)?.greet.clone();
+        if greet.is_empty() {
+            return None;
+        }
+        let botuid = self.network.uid_by_nick(&bot)?.to_string();
+        Some(NetAction::Privmsg { from: botuid, to: channel.to_string(), text: format!("[{acc}] {greet}") })
     }
 
     // Fantasy commands: `!op nick`, `!kick nick`, `!topic …` spoken in a channel
@@ -1442,7 +1467,7 @@ mod tests {
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), password_hash: "OTHER".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![],
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(),
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(winner));
         e.gossip_ingest(entry).unwrap();
@@ -1852,6 +1877,56 @@ mod tests {
         let out = bs(&mut e, "000AAAAAR", "SAY #c nope");
         assert!(!out.iter().any(|a| matches!(a, NetAction::Privmsg { .. })), "non-op blocked: {out:?}");
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "denied notice: {out:?}");
+    }
+
+    // A member's personal greet is shown by the assigned bot on join, once the
+    // channel enables greets and the member has access.
+    #[test]
+    fn botserv_greet_shown_on_join() {
+        use fedserv_botserv::BotServ;
+        use fedserv_chanserv::ChanServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bsgreet.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        e.chan_service = Some("42SAAAAAB".into());
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAB", "SET GREET hello all");
+        bs(&mut e, "000AAAAAB", "BOT ADD Bendy bot serv.host Helper");
+        bs(&mut e, "000AAAAAB", "ASSIGN #c Bendy");
+
+        // Greets off by default: joining is silent.
+        assert!(
+            !e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: true }).iter().any(|a| matches!(a, NetAction::Privmsg { .. })),
+            "no greet before it is enabled"
+        );
+        e.handle(NetEvent::Part { uid: "000AAAAAB".into(), channel: "#c".into() });
+        bs(&mut e, "000AAAAAB", "SET #c GREET ON");
+        // Now the founder's greet is shown by the bot.
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: true });
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text } if from.starts_with("42SB") && to == "#c" && text == "[boss] hello all")),
+            "greet shown: {out:?}"
+        );
     }
 
     // Fantasy commands typed in-channel route through ChanServ and are sourced
