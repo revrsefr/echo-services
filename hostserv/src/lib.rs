@@ -15,6 +15,12 @@ mod set;
 mod del;
 #[path = "list.rs"]
 mod list;
+#[path = "request.rs"]
+mod request;
+#[path = "waiting.rs"]
+mod waiting;
+#[path = "approve.rs"]
+mod approve;
 
 pub struct HostServ {
     pub uid: String,
@@ -39,7 +45,11 @@ impl Service for HostServ {
             Some("SET") => set::handle(me, from, args, ctx, net, db),
             Some("DEL") => del::handle(me, from, args, ctx, net, db),
             Some("LIST") => list::handle(me, from, ctx, db),
-            Some("HELP") | None => ctx.notice(me, from.uid, "HostServ gives you a vhost: \x02ON\x02 activates your assigned vhost, \x02OFF\x02 restores your normal host. Operators use \x02SET\x02 <account> <host>, \x02DEL\x02 <account> and \x02LIST\x02."),
+            Some("REQUEST") => request::handle(me, from, args, ctx, db),
+            Some("WAITING") => waiting::handle(me, from, ctx, db),
+            Some("ACTIVATE") | Some("APPROVE") => approve::handle(me, from, args, ctx, net, db, true),
+            Some("REJECT") => approve::handle(me, from, args, ctx, net, db, false),
+            Some("HELP") | None => ctx.notice(me, from.uid, "HostServ gives you a vhost: \x02ON\x02 activates your assigned vhost, \x02OFF\x02 restores your normal host, \x02REQUEST\x02 <host> asks for one. Operators use \x02SET\x02/\x02DEL\x02 <account>, \x02LIST\x02, and \x02WAITING\x02 + \x02ACTIVATE\x02/\x02REJECT\x02 <account> for requests."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
         }
     }

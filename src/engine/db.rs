@@ -76,6 +76,16 @@ pub struct Account {
     // Assigned vhost (HostServ), applied to the displayed host on identify.
     #[serde(default)]
     pub vhost: Option<Vhost>,
+    // A vhost the user has requested, pending operator approval.
+    #[serde(default)]
+    pub vhost_request: Option<PendingVhost>,
+}
+
+// A requested vhost awaiting approval.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingVhost {
+    pub host: String,
+    pub ts: u64,
 }
 
 // A HostServ virtual host: the displayed host, who assigned it, and when.
@@ -108,6 +118,8 @@ pub enum Event {
     AjoinRemoved { account: String, channel: String },
     VhostSet { account: String, host: String, setter: String, ts: u64 },
     VhostDeleted { account: String },
+    VhostRequested { account: String, host: String, ts: u64 },
+    VhostRequestCleared { account: String },
     AccountSuspended { account: String, by: String, reason: String, ts: u64, expires: Option<u64> },
     AccountUnsuspended { account: String },
     MemoSent { account: String, from: String, text: String, ts: u64 },
@@ -163,6 +175,8 @@ impl Event {
             | Event::AjoinRemoved { .. }
             | Event::VhostSet { .. }
             | Event::VhostDeleted { .. }
+            | Event::VhostRequested { .. }
+            | Event::VhostRequestCleared { .. }
             | Event::AccountSuspended { .. }
             | Event::AccountUnsuspended { .. }
             | Event::MemoSent { .. }
@@ -986,6 +1000,7 @@ impl Db {
             memos: Vec::new(),
             greet: String::new(),
             vhost: None,
+            vhost_request: None,
         };
         self.log.append(Event::AccountRegistered(account.clone())).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
@@ -1183,6 +1198,44 @@ impl Db {
     /// `account`'s vhost, if any.
     pub fn vhost(&self, account: &str) -> Option<&Vhost> {
         self.accounts.get(&key(account)).and_then(|a| a.vhost.as_ref())
+    }
+
+    /// Record a pending vhost request for `account` (awaiting approval).
+    pub fn request_vhost(&mut self, account: &str, host: &str) -> Result<(), RegError> {
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return Err(RegError::Internal);
+        }
+        let ts = now();
+        self.log.append(Event::VhostRequested { account: account.to_string(), host: host.to_string(), ts }).map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().vhost_request = Some(PendingVhost { host: host.to_string(), ts });
+        Ok(())
+    }
+
+    /// Clear a pending vhost request (on approval or rejection). Returns the
+    /// requested host, if there was one.
+    pub fn take_vhost_request(&mut self, account: &str) -> Result<Option<String>, RegError> {
+        let k = key(account);
+        let host = match self.accounts.get(&k) {
+            Some(a) => a.vhost_request.as_ref().map(|r| r.host.clone()),
+            None => return Err(RegError::Internal),
+        };
+        if host.is_some() {
+            self.log.append(Event::VhostRequestCleared { account: account.to_string() }).map_err(|_| RegError::Internal)?;
+            self.accounts.get_mut(&k).unwrap().vhost_request = None;
+        }
+        Ok(host)
+    }
+
+    /// Every account with a pending vhost request, as (account, host).
+    pub fn vhost_requests(&self) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = self
+            .accounts
+            .values()
+            .filter_map(|a| a.vhost_request.as_ref().map(|r| (a.name.clone(), r.host.clone())))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
     }
 
     /// Every account that has a vhost, as (account, host, setter).
@@ -2052,6 +2105,16 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
                 a.vhost = None;
             }
         }
+        Event::VhostRequested { account, host, ts } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.vhost_request = Some(PendingVhost { host, ts });
+            }
+        }
+        Event::VhostRequestCleared { account } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.vhost_request = None;
+            }
+        }
         Event::AccountSuspended { account, by, reason, ts, expires } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {
                 a.suspension = Some(Suspension { by, reason, ts, expires });
@@ -2330,6 +2393,15 @@ impl Store for Db {
     fn vhosts(&self) -> Vec<VhostView> {
         Db::vhosts(self).into_iter().map(|(account, host, setter)| VhostView { account, host, setter }).collect()
     }
+    fn request_vhost(&mut self, account: &str, host: &str) -> Result<(), RegError> {
+        Db::request_vhost(self, account, host)
+    }
+    fn take_vhost_request(&mut self, account: &str) -> Result<Option<String>, RegError> {
+        Db::take_vhost_request(self, account)
+    }
+    fn vhost_requests(&self) -> Vec<(String, String)> {
+        Db::vhost_requests(self)
+    }
     fn group_nick(&mut self, nick: &str, account: &str) -> Result<(), RegError> {
         Db::group_nick(self, nick, account)
     }
@@ -2569,7 +2641,7 @@ mod tests {
     fn account_conflict_resolves_deterministically() {
         let alice = |hash: &str, ts: u64, home: &str| Account {
             name: "alice".into(), password_hash: hash.into(), email: None,
-            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None,
+            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None,
         };
         let converge = |first: &Account, second: &Account| {
             let (mut acc, mut ch, mut gr, mut bo) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new());
@@ -2845,7 +2917,7 @@ mod tests {
         db.register("alice", "pw", None).unwrap();
         let bob = Account {
             name: "bob".into(), password_hash: "x".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None,
         };
         let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, event: Event::AccountRegistered(bob) };
         db.ingest(entry).unwrap();

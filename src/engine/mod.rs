@@ -1914,7 +1914,7 @@ mod tests {
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), password_hash: "OTHER".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None,
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(winner));
         e.gossip_ingest(entry).unwrap();
@@ -2684,6 +2684,54 @@ mod tests {
         // Non-operators can't SET; invalid hosts are rejected.
         assert!(hs(&mut e, "000AAAAAV", "SET boss x.y").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "oper-gated");
         assert!(hs(&mut e, "000AAAAAB", "SET alice not a host").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't a valid host"))), "host validated");
+    }
+
+    // HostServ REQUEST -> WAITING -> ACTIVATE assigns and applies the vhost; a
+    // REJECT clears the request without assigning anything.
+    #[test]
+    fn hostserv_request_workflow() {
+        use fedserv_hostserv::HostServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-hsreq.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("alice", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(HostServ { uid: "42SAAAAAG".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAV", "IDENTIFY password1");
+        let says = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        // alice requests; the request shows up in WAITING.
+        hs(&mut e, "000AAAAAV", "REQUEST alice.cool.example");
+        assert!(says(&hs(&mut e, "000AAAAAB", "WAITING"), "alice.cool.example"), "request waiting");
+        // ACTIVATE assigns + applies it to alice's online session.
+        let out = hs(&mut e, "000AAAAAB", "ACTIVATE alice");
+        assert!(out.iter().any(|a| matches!(a, NetAction::SetHost { uid, host } if uid == "000AAAAAV" && host == "alice.cool.example")), "activated + applied: {out:?}");
+        // The request is consumed; WAITING is empty again.
+        assert!(says(&hs(&mut e, "000AAAAAB", "WAITING"), "No vhost requests"), "request consumed");
+
+        // A rejected request assigns nothing.
+        hs(&mut e, "000AAAAAV", "REQUEST other.example");
+        assert!(says(&hs(&mut e, "000AAAAAB", "REJECT alice"), "Rejected"), "rejected");
+        assert!(says(&hs(&mut e, "000AAAAAB", "WAITING"), "No vhost requests"), "no request left after reject");
+        // A non-operator can't approve.
+        assert!(says(&hs(&mut e, "000AAAAAV", "WAITING"), "Access denied"), "oper-gated");
     }
 
     // StatServ reports per-channel activity (#channel) and the global registry
