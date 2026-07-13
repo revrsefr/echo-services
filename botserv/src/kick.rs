@@ -5,12 +5,26 @@ use fedserv_api::{Kicker, Sender, ServiceCtx, Store};
 // and the exemption DONTKICKOPS. Founder-or-admin.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
     let (Some(&chan), Some(kind)) = (args.get(1), args.get(2)) else {
-        ctx.notice(me, from.uid, "Syntax: KICK <#channel> <CAPS|FLOOD|REPEAT|BOLDS|COLORS|UNDERLINES|REVERSES|ITALICS|DONTKICKOPS> <ON|OFF> [params]");
+        ctx.notice(me, from.uid, "Syntax: KICK <#channel> <CAPS|FLOOD|REPEAT|BADWORDS|BOLDS|COLORS|UNDERLINES|REVERSES|ITALICS|DONTKICKOPS> <ON|OFF> [params], or KICK <#channel> TTB <n>");
         return;
     };
     if !super::require_channel_admin(me, from, chan, ctx, db) {
         return;
     }
+
+    // TTB takes a number, not ON/OFF: kicks-before-ban (0 = never ban).
+    if kind.eq_ignore_ascii_case("TTB") {
+        match args.get(3).and_then(|s| s.parse::<u16>().ok()) {
+            Some(n) => match db.set_ttb(chan, n) {
+                Ok(()) if n == 0 => ctx.notice(me, from.uid, format!("The bot will only kick (not ban) in \x02{chan}\x02.")),
+                Ok(()) => ctx.notice(me, from.uid, format!("The bot will ban a user after \x02{n}\x02 kick(s) in \x02{chan}\x02.")),
+                Err(_) => reg_error(me, from, chan, ctx),
+            },
+            None => ctx.notice(me, from.uid, "Syntax: KICK <#channel> TTB <number>"),
+        }
+        return;
+    }
+
     let on = match args.get(3).map(|s| s.to_ascii_uppercase()).as_deref() {
         Some("ON") | Some("TRUE") => true,
         Some("OFF") | Some("FALSE") => false,

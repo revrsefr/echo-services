@@ -331,6 +331,13 @@ pub struct KickerSettings {
     // Kick lines matching one of the channel's badword regexes.
     #[serde(default)]
     pub badwords: bool,
+    // Times a user may be kicked (by any kicker) before the bot bans them
+    // instead. 0 = never ban, only kick.
+    #[serde(default)]
+    pub ttb: u16,
+    // How long such a ban lasts, in seconds. 0 = until manually removed.
+    #[serde(default)]
+    pub ban_expire: u32,
     // Don't kick channel operators, whatever they send.
     #[serde(default)]
     pub dontkickops: bool,
@@ -799,7 +806,7 @@ impl Db {
             if let Some(bot) = &c.assigned_bot {
                 snapshot.push(Event::ChannelBotAssigned { channel: c.name.clone(), bot: bot.clone() });
             }
-            if c.kickers.any() || c.kickers.dontkickops {
+            if c.kickers.any() || c.kickers.dontkickops || c.kickers.ttb > 0 || c.kickers.ban_expire > 0 {
                 snapshot.push(Event::ChannelKickerSet { channel: c.name.clone(), kickers: c.kickers.clone() });
             }
             if !c.badwords.is_empty() {
@@ -1447,6 +1454,16 @@ impl Db {
         })
     }
 
+    /// Kicks-before-ban threshold (0 = never ban, only kick).
+    pub fn set_ttb(&mut self, channel: &str, ttb: u16) -> Result<(), ChanError> {
+        self.update_kickers(channel, |k| k.ttb = ttb)
+    }
+
+    /// How long a kicker ban lasts, in seconds (0 = until removed).
+    pub fn set_ban_expire(&mut self, channel: &str, secs: u32) -> Result<(), ChanError> {
+        self.update_kickers(channel, |k| k.ban_expire = secs)
+    }
+
     /// Add a badword regex. Validates it compiles within the size limit; returns
     /// Ok(false) if the exact pattern is already present.
     pub fn badword_add(&mut self, channel: &str, pattern: &str) -> Result<bool, ChanError> {
@@ -2091,6 +2108,12 @@ impl Store for Db {
     }
     fn set_repeat_kicker(&mut self, channel: &str, times: u16) -> Result<(), ChanError> {
         Db::set_repeat_kicker(self, channel, times)
+    }
+    fn set_ttb(&mut self, channel: &str, ttb: u16) -> Result<(), ChanError> {
+        Db::set_ttb(self, channel, ttb)
+    }
+    fn set_ban_expire(&mut self, channel: &str, secs: u32) -> Result<(), ChanError> {
+        Db::set_ban_expire(self, channel, secs)
     }
     fn badword_add(&mut self, channel: &str, pattern: &str) -> Result<bool, ChanError> {
         Db::badword_add(self, channel, pattern)

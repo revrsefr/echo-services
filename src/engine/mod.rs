@@ -109,6 +109,8 @@ pub struct Engine {
     // every pattern in a single linear pass (and the regex crate is backtracking-
     // free, so user patterns can't blow up). Never event-logged.
     badword_cache: HashMap<String, CachedBadwords>,
+    // Kicker bans (times-to-ban) awaiting BANEXPIRE removal. Swept on each event.
+    pending_unbans: Vec<PendingUnban>,
 }
 
 struct CachedBadwords {
@@ -116,13 +118,23 @@ struct CachedBadwords {
     set: regex::RegexSet,
 }
 
-// One user's recent-chatter counters in one channel (FLOOD + REPEAT kickers).
+// One user's recent-chatter counters in one channel (FLOOD + REPEAT kickers,
+// plus the running kick count that drives times-to-ban).
 #[derive(Default)]
 struct ChatterState {
     flood_start: u64, // window start (unix secs)
     flood_lines: u16, // lines since flood_start
     last_hash: u64,   // case-insensitive hash of the previous line
     repeats: u16,     // consecutive identical lines seen so far (0 on the first)
+    kicks: u16,       // times kicked so far (reset when it triggers a ban)
+}
+
+// A kicker ban awaiting automatic removal (BANEXPIRE).
+struct PendingUnban {
+    at: u64,      // unix secs when it should be lifted
+    from: String, // the bot uid that placed it, to source the -b from
+    channel: String,
+    mask: String,
 }
 
 impl Engine {
@@ -146,6 +158,7 @@ impl Engine {
             chatter: HashMap::new(),
             now_override: None,
             badword_cache: HashMap::new(),
+            pending_unbans: Vec::new(),
         }
     }
 
@@ -516,7 +529,10 @@ impl Engine {
     }
 
     pub fn handle(&mut self, event: NetEvent) -> Vec<NetAction> {
-        let out = match event {
+        // Lift any kicker bans whose BANEXPIRE has elapsed (cheap when none are
+        // pending, which is the usual case).
+        let mut out = self.sweep_unbans();
+        let evout = match event {
             NetEvent::Ping { token, from } => vec![NetAction::Pong { token, from }],
             NetEvent::UserConnect { uid, nick, host } => {
                 self.network.user_connect(uid, nick, host);
@@ -662,7 +678,26 @@ impl Engine {
             NetEvent::Sasl { client, mode, data, .. } => self.sasl(client, mode, data),
             _ => Vec::new(),
         };
-        self.track_accounts(&out);
+        self.track_accounts(&evout);
+        out.extend(evout);
+        out
+    }
+
+    // Remove kicker bans whose BANEXPIRE has elapsed, sourced from ChanServ.
+    fn sweep_unbans(&mut self) -> Vec<NetAction> {
+        if self.pending_unbans.is_empty() {
+            return Vec::new();
+        }
+        let now = self.now_secs();
+        let mut out = Vec::new();
+        self.pending_unbans.retain(|u| {
+            if u.at <= now {
+                out.push(NetAction::ChannelMode { from: u.from.clone(), channel: u.channel.clone(), modes: format!("-b {}", u.mask) });
+                false
+            } else {
+                true
+            }
+        });
         out
     }
 
@@ -899,9 +934,8 @@ impl Engine {
             // In-channel: a fantasy command (!op …) if a bot is assigned, plus a
             // BotServ kicker check on every line.
             self.fantasy(&sender, to, text, &mut ctx);
-            if let Some(k) = self.kicker_check(from, to, text) {
-                ctx.actions.push(k);
-            }
+            let kicks = self.kicker_check(from, to, text);
+            ctx.actions.extend(kicks);
         } else {
             let Self { services, network, db, .. } = self;
             for svc in services.iter_mut() {
@@ -938,48 +972,103 @@ impl Engine {
 
     // A BotServ kicker verdict for a channel line: if the channel has an active
     // kicker the message trips (and the sender isn't an exempt operator), the
-    // assigned bot kicks them. `&mut self` because the FLOOD/REPEAT kickers keep
-    // per-user counters. Hot path: one HashMap lookup for a channel with no
-    // kickers, and no heap allocation for a returning speaker.
-    fn kicker_check(&mut self, from: &str, channel: &str, text: &str) -> Option<NetAction> {
-        // `c` borrows self.db; self.network and self.chatter are disjoint fields,
-        // so they can be touched while it is alive.
-        let c = self.db.channel(channel)?;
+    // assigned bot kicks them — and, once they've been kicked `ttb` times, bans
+    // them first. `&mut self` because FLOOD/REPEAT and times-to-ban keep per-user
+    // counters. Hot path: one HashMap lookup for a channel with no kickers, and
+    // no heap allocation for a returning speaker.
+    fn kicker_check(&mut self, from: &str, channel: &str, text: &str) -> Vec<NetAction> {
+        // `c` borrows self.db; the other fields (network, chatter, badword_cache)
+        // are disjoint, so they can be touched while it is alive — but we stop
+        // using `c` before mutating chatter, by copying its config into locals.
+        let Some(c) = self.db.channel(channel) else { return Vec::new() };
         let k = &c.kickers;
         if !k.any() {
-            return None;
+            return Vec::new();
         }
         if k.dontkickops && self.network.is_op(channel, from) {
-            return None;
+            return Vec::new();
         }
-        let botuid = self.network.uid_by_nick(c.assigned_bot.as_deref()?)?.to_string();
-        let kick = |reason: &str| Some(NetAction::Kick { from: botuid.clone(), channel: channel.to_string(), uid: from.to_string(), reason: reason.to_string() });
+        let Some(bot) = c.assigned_bot.as_deref() else { return Vec::new() };
+        let Some(botuid) = self.network.uid_by_nick(bot).map(str::to_string) else { return Vec::new() };
 
-        // Stateless kickers first (cheapest, and they don't touch counters).
-        if let Some(reason) = k.violation(text) {
-            return kick(reason);
-        }
-        // BADWORDS: match the line against the channel's compiled regex set,
-        // rebuilding the cache only when the badword list has changed.
-        if k.badwords && !c.badwords.is_empty() {
+        // Stateless kickers first (cheapest, and they don't touch counters), then
+        // badwords against the channel's compiled regex set (rebuilt only when the
+        // list's revision changes).
+        let mut reason: Option<&'static str> = k.violation(text);
+        if reason.is_none() && k.badwords && !c.badwords.is_empty() {
             let rev = c.badwords_rev;
             if self.badword_cache.get(channel).map(|cb| cb.rev) != Some(rev) {
                 let set = build_badword_set(&c.badwords);
                 self.badword_cache.insert(channel.to_string(), CachedBadwords { rev, set });
             }
             if self.badword_cache.get(channel).unwrap().set.is_match(text) {
-                return kick("Watch your language!");
+                reason = Some("Watch your language!");
             }
         }
-        if !k.flood && !k.repeat {
-            return None;
-        }
+        // Copy the rest of the config out so `c`'s borrow ends before we mutate
+        // the counter map below.
         let (flood_lines, flood_secs) = k.flood_thresholds();
         let (flood, repeat, repeat_times) = (k.flood, k.repeat, k.repeat_threshold());
-        let now = self.now_secs();
+        let (ttb, ban_expire) = (k.ttb, k.ban_expire);
 
-        // Get (or lazily create) this speaker's counters. get_mut avoids any
-        // allocation for a channel/user already being tracked.
+        // FLOOD/REPEAT (only if nothing has tripped yet), updating counters.
+        if reason.is_none() && (flood || repeat) {
+            let now = self.now_secs();
+            let state = self.chatter_entry(channel, from);
+            if flood {
+                if now.saturating_sub(state.flood_start) > flood_secs as u64 {
+                    state.flood_start = now;
+                    state.flood_lines = 0;
+                }
+                state.flood_lines = state.flood_lines.saturating_add(1);
+                if state.flood_lines >= flood_lines {
+                    reason = Some("Stop flooding!");
+                }
+            }
+            if reason.is_none() && repeat {
+                let h = ci_hash(text);
+                if h == state.last_hash {
+                    state.repeats = state.repeats.saturating_add(1);
+                } else {
+                    state.repeats = 0;
+                    state.last_hash = h;
+                }
+                if state.repeats >= repeat_times {
+                    reason = Some("Stop repeating yourself!");
+                }
+            }
+        }
+
+        let Some(reason) = reason else { return Vec::new() };
+
+        // Times-to-ban: after `ttb` kicks the bot bans (an ideal host mask) before
+        // kicking, and schedules the unban if BANEXPIRE is set.
+        let mut out = Vec::new();
+        if ttb > 0 {
+            let kicks = {
+                let state = self.chatter_entry(channel, from);
+                state.kicks = state.kicks.saturating_add(1);
+                state.kicks
+            };
+            if kicks >= ttb {
+                self.chatter_entry(channel, from).kicks = 0;
+                if let Some(host) = self.network.host_of(from).map(str::to_string) {
+                    let mask = format!("*!*@{host}");
+                    out.push(NetAction::ChannelMode { from: botuid.clone(), channel: channel.to_string(), modes: format!("+b {mask}") });
+                    if ban_expire > 0 {
+                        let at = self.now_secs() + ban_expire as u64;
+                        self.pending_unbans.push(PendingUnban { at, from: botuid.clone(), channel: channel.to_string(), mask });
+                    }
+                }
+            }
+        }
+        out.push(NetAction::Kick { from: botuid, channel: channel.to_string(), uid: from.to_string(), reason: reason.to_string() });
+        out
+    }
+
+    // Get (or lazily create) a speaker's counters in a channel. get_mut avoids
+    // any allocation for a channel/user already being tracked.
+    fn chatter_entry(&mut self, channel: &str, from: &str) -> &mut ChatterState {
         if !self.chatter.contains_key(channel) {
             self.chatter.insert(channel.to_string(), HashMap::new());
         }
@@ -987,31 +1076,7 @@ impl Engine {
         if !bucket.contains_key(from) {
             bucket.insert(from.to_string(), ChatterState::default());
         }
-        let state = bucket.get_mut(from).unwrap();
-
-        if flood {
-            if now.saturating_sub(state.flood_start) > flood_secs as u64 {
-                state.flood_start = now;
-                state.flood_lines = 0;
-            }
-            state.flood_lines = state.flood_lines.saturating_add(1);
-            if state.flood_lines >= flood_lines {
-                return kick("Stop flooding!");
-            }
-        }
-        if repeat {
-            let h = ci_hash(text);
-            if h == state.last_hash {
-                state.repeats = state.repeats.saturating_add(1);
-            } else {
-                state.repeats = 0;
-                state.last_hash = h;
-            }
-            if state.repeats >= repeat_times {
-                return kick("Stop repeating yourself!");
-            }
-        }
-        None
+        bucket.get_mut(from).unwrap()
     }
 
     // Drop a user's chatter counters for a channel (on part), and the channel's
@@ -2148,6 +2213,37 @@ mod tests {
         let out = bs(&mut e, "BADWORDS #c ADD [unclosed");
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("valid regular expression"))), "invalid rejected: {out:?}");
         assert!(!say(&mut e, "[unclosed bracket text").iter().any(|a| matches!(a, NetAction::Kick { .. })), "bad pattern not stored");
+    }
+
+    // Times-to-ban: after TTB kicks the bot bans the user, and BANEXPIRE lifts
+    // the ban once it elapses (swept on the next event).
+    #[test]
+    fn botserv_ttb_bans_and_expires() {
+        let (mut e, _p) = kicker_fixture("bsttb");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        bs(&mut e, "KICK #c CAPS ON");
+        bs(&mut e, "KICK #c TTB 2");
+        bs(&mut e, "SET #c BANEXPIRE 1m");
+        let banned = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::ChannelMode { from, channel, modes } if from.starts_with("42SB") && channel == "#c" && modes == "+b *!*@h"));
+        let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAS"));
+
+        e.now_override = Some(1000);
+        // First offence: kick only.
+        let out = say(&mut e, "SHOUTING LOUDLY ONE");
+        assert!(kicked(&out) && !banned(&out), "1st: kick only: {out:?}");
+        // Second offence reaches TTB: ban then kick.
+        let out = say(&mut e, "SHOUTING LOUDLY TWO");
+        assert!(banned(&out) && kicked(&out), "2nd: ban + kick: {out:?}");
+
+        // Before the ban expires, an event lifts nothing.
+        e.now_override = Some(1059);
+        let out = e.handle(NetEvent::Ping { token: "t".into(), from: None });
+        assert!(!out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes.starts_with("-b"))), "not yet expired: {out:?}");
+        // After it expires, the next event lifts it.
+        e.now_override = Some(1061);
+        let out = e.handle(NetEvent::Ping { token: "t".into(), from: None });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#c" && modes == "-b *!*@h")), "ban lifted: {out:?}");
     }
 
     // Registers #c with founder boss (admin), a live assigned bot Bendy, and
