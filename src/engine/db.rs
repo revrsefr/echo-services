@@ -355,6 +355,9 @@ pub struct KickerSettings {
     // How long such a ban lasts, in seconds. 0 = until manually removed.
     #[serde(default)]
     pub ban_expire: u32,
+    // Warn a user (once) before kicking them the first time.
+    #[serde(default)]
+    pub warn: bool,
     // Don't kick channel operators, whatever they send.
     #[serde(default)]
     pub dontkickops: bool,
@@ -1442,6 +1445,7 @@ impl Db {
             Kicker::Flood => k.flood = on,
             Kicker::Repeat => k.repeat = on,
             Kicker::Badwords => k.badwords = on,
+            Kicker::Warn => k.warn = on,
             Kicker::DontKickOps => k.dontkickops = on,
         })
     }

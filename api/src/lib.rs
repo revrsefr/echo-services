@@ -425,6 +425,8 @@ pub enum Kicker {
     Repeat,
     // Kick lines matching a configured badword regex (patterns via BADWORDS).
     Badwords,
+    // Modifier: warn once before the first kick.
+    Warn,
     // Exemption, not a rule: never kick channel operators.
     DontKickOps,
 }

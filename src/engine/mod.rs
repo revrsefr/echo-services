@@ -128,6 +128,7 @@ struct ChatterState {
     last_hash: u64,   // case-insensitive hash of the previous line
     repeats: u16,     // consecutive identical lines seen so far (0 on the first)
     kicks: u16,       // times kicked so far (reset when it triggers a ban)
+    warned: bool,     // whether the one-time warning has been given
 }
 
 // A kicker ban awaiting automatic removal (BANEXPIRE).
@@ -1024,7 +1025,7 @@ impl Engine {
         // the counter map below.
         let (flood_lines, flood_secs) = k.flood_thresholds();
         let (flood, repeat, repeat_times) = (k.flood, k.repeat, k.repeat_threshold());
-        let (ttb, ban_expire) = (k.ttb, k.ban_expire);
+        let (ttb, ban_expire, warn) = (k.ttb, k.ban_expire, k.warn);
 
         // FLOOD/REPEAT (only if nothing has tripped yet), updating counters.
         if reason.is_none() && (flood || repeat) {
@@ -1055,6 +1056,20 @@ impl Engine {
         }
 
         let Some(reason) = reason else { return Vec::new() };
+
+        // WARN: the first offence gets a private warning from the bot instead of a
+        // kick; the next one is kicked for real.
+        if warn {
+            let already = {
+                let state = self.chatter_entry(channel, from);
+                let w = state.warned;
+                state.warned = true;
+                w
+            };
+            if !already {
+                return vec![NetAction::Notice { from: botuid, to: from.to_string(), text: format!("Please mind the channel rules — {reason} Next time you'll be kicked.") }];
+            }
+        }
 
         // Times-to-ban: after `ttb` kicks the bot bans (an ideal host mask) before
         // kicking, and schedules the unban if BANEXPIRE is set.
@@ -2391,6 +2406,24 @@ mod tests {
         // Now #d has #c's caps and badword config.
         assert!(says(&bs(&mut e, "KICK #d TEST SHOUTING LOUD ALLCAPS"), "would be kicked"), "caps copied");
         assert!(says(&bs(&mut e, "KICK #d TEST i love frogs"), "would be kicked"), "badwords copied");
+    }
+
+    // WARN gives a one-time warning before the first real kick.
+    #[test]
+    fn botserv_warn_before_kick() {
+        let (mut e, _p) = kicker_fixture("bswarn");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        bs(&mut e, "KICK #c CAPS ON");
+        bs(&mut e, "KICK #c WARN ON");
+        let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAS"));
+
+        // First offence: a warning notice from the bot, no kick.
+        let out = say(&mut e, "SHOUTING THE FIRST TIME");
+        assert!(!kicked(&out), "no kick on first offence");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { from, to, text } if from.starts_with("42SB") && to == "000AAAAAS" && text.contains("Next time"))), "warned: {out:?}");
+        // Second offence: kicked for real.
+        assert!(kicked(&say(&mut e, "SHOUTING THE SECOND TIME")), "kicked on second offence");
     }
 
     // KICK TEST dry-runs the content kickers against a line without kicking.

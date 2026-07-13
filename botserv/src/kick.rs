@@ -96,6 +96,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         "REVERSES" => Kicker::Reverses,
         "ITALICS" => Kicker::Italics,
         "BADWORDS" => Kicker::Badwords,
+        "WARN" => Kicker::Warn,
         "DONTKICKOPS" => Kicker::DontKickOps,
         other => {
             ctx.notice(me, from.uid, format!("Unknown kicker \x02{other}\x02. Try CAPS, FLOOD, REPEAT, BOLDS, COLORS, UNDERLINES, REVERSES, ITALICS or DONTKICKOPS."));
@@ -116,6 +117,7 @@ fn label(kicker: Kicker) -> &'static str {
         Kicker::Flood => "flood",
         Kicker::Repeat => "repeat",
         Kicker::Badwords => "badwords",
+        Kicker::Warn => "warn",
         Kicker::DontKickOps => "dontkickops",
     }
 }
@@ -124,6 +126,8 @@ fn toggle(me: &str, from: &Sender, chan: &str, kicker: Kicker, on: bool, ctx: &m
     match db.set_kicker(chan, kicker, on) {
         Ok(()) if kicker == Kicker::DontKickOps && on => ctx.notice(me, from.uid, format!("The bot will no longer kick channel operators in \x02{chan}\x02.")),
         Ok(()) if kicker == Kicker::DontKickOps => ctx.notice(me, from.uid, format!("The bot may again kick channel operators in \x02{chan}\x02.")),
+        Ok(()) if kicker == Kicker::Warn && on => ctx.notice(me, from.uid, format!("The bot will warn once before the first kick in \x02{chan}\x02.")),
+        Ok(()) if kicker == Kicker::Warn => ctx.notice(me, from.uid, format!("The bot will kick without warning in \x02{chan}\x02.")),
         Ok(()) if on => ctx.notice(me, from.uid, format!("The \x02{}\x02 kicker is now on in \x02{chan}\x02.", label(kicker))),
         Ok(()) => ctx.notice(me, from.uid, format!("The \x02{}\x02 kicker is now off in \x02{chan}\x02.", label(kicker))),
         Err(_) => reg_error(me, from, chan, ctx),
