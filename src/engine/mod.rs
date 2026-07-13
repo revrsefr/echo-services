@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 use crate::proto::{NetAction, NetEvent, RegReply};
 use db::{Db, LogEntry, RegError};
 use scram::Verifier;
+use fedserv_api::Privs;
 use service::{Sender, Service, ServiceCtx};
 use state::Network;
 
@@ -89,6 +90,7 @@ pub struct Engine {
     chan_service: Option<String>, // uid to source channel modes from (ChanServ)
     nick_service: Option<String>, // uid of the account service (NickServ), for its notices
     irc_out: Option<mpsc::UnboundedSender<NetAction>>, // services-initiated actions -> the uplink
+    opers: HashMap<String, Privs>, // casefolded account -> privileges (from [[oper]] config)
 }
 
 impl Engine {
@@ -104,6 +106,7 @@ impl Engine {
             chan_service,
             nick_service,
             irc_out: None,
+            opers: HashMap::new(),
         }
     }
 
@@ -112,6 +115,16 @@ impl Engine {
     // registration conflict).
     pub fn set_irc_out(&mut self, tx: mpsc::UnboundedSender<NetAction>) {
         self.irc_out = Some(tx);
+    }
+
+    // Load the services-operator table (casefolded account -> privileges).
+    pub fn set_opers(&mut self, opers: HashMap<String, Privs>) {
+        self.opers = opers;
+    }
+
+    // The privileges an account holds, empty if it is not an oper.
+    fn oper_privs(&self, account: &str) -> Privs {
+        self.opers.get(&account.to_ascii_lowercase()).copied().unwrap_or_default()
     }
 
     fn emit_irc(&self, action: NetAction) {
@@ -752,8 +765,9 @@ impl Engine {
     fn dispatch(&mut self, from: &str, to: &str, text: &str) -> Vec<NetAction> {
         let nick = self.network.nick_of(from).unwrap_or(from).to_string();
         let account = self.network.account_of(from).map(str::to_string);
+        let privs = account.as_deref().map(|a| self.oper_privs(a)).unwrap_or_default();
         let mut ctx = ServiceCtx::default();
-        let sender = Sender { uid: from, nick: &nick, account: account.as_deref() };
+        let sender = Sender { uid: from, nick: &nick, account: account.as_deref(), privs };
         let Self { services, network, db, .. } = self;
         for svc in services.iter_mut() {
             if to.eq_ignore_ascii_case(svc.uid()) || to.eq_ignore_ascii_case(svc.nick()) {
@@ -1529,6 +1543,35 @@ mod tests {
         e.db.set_channel_setting("#c", db::ChanSetting::SecureOps, false).unwrap();
         let out = e.handle(NetEvent::ChannelOp { channel: "#c".into(), uid: "000AAAAAB".into(), op: true });
         assert!(out.is_empty(), "no enforcement when SECUREOPS is off: {out:?}");
+    }
+
+    // An auspex oper sees another account's hidden INFO (email); a non-oper does not.
+    #[test]
+    fn auspex_oper_sees_hidden_info() {
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-auspex.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "password1", Some("alice@example.org".into())).unwrap();
+        db.register("operator", "password1", None).unwrap();
+        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("operator".to_string(), Privs::default().with(fedserv_api::Priv::Auspex));
+        e.set_opers(opers);
+        let info_alice = |e: &mut Engine, uid: &str| {
+            e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "INFO alice".into() })
+        };
+        let shows_email = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("alice@example.org")));
+
+        // The auspex oper identifies and sees alice's email.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "operator".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        assert!(shows_email(&info_alice(&mut e, "000AAAAAB")), "auspex oper sees the email");
+
+        // An unidentified (non-oper) viewer does not.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "guest".into(), host: "h".into() });
+        assert!(!shows_email(&info_alice(&mut e, "000AAAAAC")), "non-oper sees no email");
     }
 
     // TOPICLOCK reverts an unauthorised topic change; KEEPTOPIC restores the

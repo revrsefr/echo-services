@@ -40,3 +40,10 @@ protocol = 1206            # InspIRCd link protocol version (1206 = insp4, 1205 
 # ChanServ. Add "example" to also start the example template service.
 # [modules]
 # services = ["nickserv", "chanserv"]
+
+# Services operators: accounts granted privileges. Omit for a network with no
+# opers. Privileges: "auspex" (see others' hidden info), "suspend"
+# (suspend/unsuspend), "admin" (modify or drop other accounts/channels).
+# [[oper]]
+# account = "yournick"
+# privs = ["auspex", "suspend", "admin"]

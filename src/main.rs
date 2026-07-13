@@ -77,6 +77,7 @@ async fn main() -> Result<()> {
     // Channel for services-initiated actions to reach the uplink (drained by the link loop).
     let (irc_tx, irc_rx) = tokio::sync::mpsc::unbounded_channel();
     engine.lock().await.set_irc_out(irc_tx);
+    engine.lock().await.set_opers(cfg.opers());
 
     if let Some(gossip) = cfg.gossip.clone() {
         tracing::info!(peers = cfg.peer.len(), "starting gossip");

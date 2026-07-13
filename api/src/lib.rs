@@ -115,12 +115,46 @@ pub trait Protocol: Send {
 // Service vocabulary
 // ---------------------------------------------------------------------------
 
+// A services-operator privilege. Coarse and typed (not a string namespace like
+// Anope's "nickserv/suspend"), so the compiler checks every use and there is one
+// gating mechanism, not two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Priv {
+    // See other users' hidden info (INFO fields, LIST filters).
+    Auspex,
+    // Suspend / unsuspend accounts and channels.
+    Suspend,
+    // Modify or drop other users' accounts and channels (SASET, DROP, GETEMAIL).
+    Admin,
+}
+
+// The set of privileges a sender holds. A plain Copy bitset — empty means "not
+// an oper". Built from the [[oper]] config and carried on every Sender.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Privs(u8);
+
+impl Privs {
+    // Grant a privilege (builder style: `Privs::default().with(Priv::Admin)`).
+    pub fn with(self, p: Priv) -> Self {
+        Privs(self.0 | (1 << p as u8))
+    }
+    // Whether this set holds `p`.
+    pub fn has(self, p: Priv) -> bool {
+        self.0 & (1 << p as u8) != 0
+    }
+    // Whether this is a services operator at all (holds any privilege).
+    pub fn any(self) -> bool {
+        self.0 != 0
+    }
+}
+
 // Who sent the command, resolved by the engine (UID + current nick + the
-// account they are identified to, if any).
+// account they are identified to, if any, and any oper privileges it holds).
 pub struct Sender<'a> {
     pub uid: &'a str,
     pub nick: &'a str,
     pub account: Option<&'a str>,
+    pub privs: Privs,
 }
 
 // The intent sink a service writes to. A service never mutates the network or
@@ -533,4 +567,18 @@ pub fn human_time(ts: u64) -> String {
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = y + i64::from(month <= 2);
     format!("{year:04}-{month:02}-{day:02} {hh:02}:{mm:02}:{ss:02} UTC")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn privs_bitset_grants_and_checks() {
+        let p = Privs::default().with(Priv::Auspex).with(Priv::Admin);
+        assert!(p.has(Priv::Auspex) && p.has(Priv::Admin));
+        assert!(!p.has(Priv::Suspend), "only granted privileges are held");
+        assert!(p.any());
+        assert!(!Privs::default().any(), "empty set is not an oper");
+    }
 }
