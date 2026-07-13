@@ -86,6 +86,37 @@ fn require_oper(me: &str, from: &Sender, ctx: &mut ServiceCtx) -> bool {
     false
 }
 
+// Canonicalise a vhost the way the ircd will actually display it: the host part
+// only allows letters, digits, dots and hyphens, so a disallowed character it
+// would rewrite (an underscore becomes a hyphen) is rewritten here first. This
+// keeps what we store identical to what shows on the network, so two inputs
+// that would collapse to the same host are detected as one.
+// (Recommended by siniStar — the ns_nethost normalisation approach.)
+pub(crate) fn normalize_vhost(spec: &str) -> String {
+    let (ident, host) = match spec.split_once('@') {
+        Some((i, h)) => (Some(i), h),
+        None => (None, spec),
+    };
+    let norm_host: String = host.chars().map(|c| if c == '_' { '-' } else { c }).collect();
+    match ident {
+        Some(i) => format!("{i}@{norm_host}"),
+        None => norm_host,
+    }
+}
+
+// Normalise a requested vhost and check it's valid and not already another
+// account's. Returns the canonical spec to store, or a message to show.
+pub(crate) fn prepare_vhost(spec: &str, account: &str, db: &dyn Store) -> Result<String, String> {
+    let host = normalize_vhost(spec);
+    if !valid_vhost(&host) {
+        return Err(format!("\x02{host}\x02 isn't a valid host (letters, digits, hyphens and dots)."));
+    }
+    if db.vhost_owner(&host).is_some_and(|owner| !owner.eq_ignore_ascii_case(account)) {
+        return Err(format!("\x02{host}\x02 is already in use. Please choose another."));
+    }
+    Ok(host)
+}
+
 // Whether `spec` is a valid vhost: an optional `ident@` (letters, digits, a few
 // punctuation) followed by a hostname of dot-separated alphanumeric/hyphen labels.
 pub(crate) fn valid_vhost(spec: &str) -> bool {

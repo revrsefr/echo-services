@@ -2686,6 +2686,50 @@ mod tests {
         assert!(hs(&mut e, "000AAAAAB", "SET alice not a host").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't a valid host"))), "host validated");
     }
 
+    // A vhost is normalised the way the ircd displays it (_ -> -) and can't be
+    // assigned to two accounts (uniqueness on the normalised form).
+    #[test]
+    fn hostserv_normalises_and_dedupes() {
+        use fedserv_hostserv::HostServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-hsnorm.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("alice", "password1", None).unwrap();
+        db.register("bob", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(HostServ { uid: "42SAAAAAG".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAW".into(), nick: "bob".into(), host: "realhost".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAV", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAW", "IDENTIFY password1");
+        let says = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        // The underscore is normalised to a hyphen, so what's applied matches the
+        // ircd's display.
+        let out = hs(&mut e, "000AAAAAB", "SET alice cool_user.example");
+        assert!(out.iter().any(|a| matches!(a, NetAction::SetHost { host, .. } if host == "cool-user.example")), "normalised: {out:?}");
+        // bob can't take the same host (even spelled with the underscore).
+        assert!(says(&hs(&mut e, "000AAAAAB", "SET bob cool_user.example"), "already in use"), "uniqueness enforced");
+        // A distinct host is fine.
+        assert!(hs(&mut e, "000AAAAAB", "SET bob other.example").iter().any(|a| matches!(a, NetAction::SetHost { host, .. } if host == "other.example")), "distinct host ok");
+    }
+
     // A temporary vhost applies while valid; an already-expired one is ignored.
     #[test]
     fn hostserv_vhost_expiry() {

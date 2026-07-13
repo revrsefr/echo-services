@@ -26,6 +26,14 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         ctx.notice(me, from.uid, format!("Rejected \x02{account}\x02's vhost request."));
         return;
     }
+    // Re-check the requested host now (another account may have taken it since).
+    let host = match super::prepare_vhost(&host, account, db) {
+        Ok(h) => h,
+        Err(msg) => {
+            ctx.notice(me, from.uid, format!("Can't activate: {msg}"));
+            return;
+        }
+    };
     match db.set_vhost(account, &host, from.nick, None) {
         Ok(()) => {
             for uid in net.uids_logged_into(account) {

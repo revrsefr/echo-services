@@ -1356,6 +1356,15 @@ impl Db {
         self.host_cfg.template.as_deref()
     }
 
+    /// The account whose current (non-expired) vhost is `host`, if any — so a
+    /// vhost can't be assigned to two accounts and collide on the network.
+    pub fn vhost_owner(&self, host: &str) -> Option<String> {
+        self.accounts
+            .values()
+            .find(|a| a.vhost.as_ref().is_some_and(|v| v.host.eq_ignore_ascii_case(host) && v.expires.is_none_or(|e| e > now())))
+            .map(|a| a.name.clone())
+    }
+
     /// Every account that has a vhost, as (account, host, setter, expires).
     pub fn vhosts(&self) -> Vec<(String, String, String, Option<u64>)> {
         let mut out: Vec<(String, String, String, Option<u64>)> = self
@@ -2531,6 +2540,9 @@ impl Store for Db {
     }
     fn vhosts(&self) -> Vec<VhostView> {
         Db::vhosts(self).into_iter().map(|(account, host, setter, expires)| VhostView { account, host, setter, expires }).collect()
+    }
+    fn vhost_owner(&self, host: &str) -> Option<String> {
+        Db::vhost_owner(self, host)
     }
     fn request_vhost(&mut self, account: &str, host: &str) -> Result<(), RegError> {
         Db::request_vhost(self, account, host)

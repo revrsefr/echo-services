@@ -10,9 +10,16 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         ctx.notice(me, from.uid, "Syntax: TAKE <number> (see OFFERLIST)");
         return;
     };
-    let Some(host) = n.checked_sub(1).and_then(|i| db.vhost_offers().into_iter().nth(i)) else {
+    let Some(offer) = n.checked_sub(1).and_then(|i| db.vhost_offers().into_iter().nth(i)) else {
         ctx.notice(me, from.uid, format!("There's no offer #\x02{n}\x02. See \x02OFFERLIST\x02."));
         return;
+    };
+    let host = match super::prepare_vhost(&offer, account, db) {
+        Ok(h) => h,
+        Err(msg) => {
+            ctx.notice(me, from.uid, msg);
+            return;
+        }
     };
     match db.set_vhost(account, &host, "offer", None) {
         Ok(()) => {

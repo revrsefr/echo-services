@@ -10,11 +10,14 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         ctx.notice(me, from.uid, "Syntax: REQUEST <host>");
         return;
     };
-    if !super::valid_vhost(host) {
-        ctx.notice(me, from.uid, format!("\x02{host}\x02 isn't a valid host (letters, digits, hyphens and dots)."));
-        return;
-    }
-    if db.vhost_is_forbidden(host) {
+    let host = match super::prepare_vhost(host, account, db) {
+        Ok(h) => h,
+        Err(msg) => {
+            ctx.notice(me, from.uid, msg);
+            return;
+        }
+    };
+    if db.vhost_is_forbidden(&host) {
         ctx.notice(me, from.uid, format!("\x02{host}\x02 isn't allowed here. Please choose another."));
         return;
     }
@@ -23,7 +26,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         ctx.notice(me, from.uid, format!("Please wait \x02{wait}\x02s before requesting another vhost."));
         return;
     }
-    match db.request_vhost(account, host) {
+    match db.request_vhost(account, &host) {
         Ok(()) => ctx.notice(me, from.uid, format!("Requested vhost \x02{host}\x02 — an operator will review it.")),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }

@@ -11,19 +11,22 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         ctx.notice(me, from.uid, "Syntax: SET <account> <host> [duration]");
         return;
     };
-    if !super::valid_vhost(host) {
-        ctx.notice(me, from.uid, format!("\x02{host}\x02 isn't a valid host (letters, digits, hyphens and dots)."));
-        return;
-    }
     if db.account(account).is_none() {
         ctx.notice(me, from.uid, format!("\x02{account}\x02 isn't registered."));
         return;
     }
+    let host = match super::prepare_vhost(host, account, db) {
+        Ok(h) => h,
+        Err(msg) => {
+            ctx.notice(me, from.uid, msg);
+            return;
+        }
+    };
     let ttl = args.get(3).and_then(|s| parse_duration(s));
-    match db.set_vhost(account, host, from.nick, ttl) {
+    match db.set_vhost(account, &host, from.nick, ttl) {
         Ok(()) => {
             for uid in net.uids_logged_into(account) {
-                ctx.apply_vhost(&uid, host);
+                ctx.apply_vhost(&uid, &host);
             }
             let when = args.get(3).filter(|_| ttl.is_some()).map(|d| format!(" (expires in {d})")).unwrap_or_default();
             ctx.notice(me, from.uid, format!("Vhost \x02{host}\x02 assigned to \x02{account}\x02{when}."));

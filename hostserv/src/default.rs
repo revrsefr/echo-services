@@ -17,11 +17,14 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store)
         ctx.notice(me, from.uid, "Your account name has no usable characters for a vhost.");
         return;
     }
-    let host = template.replace("$account", &label);
-    if !super::valid_vhost(&host) || db.vhost_is_forbidden(&host) {
-        ctx.notice(me, from.uid, "Sorry, a vhost couldn't be generated for your account.");
-        return;
-    }
+    let generated = template.replace("$account", &label);
+    let host = match super::prepare_vhost(&generated, account, db) {
+        Ok(h) if !db.vhost_is_forbidden(&h) => h,
+        _ => {
+            ctx.notice(me, from.uid, "Sorry, a vhost couldn't be generated for your account.");
+            return;
+        }
+    };
     match db.set_vhost(account, &host, "template", None) {
         Ok(()) => {
             ctx.apply_vhost(from.uid, &host);
