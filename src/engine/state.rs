@@ -32,6 +32,9 @@ pub struct Channel {
     pub ops: HashSet<String>,     // uids holding channel-operator status
     pub voices: HashSet<String>,  // uids holding +v
     pub key: Option<String>,
+    // BOTSTATS: lines seen this session, and per-nick counts (top-talkers). Bounded.
+    pub lines: u64,
+    pub talkers: HashMap<String, u64>,
 }
 
 // The last time a nick was seen, and doing what.
@@ -182,6 +185,26 @@ impl Network {
         self.channels.get(&lc(channel)).is_some_and(|c| c.voices.contains(uid))
     }
 
+    // Record a line spoken in `channel` by `nick`, for BOTSTATS. The per-nick map
+    // is capped so a busy channel can't grow it without bound.
+    pub fn record_line(&mut self, channel: &str, nick: &str) {
+        const TALKER_CAP: usize = 512;
+        let c = self.channels.entry(lc(channel)).or_default();
+        c.lines = c.lines.saturating_add(1);
+        if c.talkers.len() < TALKER_CAP || c.talkers.contains_key(nick) {
+            *c.talkers.entry(nick.to_string()).or_insert(0) += 1;
+        }
+    }
+
+    // BOTSTATS view: (total lines, top talkers by count, descending).
+    pub fn channel_activity(&self, channel: &str) -> Option<(u64, Vec<(String, u64)>)> {
+        let c = self.channels.get(&lc(channel))?;
+        let mut top: Vec<(String, u64)> = c.talkers.iter().map(|(n, v)| (n.clone(), *v)).collect();
+        top.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        top.truncate(10);
+        Some((c.lines, top))
+    }
+
     // Uids currently in `channel`.
     pub fn channel_members(&self, channel: &str) -> impl Iterator<Item = &str> {
         self.channels.get(&lc(channel)).into_iter().flat_map(|c| c.members.iter().map(String::as_str))
@@ -233,5 +256,8 @@ impl NetView for Network {
             ts: s.ts,
             what: s.what.clone(),
         })
+    }
+    fn channel_activity(&self, channel: &str) -> Option<(u64, Vec<(String, u64)>)> {
+        Network::channel_activity(self, channel)
     }
 }

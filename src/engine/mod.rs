@@ -995,6 +995,11 @@ impl Engine {
                     ctx.actions.push(resp);
                 }
             }
+            // BOTSTATS: count activity in channels that have a bot.
+            if self.db.channel(to).is_some_and(|c| c.assigned_bot.is_some()) {
+                self.network.record_line(to, &nick);
+                self.bump("botserv.messages");
+            }
         } else {
             let mut matched: Option<String> = None;
             {
@@ -2511,6 +2516,20 @@ mod tests {
         );
         // A non-matching line is ignored.
         assert!(!say(&mut e, "goodbye all").iter().any(|a| matches!(a, NetAction::Privmsg { .. })), "no response on miss");
+    }
+
+    // BOTSTATS reports per-channel activity the bot has seen this session.
+    #[test]
+    fn botserv_botstats_reports_activity() {
+        let (mut e, _p) = kicker_fixture("bsbotstats");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        say(&mut e, "one");
+        say(&mut e, "two");
+        say(&mut e, "three");
+        let out = bs(&mut e, "BOTSTATS #c");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("line(s) seen this session"))), "line count: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("spammer") && text.contains("3"))), "top talker listed: {out:?}");
     }
 
     // The shared stats registry gathers per-service command counts, BotServ
