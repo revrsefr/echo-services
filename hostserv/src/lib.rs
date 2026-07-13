@@ -91,7 +91,6 @@ fn require_oper(me: &str, from: &Sender, ctx: &mut ServiceCtx) -> bool {
 // would rewrite (an underscore becomes a hyphen) is rewritten here first. This
 // keeps what we store identical to what shows on the network, so two inputs
 // that would collapse to the same host are detected as one.
-// (Recommended by siniStar — the ns_nethost normalisation approach.)
 pub(crate) fn normalize_vhost(spec: &str) -> String {
     let (ident, host) = match spec.split_once('@') {
         Some((i, h)) => (Some(i), h),
