@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::routing::post;
 use axum::{Json, Router};
 use serde_json::{json, Value};
@@ -26,6 +26,7 @@ type Shared = Arc<Mutex<Engine>>;
 struct AppState {
     engine: Shared,
     token: String,
+    origins: Arc<Vec<String>>,
 }
 
 // Start the endpoint, if configured. Absent [jsonrpc] in config.toml = no-op.
@@ -37,9 +38,9 @@ pub async fn run(engine: Shared, cfg: JsonRpcCfg) {
     if cfg.token.is_empty() {
         return tracing::error!("jsonrpc token is empty; refusing to start an unauthenticated stats endpoint");
     }
-    let state = AppState { engine, token: cfg.token };
+    let state = AppState { engine, token: cfg.token, origins: Arc::new(cfg.origins) };
     let app = Router::new()
-        .route("/", post(handle))
+        .route("/", post(handle).options(preflight))
         .layer(DefaultBodyLimit::max(64 * 1024))
         .with_state(state);
     let listener = match tokio::net::TcpListener::bind(addr).await {
@@ -52,14 +53,25 @@ pub async fn run(engine: Shared, cfg: JsonRpcCfg) {
     }
 }
 
-async fn handle(State(state): State<AppState>, headers: HeaderMap, body: Json<Value>) -> (StatusCode, Json<Value>) {
+// Preflight (OPTIONS): tell the browser this origin may POST with an
+// Authorization header. Only origins on the allowlist are answered.
+async fn preflight(State(state): State<AppState>, headers: HeaderMap) -> (StatusCode, HeaderMap) {
+    let mut out = cors_headers(&headers, &state.origins);
+    out.insert("access-control-allow-methods", HeaderValue::from_static("POST, OPTIONS"));
+    out.insert("access-control-allow-headers", HeaderValue::from_static("authorization, content-type"));
+    out.insert("access-control-max-age", HeaderValue::from_static("86400"));
+    (StatusCode::NO_CONTENT, out)
+}
+
+async fn handle(State(state): State<AppState>, headers: HeaderMap, body: Json<Value>) -> (StatusCode, HeaderMap, Json<Value>) {
+    let cors = cors_headers(&headers, &state.origins);
     if !authorized(&headers, &state.token) {
-        return (StatusCode::UNAUTHORIZED, Json(error(&Value::Null, -32001, "unauthorized")));
+        return (StatusCode::UNAUTHORIZED, cors, Json(error(&Value::Null, -32001, "unauthorized")));
     }
     let req = body.0;
     let id = req.get("id").cloned().unwrap_or(Value::Null);
     let Some(method) = req.get("method").and_then(Value::as_str) else {
-        return (StatusCode::OK, Json(error(&id, -32600, "invalid request: no method")));
+        return (StatusCode::OK, cors, Json(error(&id, -32600, "invalid request: no method")));
     };
     let params = req.get("params").cloned().unwrap_or(Value::Null);
 
@@ -79,9 +91,25 @@ async fn handle(State(state): State<AppState>, headers: HeaderMap, body: Json<Va
     };
 
     match result {
-        Ok(value) => (StatusCode::OK, Json(json!({ "jsonrpc": "2.0", "result": value, "id": id }))),
-        Err((code, message)) => (StatusCode::OK, Json(error(&id, code, message))),
+        Ok(value) => (StatusCode::OK, cors, Json(json!({ "jsonrpc": "2.0", "result": value, "id": id }))),
+        Err((code, message)) => (StatusCode::OK, cors, Json(error(&id, code, message))),
     }
+}
+
+// CORS headers for a request: echo the Origin only if it's on the allowlist
+// (never `*`), and always Vary on Origin so caches don't cross origins.
+fn cors_headers(headers: &HeaderMap, origins: &[String]) -> HeaderMap {
+    let mut out = HeaderMap::new();
+    out.insert("vary", HeaderValue::from_static("Origin"));
+    let origin = headers.get("origin").and_then(|v| v.to_str().ok());
+    if let Some(o) = origin {
+        if origins.iter().any(|a| a == o) {
+            if let Ok(v) = HeaderValue::from_str(o) {
+                out.insert("access-control-allow-origin", v);
+            }
+        }
+    }
+    out
 }
 
 // Constant-time bearer check (length compared first — token length isn't secret).
@@ -113,6 +141,10 @@ mod tests {
         Arc::new(Mutex::new(e))
     }
 
+    fn state(tag: &str, origins: Vec<String>) -> AppState {
+        AppState { engine: engine_with_stat(tag), token: "secret".into(), origins: Arc::new(origins) }
+    }
+
     fn bearer(token: &str) -> HeaderMap {
         let mut h = HeaderMap::new();
         h.insert("authorization", format!("Bearer {token}").parse().unwrap());
@@ -121,14 +153,14 @@ mod tests {
 
     #[tokio::test]
     async fn requires_token_then_returns_counters() {
-        let state = AppState { engine: engine_with_stat("auth"), token: "secret".into() };
+        let st = state("auth", vec![]);
         // No/wrong token -> 401, no data.
-        let (status, _) = handle(State(state.clone()), HeaderMap::new(), Json(json!({"method": "stats.get", "id": 1}))).await;
+        let (status, _, _) = handle(State(st.clone()), HeaderMap::new(), Json(json!({"method": "stats.get", "id": 1}))).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
-        let (status, _) = handle(State(state.clone()), bearer("wrong"), Json(json!({"method": "stats.get", "id": 1}))).await;
+        let (status, _, _) = handle(State(st.clone()), bearer("wrong"), Json(json!({"method": "stats.get", "id": 1}))).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         // Correct token -> the counters and gauges.
-        let (status, Json(resp)) = handle(State(state), bearer("secret"), Json(json!({"jsonrpc": "2.0", "method": "stats.get", "id": 7}))).await;
+        let (status, _, Json(resp)) = handle(State(st), bearer("secret"), Json(json!({"jsonrpc": "2.0", "method": "stats.get", "id": 7}))).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(resp["result"]["botserv.messages"], 1);
         assert!(resp["result"]["accounts.total"].is_number(), "gauge present: {resp}");
@@ -137,9 +169,22 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_method_is_a_jsonrpc_error() {
-        let state = AppState { engine: engine_with_stat("badmethod"), token: "secret".into() };
-        let (status, Json(resp)) = handle(State(state), bearer("secret"), Json(json!({"method": "drop.everything", "id": 2}))).await;
+        let (status, _, Json(resp)) = handle(State(state("badmethod", vec![])), bearer("secret"), Json(json!({"method": "drop.everything", "id": 2}))).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(resp["error"]["code"], -32601);
+    }
+
+    #[tokio::test]
+    async fn cors_echoes_only_allowlisted_origins() {
+        let st = state("cors", vec!["https://tchatou.fr".into()]);
+        let mut allowed = bearer("secret");
+        allowed.insert("origin", "https://tchatou.fr".parse().unwrap());
+        let (_, headers, _) = handle(State(st.clone()), allowed, Json(json!({"method": "stats.get", "id": 1}))).await;
+        assert_eq!(headers.get("access-control-allow-origin").unwrap(), "https://tchatou.fr");
+        // A site not on the list gets no allow-origin header (browser blocks it).
+        let mut evil = bearer("secret");
+        evil.insert("origin", "https://evil.example".parse().unwrap());
+        let (_, headers, _) = handle(State(st), evil, Json(json!({"method": "stats.get", "id": 1}))).await;
+        assert!(headers.get("access-control-allow-origin").is_none(), "unlisted origin not echoed");
     }
 }

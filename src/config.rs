@@ -96,10 +96,15 @@ pub struct ServerTls {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct JsonRpc {
-    // Address to accept HTTP on, e.g. "127.0.0.1:5601". Keep it on localhost.
+    // Address to accept HTTP on, e.g. "127.0.0.1:5601". Keep it on localhost and
+    // let a reverse proxy terminate TLS / HTTP-2 / HTTP-3.
     pub bind: String,
     // Bearer token every request must present (`authorization: Bearer <token>`).
     pub token: String,
+    // Browser origins allowed to call this cross-site (CORS), e.g.
+    // ["https://tchatou.fr", "https://swaygo.fr"]. Empty = no browser access.
+    #[serde(default)]
+    pub origins: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
