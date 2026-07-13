@@ -13,18 +13,28 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     }
     match args.get(2).map(|s| s.to_ascii_uppercase()).as_deref() {
         Some("ADD") => {
-            // Everything after ADD is "<regex>|<response>".
+            // "<regex>|<response>" with an optional trailing "|<cooldown-secs>".
+            // $1..$9 in the response fill from regex capture groups; $nick is the
+            // speaker.
             let rest = args[3..].join(" ");
-            let Some((pattern, response)) = rest.split_once('|') else {
-                ctx.notice(me, from.uid, "Syntax: TRIGGER <#channel> ADD <regex>|<response> (e.g. (?i)hello|Hi $nick!)");
+            let Some((pattern, mut response)) = rest.split_once('|') else {
+                ctx.notice(me, from.uid, "Syntax: TRIGGER <#channel> ADD <regex>|<response>[|<cooldown-secs>]");
                 return;
             };
+            // A numeric field after the last '|' is a cooldown, not part of the text.
+            let mut cooldown = 0;
+            if let Some((head, tail)) = response.rsplit_once('|') {
+                if let Ok(secs) = tail.trim().parse::<u32>() {
+                    cooldown = secs;
+                    response = head;
+                }
+            }
             let (pattern, response) = (pattern.trim(), response.trim());
             if pattern.is_empty() || response.is_empty() {
                 ctx.notice(me, from.uid, "Both a pattern and a response are required: ADD <regex>|<response>.");
                 return;
             }
-            match db.trigger_add(chan, pattern, response) {
+            match db.trigger_add(chan, pattern, response, cooldown) {
                 Ok(true) => ctx.notice(me, from.uid, format!("Added a trigger to \x02{chan}\x02.")),
                 Ok(false) => ctx.notice(me, from.uid, "That pattern already has a trigger."),
                 Err(ChanError::InvalidPattern) => ctx.notice(me, from.uid, format!("\x02{pattern}\x02 isn't a valid regular expression.")),
@@ -54,7 +64,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             }
             ctx.notice(me, from.uid, format!("Triggers for \x02{chan}\x02 ({}):", triggers.len()));
             for (i, t) in triggers.iter().enumerate() {
-                ctx.notice(me, from.uid, format!("  {}. {} \x02→\x02 {}", i + 1, t.pattern, t.response));
+                let cd = if t.cooldown > 0 { format!(" (cooldown {}s)", t.cooldown) } else { String::new() };
+                ctx.notice(me, from.uid, format!("  {}. {} \x02→\x02 {}{cd}", i + 1, t.pattern, t.response));
             }
         }
         Some(other) => ctx.notice(me, from.uid, format!("Unknown TRIGGER command \x02{other}\x02. Use ADD, DEL, LIST or CLEAR.")),

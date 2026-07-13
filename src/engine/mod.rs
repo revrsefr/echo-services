@@ -128,8 +128,15 @@ struct CachedBadwords {
 
 struct CachedTriggers {
     rev: u64,
-    set: regex::RegexSet,
-    responses: Vec<String>, // parallel to the set's patterns
+    entries: Vec<TriggerRt>,
+}
+
+// A compiled trigger, with its own last-fired time for the cooldown.
+struct TriggerRt {
+    re: regex::Regex,
+    response: String,
+    cooldown: u32,
+    last_fired: u64,
 }
 
 // One user's recent-chatter counters in one channel (FLOOD + REPEAT kickers,
@@ -1173,16 +1180,42 @@ impl Engine {
         let botuid = self.network.uid_by_nick(bot)?.to_string();
         let rev = c.triggers_rev;
         if self.trigger_cache.get(channel).map(|ct| ct.rev) != Some(rev) {
-            let patterns: Vec<String> = c.triggers.iter().map(|t| t.pattern.clone()).collect();
-            let set = db::build_badword_set(&patterns);
-            let responses = c.triggers.iter().map(|t| t.response.clone()).collect();
-            self.trigger_cache.insert(channel.to_string(), CachedTriggers { rev, set, responses });
+            let entries = c
+                .triggers
+                .iter()
+                .filter_map(|t| {
+                    regex::RegexBuilder::new(&t.pattern)
+                        .case_insensitive(true)
+                        .size_limit(db::BADWORD_SIZE_LIMIT)
+                        .build()
+                        .ok()
+                        .map(|re| TriggerRt { re, response: t.response.clone(), cooldown: t.cooldown, last_fired: 0 })
+                })
+                .collect();
+            self.trigger_cache.insert(channel.to_string(), CachedTriggers { rev, entries });
         }
-        let cached = self.trigger_cache.get(channel).unwrap();
-        let idx = cached.set.matches(text).iter().next()?;
-        let response = cached.responses.get(idx)?.clone();
-        let nick = self.network.nick_of(from).unwrap_or(from);
-        let response = response.replace("$nick", nick);
+        let now = self.now_secs();
+        let nick = self.network.nick_of(from).unwrap_or(from).to_string();
+
+        // First matching trigger wins; $1..$9 fill from capture groups, $nick from
+        // the speaker. A trigger still cooling down suppresses the response.
+        let cached = self.trigger_cache.get_mut(channel).unwrap();
+        let mut response = None;
+        for e in cached.entries.iter_mut() {
+            if let Some(caps) = e.re.captures(text) {
+                if now.saturating_sub(e.last_fired) < e.cooldown as u64 {
+                    return None;
+                }
+                e.last_fired = now;
+                let mut resp = e.response.clone();
+                for i in 1..caps.len() {
+                    resp = resp.replace(&format!("${i}"), caps.get(i).map_or("", |m| m.as_str()));
+                }
+                response = Some(resp.replace("$nick", &nick));
+                break;
+            }
+        }
+        let response = response?;
         self.bump("botserv.trigger");
         Some(NetAction::Privmsg { from: botuid, to: channel.to_string(), text: response })
     }
@@ -2569,6 +2602,28 @@ mod tests {
         // Devoiced: kickable again.
         e.handle(NetEvent::ChannelVoice { channel: "#c".into(), uid: "000AAAAAS".into(), voice: false });
         assert!(kicked(&say(&mut e, "SHOUTING WITHOUT VOICE")), "devoiced user kicked");
+    }
+
+    // Triggers substitute regex capture groups ($1) and honour a cooldown.
+    #[test]
+    fn botserv_trigger_captures_and_cooldown() {
+        let (mut e, _p) = kicker_fixture("bstrigcap");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        bs(&mut e, "TRIGGER #c ADD (?i)hi (\\w+)|Hi $1!|30"); // capture group + 30s cooldown
+        let response = |out: &[NetAction]| out.iter().find_map(|a| match a {
+            NetAction::Privmsg { text, .. } => Some(text.clone()),
+            _ => None,
+        });
+
+        e.now_override = Some(1000);
+        assert_eq!(response(&say(&mut e, "hi alice")).as_deref(), Some("Hi alice!"), "capture substituted");
+        // Within the cooldown window: suppressed.
+        e.now_override = Some(1010);
+        assert_eq!(response(&say(&mut e, "hi bob")), None, "suppressed by cooldown");
+        // After the cooldown: fires again.
+        e.now_override = Some(1031);
+        assert_eq!(response(&say(&mut e, "hi carol")).as_deref(), Some("Hi carol!"), "fires after cooldown");
     }
 
     // WARN gives a one-time warning before the first real kick.

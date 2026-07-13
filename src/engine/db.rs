@@ -322,6 +322,9 @@ pub struct ChannelInfo {
 pub struct Trigger {
     pub pattern: String,
     pub response: String,
+    // Minimum seconds between firings of this trigger (0 = no limit).
+    #[serde(default)]
+    pub cooldown: u32,
 }
 
 // BotServ's per-channel "kickers": the assigned bot kicks a message that trips
@@ -1554,7 +1557,7 @@ impl Db {
 
     /// Add an auto-response trigger. Validates the pattern; Ok(false) if the same
     /// pattern is already present.
-    pub fn trigger_add(&mut self, channel: &str, pattern: &str, response: &str) -> Result<bool, ChanError> {
+    pub fn trigger_add(&mut self, channel: &str, pattern: &str, response: &str, cooldown: u32) -> Result<bool, ChanError> {
         if regex::RegexBuilder::new(pattern).size_limit(BADWORD_SIZE_LIMIT).build().is_err() {
             return Err(ChanError::InvalidPattern);
         }
@@ -1564,7 +1567,7 @@ impl Db {
             return Ok(false);
         }
         let mut list = c.triggers.clone();
-        list.push(Trigger { pattern: pattern.to_string(), response: response.to_string() });
+        list.push(Trigger { pattern: pattern.to_string(), response: response.to_string(), cooldown });
         self.write_triggers(channel, &k, list)?;
         Ok(true)
     }
@@ -2330,8 +2333,8 @@ impl Store for Db {
     fn copy_bot_config(&mut self, src: &str, dst: &str) -> Result<(), ChanError> {
         Db::copy_bot_config(self, src, dst)
     }
-    fn trigger_add(&mut self, channel: &str, pattern: &str, response: &str) -> Result<bool, ChanError> {
-        Db::trigger_add(self, channel, pattern, response)
+    fn trigger_add(&mut self, channel: &str, pattern: &str, response: &str, cooldown: u32) -> Result<bool, ChanError> {
+        Db::trigger_add(self, channel, pattern, response, cooldown)
     }
     fn trigger_del(&mut self, channel: &str, index: usize) -> Result<bool, ChanError> {
         Db::trigger_del(self, channel, index)
@@ -2340,7 +2343,7 @@ impl Store for Db {
         Db::trigger_clear(self, channel)
     }
     fn triggers(&self, channel: &str) -> Vec<TriggerView> {
-        Db::triggers(self, channel).iter().map(|t| TriggerView { pattern: t.pattern.clone(), response: t.response.clone() }).collect()
+        Db::triggers(self, channel).iter().map(|t| TriggerView { pattern: t.pattern.clone(), response: t.response.clone(), cooldown: t.cooldown }).collect()
     }
     fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError> {
         Db::set_channel_topic(self, channel, topic)
