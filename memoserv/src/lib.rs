@@ -1,8 +1,8 @@
 //! MemoServ delivers short messages ("memos") to registered accounts whether or
 //! not they are online — they read them next time they identify. Memos are typed
 //! and event-logged on the account, so they persist and federate like any other
-//! account data (no Anope-style flat-file serialization). `lib.rs` holds the
-//! dispatcher; each command lives in its own file, matching NickServ/ChanServ.
+//! account data. `lib.rs` holds the dispatcher; each command lives in its own
+//! file, matching NickServ/ChanServ.
 
 use fedserv_api::{NetView, Sender, Service, ServiceCtx, Store};
 

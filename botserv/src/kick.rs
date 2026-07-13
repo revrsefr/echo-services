@@ -5,7 +5,7 @@ use fedserv_api::{Kicker, Sender, ServiceCtx, Store};
 // and the exemption DONTKICKOPS. Founder-or-admin.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
     let (Some(&chan), Some(kind)) = (args.get(1), args.get(2)) else {
-        ctx.notice(me, from.uid, "Syntax: KICK <#channel> <CAPS|FLOOD|REPEAT|BADWORDS|BOLDS|COLORS|UNDERLINES|REVERSES|ITALICS|DONTKICKOPS> <ON|OFF> [params], or KICK <#channel> TTB <n>");
+        ctx.notice(me, from.uid, "Syntax: KICK <#channel> <CAPS|FLOOD|REPEAT|BADWORDS|BOLDS|COLORS|UNDERLINES|REVERSES|ITALICS|WARN|DONTKICKOPS|DONTKICKVOICES> <ON|OFF> [params], or KICK <#channel> TTB <n> / TEST <message>");
         return;
     };
     if !super::require_channel_admin(me, from, chan, ctx, db) {
@@ -98,8 +98,9 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         "BADWORDS" => Kicker::Badwords,
         "WARN" => Kicker::Warn,
         "DONTKICKOPS" => Kicker::DontKickOps,
+        "DONTKICKVOICES" => Kicker::DontKickVoices,
         other => {
-            ctx.notice(me, from.uid, format!("Unknown kicker \x02{other}\x02. Try CAPS, FLOOD, REPEAT, BOLDS, COLORS, UNDERLINES, REVERSES, ITALICS or DONTKICKOPS."));
+            ctx.notice(me, from.uid, format!("Unknown kicker \x02{other}\x02. Try CAPS, FLOOD, REPEAT, BADWORDS, BOLDS, COLORS, UNDERLINES, REVERSES, ITALICS, WARN, DONTKICKOPS or DONTKICKVOICES."));
             return;
         }
     };
@@ -119,6 +120,7 @@ fn label(kicker: Kicker) -> &'static str {
         Kicker::Badwords => "badwords",
         Kicker::Warn => "warn",
         Kicker::DontKickOps => "dontkickops",
+        Kicker::DontKickVoices => "dontkickvoices",
     }
 }
 
@@ -126,6 +128,8 @@ fn toggle(me: &str, from: &Sender, chan: &str, kicker: Kicker, on: bool, ctx: &m
     match db.set_kicker(chan, kicker, on) {
         Ok(()) if kicker == Kicker::DontKickOps && on => ctx.notice(me, from.uid, format!("The bot will no longer kick channel operators in \x02{chan}\x02.")),
         Ok(()) if kicker == Kicker::DontKickOps => ctx.notice(me, from.uid, format!("The bot may again kick channel operators in \x02{chan}\x02.")),
+        Ok(()) if kicker == Kicker::DontKickVoices && on => ctx.notice(me, from.uid, format!("The bot will no longer kick voiced users in \x02{chan}\x02.")),
+        Ok(()) if kicker == Kicker::DontKickVoices => ctx.notice(me, from.uid, format!("The bot may again kick voiced users in \x02{chan}\x02.")),
         Ok(()) if kicker == Kicker::Warn && on => ctx.notice(me, from.uid, format!("The bot will warn once before the first kick in \x02{chan}\x02.")),
         Ok(()) if kicker == Kicker::Warn => ctx.notice(me, from.uid, format!("The bot will kick without warning in \x02{chan}\x02.")),
         Ok(()) if on => ctx.notice(me, from.uid, format!("The \x02{}\x02 kicker is now on in \x02{chan}\x02.", label(kicker))),

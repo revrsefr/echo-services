@@ -30,6 +30,7 @@ pub struct User {
 pub struct Channel {
     pub members: HashSet<String>, // uids
     pub ops: HashSet<String>,     // uids holding channel-operator status
+    pub voices: HashSet<String>,  // uids holding +v
     pub key: Option<String>,
 }
 
@@ -96,6 +97,7 @@ impl Network {
         for c in self.channels.values_mut() {
             c.members.remove(uid);
             c.ops.remove(uid);
+            c.voices.remove(uid);
         }
     }
 
@@ -143,6 +145,7 @@ impl Network {
         if let Some(c) = self.channels.get_mut(&lc(channel)) {
             c.members.remove(uid);
             c.ops.remove(uid);
+            c.voices.remove(uid);
         }
         if let Some(nick) = self.nick_of(uid) {
             self.seen.insert(lc(nick), Seen { nick: nick.to_string(), ts: now(), what: format!("leaving {channel}") });
@@ -162,6 +165,21 @@ impl Network {
     // Whether `uid` currently holds operator status in `channel`.
     pub fn is_op(&self, channel: &str, uid: &str) -> bool {
         self.channels.get(&lc(channel)).is_some_and(|c| c.ops.contains(uid))
+    }
+
+    // Set or clear a user's voice status (+v).
+    pub fn set_voice(&mut self, channel: &str, uid: &str, voice: bool) {
+        let c = self.channels.entry(lc(channel)).or_default();
+        if voice {
+            c.voices.insert(uid.to_string());
+        } else {
+            c.voices.remove(uid);
+        }
+    }
+
+    // Whether `uid` currently holds voice in `channel`.
+    pub fn is_voiced(&self, channel: &str, uid: &str) -> bool {
+        self.channels.get(&lc(channel)).is_some_and(|c| c.voices.contains(uid))
     }
 
     // Uids currently in `channel`.

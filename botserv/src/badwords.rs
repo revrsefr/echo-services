@@ -2,8 +2,8 @@ use fedserv_api::{ChanError, Sender, ServiceCtx, Store};
 
 // BADWORDS <#channel> ADD <regex> | DEL <regex> | LIST | CLEAR: manage the
 // channel's badword patterns. Each entry is a regular expression, so a channel
-// can match whatever it likes (improving on Anope's fixed ANY/SINGLE/START/END).
-// Enable the kicker itself with KICK <#channel> BADWORDS ON. Founder-or-admin.
+// can match whatever it likes. Enable the kicker itself with
+// KICK <#channel> BADWORDS ON. Founder-or-admin.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
     let Some(&chan) = args.get(1) else {
         ctx.notice(me, from.uid, "Syntax: BADWORDS <#channel> ADD|DEL|LIST|CLEAR [pattern]");

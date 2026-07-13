@@ -7,8 +7,8 @@ use std::path::PathBuf;
 pub const BADWORD_SIZE_LIMIT: usize = 1 << 20;
 
 /// Compile a channel's badword patterns into one RegexSet. Case-insensitive by
-/// default (Anope's default; a pattern can opt out with `(?-i)`), size-limited,
-/// and tolerant of a bad entry so one pattern can't disable the whole set.
+/// default (a pattern can opt out with `(?-i)`), size-limited, and tolerant of a
+/// bad entry so one pattern can't disable the whole set.
 pub fn build_badword_set(patterns: &[String]) -> regex::RegexSet {
     regex::RegexSetBuilder::new(patterns)
         .case_insensitive(true)
@@ -376,6 +376,9 @@ pub struct KickerSettings {
     // Don't kick channel operators, whatever they send.
     #[serde(default)]
     pub dontkickops: bool,
+    // Don't kick voiced (+v) users.
+    #[serde(default)]
+    pub dontkickvoices: bool,
 }
 
 impl KickerSettings {
@@ -384,7 +387,7 @@ impl KickerSettings {
         self.caps || self.bolds || self.colors || self.underlines || self.reverses || self.italics || self.flood || self.repeat || self.badwords
     }
 
-    // Resolved thresholds, applying Anope's defaults for a 0 (unset) value.
+    // Resolved thresholds, applying the defaults for a 0 (unset) value.
     pub fn flood_thresholds(&self) -> (u16, u16) {
         (if self.flood_lines < 2 { 6 } else { self.flood_lines }, if self.flood_secs == 0 { 10 } else { self.flood_secs })
     }
@@ -1465,6 +1468,7 @@ impl Db {
             Kicker::Badwords => k.badwords = on,
             Kicker::Warn => k.warn = on,
             Kicker::DontKickOps => k.dontkickops = on,
+            Kicker::DontKickVoices => k.dontkickvoices = on,
         })
     }
 

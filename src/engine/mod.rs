@@ -20,7 +20,7 @@ use state::Network;
 // `sasl=` capability value (IRCv3 SASL 3.2 mechanism list) and the set we accept.
 const SASL_MECHS: &str = "EXTERNAL,SCRAM-SHA-512,SCRAM-SHA-256,PLAIN";
 
-// The in-channel fantasy trigger, e.g. `!op`. Matches Anope's default.
+// The in-channel fantasy trigger, e.g. `!op`.
 const FANTASY_PREFIX: &str = "!";
 
 // A client's base64 response is split into chunks of this length; a chunk
@@ -669,6 +669,10 @@ impl Engine {
                 }
                 Vec::new()
             }
+            NetEvent::ChannelVoice { channel, uid, voice } => {
+                self.network.set_voice(&channel, &uid, voice);
+                Vec::new()
+            }
             NetEvent::ChannelKey { channel, key } => {
                 self.network.set_channel_key(&channel, key);
                 Vec::new()
@@ -1021,6 +1025,9 @@ impl Engine {
         if k.dontkickops && self.network.is_op(channel, from) {
             return Vec::new();
         }
+        if k.dontkickvoices && self.network.is_voiced(channel, from) {
+            return Vec::new();
+        }
         let Some(bot) = c.assigned_bot.as_deref() else { return Vec::new() };
         let Some(botuid) = self.network.uid_by_nick(bot).map(str::to_string) else { return Vec::new() };
 
@@ -1174,7 +1181,7 @@ impl Engine {
     // that has a bot assigned. We reuse ChanServ's real command handlers — the
     // fantasy word becomes the command and the channel is injected as its first
     // argument — then re-source the resulting actions from the bot, so the bot is
-    // the visible actor (Anope routes fantasy through the assigned bot too).
+    // the visible actor.
     fn fantasy(&mut self, sender: &Sender, chan: &str, text: &str, ctx: &mut ServiceCtx) {
         let Some(rest) = text.strip_prefix(FANTASY_PREFIX) else { return };
         let mut words = rest.split_whitespace();
@@ -2124,7 +2131,7 @@ mod tests {
         assert!(out.iter().any(|a| matches!(a, NetAction::ServicePart { channel, .. } if channel == "#c")), "parts on unassign: {out:?}");
     }
 
-    // BOT DEL * removes every bot at once (Anope issue #315), quitting each.
+    // BOT DEL * removes every bot at once, quitting each.
     #[test]
     fn botserv_mass_bot_removal() {
         use fedserv_botserv::BotServ;
@@ -2467,6 +2474,24 @@ mod tests {
         );
         // A non-matching line is ignored.
         assert!(!say(&mut e, "goodbye all").iter().any(|a| matches!(a, NetAction::Privmsg { .. })), "no response on miss");
+    }
+
+    // DONTKICKVOICES exempts voiced users; removing the voice makes them kickable.
+    #[test]
+    fn botserv_dontkickvoices_exempts() {
+        let (mut e, _p) = kicker_fixture("bsdkv");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAS"));
+        bs(&mut e, "KICK #c CAPS ON");
+        bs(&mut e, "KICK #c DONTKICKVOICES ON");
+
+        // Voiced: exempt.
+        e.handle(NetEvent::ChannelVoice { channel: "#c".into(), uid: "000AAAAAS".into(), voice: true });
+        assert!(!kicked(&say(&mut e, "SHOUTING WHILE VOICED")), "voiced user exempt");
+        // Devoiced: kickable again.
+        e.handle(NetEvent::ChannelVoice { channel: "#c".into(), uid: "000AAAAAS".into(), voice: false });
+        assert!(kicked(&say(&mut e, "SHOUTING WITHOUT VOICE")), "devoiced user kicked");
     }
 
     // WARN gives a one-time warning before the first real kick.

@@ -28,6 +28,8 @@ pub enum NetEvent {
     Part { uid: String, channel: String },
     // A user's channel-operator status changed (FMODE +o/-o), for live op tracking.
     ChannelOp { channel: String, uid: String, op: bool },
+    // A user's voice status changed (FMODE +v/-v, or a +v join prefix).
+    ChannelVoice { channel: String, uid: String, voice: bool },
     // A channel's modes changed (FMODE), for enforcing mode locks. Our own
     // changes are filtered out by the protocol layer.
     ChannelModeChange { channel: String, modes: String },
@@ -120,9 +122,8 @@ pub trait Protocol: Send {
 // Service vocabulary
 // ---------------------------------------------------------------------------
 
-// A services-operator privilege. Coarse and typed (not a string namespace like
-// Anope's "nickserv/suspend"), so the compiler checks every use and there is one
-// gating mechanism, not two.
+// A services-operator privilege. Coarse and typed (not a string namespace), so
+// the compiler checks every use and there is one gating mechanism, not two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Priv {
     // See other users' hidden info (INFO fields, LIST filters).
@@ -435,6 +436,8 @@ pub enum Kicker {
     Warn,
     // Exemption, not a rule: never kick channel operators.
     DontKickOps,
+    // Exemption: never kick voiced users.
+    DontKickVoices,
 }
 
 impl ChannelView {

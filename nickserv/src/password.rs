@@ -1,6 +1,6 @@
-// Password policy for REGISTER and SET PASSWORD. Anope enforces a minimum
-// length and forbids the password matching the nick; we do the same, plus an
-// upper bound so a huge password can't be used to burn CPU in the key
+// Password policy for REGISTER and SET PASSWORD: a minimum length and forbidding
+// the password matching the nick, plus an upper bound so a huge password can't
+// be used to burn CPU in the key
 // derivation. Length is measured in characters, the cap in bytes (what the
 // hasher actually processes).
 

@@ -115,6 +115,9 @@ impl Protocol for InspIrcd {
                             let uid = member.split(':').next().unwrap_or("");
                             if !uid.is_empty() {
                                 out.push(NetEvent::Join { uid: uid.to_string(), channel: chan.to_string(), op: prefix.contains('o') });
+                                if prefix.contains('v') {
+                                    out.push(NetEvent::ChannelVoice { channel: chan.to_string(), uid: uid.to_string(), voice: true });
+                                }
                             }
                         }
                     }
@@ -157,8 +160,11 @@ impl Protocol for InspIrcd {
                         if let Some(key) = scan_key(modes, params) {
                             out.push(NetEvent::ChannelKey { channel: chan.to_string(), key });
                         }
-                        for (op, uid) in scan_ops(modes, params) {
+                        for (op, uid) in scan_status(modes, params, 'o') {
                             out.push(NetEvent::ChannelOp { channel: chan.to_string(), uid, op });
+                        }
+                        for (voice, uid) in scan_status(modes, params, 'v') {
+                            out.push(NetEvent::ChannelVoice { channel: chan.to_string(), uid, voice });
                         }
                         out
                     }
@@ -345,9 +351,10 @@ fn scan_key(modes: &str, params: &[&str]) -> Option<Option<String>> {
     result
 }
 
-// Walk a mode change and its params for op grants/revokes (+o/-o). Returns
-// (is_op, uid) per `o` in the change, using the same param cursor as scan_key.
-fn scan_ops(modes: &str, params: &[&str]) -> Vec<(bool, String)> {
+// Walk a mode change and its params for grants/revokes of one status mode
+// (`want`, e.g. 'o' or 'v'). Returns (is_set, uid) per match, using the same
+// param cursor as scan_key.
+fn scan_status(modes: &str, params: &[&str], want: char) -> Vec<(bool, String)> {
     let mut adding = true;
     let mut pi = 0;
     let mut out = Vec::new();
@@ -355,7 +362,7 @@ fn scan_ops(modes: &str, params: &[&str]) -> Vec<(bool, String)> {
         match m {
             '+' => adding = true,
             '-' => adding = false,
-            'o' => {
+            c if c == want => {
                 if let Some(p) = params.get(pi) {
                     out.push((adding, p.to_string()));
                 }
@@ -424,6 +431,21 @@ mod tests {
         );
         let ev = proto().parse(":42S FMODE #chan 1783845132 -m");
         assert!(!ev.iter().any(|e| matches!(e, NetEvent::ChannelModeChange { .. })), "own change filtered: {ev:?}");
+    }
+
+    // FMODE and an FJOIN prefix both surface voice status changes.
+    #[test]
+    fn parses_voice_status() {
+        // +o then +v with two params: op for the first uid, voice for the second.
+        let ev = proto().parse(":0IRAAAAAB FMODE #chan 1783845132 +ov 0IRAAAAAB 0IRAAAAAC");
+        assert!(ev.iter().any(|e| matches!(e, NetEvent::ChannelOp { uid, op: true, .. } if uid == "0IRAAAAAB")), "op: {ev:?}");
+        assert!(ev.iter().any(|e| matches!(e, NetEvent::ChannelVoice { uid, voice: true, .. } if uid == "0IRAAAAAC")), "voice: {ev:?}");
+        // A -v revokes voice.
+        let ev = proto().parse(":0IRAAAAAB FMODE #chan 1783845132 -v 0IRAAAAAC");
+        assert!(ev.iter().any(|e| matches!(e, NetEvent::ChannelVoice { uid, voice: false, .. } if uid == "0IRAAAAAC")), "devoice: {ev:?}");
+        // A +v join prefix surfaces a voice event alongside the Join.
+        let ev = proto().parse(":0IR FJOIN #chan 1783845132 +tn :v,0IRAAAAAD");
+        assert!(ev.iter().any(|e| matches!(e, NetEvent::ChannelVoice { uid, voice: true, .. } if uid == "0IRAAAAAD")), "join voice: {ev:?}");
     }
 
     #[test]
