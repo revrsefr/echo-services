@@ -1916,7 +1916,7 @@ mod tests {
             name: "alice".into(), password_hash: "OTHER".into(), email: None,
             ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None,
         };
-        let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(winner));
+        let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)));
         e.gossip_ingest(entry).unwrap();
 
         // The local session is logged out and its orphaned channel is dropped.

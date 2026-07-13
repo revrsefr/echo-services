@@ -42,6 +42,9 @@ const SUBSCRIBER_BUFFER: usize = 1024;
 // Every RPC (both services) needs `authorization: Bearer <token>` matching the
 // configured secret. Constant-time compare — same posture as password/secret
 // checks elsewhere in this codebase, cheap insurance against a timing side-channel.
+// Status is tonic's error type, used by every RPC — boxing it here would fight
+// the framework's convention for marginal size gain.
+#[allow(clippy::result_large_err)]
 fn authorize<T>(req: &Request<T>, token: &str) -> Result<(), Status> {
     let got = req
         .metadata()
@@ -409,7 +412,7 @@ mod tests {
             vhost: None,
             vhost_request: None,
         };
-        let registered = LogEntry::for_test("A", 0, 1, Event::AccountRegistered(acct));
+        let registered = LogEntry::for_test("A", 0, 1, Event::AccountRegistered(Box::new(acct)));
         let wire = to_wire(&registered).expect("account registration replicates");
         match wire.kind {
             Some(Kind::AccountRegistered(a)) => {

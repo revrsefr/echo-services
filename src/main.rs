@@ -39,6 +39,7 @@ async fn main() -> Result<()> {
 
     let proto = Box::new(InspIrcd::new(
         cfg.server.name.clone(),
+        cfg.server.description.clone(),
         cfg.server.sid.clone(),
         cfg.uplink.password.clone(),
         cfg.server.protocol,

@@ -35,7 +35,9 @@ enum Msg {
         #[serde(default)]
         reply: bool,
     },
-    Entry { entry: LogEntry },
+    // Boxed: a LogEntry carries an Event, whose largest variant dwarfs the other
+    // Msg variants.
+    Entry { entry: Box<LogEntry> },
 }
 
 // Start the listener (if bound) and a dialer per configured peer. When TLS is
@@ -203,7 +205,7 @@ where
             loop {
                 match rx.recv().await {
                     Ok(entry) => {
-                        if send(&tx, &Msg::Entry { entry }).await.is_err() {
+                        if send(&tx, &Msg::Entry { entry: Box::new(entry) }).await.is_err() {
                             break;
                         }
                     }
@@ -229,7 +231,7 @@ where
                 Ok(Msg::Digest { versions, reply }) => {
                     let missing = engine.lock().await.gossip_missing(&versions);
                     for entry in missing {
-                        let _ = send(&tx, &Msg::Entry { entry }).await;
+                        let _ = send(&tx, &Msg::Entry { entry: Box::new(entry) }).await;
                     }
                     if reply {
                         let versions = engine.lock().await.gossip_digest();
@@ -237,7 +239,7 @@ where
                     }
                 }
                 Ok(Msg::Entry { entry }) => {
-                    if let Err(e) = engine.lock().await.gossip_ingest(entry) {
+                    if let Err(e) = engine.lock().await.gossip_ingest(*entry) {
                         tracing::warn!(%e, "gossip ingest failed");
                     }
                 }

@@ -42,18 +42,33 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
-        Some("SIGNKICK") => toggle(me, from, ctx, db, chan, ChanSetting::SignKick, args.get(3).copied(), "SIGNKICK"),
-        Some("PRIVATE") => toggle(me, from, ctx, db, chan, ChanSetting::Private, args.get(3).copied(), "PRIVATE"),
-        Some("PEACE") => toggle(me, from, ctx, db, chan, ChanSetting::Peace, args.get(3).copied(), "PEACE"),
-        Some("SECUREOPS") => toggle(me, from, ctx, db, chan, ChanSetting::SecureOps, args.get(3).copied(), "SECUREOPS"),
-        Some("KEEPTOPIC") => toggle(me, from, ctx, db, chan, ChanSetting::KeepTopic, args.get(3).copied(), "KEEPTOPIC"),
-        Some("TOPICLOCK") => toggle(me, from, ctx, db, chan, ChanSetting::TopicLock, args.get(3).copied(), "TOPICLOCK"),
+        Some("SIGNKICK") => toggle(me, from, ctx, db, chan, ChanSetting::SignKick, args.get(3).copied()),
+        Some("PRIVATE") => toggle(me, from, ctx, db, chan, ChanSetting::Private, args.get(3).copied()),
+        Some("PEACE") => toggle(me, from, ctx, db, chan, ChanSetting::Peace, args.get(3).copied()),
+        Some("SECUREOPS") => toggle(me, from, ctx, db, chan, ChanSetting::SecureOps, args.get(3).copied()),
+        Some("KEEPTOPIC") => toggle(me, from, ctx, db, chan, ChanSetting::KeepTopic, args.get(3).copied()),
+        Some("TOPICLOCK") => toggle(me, from, ctx, db, chan, ChanSetting::TopicLock, args.get(3).copied()),
         _ => ctx.notice(me, from.uid, "Syntax: SET <#channel> FOUNDER <account> | DESC <text> | SIGNKICK {ON|OFF} | PRIVATE {ON|OFF} | PEACE {ON|OFF} | SECUREOPS {ON|OFF} | KEEPTOPIC {ON|OFF} | TOPICLOCK {ON|OFF}"),
     }
 }
 
+// The SET keyword for a channel option, used in its messages.
+fn label(setting: ChanSetting) -> &'static str {
+    match setting {
+        ChanSetting::SignKick => "SIGNKICK",
+        ChanSetting::Private => "PRIVATE",
+        ChanSetting::Peace => "PEACE",
+        ChanSetting::SecureOps => "SECUREOPS",
+        ChanSetting::KeepTopic => "KEEPTOPIC",
+        ChanSetting::TopicLock => "TOPICLOCK",
+        ChanSetting::BotGreet => "GREET",
+        ChanSetting::NoBot => "NOBOT",
+    }
+}
+
 // Flip one on/off channel option, reporting the new state.
-fn toggle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store, chan: &str, setting: ChanSetting, arg: Option<&str>, name: &str) {
+fn toggle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store, chan: &str, setting: ChanSetting, arg: Option<&str>) {
+    let name = label(setting);
     let on = match arg.map(|s| s.to_ascii_uppercase()).as_deref() {
         Some("ON") => true,
         Some("OFF") => false,

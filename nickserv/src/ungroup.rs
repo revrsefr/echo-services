@@ -12,7 +12,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         ctx.notice(me, from.uid, "You can't ungroup your main account name.");
         return;
     }
-    if db.resolve_account(nick).map_or(true, |a| !a.eq_ignore_ascii_case(account)) {
+    if db.resolve_account(nick).is_none_or(|a| !a.eq_ignore_ascii_case(account)) {
         ctx.notice(me, from.uid, format!("\x02{nick}\x02 isn't grouped to your account."));
         return;
     }

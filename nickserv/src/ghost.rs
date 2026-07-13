@@ -4,6 +4,9 @@ use fedserv_api::NetView;
 
 // GHOST/RECOVER <nick> [password]: rename off a session using a nick you own,
 // either by being identified to its account or giving that account's password.
+// Every argument is a distinct input the guest-rename needs (the guest nick and
+// its sequence counter among them), so the count is inherent.
+#[allow(clippy::too_many_arguments)]
 pub fn handle(me: &str, guest_nick: &str, guest_seq: &mut u32, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &dyn Store) {
     let Some(&target) = args.get(1) else {
         ctx.notice(me, from.uid, "Syntax: GHOST <nick> [password]");

@@ -7,17 +7,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct InspIrcd {
     sid: String,
     name: String,
+    description: String,
     password: String,
     protocol: u32,
     ts: u64,
 }
 
 impl InspIrcd {
-    pub fn new(name: String, sid: String, password: String, protocol: u32, ts: u64) -> Self {
-        Self { sid, name, password, protocol, ts }
+    pub fn new(name: String, description: String, sid: String, password: String, protocol: u32, ts: u64) -> Self {
+        Self { sid, name, description, password, protocol, ts }
     }
 
-    fn from_us(&self, cmd: String) -> String {
+    fn sourced(&self, cmd: String) -> String {
         format!(":{} {}", self.sid, cmd)
     }
 }
@@ -28,7 +29,7 @@ impl Protocol for InspIrcd {
             format!("CAPAB START {}", self.protocol),
             format!("CAPAB CAPABILITIES :PROTOCOL={}", self.protocol),
             "CAPAB END".to_string(),
-            format!("SERVER {} {} {} :{}", self.name, self.password, self.sid, "Federated Services"),
+            format!("SERVER {} {} {} :{}", self.name, self.password, self.sid, self.description),
         ]
     }
 
@@ -36,7 +37,7 @@ impl Protocol for InspIrcd {
         // Strip an optional IRCv3 message-tag prefix (@k=v;… ) — insp tags PRIVMSGs
         // with time/msgid, and it sits before the :source.
         let line = match line.strip_prefix('@') {
-            Some(rest) => rest.splitn(2, ' ').nth(1).unwrap_or(""),
+            Some(rest) => rest.split_once(' ').map(|x| x.1).unwrap_or(""),
             None => line,
         };
         let (source, rest) = match line.strip_prefix(':') {
@@ -227,15 +228,15 @@ impl Protocol for InspIrcd {
 
     fn serialize(&mut self, action: &NetAction) -> Vec<String> {
         match action {
-            NetAction::Burst => vec![self.from_us(format!("BURST {}", self.ts))],
-            NetAction::EndBurst => vec![self.from_us("ENDBURST".to_string())],
+            NetAction::Burst => vec![self.sourced(format!("BURST {}", self.ts))],
+            NetAction::EndBurst => vec![self.sourced("ENDBURST".to_string())],
             NetAction::Pong { token, from } => {
                 let dest = from.clone().unwrap_or_else(|| self.sid.clone());
-                vec![self.from_us(format!("PONG {} {}", dest, token))]
+                vec![self.sourced(format!("PONG {} {}", dest, token))]
             }
             // insp4 UID: uuid nickts nick realhost disphost realuser dispuser ip signonts +modes :gecos
             // (both a real AND a displayed user field — see m_spanningtree/uid.cpp Builder).
-            NetAction::IntroduceUser { uid, nick, ident, host, gecos } => vec![self.from_us(format!(
+            NetAction::IntroduceUser { uid, nick, ident, host, gecos } => vec![self.sourced(format!(
                 "UID {uid} {ts} {nick} {host} {host} {ident} {ident} 0.0.0.0 {ts} +i :{gecos}",
                 uid = uid, ts = self.ts, nick = nick, host = host, ident = ident, gecos = gecos
             ))],
@@ -247,7 +248,7 @@ impl Protocol for InspIrcd {
             }
             // ACCTREGRESULT <reqid> <kind> <account> <status> <code> :<message>
             NetAction::AccountResponse { reqid, kind, account, status, code, message } => {
-                vec![self.from_us(format!(
+                vec![self.sourced(format!(
                     "ACCTREGRESULT {} {} {} {} {} :{}",
                     reqid, kind, account, status, code, message
                 ))]
@@ -259,11 +260,11 @@ impl Protocol for InspIrcd {
                     line.push(' ');
                     line.push_str(d);
                 }
-                vec![self.from_us(line)]
+                vec![self.sourced(line)]
             }
             // METADATA <target> <key> :<value> — "*" is server-global metadata.
             NetAction::Metadata { target, key, value } => {
-                vec![self.from_us(format!("METADATA {} {} :{}", target, key, value))]
+                vec![self.sourced(format!("METADATA {} {} :{}", target, key, value))]
             }
             // SVSNICK <uid> <newnick> <nickts> — the new nick takes the current
             // time as its TS so it wins any collision resolution.
@@ -273,23 +274,23 @@ impl Protocol for InspIrcd {
             // ENCAP the target's server: CHGHOST <uid> <newhost>, to set a vhost.
             NetAction::SetHost { uid, host } => {
                 let target = uid.get(..3).unwrap_or(uid.as_str());
-                vec![self.from_us(format!("ENCAP {} CHGHOST {} {}", target, uid, host))]
+                vec![self.sourced(format!("ENCAP {} CHGHOST {} {}", target, uid, host))]
             }
             NetAction::SetIdent { uid, ident } => {
                 let target = uid.get(..3).unwrap_or(uid.as_str());
-                vec![self.from_us(format!("ENCAP {} CHGIDENT {} {}", target, uid, ident))]
+                vec![self.sourced(format!("ENCAP {} CHGIDENT {} {}", target, uid, ident))]
             }
             NetAction::ForceNick { uid, nick } => {
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(self.ts);
-                vec![self.from_us(format!("SVSNICK {} {} {}", uid, nick, now))]
+                vec![self.sourced(format!("SVSNICK {} {} {}", uid, nick, now))]
             }
             // SVSJOIN <uid> <chan> [key]: force a user into a channel, sourced from
             // the services server. Used to apply an account's auto-join list.
             NetAction::ForceJoin { uid, channel, key } => {
                 if key.is_empty() {
-                    vec![self.from_us(format!("SVSJOIN {} {}", uid, channel))]
+                    vec![self.sourced(format!("SVSJOIN {} {}", uid, channel))]
                 } else {
-                    vec![self.from_us(format!("SVSJOIN {} {} {}", uid, channel, key))]
+                    vec![self.sourced(format!("SVSJOIN {} {} {}", uid, channel, key))]
                 }
             }
             // FMODE <chan> <ts> <modes>. The ircd drops an FMODE whose TS is newer
@@ -299,7 +300,7 @@ impl Protocol for InspIrcd {
             NetAction::ChannelMode { from, channel, modes } => {
                 let cmd = format!("FMODE {} 1 {}", channel, modes);
                 if from.is_empty() {
-                    vec![self.from_us(cmd)]
+                    vec![self.sourced(cmd)]
                 } else {
                     vec![format!(":{} {}", from, cmd)]
                 }
@@ -397,7 +398,7 @@ mod tests {
     use super::*;
 
     fn proto() -> InspIrcd {
-        InspIrcd::new("services.test".into(), "42S".into(), "pw".into(), 1206, 1)
+        InspIrcd::new("services.test".into(), "Federated Services".into(), "42S".into(), "pw".into(), 1206, 1)
     }
 
     // A remote nick change must surface as a NickChange for the source uid, or

@@ -109,7 +109,9 @@ fn verified_default() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event")]
 pub enum Event {
-    AccountRegistered(Account),
+    // Boxed: Account is far larger than any other variant, so this keeps every
+    // small event in the log from being sized to it.
+    AccountRegistered(Box<Account>),
     CertAdded { account: String, fp: String },
     CertRemoved { account: String, fp: String },
     AccountEmailSet { account: String, email: Option<String> },
@@ -692,7 +694,7 @@ impl EventLog {
         self.entries
             .iter()
             .filter(|e| e.event.scope() == Scope::Global)
-            .filter(|e| peer.get(&e.origin).map_or(true, |&s| e.seq > s))
+            .filter(|e| peer.get(&e.origin).is_none_or(|&s| e.seq > s))
             .cloned()
             .collect()
     }
@@ -879,7 +881,7 @@ impl Db {
     /// Rewrite the log to one entry per account and channel, reclaiming churn.
     pub fn compact(&mut self) -> std::io::Result<()> {
         let before = self.log.len();
-        let mut snapshot: Vec<Event> = self.accounts.values().cloned().map(Event::AccountRegistered).collect();
+        let mut snapshot: Vec<Event> = self.accounts.values().cloned().map(|a| Event::AccountRegistered(Box::new(a))).collect();
         for c in self.channels.values() {
             snapshot.push(Event::ChannelRegistered { name: c.name.clone(), founder: c.founder.clone(), ts: c.ts });
             if !c.lock_on.is_empty() || !c.lock_off.is_empty() {
@@ -1041,7 +1043,7 @@ impl Db {
             vhost: None,
             vhost_request: None,
         };
-        self.log.append(Event::AccountRegistered(account.clone())).map_err(|_| RegError::Internal)?;
+        self.log.append(Event::AccountRegistered(Box::new(account.clone()))).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
         Ok(())
     }
@@ -1081,7 +1083,7 @@ impl Db {
     /// globally unique, so this is unambiguous.
     pub fn certfp_owner(&self, fp: &str) -> Option<&str> {
         let fp = fp.to_ascii_lowercase();
-        self.accounts.values().find(|a| a.certfps.iter().any(|c| *c == fp)).map(|a| a.name.as_str())
+        self.accounts.values().find(|a| a.certfps.contains(&fp)).map(|a| a.name.as_str())
     }
 
     /// The fingerprints registered to an account (empty if unknown/none).
@@ -1096,7 +1098,7 @@ impl Db {
 
     /// Whether `account`'s email is confirmed (true for unknown/legacy accounts).
     pub fn is_verified(&self, account: &str) -> bool {
-        self.account(account).map_or(true, |a| a.verified)
+        self.account(account).is_none_or(|a| a.verified)
     }
 
     /// Mark `account`'s email confirmed.
@@ -1443,7 +1445,7 @@ impl Db {
         let k = key(account);
         match self.accounts.get(&k) {
             None => return Err(CertError::NoAccount),
-            Some(a) if !a.certfps.iter().any(|c| *c == fp) => return Ok(false),
+            Some(a) if !a.certfps.contains(&fp) => return Ok(false),
             Some(_) => {}
         }
         self.log.append(Event::CertRemoved { account: account.to_string(), fp: fp.clone() }).map_err(|_| CertError::Internal)?;
@@ -2169,7 +2171,7 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             let k = key(&a.name);
             let keep_existing = accounts.get(&k).is_some_and(|cur| owns_over(cur, &a));
             if !keep_existing {
-                accounts.insert(k, a);
+                accounts.insert(k, *a);
             }
         }
         Event::CertAdded { account, fp } => {
@@ -2826,8 +2828,8 @@ mod tests {
         };
         let converge = |first: &Account, second: &Account| {
             let (mut acc, mut ch, mut gr, mut bo, mut hc) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HostConfig::default());
-            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, Event::AccountRegistered(first.clone()));
-            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, Event::AccountRegistered(second.clone()));
+            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, Event::AccountRegistered(Box::new(first.clone())));
+            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, Event::AccountRegistered(Box::new(second.clone())));
             acc["alice"].password_hash.clone()
         };
         // Earlier registration wins, regardless of which claim applies first.
@@ -3100,7 +3102,7 @@ mod tests {
             name: "bob".into(), password_hash: "x".into(), email: None,
             ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None,
         };
-        let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, event: Event::AccountRegistered(bob) };
+        let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, event: Event::AccountRegistered(Box::new(bob)) };
         db.ingest(entry).unwrap();
         assert!(db.exists("bob"), "peer's account is present locally");
         assert!(db.exists("alice"), "local account still there");
