@@ -53,6 +53,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             }
             ctx.login(from.uid, &account);
+            ctx.count("nickserv.identify");
             ctx.notice(me, from.uid, format!("You're now identified as \x02{}\x02. Welcome back!", account));
             // Apply the account's auto-join list (AJOIN).
             for entry in db.ajoin_list(&account) {
@@ -66,6 +67,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         }
         None => {
             db.note_auth(account_name, false);
+            ctx.count("nickserv.identify_fail");
             ctx.notice(me, from.uid, "Invalid password. Please try again.");
         }
     }
