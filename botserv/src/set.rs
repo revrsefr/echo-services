@@ -42,6 +42,19 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         return;
     }
 
+    // VOTEKICK takes a vote count (0 = off), not ON/OFF.
+    if option.eq_ignore_ascii_case("VOTEKICK") {
+        match args.get(3).and_then(|s| s.parse::<u16>().ok()) {
+            Some(n) => match db.set_votekick(chan, n) {
+                Ok(()) if n == 0 => ctx.notice(me, from.uid, format!("\x02!votekick\x02 is now disabled in \x02{chan}\x02.")),
+                Ok(()) => ctx.notice(me, from.uid, format!("\x02{n}\x02 vote(s) will now carry a \x02!votekick\x02/\x02!voteban\x02 in \x02{chan}\x02.")),
+                Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+            },
+            None => ctx.notice(me, from.uid, "Syntax: SET <#channel> VOTEKICK <number> (0 to disable)"),
+        }
+        return;
+    }
+
     // BANEXPIRE takes a duration, not ON/OFF.
     if option.eq_ignore_ascii_case("BANEXPIRE") {
         let Some(&arg) = args.get(3) else {

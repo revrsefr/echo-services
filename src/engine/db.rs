@@ -376,6 +376,9 @@ pub struct KickerSettings {
     // Warn a user (once) before kicking them the first time.
     #[serde(default)]
     pub warn: bool,
+    // Community !votekick/!voteban: votes needed to act (0 = disabled).
+    #[serde(default)]
+    pub votekick: u16,
     // Don't kick channel operators, whatever they send.
     #[serde(default)]
     pub dontkickops: bool,
@@ -847,7 +850,7 @@ impl Db {
             if let Some(bot) = &c.assigned_bot {
                 snapshot.push(Event::ChannelBotAssigned { channel: c.name.clone(), bot: bot.clone() });
             }
-            if c.kickers.any() || c.kickers.dontkickops || c.kickers.ttb > 0 || c.kickers.ban_expire > 0 {
+            if c.kickers.any() || c.kickers.dontkickops || c.kickers.ttb > 0 || c.kickers.ban_expire > 0 || c.kickers.votekick > 0 {
                 snapshot.push(Event::ChannelKickerSet { channel: c.name.clone(), kickers: c.kickers.clone() });
             }
             if !c.badwords.is_empty() {
@@ -1509,6 +1512,11 @@ impl Db {
     /// How long a kicker ban lasts, in seconds (0 = until removed).
     pub fn set_ban_expire(&mut self, channel: &str, secs: u32) -> Result<(), ChanError> {
         self.update_kickers(channel, |k| k.ban_expire = secs)
+    }
+
+    /// Votes needed for a community !votekick/!voteban (0 = disabled).
+    pub fn set_votekick(&mut self, channel: &str, votes: u16) -> Result<(), ChanError> {
+        self.update_kickers(channel, |k| k.votekick = votes)
     }
 
     /// Add a badword regex. Validates it compiles within the size limit; returns
@@ -2314,6 +2322,9 @@ impl Store for Db {
     }
     fn set_ban_expire(&mut self, channel: &str, secs: u32) -> Result<(), ChanError> {
         Db::set_ban_expire(self, channel, secs)
+    }
+    fn set_votekick(&mut self, channel: &str, votes: u16) -> Result<(), ChanError> {
+        Db::set_votekick(self, channel, votes)
     }
     fn badword_add(&mut self, channel: &str, pattern: &str) -> Result<bool, ChanError> {
         Db::badword_add(self, channel, pattern)

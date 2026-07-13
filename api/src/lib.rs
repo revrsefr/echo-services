@@ -589,6 +589,7 @@ pub trait Store {
     fn set_repeat_kicker(&mut self, channel: &str, times: u16) -> Result<(), ChanError>;
     fn set_ttb(&mut self, channel: &str, ttb: u16) -> Result<(), ChanError>;
     fn set_ban_expire(&mut self, channel: &str, secs: u32) -> Result<(), ChanError>;
+    fn set_votekick(&mut self, channel: &str, votes: u16) -> Result<(), ChanError>;
     // BADWORDS list (regex patterns). add validates the pattern compiles.
     fn badword_add(&mut self, channel: &str, pattern: &str) -> Result<bool, ChanError>;
     fn badword_del(&mut self, channel: &str, pattern: &str) -> Result<bool, ChanError>;

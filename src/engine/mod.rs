@@ -23,6 +23,9 @@ const SASL_MECHS: &str = "EXTERNAL,SCRAM-SHA-512,SCRAM-SHA-256,PLAIN";
 // The in-channel fantasy trigger, e.g. `!op`.
 const FANTASY_PREFIX: &str = "!";
 
+// A community vote lapses if it isn't reached within this many seconds.
+const VOTE_TTL: u64 = 120;
+
 // A client's base64 response is split into chunks of this length; a chunk
 // shorter than this (or a lone "+") marks the end of the response (SASL 3.1).
 const MAX_AUTHENTICATE: usize = 400;
@@ -119,6 +122,15 @@ pub struct Engine {
     // ServiceCtx::count) plus engine-internal events; exposed over the gRPC
     // Stats API. Ordered so a snapshot is stable.
     stats: std::collections::BTreeMap<String, u64>,
+    // In-flight community !votekick/!voteban tallies, keyed by (channel_lc,
+    // target_nick_lc). Ephemeral; expire after VOTE_TTL.
+    votes: HashMap<(String, String), VoteState>,
+}
+
+struct VoteState {
+    ban: bool,
+    voters: std::collections::HashSet<String>, // voter uids, one vote each
+    started: u64,
 }
 
 struct CachedBadwords {
@@ -184,6 +196,7 @@ impl Engine {
             trigger_cache: HashMap::new(),
             pending_unbans: Vec::new(),
             stats: std::collections::BTreeMap::new(),
+            votes: HashMap::new(),
         }
     }
 
@@ -990,16 +1003,20 @@ impl Engine {
         let mut ctx = ServiceCtx::default();
         let sender = Sender { uid: from, nick: &nick, account: account.as_deref(), privs };
         if to.starts_with('#') || to.starts_with('&') {
-            // In-channel: a fantasy command (!op …) if a bot is assigned, plus a
-            // BotServ kicker check on every line.
-            self.fantasy(&sender, to, text, &mut ctx);
-            let kicks = self.kicker_check(from, to, text);
-            let kicked = kicks.iter().any(|a| matches!(a, NetAction::Kick { .. }));
-            ctx.actions.extend(kicks);
-            // Don't reward a line the bot just kicked for with a response.
-            if !kicked {
-                if let Some(resp) = self.trigger_response(from, to, text) {
-                    ctx.actions.push(resp);
+            // A community !votekick/!voteban is handled on its own; otherwise the
+            // line runs through fantasy (!op …), the kickers, and triggers.
+            if let Some(vote_actions) = self.handle_vote(from, to, text) {
+                ctx.actions.extend(vote_actions);
+            } else {
+                self.fantasy(&sender, to, text, &mut ctx);
+                let kicks = self.kicker_check(from, to, text);
+                let kicked = kicks.iter().any(|a| matches!(a, NetAction::Kick { .. }));
+                ctx.actions.extend(kicks);
+                // Don't reward a line the bot just kicked for with a response.
+                if !kicked {
+                    if let Some(resp) = self.trigger_response(from, to, text) {
+                        ctx.actions.push(resp);
+                    }
                 }
             }
             // BOTSTATS: count activity in channels that have a bot.
@@ -1250,6 +1267,57 @@ impl Engine {
             bucket.remove(uid);
             !bucket.is_empty()
         });
+    }
+
+    // Community moderation: `!votekick <nick>` / `!voteban <nick>`. Each voter
+    // (by uid) counts once; when the channel's VOTEKICK threshold is reached the
+    // assigned bot kicks (or bans then kicks) the target. Returns None if the line
+    // isn't a vote command, so the caller can fall through to fantasy.
+    fn handle_vote(&mut self, from: &str, channel: &str, text: &str) -> Option<Vec<NetAction>> {
+        let (ban, target_raw) = if let Some(t) = text.strip_prefix("!votekick ") {
+            (false, t)
+        } else {
+            (true, text.strip_prefix("!voteban ")?)
+        };
+        let target_nick = target_raw.trim();
+        if target_nick.is_empty() || target_nick.contains(' ') {
+            return Some(Vec::new());
+        }
+        let threshold = self.db.channel(channel).map(|c| c.kickers.votekick).unwrap_or(0);
+        let botnick = self.db.channel(channel).and_then(|c| c.assigned_bot.clone());
+        let (Some(botnick), true) = (botnick, threshold > 0) else { return Some(Vec::new()) };
+        let Some(botuid) = self.network.uid_by_nick(&botnick).map(str::to_string) else { return Some(Vec::new()) };
+        let Some(target_uid) = self.network.uid_by_nick(target_nick).map(str::to_string) else {
+            return Some(vec![NetAction::Privmsg { from: botuid, to: channel.to_string(), text: format!("There's no \x02{target_nick}\x02 here to vote on.") }]);
+        };
+        let target_display = self.network.nick_of(&target_uid).unwrap_or(target_nick).to_string();
+        let now = self.now_secs();
+        let key = (channel.to_ascii_lowercase(), target_display.to_ascii_lowercase());
+
+        let vs = self.votes.entry(key.clone()).or_insert(VoteState { ban, voters: std::collections::HashSet::new(), started: now });
+        if now.saturating_sub(vs.started) > VOTE_TTL {
+            *vs = VoteState { ban, voters: std::collections::HashSet::new(), started: now };
+        }
+        vs.ban = ban;
+        vs.voters.insert(from.to_string());
+        let count = vs.voters.len() as u16;
+
+        if count < threshold {
+            let verb = if ban { "ban" } else { "kick" };
+            return Some(vec![NetAction::Privmsg { from: botuid, to: channel.to_string(), text: format!("\x02{count}\x02/\x02{threshold}\x02 votes to {verb} \x02{target_display}\x02.") }]);
+        }
+        self.votes.remove(&key);
+        self.bump("botserv.votekick");
+        let mut out = Vec::new();
+        if ban {
+            if let Some(host) = self.network.host_of(&target_uid).map(str::to_string) {
+                out.push(NetAction::ChannelMode { from: botuid.clone(), channel: channel.to_string(), modes: format!("+b *!*@{host}") });
+            }
+        }
+        let verb = if ban { "banned" } else { "kicked" };
+        out.push(NetAction::Privmsg { from: botuid.clone(), to: channel.to_string(), text: format!("Vote passed — \x02{target_display}\x02 has been {verb}.") });
+        out.push(NetAction::Kick { from: botuid, channel: channel.to_string(), uid: target_uid, reason: format!("Voted out by the channel ({count} votes)") });
+        Some(out)
     }
 
     // Fantasy commands: `!op nick`, `!kick nick`, `!topic …` spoken in a channel
@@ -2549,6 +2617,24 @@ mod tests {
         );
         // A non-matching line is ignored.
         assert!(!say(&mut e, "goodbye all").iter().any(|a| matches!(a, NetAction::Privmsg { .. })), "no response on miss");
+    }
+
+    // Community !votekick tallies distinct voters and kicks at the threshold.
+    #[test]
+    fn botserv_votekick_reaches_threshold() {
+        let (mut e, _p) = kicker_fixture("bsvote");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let vote = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "#c".into(), text: t.into() });
+        bs(&mut e, "SET #c VOTEKICK 2");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "victim".into(), host: "h".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "carol".into(), host: "h".into() });
+        let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { from, uid, .. } if from.starts_with("42SB") && uid == "000AAAAAV"));
+
+        // First voter, then the same voter again (deduped) — no kick yet.
+        assert!(!kicked(&vote(&mut e, "000AAAAAB", "!votekick victim")), "1 vote: no kick");
+        assert!(!kicked(&vote(&mut e, "000AAAAAB", "!votekick victim")), "same voter doesn't double-count");
+        // A second distinct voter reaches the threshold.
+        assert!(kicked(&vote(&mut e, "000AAAAAC", "!votekick victim")), "2 distinct votes: kicked");
     }
 
     // BOTSTATS reports per-channel activity the bot has seen this session.
