@@ -157,6 +157,9 @@ pub struct ChanSettings {
     // Hide the channel from ChanServ LIST.
     #[serde(default)]
     pub private: bool,
+    // Forbid using ChanServ to act against someone with equal-or-higher access.
+    #[serde(default)]
+    pub peace: bool,
 }
 
 // A registered channel and who owns it.
@@ -586,7 +589,7 @@ impl Db {
             if !c.entrymsg.is_empty() {
                 snapshot.push(Event::ChannelEntryMsgSet { channel: c.name.clone(), msg: c.entrymsg.clone() });
             }
-            if c.settings.signkick || c.settings.private {
+            if c.settings.signkick || c.settings.private || c.settings.peace {
                 snapshot.push(Event::ChannelSettingsSet { channel: c.name.clone(), settings: c.settings });
             }
         }
@@ -1115,6 +1118,7 @@ impl Db {
         match setting {
             ChanSetting::SignKick => settings.signkick = on,
             ChanSetting::Private => settings.private = on,
+            ChanSetting::Peace => settings.peace = on,
         }
         self.log
             .append(Event::ChannelSettingsSet { channel: channel.to_string(), settings })
@@ -1479,6 +1483,7 @@ fn channel_view(c: &ChannelInfo) -> ChannelView {
         entrymsg: c.entrymsg.clone(),
         signkick: c.settings.signkick,
         private: c.settings.private,
+        peace: c.settings.peace,
     }
 }
 
@@ -1611,6 +1616,21 @@ mod tests {
         }
         let s = Db::open(&p, "N1").channel("#c").unwrap().settings;
         assert!(s.signkick && !s.private, "settings replay from the log");
+    }
+
+    // Access ranks order founder > op > voice > none for PEACE comparisons.
+    #[test]
+    fn access_rank_orders_founder_op_voice() {
+        let mut db = Db::open(&tmp("rank"), "N1");
+        db.register_channel("#c", "boss").unwrap();
+        db.access_add("#c", "op1", "op").unwrap();
+        db.access_add("#c", "v1", "voice").unwrap();
+        let cv = Store::channel(&db, "#c").unwrap();
+        assert_eq!(cv.access_rank(Some("boss")), 3);
+        assert_eq!(cv.access_rank(Some("OP1")), 2, "case-insensitive");
+        assert_eq!(cv.access_rank(Some("v1")), 1);
+        assert_eq!(cv.access_rank(Some("nobody")), 0);
+        assert_eq!(cv.access_rank(None), 0);
     }
 
     // A wrong code is tolerated a few times, then the code is burned so it can't

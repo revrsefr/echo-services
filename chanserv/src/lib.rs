@@ -104,6 +104,7 @@ impl Service for ChanServ {
                         let mut opts = Vec::new();
                         if info.signkick { opts.push("SIGNKICK"); }
                         if info.private { opts.push("PRIVATE"); }
+                        if info.peace { opts.push("PEACE"); }
                         if !opts.is_empty() {
                             ctx.notice(me, from.uid, format!("  Options    : {}", opts.join(", ")));
                         }
@@ -233,6 +234,20 @@ fn require_op(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &dy
             false
         }
     }
+}
+
+// PEACE: returns true (and notices) if `from` may not act against `target_uid`
+// because the channel has PEACE set and the target holds equal-or-higher access.
+fn peace_blocks(me: &str, from: &Sender, chan: &str, target_uid: &str, ctx: &mut ServiceCtx, net: &dyn NetView, db: &dyn Store) -> bool {
+    let Some(info) = db.channel(chan) else { return false };
+    if !info.peace {
+        return false;
+    }
+    if info.access_rank(net.account_of(target_uid)) >= info.access_rank(from.account) {
+        ctx.notice(me, from.uid, "\x02PEACE\x02 is set: you can't act against someone with equal or higher access.");
+        return true;
+    }
+    false
 }
 
 // Parse a mode spec like "+nt-s" into (locked-on, locked-off) mode chars. `r` is

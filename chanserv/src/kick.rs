@@ -15,6 +15,9 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         ctx.notice(me, from.uid, format!("\x02{nick}\x02 isn't here."));
         return;
     };
+    if super::peace_blocks(me, from, chan, target, ctx, net, db) {
+        return;
+    }
     let mut reason = if args.len() > 3 { args[3..].join(" ") } else { "Kicked".to_string() };
     // SIGNKICK: attribute the kick to whoever asked for it.
     if db.channel(chan).is_some_and(|c| c.signkick) {

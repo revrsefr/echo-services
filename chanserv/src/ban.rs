@@ -15,6 +15,9 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         ctx.notice(me, from.uid, format!("\x02{nick}\x02 isn't here."));
         return;
     };
+    if super::peace_blocks(me, from, chan, &target, ctx, net, db) {
+        return;
+    }
     let host = net.host_of(&target).unwrap_or("*");
     ctx.channel_mode(me, chan, &format!("+b *!*@{host}"));
     let reason = if args.len() > 3 { args[3..].join(" ") } else { "Banned".to_string() };

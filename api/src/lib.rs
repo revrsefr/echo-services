@@ -294,6 +294,7 @@ pub struct ChannelView {
     // ChanServ SET options.
     pub signkick: bool,
     pub private: bool,
+    pub peace: bool,
 }
 
 // A single ChanServ SET option, named for the typed `set_channel_setting` call.
@@ -301,6 +302,7 @@ pub struct ChannelView {
 pub enum ChanSetting {
     SignKick,
     Private,
+    Peace,
 }
 
 impl ChannelView {
@@ -314,6 +316,18 @@ impl ChannelView {
             .iter()
             .find(|a| a.account.eq_ignore_ascii_case(account))
             .map(|a| if a.level == "voice" { "+v" } else { "+o" })
+    }
+
+    // A comparable access rank for PEACE: founder 3, op 2, voice 1, none 0.
+    pub fn access_rank(&self, account: Option<&str>) -> u8 {
+        let Some(acc) = account else { return 0 };
+        if self.founder.eq_ignore_ascii_case(acc) {
+            return 3;
+        }
+        self.access
+            .iter()
+            .find(|a| a.account.eq_ignore_ascii_case(acc))
+            .map_or(0, |a| if a.level == "voice" { 1 } else { 2 })
     }
 
     // Whether this account holds channel-operator access (founder or op level).
