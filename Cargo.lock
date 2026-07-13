@@ -284,6 +284,7 @@ dependencies = [
  "anyhow",
  "argon2",
  "base64",
+ "fedserv-api",
  "hmac",
  "pbkdf2",
  "prost",
@@ -301,6 +302,10 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
 ]
+
+[[package]]
+name = "fedserv-api"
+version = "0.0.1"
 
 [[package]]
 name = "find-msvc-tools"

@@ -1,14 +1,10 @@
 use crate::engine::db::Db;
 use crate::engine::state::Network;
-use crate::proto::{NetAction, RegReply};
 
-// Who sent the command, resolved by the engine (UID + current nick + the
-// account they are identified to, if any).
-pub struct Sender<'a> {
-    pub uid: &'a str,
-    pub nick: &'a str,
-    pub account: Option<&'a str>,
-}
+// Sender + ServiceCtx (the command context a module receives) live in the
+// fedserv-api SDK crate; re-exported so modules keep using
+// `crate::engine::service::{Sender, ServiceCtx}`.
+pub use fedserv_api::{Sender, ServiceCtx};
 
 // A pseudo-client (NickServ, ChanServ, ...). Introduced at burst, receives the
 // commands users message it, reads/writes the account store, and pushes actions.
@@ -30,112 +26,4 @@ pub trait Service: Send {
         false
     }
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &Network, db: &mut Db);
-}
-
-#[derive(Default)]
-pub struct ServiceCtx {
-    pub actions: Vec<NetAction>,
-}
-
-impl ServiceCtx {
-    pub fn notice(&mut self, from: &str, to: &str, text: impl Into<String>) {
-        self.actions.push(NetAction::Notice {
-            from: from.to_string(),
-            to: to.to_string(),
-            text: text.into(),
-        });
-    }
-
-    // Hand a registration to the engine to finish: its password derivation runs
-    // off the reactor, then the engine commits it and answers `reply`.
-    pub fn defer_register(&mut self, account: impl Into<String>, password: impl Into<String>, email: Option<String>, reply: RegReply) {
-        self.actions.push(NetAction::DeferRegister {
-            account: account.into(),
-            password: password.into(),
-            email,
-            reply,
-        });
-    }
-
-    // Send an email (the link layer pipes it to the configured mail command).
-    pub fn send_email(&mut self, to: impl Into<String>, subject: impl Into<String>, text: impl Into<String>, html: Option<String>) {
-        self.actions.push(NetAction::SendEmail { to: to.into(), subject: subject.into(), text: text.into(), html });
-    }
-
-    // Hand a password change to the engine to finish: its derivation runs off the
-    // reactor, then the engine commits it and notices `uid`, sourced from `agent`.
-    pub fn defer_password(&mut self, account: impl Into<String>, password: impl Into<String>, agent: impl Into<String>, uid: impl Into<String>) {
-        self.actions.push(NetAction::DeferPassword {
-            account: account.into(),
-            password: password.into(),
-            agent: agent.into(),
-            uid: uid.into(),
-        });
-    }
-
-    // Log a user into an account: sets the accountname the ircd turns into
-    // RPL_LOGGEDIN (900) and exposes to account-tag / WHOX, the same login the
-    // SASL agent applies. Used after a successful REGISTER / IDENTIFY.
-    pub fn login(&mut self, uid: &str, account: &str) {
-        self.actions.push(NetAction::Metadata {
-            target: uid.to_string(),
-            key: "accountname".to_string(),
-            value: account.to_string(),
-        });
-    }
-
-    // Log a user out: clearing the accountname the ircd turns into RPL_LOGGEDOUT
-    // (901) and drops from account-tag / WHOX. The inverse of `login`.
-    pub fn logout(&mut self, uid: &str) {
-        self.actions.push(NetAction::Metadata {
-            target: uid.to_string(),
-            key: "accountname".to_string(),
-            value: String::new(),
-        });
-    }
-
-    // Force a user's nick (SVSNICK), e.g. to a guest nick after logout.
-    pub fn force_nick(&mut self, uid: &str, nick: &str) {
-        self.actions.push(NetAction::ForceNick {
-            uid: uid.to_string(),
-            nick: nick.to_string(),
-        });
-    }
-
-    // Set channel modes, sourced from pseudoclient `from` (e.g. ChanServ).
-    pub fn channel_mode(&mut self, from: &str, channel: &str, modes: &str) {
-        self.actions.push(NetAction::ChannelMode {
-            from: from.to_string(),
-            channel: channel.to_string(),
-            modes: modes.to_string(),
-        });
-    }
-
-    // Kick a user, sourced from pseudoclient `from`.
-    pub fn kick(&mut self, from: &str, channel: &str, uid: &str, reason: &str) {
-        self.actions.push(NetAction::Kick {
-            from: from.to_string(),
-            channel: channel.to_string(),
-            uid: uid.to_string(),
-            reason: reason.to_string(),
-        });
-    }
-
-    // Set a channel's topic, sourced from pseudoclient `from`.
-    pub fn topic(&mut self, from: &str, channel: &str, topic: &str) {
-        self.actions.push(NetAction::Topic {
-            from: from.to_string(),
-            channel: channel.to_string(),
-            topic: topic.to_string(),
-        });
-    }
-
-    // Invite a user to a channel, sourced from pseudoclient `from`.
-    pub fn invite(&mut self, from: &str, uid: &str, channel: &str) {
-        self.actions.push(NetAction::Invite {
-            from: from.to_string(),
-            uid: uid.to_string(),
-            channel: channel.to_string(),
-        });
-    }
 }
