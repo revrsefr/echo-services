@@ -1,13 +1,43 @@
-use fedserv_api::{parse_duration, ChanSetting, Sender, ServiceCtx, Store};
+use fedserv_api::{parse_duration, ChanSetting, Priv, Sender, ServiceCtx, Store};
 
-// SET <#channel> <option> <value>: per-channel bot options. Founder-or-admin.
-// GREET <on|off> (show members' greets on join), BANEXPIRE <duration|off> (how
-// long kicker bans last).
+// SET <#channel> <option> <value>: per-channel bot options (founder-or-admin) —
+// GREET <on|off>, BANEXPIRE <duration|off>, NOBOT <on|off>. Also
+// SET <bot> PRIVATE <on|off> (services-admin only).
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
-    let (Some(&chan), Some(option)) = (args.get(1), args.get(2)) else {
-        ctx.notice(me, from.uid, "Syntax: SET <#channel> <GREET <ON|OFF> | BANEXPIRE <duration|off>>");
+    let (Some(&target), Some(option)) = (args.get(1), args.get(2)) else {
+        ctx.notice(me, from.uid, "Syntax: SET <#channel> <GREET|BANEXPIRE|NOBOT> <value>, or SET <bot> PRIVATE <ON|OFF>");
         return;
     };
+
+    // A non-channel target names a bot: the only per-bot option is PRIVATE, and
+    // it is services-admin only.
+    if !target.starts_with('#') {
+        if !from.privs.has(Priv::Admin) {
+            ctx.notice(me, from.uid, "Access denied — managing bots is for services operators.");
+            return;
+        }
+        let on = match (option.eq_ignore_ascii_case("PRIVATE"), args.get(3).map(|s| s.to_ascii_uppercase()).as_deref()) {
+            (true, Some("ON")) => true,
+            (true, Some("OFF")) => false,
+            (true, _) => {
+                ctx.notice(me, from.uid, "Syntax: SET <bot> PRIVATE <ON|OFF>");
+                return;
+            }
+            (false, _) => {
+                ctx.notice(me, from.uid, format!("Unknown bot option \x02{option}\x02. Available: \x02PRIVATE\x02."));
+                return;
+            }
+        };
+        match db.bot_set_private(target, on) {
+            Ok(true) if on => ctx.notice(me, from.uid, format!("Bot \x02{target}\x02 is now private (operators only).")),
+            Ok(true) => ctx.notice(me, from.uid, format!("Bot \x02{target}\x02 is now public.")),
+            Ok(false) => ctx.notice(me, from.uid, format!("There's no bot named \x02{target}\x02.")),
+            Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+        }
+        return;
+    }
+
+    let chan = target;
     if !super::require_channel_admin(me, from, chan, ctx, db) {
         return;
     }
@@ -51,6 +81,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             Ok(()) => ctx.notice(me, from.uid, format!("Greet messages are now \x02off\x02 in \x02{chan}\x02.")),
             Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
         },
-        other => ctx.notice(me, from.uid, format!("Unknown option \x02{other}\x02. Available: \x02GREET\x02, \x02BANEXPIRE\x02.")),
+        "NOBOT" => match db.set_channel_setting(chan, ChanSetting::NoBot, on) {
+            Ok(()) if on => ctx.notice(me, from.uid, format!("Only operators may (un)assign a bot in \x02{chan}\x02 now.")),
+            Ok(()) => ctx.notice(me, from.uid, format!("The founder may (un)assign a bot in \x02{chan}\x02 again.")),
+            Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+        },
+        other => ctx.notice(me, from.uid, format!("Unknown option \x02{other}\x02. Available: \x02GREET\x02, \x02BANEXPIRE\x02, \x02NOBOT\x02.")),
     }
 }

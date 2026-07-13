@@ -342,6 +342,9 @@ pub struct BotView {
     pub user: String,
     pub host: String,
     pub gecos: String,
+    // A private bot may only be assigned by a services admin and is hidden from
+    // BOT LIST for everyone else.
+    pub private: bool,
 }
 
 // A services suspension on an account: who, why, when, and an optional expiry
@@ -388,6 +391,8 @@ pub struct ChannelView {
     pub assigned_bot: Option<String>,
     // BotServ: whether members' personal greets are shown on join.
     pub bot_greet: bool,
+    // BotServ: whether the founder is barred from (un)assigning a bot.
+    pub nobot: bool,
 }
 
 // A single ChanServ SET option, named for the typed `set_channel_setting` call.
@@ -401,6 +406,8 @@ pub enum ChanSetting {
     TopicLock,
     // BotServ: show members' personal greets on join.
     BotGreet,
+    // BotServ: forbid the founder from (un)assigning a bot (admin override only).
+    NoBot,
 }
 
 // A BotServ kicker: the assigned bot kicks a message that trips an enabled one.
@@ -571,6 +578,7 @@ pub trait Store {
     // BotServ registry (oper-only at the command layer).
     fn bot_add(&mut self, nick: &str, user: &str, host: &str, gecos: &str) -> Result<(), ChanError>;
     fn bot_change(&mut self, old: &str, new_nick: &str, user: &str, host: &str, gecos: &str) -> Result<(), ChanError>;
+    fn bot_set_private(&mut self, nick: &str, private: bool) -> Result<bool, ChanError>;
     fn bot_del(&mut self, nick: &str) -> Result<bool, ChanError>;
     fn bots(&self) -> Vec<BotView>;
     fn assign_bot(&mut self, channel: &str, bot: &str) -> Result<(), ChanError>;

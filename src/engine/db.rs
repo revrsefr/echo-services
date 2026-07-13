@@ -209,6 +209,9 @@ pub struct Bot {
     pub user: String,
     pub host: String,
     pub gecos: String,
+    // Oper-only to assign, and hidden from BOT LIST for non-admins.
+    #[serde(default)]
+    pub private: bool,
 }
 
 // An auto-join entry: a channel this account is joined to on identify, with an
@@ -245,6 +248,9 @@ pub struct ChanSettings {
     // BotServ: show members' personal greets when they join.
     #[serde(default)]
     pub bot_greet: bool,
+    // BotServ: forbid the founder from (un)assigning a bot (admin override only).
+    #[serde(default)]
+    pub nobot: bool,
 }
 
 // A registered channel and who owns it.
@@ -1403,6 +1409,7 @@ impl Db {
             ChanSetting::KeepTopic => settings.keeptopic = on,
             ChanSetting::TopicLock => settings.topiclock = on,
             ChanSetting::BotGreet => settings.bot_greet = on,
+            ChanSetting::NoBot => settings.nobot = on,
         }
         self.log
             .append(Event::ChannelSettingsSet { channel: channel.to_string(), settings })
@@ -1586,10 +1593,21 @@ impl Db {
         if self.bots.contains_key(&k) {
             return Err(ChanError::Exists);
         }
-        let bot = Bot { nick: nick.to_string(), user: user.to_string(), host: host.to_string(), gecos: gecos.to_string() };
+        let bot = Bot { nick: nick.to_string(), user: user.to_string(), host: host.to_string(), gecos: gecos.to_string(), private: false };
         self.log.append(Event::BotAdded(bot.clone())).map_err(|_| ChanError::Internal)?;
         self.bots.insert(k, bot);
         Ok(())
+    }
+
+    /// Mark a bot private (oper-only assign) or public. Returns Ok(false) if
+    /// there is no such bot.
+    pub fn bot_set_private(&mut self, nick: &str, private: bool) -> Result<bool, ChanError> {
+        let k = key(nick);
+        let Some(mut bot) = self.bots.get(&k).cloned() else { return Ok(false) };
+        bot.private = private;
+        self.log.append(Event::BotAdded(bot.clone())).map_err(|_| ChanError::Internal)?;
+        self.bots.insert(k, bot);
+        Ok(true)
     }
 
     /// Delete a service bot. Returns whether it existed.
@@ -1616,7 +1634,9 @@ impl Db {
         if renaming && self.bots.contains_key(&nk) {
             return Err(ChanError::Exists);
         }
-        let bot = Bot { nick: new_nick.to_string(), user: user.to_string(), host: host.to_string(), gecos: gecos.to_string() };
+        // Keep the private flag across a change.
+        let private = self.bots.get(&ok).map(|b| b.private).unwrap_or(false);
+        let bot = Bot { nick: new_nick.to_string(), user: user.to_string(), host: host.to_string(), gecos: gecos.to_string(), private };
         if renaming {
             let chans: Vec<String> = self
                 .channels
@@ -2185,11 +2205,14 @@ impl Store for Db {
     fn bot_change(&mut self, old: &str, new_nick: &str, user: &str, host: &str, gecos: &str) -> Result<(), ChanError> {
         Db::bot_change(self, old, new_nick, user, host, gecos)
     }
+    fn bot_set_private(&mut self, nick: &str, private: bool) -> Result<bool, ChanError> {
+        Db::bot_set_private(self, nick, private)
+    }
     fn bot_del(&mut self, nick: &str) -> Result<bool, ChanError> {
         Db::bot_del(self, nick)
     }
     fn bots(&self) -> Vec<BotView> {
-        Db::bots(self).map(|b| BotView { nick: b.nick.clone(), user: b.user.clone(), host: b.host.clone(), gecos: b.gecos.clone() }).collect()
+        Db::bots(self).map(|b| BotView { nick: b.nick.clone(), user: b.user.clone(), host: b.host.clone(), gecos: b.gecos.clone(), private: b.private }).collect()
     }
     fn assign_bot(&mut self, channel: &str, bot: &str) -> Result<(), ChanError> {
         Db::assign_bot(self, channel, bot)
@@ -2253,6 +2276,7 @@ fn channel_view(c: &ChannelInfo) -> ChannelView {
         suspended: c.suspension.as_ref().is_some_and(|s| s.expires.is_none_or(|e| e > now())),
         assigned_bot: c.assigned_bot.clone(),
         bot_greet: c.settings.bot_greet,
+        nobot: c.settings.nobot,
     }
 }
 

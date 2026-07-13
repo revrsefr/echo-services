@@ -57,7 +57,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             }
             ctx.notice(me, from.uid, format!("Bots ({}):", bots.len()));
             for b in &bots {
-                ctx.notice(me, from.uid, format!("  \x02{}\x02 ({}@{}) — {}", b.nick, b.user, b.host, b.gecos));
+                let flag = if b.private { " \x02[private]\x02" } else { "" };
+                ctx.notice(me, from.uid, format!("  \x02{}\x02 ({}@{}) — {}{flag}", b.nick, b.user, b.host, b.gecos));
             }
         }
         Some(other) => ctx.notice(me, from.uid, format!("Unknown BOT command \x02{other}\x02. Use \x02ADD\x02, \x02CHANGE\x02, \x02DEL\x02 or \x02LIST\x02.")),
