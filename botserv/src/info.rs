@@ -13,10 +13,23 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             ctx.notice(me, from.uid, format!("\x02{target}\x02 isn't registered."));
             return;
         };
-        match chan.assigned_bot {
+        match &chan.assigned_bot {
             Some(bot) => ctx.notice(me, from.uid, format!("\x02{target}\x02 is served by bot \x02{bot}\x02.")),
             None => ctx.notice(me, from.uid, format!("\x02{target}\x02 has no bot assigned. Assign one with \x02ASSIGN\x02 {target} <bot>.")),
         }
+        // The BotServ options in effect on this channel.
+        let mut opts = Vec::new();
+        if chan.bot_greet {
+            opts.push("greets");
+        }
+        if chan.kickers_active {
+            opts.push("kickers");
+        }
+        if chan.nobot {
+            opts.push("nobot");
+        }
+        let summary = if opts.is_empty() { "none".to_string() } else { opts.join(", ") };
+        ctx.notice(me, from.uid, format!("  Options: {summary}"));
         return;
     }
 
@@ -31,7 +44,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         .map(|c| c.name)
         .collect();
 
-    ctx.notice(me, from.uid, format!("Bot \x02{}\x02 — {}@{}", bot.nick, bot.user, bot.host));
+    let privacy = if bot.private { " (private)" } else { "" };
+    ctx.notice(me, from.uid, format!("Bot \x02{}\x02 — {}@{}{privacy}", bot.nick, bot.user, bot.host));
     ctx.notice(me, from.uid, format!("  Real name: {}", bot.gecos));
     if channels.is_empty() {
         ctx.notice(me, from.uid, "  Not assigned to any channel.");

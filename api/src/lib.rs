@@ -393,6 +393,8 @@ pub struct ChannelView {
     pub bot_greet: bool,
     // BotServ: whether the founder is barred from (un)assigning a bot.
     pub nobot: bool,
+    // BotServ: whether any message kicker is active on this channel.
+    pub kickers_active: bool,
 }
 
 // A single ChanServ SET option, named for the typed `set_channel_setting` call.

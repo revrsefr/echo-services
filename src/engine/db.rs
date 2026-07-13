@@ -2277,6 +2277,7 @@ fn channel_view(c: &ChannelInfo) -> ChannelView {
         assigned_bot: c.assigned_bot.clone(),
         bot_greet: c.settings.bot_greet,
         nobot: c.settings.nobot,
+        kickers_active: c.kickers.any(),
     }
 }
 
