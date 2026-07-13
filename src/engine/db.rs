@@ -1603,6 +1603,43 @@ impl Db {
         Ok(true)
     }
 
+    /// Change a bot's nick and/or identity. `NoChannel` = no such bot,
+    /// `Exists` = the new nick belongs to a different bot. On a rename, every
+    /// channel the old bot was assigned to is moved to the new nick.
+    pub fn bot_change(&mut self, old: &str, new_nick: &str, user: &str, host: &str, gecos: &str) -> Result<(), ChanError> {
+        let ok = key(old);
+        if !self.bots.contains_key(&ok) {
+            return Err(ChanError::NoChannel);
+        }
+        let nk = key(new_nick);
+        let renaming = ok != nk;
+        if renaming && self.bots.contains_key(&nk) {
+            return Err(ChanError::Exists);
+        }
+        let bot = Bot { nick: new_nick.to_string(), user: user.to_string(), host: host.to_string(), gecos: gecos.to_string() };
+        if renaming {
+            let chans: Vec<String> = self
+                .channels
+                .values()
+                .filter(|c| c.assigned_bot.as_deref().is_some_and(|b| key(b) == ok))
+                .map(|c| c.name.clone())
+                .collect();
+            self.log.append(Event::BotRemoved { nick: old.to_string() }).map_err(|_| ChanError::Internal)?;
+            self.bots.remove(&ok);
+            self.log.append(Event::BotAdded(bot.clone())).map_err(|_| ChanError::Internal)?;
+            self.bots.insert(nk, bot);
+            for chan in chans {
+                self.log.append(Event::ChannelBotAssigned { channel: chan.clone(), bot: new_nick.to_string() }).map_err(|_| ChanError::Internal)?;
+                self.channels.get_mut(&key(&chan)).unwrap().assigned_bot = Some(new_nick.to_string());
+            }
+        } else {
+            // Same nick, new identity: re-emit BotAdded to overwrite the fields.
+            self.log.append(Event::BotAdded(bot.clone())).map_err(|_| ChanError::Internal)?;
+            self.bots.insert(nk, bot);
+        }
+        Ok(())
+    }
+
     /// All registered bots.
     pub fn bots(&self) -> impl Iterator<Item = &Bot> {
         self.bots.values()
@@ -2144,6 +2181,9 @@ impl Store for Db {
     }
     fn bot_add(&mut self, nick: &str, user: &str, host: &str, gecos: &str) -> Result<(), ChanError> {
         Db::bot_add(self, nick, user, host, gecos)
+    }
+    fn bot_change(&mut self, old: &str, new_nick: &str, user: &str, host: &str, gecos: &str) -> Result<(), ChanError> {
+        Db::bot_change(self, old, new_nick, user, host, gecos)
     }
     fn bot_del(&mut self, nick: &str) -> Result<bool, ChanError> {
         Db::bot_del(self, nick)

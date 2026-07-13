@@ -570,6 +570,7 @@ pub trait Store {
     fn channel_suspension(&self, channel: &str) -> Option<SuspensionView>;
     // BotServ registry (oper-only at the command layer).
     fn bot_add(&mut self, nick: &str, user: &str, host: &str, gecos: &str) -> Result<(), ChanError>;
+    fn bot_change(&mut self, old: &str, new_nick: &str, user: &str, host: &str, gecos: &str) -> Result<(), ChanError>;
     fn bot_del(&mut self, nick: &str) -> Result<bool, ChanError>;
     fn bots(&self) -> Vec<BotView>;
     fn assign_bot(&mut self, channel: &str, bot: &str) -> Result<(), ChanError>;

@@ -96,6 +96,7 @@ pub struct Engine {
     opers: HashMap<String, Privs>, // casefolded account -> privileges (from [[oper]] config)
     sid: String, // our services SID, for minting bot uids
     bot_uids: HashMap<String, String>, // casefolded bot nick -> live uid (per connection)
+    bot_idents: HashMap<String, u64>, // casefolded bot nick -> hash of user/host/gecos (to spot BOT CHANGE)
     next_bot_index: u32,
     bot_channels: std::collections::HashSet<(String, String)>, // (bot nick lc, channel) the bot has joined
     // Ephemeral per-channel, per-user chatter tracking for the FLOOD and REPEAT
@@ -153,6 +154,7 @@ impl Engine {
             opers: HashMap::new(),
             sid: String::new(),
             bot_uids: HashMap::new(),
+            bot_idents: HashMap::new(),
             next_bot_index: 0,
             bot_channels: std::collections::HashSet::new(),
             chatter: HashMap::new(),
@@ -198,12 +200,23 @@ impl Engine {
             self.db.bots().map(|b| (b.nick.clone(), b.user.clone(), b.host.clone(), b.gecos.clone())).collect();
         for (nick, user, host, gecos) in &live {
             let k = nick.to_ascii_lowercase();
+            let ident = ident_hash(user, host, gecos);
+            // A BOT CHANGE that kept the nick but altered the identity: quit the
+            // stale client so it is reintroduced (and rejoins its channels) below.
+            if self.bot_uids.contains_key(&k) && self.bot_idents.get(&k) != Some(&ident) {
+                if let Some(uid) = self.bot_uids.remove(&k) {
+                    out.push(NetAction::QuitUser { uid, reason: "Bot changed".to_string() });
+                }
+                self.network.bot_forget(&k);
+                self.bot_channels.retain(|(b, _)| *b != k);
+            }
             if !self.bot_uids.contains_key(&k) {
                 let uid = format!("{}B{:05}", self.sid, self.next_bot_index);
                 self.next_bot_index += 1;
                 out.push(NetAction::IntroduceUser { uid: uid.clone(), nick: nick.clone(), ident: user.clone(), host: host.clone(), gecos: gecos.clone() });
                 self.network.bot_connect(nick, &uid);
-                self.bot_uids.insert(k, uid);
+                self.bot_uids.insert(k.clone(), uid);
+                self.bot_idents.insert(k, ident);
             }
         }
         let live_keys: std::collections::HashSet<String> = live.iter().map(|(n, ..)| n.to_ascii_lowercase()).collect();
@@ -212,6 +225,7 @@ impl Engine {
             if let Some(uid) = self.bot_uids.remove(&k) {
                 out.push(NetAction::QuitUser { uid, reason: "Bot removed".to_string() });
             }
+            self.bot_idents.remove(&k);
             self.network.bot_forget(&k);
             self.bot_channels.retain(|(b, _)| *b != k); // its channel memberships go with it
         }
@@ -502,6 +516,7 @@ impl Engine {
     pub fn startup_actions(&mut self) -> Vec<NetAction> {
         // Fresh link: forget bot uids minted on any previous connection.
         self.bot_uids.clear();
+        self.bot_idents.clear();
         self.bot_channels.clear();
         self.network.clear_bots();
         self.next_bot_index = 0;
@@ -1158,6 +1173,17 @@ fn resource_action(a: &mut NetAction, old: &str, new: &str) {
 // A case-insensitive 64-bit hash of a line, for the REPEAT kicker. Allocation-
 // free (folds each byte to lowercase in place) so it stays cheap on the hot
 // path; a 64-bit collision causing a spurious kick is astronomically unlikely.
+// A hash of a bot's identity (user/host/gecos), so reconcile can tell when a
+// BOT CHANGE altered it without changing the nick.
+fn ident_hash(user: &str, host: &str, gecos: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    user.hash(&mut h);
+    host.hash(&mut h);
+    gecos.hash(&mut h);
+    h.finish()
+}
+
 fn ci_hash(text: &str) -> u64 {
     use std::hash::Hasher;
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -2050,6 +2076,49 @@ mod tests {
         // Unassigning parts it.
         let out = bs(&mut e, "000AAAAAB", "UNASSIGN #c");
         assert!(out.iter().any(|a| matches!(a, NetAction::ServicePart { channel, .. } if channel == "#c")), "parts on unassign: {out:?}");
+    }
+
+    // BOT CHANGE renames a bot (moving its channel assignments) and reintroduces
+    // it when only the identity changes; the network client is refreshed both ways.
+    #[test]
+    fn botserv_bot_change_renames_and_reidentifies() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bschange.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() });
+        ns(&mut e, "IDENTIFY password1");
+        bs(&mut e, "BOT ADD Bendy bot serv.host Helper");
+        bs(&mut e, "ASSIGN #c Bendy");
+
+        // Rename: the old client quits, a Roger client is introduced and rejoins #c.
+        let out = bs(&mut e, "BOT CHANGE Bendy Roger");
+        assert!(out.iter().any(|a| matches!(a, NetAction::QuitUser { .. })), "old client quit: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::IntroduceUser { nick, .. } if nick == "Roger")), "Roger introduced");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, .. } if channel == "#c")), "Roger rejoins #c");
+
+        // Same nick, new identity: the client is refreshed with the new host.
+        let out = bs(&mut e, "BOT CHANGE Roger Roger newbot new.host A New Bot");
+        assert!(out.iter().any(|a| matches!(a, NetAction::QuitUser { .. })), "stale client quit");
+        assert!(out.iter().any(|a| matches!(a, NetAction::IntroduceUser { nick, host, .. } if nick == "Roger" && host == "new.host")), "reintroduced with new host: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, .. } if channel == "#c")), "rejoins #c after re-identify");
     }
 
     // SAY/ACT speak through the channel's assigned bot, sourced from the bot's uid.
