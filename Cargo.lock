@@ -285,6 +285,9 @@ dependencies = [
  "argon2",
  "base64",
  "fedserv-api",
+ "fedserv-chanserv",
+ "fedserv-inspircd",
+ "fedserv-nickserv",
  "hmac",
  "pbkdf2",
  "prost",
@@ -306,6 +309,27 @@ dependencies = [
 [[package]]
 name = "fedserv-api"
 version = "0.0.1"
+
+[[package]]
+name = "fedserv-chanserv"
+version = "0.0.1"
+dependencies = [
+ "fedserv-api",
+]
+
+[[package]]
+name = "fedserv-inspircd"
+version = "0.0.1"
+dependencies = [
+ "fedserv-api",
+]
+
+[[package]]
+name = "fedserv-nickserv"
+version = "0.0.1"
+dependencies = [
+ "fedserv-api",
+]
 
 [[package]]
 name = "find-msvc-tools"

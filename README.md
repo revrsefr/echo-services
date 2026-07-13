@@ -7,19 +7,25 @@ derived from any project's source.
 
 ## Design
 
-The core lives in `src/`; the pluggable parts live in `modules/` (see
-`modules/README.md`).
+The core lives in `src/`. The pluggable parts are separate crates in a Cargo
+workspace, each depending only on the `fedserv-api` SDK crate.
 
+- **`api/`** (`fedserv-api`) the module SDK: the `Service`, `Protocol`, `Store`
+  and `NetView` traits a module implements or is handed, plus the normalized
+  `NetEvent`/`NetAction` vocabulary and the read views. It has no storage or
+  runtime dependencies, so a third-party module builds against it alone.
 - **`src/engine/`** the services engine: live network `state`, the account store,
-  and the `Service` trait. The store is event-sourced: every change is an `Event`
-  appended to a per-node log, and state is a fold over that log.
+  and the log. The store is event-sourced: every change is an `Event` appended to
+  a per-node log, and state is a fold over that log. A service touches it only
+  through the `Store`/`NetView` traits, so the log, gossip and credential material
+  stay out of a module's reach.
 - **`src/gossip.rs`** node-to-node replication over the logs.
-- **`modules/protocol/`** the ircd link layer. A `Protocol` trait maps raw
-  server-to-server lines to and from a normalized `NetEvent`/`NetAction` model, so
-  the engine never touches a raw line and a new ircd is one new module. InspIRCd is
-  the first.
-- **`modules/nickserv/`, `modules/chanserv/`** the pseudo-clients, one directory
-  each. OperServ and others follow the same shape.
+- **`inspircd/`** (`fedserv-inspircd`) the ircd link layer. A `Protocol` impl maps
+  raw server-to-server lines to and from the normalized model, so the engine never
+  touches a raw line and a new ircd is one new crate.
+- **`nickserv/`, `chanserv/`** (`fedserv-nickserv`, `fedserv-chanserv`) the
+  pseudo-clients, each a crate implementing `Service`. OperServ and others follow
+  the same shape.
 
 ## Replication
 

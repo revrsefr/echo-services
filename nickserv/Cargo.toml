@@ -1,0 +1,8 @@
+[package]
+name = "fedserv-nickserv"
+version = "0.0.1"
+edition = "2021"
+description = "NickServ account-registration service module for fedserv."
+
+[dependencies]
+fedserv-api = { path = "../api" }

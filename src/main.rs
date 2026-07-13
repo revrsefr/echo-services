@@ -1,26 +1,22 @@
-// Core lives in src/; pluggable modules live in ../modules/.
+// Core lives in src/; the pseudo-clients and the ircd link are external module
+// crates (fedserv-nickserv, fedserv-chanserv, fedserv-inspircd), each depending
+// only on the fedserv-api SDK.
 mod config;
-mod email;
 mod engine;
 mod gossip;
 mod grpc;
 mod link;
-#[path = "../modules/protocol/mod.rs"]
 mod proto;
-#[path = "../modules/nickserv/nickserv.rs"]
-mod nickserv;
-#[path = "../modules/chanserv/chanserv.rs"]
-mod chanserv;
 
 use anyhow::Result;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
-use chanserv::ChanServ;
 use engine::Engine;
-use nickserv::NickServ;
-use proto::inspircd::InspIrcd;
+use fedserv_chanserv::ChanServ;
+use fedserv_inspircd::InspIrcd;
+use fedserv_nickserv::NickServ;
 
 #[tokio::main]
 async fn main() -> Result<()> {

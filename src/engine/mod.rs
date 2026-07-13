@@ -168,7 +168,7 @@ impl Engine {
         if status == AuthorityStatus::Ok && !self.db.is_verified(name) {
             if let Some(addr) = addr {
                 let code = self.db.issue_code(name, db::CodeKind::Confirm);
-                let mail = crate::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), name, &code);
+                let mail = fedserv_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), name, &code);
                 self.emit_irc(NetAction::SendEmail { to: addr, subject: mail.subject, text: mail.text, html: Some(mail.html) });
             }
         }
@@ -691,7 +691,7 @@ impl Engine {
         if ok && !self.db.is_verified(account) {
             if let (Some(addr), RegReply::NickServ { agent, uid, .. }) = (addr, &reply) {
                 let code = self.db.issue_code(account, db::CodeKind::Confirm);
-                let mail = crate::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), account, &code);
+                let mail = fedserv_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), account, &code);
                 out.push(NetAction::SendEmail { to: addr, subject: mail.subject, text: mail.text, html: Some(mail.html) });
                 out.push(NetAction::Notice { from: agent.clone(), to: uid.clone(), text: "A confirmation code has been emailed to you. Confirm with \x02CONFIRM <code>\x02.".to_string() });
             }
@@ -830,7 +830,7 @@ impl RegLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nickserv::NickServ;
+    use fedserv_nickserv::NickServ;
 
     fn plain(authzid: &[u8], authcid: &[u8], passwd: &[u8]) -> String {
         let mut payload = Vec::new();
@@ -1222,7 +1222,7 @@ mod tests {
     // notifies them over the services-initiated outbound path.
     #[test]
     fn lost_conflict_logs_out_local_session() {
-        use crate::chanserv::ChanServ;
+        use fedserv_chanserv::ChanServ;
         let path = std::env::temp_dir().join("fedserv-lostconf.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "test");
@@ -1271,7 +1271,7 @@ mod tests {
     // lists the channels the account founds or has access on.
     #[test]
     fn nickserv_info_and_alist() {
-        use crate::chanserv::ChanServ;
+        use fedserv_chanserv::ChanServ;
         let path = std::env::temp_dir().join("fedserv-nsinfo.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "test");
@@ -1473,7 +1473,7 @@ mod tests {
     // only the founder can drop.
     #[test]
     fn chanserv_register_info_drop() {
-        use crate::chanserv::ChanServ;
+        use fedserv_chanserv::ChanServ;
         let path = std::env::temp_dir().join("fedserv-chanserv.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
@@ -1533,7 +1533,7 @@ mod tests {
     // ChanServ moderation: an op can op/kick/ban users; a non-op is refused.
     #[test]
     fn chanserv_moderation() {
-        use crate::chanserv::ChanServ;
+        use fedserv_chanserv::ChanServ;
         let path = std::env::temp_dir().join("fedserv-cs-mod.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
@@ -1577,7 +1577,7 @@ mod tests {
     // ChanServ topic, invite, auto-kick (with enforcement on join), list and status.
     #[test]
     fn chanserv_topic_invite_akick() {
-        use crate::chanserv::ChanServ;
+        use fedserv_chanserv::ChanServ;
         let path = std::env::temp_dir().join("fedserv-cs-tia.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
@@ -1618,7 +1618,7 @@ mod tests {
     // ChanServ SET: description and founder transfer, founder-gated.
     #[test]
     fn chanserv_set() {
-        use crate::chanserv::ChanServ;
+        use fedserv_chanserv::ChanServ;
         let path = std::env::temp_dir().join("fedserv-cs-set.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
@@ -1653,7 +1653,7 @@ mod tests {
     // ChanServ entrymsg, enforce, getkey, seen, clone and the xop lists.
     #[test]
     fn chanserv_extended() {
-        use crate::chanserv::ChanServ;
+        use fedserv_chanserv::ChanServ;
         let path = std::env::temp_dir().join("fedserv-cs-ext.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");

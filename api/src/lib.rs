@@ -2,6 +2,9 @@
 //! it carries the traits a module implements and the normalized vocabulary the
 //! engine speaks, with no storage or runtime dependencies of its own.
 
+// Branded account emails (confirm / reset), shared by the engine and modules.
+pub mod email;
+
 // ---------------------------------------------------------------------------
 // Protocol vocabulary
 // ---------------------------------------------------------------------------
@@ -447,4 +450,23 @@ fn glob_match(pattern: &str, text: &str) -> bool {
         pi += 1;
     }
     pi == p.len()
+}
+
+// Format a Unix timestamp (seconds) as "YYYY-MM-DD HH:MM:SS UTC", using Howard
+// Hinnant's civil-from-days algorithm so no date crate is needed.
+pub fn human_time(ts: u64) -> String {
+    let days = (ts / 86400) as i64;
+    let rem = ts % 86400;
+    let (hh, mm, ss) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let z = days + 719468;
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = y + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02} {hh:02}:{mm:02}:{ss:02} UTC")
 }

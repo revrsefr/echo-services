@@ -316,7 +316,7 @@ pub async fn run(engine: Shared, cfg: GrpcCfg, outbound: broadcast::Sender<LogEn
 mod tests {
     use super::*;
     use crate::engine::db::Db;
-    use crate::nickserv::NickServ;
+    use fedserv_nickserv::NickServ;
     use tokio_stream::StreamExt;
     use tonic::metadata::MetadataValue;
 
