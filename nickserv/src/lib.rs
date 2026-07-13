@@ -32,6 +32,8 @@ mod resetpass;
 mod confirm;
 #[path = "ajoin.rs"]
 mod ajoin;
+#[path = "password.rs"]
+mod password;
 
 pub struct NickServ {
     pub uid: String,

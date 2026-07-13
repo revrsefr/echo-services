@@ -13,6 +13,10 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 ctx.notice(me, from.uid, "Syntax: SET PASSWORD <newpassword>");
                 return;
             };
+            if let Err(reason) = crate::password::validate_password(password, account) {
+                ctx.notice(me, from.uid, reason);
+                return;
+            }
             // The link layer derives the new password off-thread, then commits it.
             ctx.defer_password(account, password, me, from.uid);
         }

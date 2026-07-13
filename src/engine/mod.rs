@@ -1411,7 +1411,7 @@ mod tests {
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "newbie".into(), host: "h".into() });
 
         // REGISTER with an email defers; complete it as the link layer would.
-        let reg = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "REGISTER pw newbie@example.org".into() });
+        let reg = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "REGISTER correcthorse newbie@example.org".into() });
         let (account, password, email, reply) = reg.iter().find_map(|a| match a {
             NetAction::DeferRegister { account, password, email, reply } => Some((account.clone(), password.clone(), email.clone(), reply.clone())),
             _ => None,

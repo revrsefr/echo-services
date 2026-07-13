@@ -386,6 +386,10 @@ pub trait Store {
 
     fn issue_code(&mut self, account: &str, kind: CodeKind) -> String;
     fn take_code(&mut self, account: &str, kind: CodeKind, code: &str) -> bool;
+    // Brute-force throttle for password authentication: how long the account is
+    // locked out (if at all), and a hook to record each attempt's outcome.
+    fn auth_lockout(&self, account: &str) -> Option<u64>;
+    fn note_auth(&mut self, account: &str, success: bool);
     fn verify_account(&mut self, account: &str) -> Result<(), RegError>;
     fn set_email(&mut self, account: &str, email: Option<String>) -> Result<(), RegError>;
     fn group_nick(&mut self, nick: &str, account: &str) -> Result<(), RegError>;

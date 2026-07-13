@@ -475,9 +475,32 @@ pub struct Db {
     email_brand: String,
     email_accent: String,
     email_logo: String,
-    // Node-local, non-persisted email codes: account -> (purpose, code, expiry).
-    codes: HashMap<String, (CodeKind, String, Instant)>,
+    // Node-local, non-persisted email codes, keyed by account.
+    codes: HashMap<String, PendingCode>,
+    // Node-local, non-persisted brute-force throttle for password authentication.
+    auth_fails: HashMap<String, AuthThrottle>,
 }
+
+// A pending emailed code and how many wrong guesses remain before it is burned.
+struct PendingCode {
+    kind: CodeKind,
+    code: String,
+    deadline: Instant,
+    tries_left: u8,
+}
+
+// Failed-authentication state for one account (in memory only, reset on restart).
+struct AuthThrottle {
+    fails: u32,
+    locked_until: Option<Instant>,
+}
+
+// Wrong-code guesses tolerated before a code is invalidated (defence in depth on
+// top of the code's own entropy).
+const CODE_TRIES: u8 = 5;
+// Free password attempts before the exponential backoff kicks in, and its cap.
+const AUTH_FREE_TRIES: u32 = 3;
+const AUTH_MAX_BACKOFF_SECS: u64 = 300;
 
 fn key(name: &str) -> String {
     name.to_ascii_lowercase()
@@ -497,7 +520,7 @@ impl Db {
             apply(&mut accounts, &mut channels, &mut grouped, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new() }
+        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new() }
     }
 
     /// Fold an entry authored by another node into the store — the services-side
@@ -755,20 +778,57 @@ impl Db {
     /// Issue a fresh emailed code for `account` and purpose, valid for 15 minutes.
     pub fn issue_code(&mut self, account: &str, kind: CodeKind) -> String {
         let code = gen_code();
-        self.codes.insert(key(account), (kind, code.clone(), Instant::now() + Duration::from_secs(900)));
+        self.codes.insert(
+            key(account),
+            PendingCode { kind, code: code.clone(), deadline: Instant::now() + Duration::from_secs(900), tries_left: CODE_TRIES },
+        );
         code
     }
 
     /// Consume a code for `account`: true if the purpose and code match and it
-    /// hasn't expired.
+    /// hasn't expired. A wrong guess burns a try and the code is dropped once
+    /// they run out, so it can't be ground down online.
     pub fn take_code(&mut self, account: &str, kind: CodeKind, code: &str) -> bool {
         let k = key(account);
-        match self.codes.get(&k) {
-            Some((ki, c, deadline)) if *ki == kind && c == code && *deadline > Instant::now() => {
-                self.codes.remove(&k);
-                true
-            }
-            _ => false,
+        let Some(pc) = self.codes.get_mut(&k) else { return false };
+        if pc.deadline <= Instant::now() {
+            self.codes.remove(&k);
+            return false;
+        }
+        if pc.kind == kind && pc.code == code {
+            self.codes.remove(&k);
+            return true;
+        }
+        pc.tries_left = pc.tries_left.saturating_sub(1);
+        if pc.tries_left == 0 {
+            self.codes.remove(&k);
+        }
+        false
+    }
+
+    /// Seconds the caller must wait before another password attempt on `account`,
+    /// or None if it is not currently throttled.
+    pub fn auth_lockout(&self, account: &str) -> Option<u64> {
+        let until = self.auth_fails.get(&key(account))?.locked_until?;
+        let now = Instant::now();
+        (until > now).then(|| (until - now).as_secs() + 1)
+    }
+
+    /// Record the outcome of a password attempt against `account`. Success clears
+    /// the counter; each failure past a few free tries grows an exponential
+    /// backoff, throttling guessing without a hard lockout a griefer could abuse.
+    pub fn note_auth(&mut self, account: &str, success: bool) {
+        let k = key(account);
+        if success {
+            self.auth_fails.remove(&k);
+            return;
+        }
+        let t = self.auth_fails.entry(k).or_insert(AuthThrottle { fails: 0, locked_until: None });
+        t.fails += 1;
+        if t.fails > AUTH_FREE_TRIES {
+            let shift = (t.fails - AUTH_FREE_TRIES - 1).min(9);
+            let secs = (1u64 << shift).min(AUTH_MAX_BACKOFF_SECS);
+            t.locked_until = Some(Instant::now() + Duration::from_secs(secs));
         }
     }
 
@@ -1211,10 +1271,15 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 }
 
 // A random 6-digit code for email verification / password reset.
+// An unguessable emailed code: 8 characters from a 32-symbol unambiguous
+// alphabet (~40 bits). 256 is an exact multiple of 32, so the byte->symbol map
+// is bias-free. Long enough that it can't be brute-forced inside its 15-minute
+// window even without the per-code attempt limit.
 fn gen_code() -> String {
-    let mut b = [0u8; 4];
+    const ALPHABET: &[u8; 32] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // no 0/O/1/I
+    let mut b = [0u8; 8];
     OsRng.fill_bytes(&mut b);
-    format!("{:06}", u32::from_le_bytes(b) % 1_000_000)
+    b.iter().map(|x| ALPHABET[(*x % 32) as usize] as char).collect()
 }
 
 fn hash_password(password: &str) -> Option<String> {
@@ -1285,6 +1350,12 @@ impl Store for Db {
     }
     fn take_code(&mut self, account: &str, kind: CodeKind, code: &str) -> bool {
         Db::take_code(self, account, kind, code)
+    }
+    fn auth_lockout(&self, account: &str) -> Option<u64> {
+        Db::auth_lockout(self, account)
+    }
+    fn note_auth(&mut self, account: &str, success: bool) {
+        Db::note_auth(self, account, success)
     }
     fn verify_account(&mut self, account: &str) -> Result<(), RegError> {
         Db::verify_account(self, account)
@@ -1476,6 +1547,32 @@ mod tests {
         let db = Db::open(&p, "N1");
         assert_eq!(db.ajoin_list("alice").len(), 1, "list replays from the log");
         assert_eq!(db.ajoin_list("alice")[0].channel, "#dev");
+    }
+
+    // A wrong code is tolerated a few times, then the code is burned so it can't
+    // be ground down online even though it is short.
+    #[test]
+    fn code_burns_after_too_many_wrong_guesses() {
+        let mut db = Db::open(&tmp("code"), "N1");
+        db.scram_iterations = 4096;
+        db.register("alice", "password", None).unwrap();
+        let code = db.issue_code("alice", CodeKind::Reset);
+        for _ in 0..CODE_TRIES {
+            assert!(!db.take_code("alice", CodeKind::Reset, "WRONG000"), "wrong guess fails");
+        }
+        assert!(!db.take_code("alice", CodeKind::Reset, &code), "the real code is now burned too");
+    }
+
+    // Password auth backs off after a few failures and the throttle clears on success.
+    #[test]
+    fn auth_throttle_locks_then_clears() {
+        let mut db = Db::open(&tmp("throttle"), "N1");
+        for _ in 0..=AUTH_FREE_TRIES {
+            db.note_auth("mallory", false);
+        }
+        assert!(db.auth_lockout("mallory").is_some(), "locked out after the free tries");
+        db.note_auth("mallory", true);
+        assert!(db.auth_lockout("mallory").is_none(), "a success clears the throttle");
     }
 
     // Locally-authored events get an incrementing per-origin seq and a ticking
