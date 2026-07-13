@@ -1,8 +1,13 @@
-//! BotServ registers service bots — pseudo-clients that (in later slices) get
-//! assigned to channels and run fantasy commands. This first slice is the bot
-//! registry: BOT ADD/DEL/LIST, gated on the typed Priv::Admin.
+//! BotServ registers service bots — pseudo-clients that get assigned to channels
+//! and (in later slices) run fantasy commands. `lib.rs` holds the dispatcher;
+//! each command lives in its own file, matching NickServ/ChanServ.
 
-use fedserv_api::{NetView, Priv, Sender, Service, ServiceCtx, Store};
+use fedserv_api::{NetView, Sender, Service, ServiceCtx, Store};
+
+#[path = "bot.rs"]
+mod bot;
+#[path = "assign.rs"]
+mod assign;
 
 pub struct BotServ {
     pub uid: String,
@@ -22,94 +27,11 @@ impl Service for BotServ {
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, _net: &dyn NetView, db: &mut dyn Store) {
         let me = self.uid.as_str();
         match args.first().map(|s| s.to_ascii_uppercase()).as_deref() {
-            Some("BOT") => bot(me, from, args, ctx, db),
-            Some("ASSIGN") => assign(me, from, args, ctx, db, true),
-            Some("UNASSIGN") => assign(me, from, args, ctx, db, false),
+            Some("BOT") => bot::handle(me, from, args, ctx, db),
+            Some("ASSIGN") => assign::handle(me, from, args, ctx, db, true),
+            Some("UNASSIGN") => assign::handle(me, from, args, ctx, db, false),
             Some("HELP") | None => ctx.notice(me, from.uid, "BotServ keeps service bots for your channels: \x02ASSIGN\x02 <#channel> <bot> puts a bot in your channel, \x02UNASSIGN\x02 <#channel> removes it. Operators also have \x02BOT\x02 ADD|DEL|LIST."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
         }
-    }
-}
-
-// ASSIGN <#channel> <bot> / UNASSIGN <#channel>: put a bot in a channel (or take
-// it out). Channel founder only (or a services admin).
-fn assign(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store, assigning: bool) {
-    let Some(&chan) = args.get(1) else {
-        let syntax = if assigning { "Syntax: ASSIGN <#channel> <bot>" } else { "Syntax: UNASSIGN <#channel>" };
-        ctx.notice(me, from.uid, syntax);
-        return;
-    };
-    let Some(founder) = db.channel(chan).map(|c| c.founder) else {
-        ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
-        return;
-    };
-    if from.account != Some(founder.as_str()) && !from.privs.has(Priv::Admin) {
-        ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can assign a bot to it."));
-        return;
-    }
-    if !assigning {
-        match db.unassign_bot(chan) {
-            Ok(true) => ctx.notice(me, from.uid, format!("The bot has left \x02{chan}\x02.")),
-            Ok(false) => ctx.notice(me, from.uid, format!("\x02{chan}\x02 has no bot assigned.")),
-            Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
-        }
-        return;
-    }
-    let Some(&bot) = args.get(2) else {
-        ctx.notice(me, from.uid, "Syntax: ASSIGN <#channel> <bot>");
-        return;
-    };
-    let Some(botnick) = db.bots().into_iter().find(|b| b.nick.eq_ignore_ascii_case(bot)).map(|b| b.nick) else {
-        ctx.notice(me, from.uid, format!("There's no bot named \x02{bot}\x02. See \x02BOT LIST\x02."));
-        return;
-    };
-    match db.assign_bot(chan, &botnick) {
-        Ok(()) => ctx.notice(me, from.uid, format!("Bot \x02{botnick}\x02 is now assigned to \x02{chan}\x02.")),
-        Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
-    }
-}
-
-// BOT ADD <nick> <user> <host> [gecos] | BOT DEL <nick> | BOT LIST — manage the
-// bot registry. Administering bots is oper-only (Priv::Admin).
-fn bot(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
-    if !from.privs.has(Priv::Admin) {
-        ctx.notice(me, from.uid, "Access denied — managing bots is for services operators.");
-        return;
-    }
-    match args.get(1).map(|s| s.to_ascii_uppercase()).as_deref() {
-        Some("ADD") => {
-            let (Some(&nick), Some(&user), Some(&host)) = (args.get(2), args.get(3), args.get(4)) else {
-                ctx.notice(me, from.uid, "Syntax: BOT ADD <nick> <user> <host> [gecos]");
-                return;
-            };
-            let gecos = if args.len() > 5 { args[5..].join(" ") } else { "Service Bot".to_string() };
-            match db.bot_add(nick, user, host, &gecos) {
-                Ok(()) => ctx.notice(me, from.uid, format!("Bot \x02{nick}\x02 (\x02{user}@{host}\x02) added.")),
-                Err(_) => ctx.notice(me, from.uid, format!("A bot named \x02{nick}\x02 already exists, or that didn't work.")),
-            }
-        }
-        Some("DEL") => {
-            let Some(&nick) = args.get(2) else {
-                ctx.notice(me, from.uid, "Syntax: BOT DEL <nick>");
-                return;
-            };
-            match db.bot_del(nick) {
-                Ok(true) => ctx.notice(me, from.uid, format!("Bot \x02{nick}\x02 deleted.")),
-                Ok(false) => ctx.notice(me, from.uid, format!("There's no bot named \x02{nick}\x02.")),
-                Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
-            }
-        }
-        None | Some("LIST") => {
-            let bots = db.bots();
-            if bots.is_empty() {
-                ctx.notice(me, from.uid, "No bots have been added yet. Add one with \x02BOT ADD\x02.");
-                return;
-            }
-            ctx.notice(me, from.uid, format!("Bots ({}):", bots.len()));
-            for b in &bots {
-                ctx.notice(me, from.uid, format!("  \x02{}\x02 ({}@{}) — {}", b.nick, b.user, b.host, b.gecos));
-            }
-        }
-        Some(other) => ctx.notice(me, from.uid, format!("Unknown BOT command \x02{other}\x02. Use \x02ADD\x02, \x02DEL\x02 or \x02LIST\x02.")),
     }
 }
