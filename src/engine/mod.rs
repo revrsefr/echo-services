@@ -1295,10 +1295,12 @@ impl Engine {
         let now = self.now_secs();
         let key = (channel.to_ascii_lowercase(), target_display.to_ascii_lowercase());
 
+        // Sweep tallies past their window before touching the map: a passed vote
+        // deletes its own key, but one that never reaches threshold would linger
+        // forever otherwise, so the map would grow without bound under abuse.
+        self.votes.retain(|_, vs| now.saturating_sub(vs.started) <= VOTE_TTL);
+
         let vs = self.votes.entry(key.clone()).or_insert(VoteState { ban, voters: std::collections::HashSet::new(), started: now });
-        if now.saturating_sub(vs.started) > VOTE_TTL {
-            *vs = VoteState { ban, voters: std::collections::HashSet::new(), started: now };
-        }
         vs.ban = ban;
         vs.voters.insert(from.to_string());
         let count = vs.voters.len() as u16;

@@ -338,6 +338,12 @@ pub async fn run(engine: Shared, cfg: GrpcCfg, outbound: broadcast::Sender<LogEn
         Ok(a) => a,
         Err(e) => return tracing::error!(%e, bind = %cfg.bind, "bad grpc bind address"),
     };
+    // An empty token would make the constant-time compare pass for a request
+    // that sends no authorization header at all, exposing the account-authority
+    // API unauthenticated. Refuse to start rather than serve it open.
+    if cfg.token.is_empty() {
+        return tracing::error!("grpc token is empty; refusing to start an unauthenticated accounts API");
+    }
     let has_tls = cfg.tls.is_some();
     let accounts_svc = AccountsService { engine: engine.clone(), token: cfg.token.clone() };
     let stats_svc = StatsService { engine: engine.clone(), token: cfg.token.clone() };
