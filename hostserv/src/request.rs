@@ -18,6 +18,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         ctx.notice(me, from.uid, format!("\x02{host}\x02 isn't allowed here. Please choose another."));
         return;
     }
+    let wait = db.vhost_request_wait(account);
+    if wait > 0 {
+        ctx.notice(me, from.uid, format!("Please wait \x02{wait}\x02s before requesting another vhost."));
+        return;
+    }
     match db.request_vhost(account, host) {
         Ok(()) => ctx.notice(me, from.uid, format!("Requested vhost \x02{host}\x02 — an operator will review it.")),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),

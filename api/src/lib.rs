@@ -601,6 +601,7 @@ pub trait Store {
     fn vhost(&self, account: &str) -> Option<VhostView>;
     fn vhosts(&self) -> Vec<VhostView>;
     fn request_vhost(&mut self, account: &str, host: &str) -> Result<(), RegError>;
+    fn vhost_request_wait(&self, account: &str) -> u64;
     fn take_vhost_request(&mut self, account: &str) -> Result<Option<String>, RegError>;
     fn vhost_requests(&self) -> Vec<(String, String)>;
     fn vhost_offer_add(&mut self, host: &str) -> Result<bool, RegError>;

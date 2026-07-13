@@ -2721,6 +2721,8 @@ mod tests {
         hs(&mut e, "000AAAAAB", "FORBID (?i)(admin|staff)");
         assert!(says(&hs(&mut e, "000AAAAAV", "REQUEST admin.example"), "isn't allowed"), "impersonating request blocked");
         assert!(says(&hs(&mut e, "000AAAAAV", "REQUEST cool.example"), "will review"), "clean request allowed");
+        // A second request right away is throttled.
+        assert!(says(&hs(&mut e, "000AAAAAV", "REQUEST another.example"), "Please wait"), "request throttled");
         assert!(says(&hs(&mut e, "000AAAAAV", "FORBID x"), "Access denied"), "FORBID oper-gated");
 
         // A template lets a user self-serve a $account vhost.
@@ -2810,6 +2812,7 @@ mod tests {
         db.scram_iterations = 4096;
         db.register("boss", "password1", None).unwrap();
         db.register("alice", "password1", None).unwrap();
+        db.register("bob", "password1", None).unwrap();
         let mut e = Engine::new(
             vec![
                 Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
@@ -2825,8 +2828,10 @@ mod tests {
         let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAW".into(), nick: "bob".into(), host: "realhost".into() });
         ns(&mut e, "000AAAAAB", "IDENTIFY password1");
         ns(&mut e, "000AAAAAV", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAW", "IDENTIFY password1");
         let says = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
 
         // alice requests; the request shows up in WAITING.
@@ -2838,9 +2843,9 @@ mod tests {
         // The request is consumed; WAITING is empty again.
         assert!(says(&hs(&mut e, "000AAAAAB", "WAITING"), "No vhost requests"), "request consumed");
 
-        // A rejected request assigns nothing.
-        hs(&mut e, "000AAAAAV", "REQUEST other.example");
-        assert!(says(&hs(&mut e, "000AAAAAB", "REJECT alice"), "Rejected"), "rejected");
+        // A different user's request, rejected, assigns nothing.
+        hs(&mut e, "000AAAAAW", "REQUEST other.example");
+        assert!(says(&hs(&mut e, "000AAAAAB", "REJECT bob"), "Rejected"), "rejected");
         assert!(says(&hs(&mut e, "000AAAAAB", "WAITING"), "No vhost requests"), "no request left after reject");
         // A non-operator can't approve.
         assert!(says(&hs(&mut e, "000AAAAAV", "WAITING"), "Access denied"), "oper-gated");

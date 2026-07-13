@@ -784,6 +784,8 @@ pub struct Db {
     codes: HashMap<String, PendingCode>,
     // Node-local, non-persisted brute-force throttle for password authentication.
     auth_fails: HashMap<String, AuthThrottle>,
+    // Last vhost REQUEST time per account (in-memory, anti-spam), unix secs.
+    vhost_req_times: HashMap<String, u64>,
     // Registered service bots (BotServ), keyed by casefolded nick.
     bots: HashMap<String, Bot>,
     // HostServ node config: the self-serve offer menu, the forbidden-pattern
@@ -843,7 +845,7 @@ impl Db {
             apply(&mut accounts, &mut channels, &mut grouped, &mut bots, &mut host_cfg, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), bots, host_cfg }
+        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), bots, host_cfg }
     }
 
     /// Fold an entry authored by another node into the store — the services-side
@@ -1239,7 +1241,17 @@ impl Db {
         let ts = now();
         self.log.append(Event::VhostRequested { account: account.to_string(), host: host.to_string(), ts }).map_err(|_| RegError::Internal)?;
         self.accounts.get_mut(&k).unwrap().vhost_request = Some(PendingVhost { host: host.to_string(), ts });
+        self.vhost_req_times.insert(k, ts);
         Ok(())
+    }
+
+    /// Seconds a member must wait before requesting another vhost (0 = allowed).
+    pub fn vhost_request_wait(&self, account: &str) -> u64 {
+        const COOLDOWN: u64 = 60;
+        match self.vhost_req_times.get(&key(account)) {
+            Some(&last) => COOLDOWN.saturating_sub(now().saturating_sub(last)),
+            None => 0,
+        }
     }
 
     /// Clear a pending vhost request (on approval or rejection). Returns the
@@ -2515,6 +2527,9 @@ impl Store for Db {
     }
     fn request_vhost(&mut self, account: &str, host: &str) -> Result<(), RegError> {
         Db::request_vhost(self, account, host)
+    }
+    fn vhost_request_wait(&self, account: &str) -> u64 {
+        Db::vhost_request_wait(self, account)
     }
     fn take_vhost_request(&mut self, account: &str) -> Result<Option<String>, RegError> {
         Db::take_vhost_request(self, account)
