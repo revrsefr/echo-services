@@ -1,0 +1,8 @@
+[package]
+name = "fedserv-example"
+version = "0.0.1"
+edition = "2021"
+description = "A minimal example service module: the template a new pseudo-client is copied from."
+
+[dependencies]
+fedserv-api = { path = "../api" }

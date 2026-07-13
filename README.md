@@ -27,6 +27,9 @@ workspace, each depending only on the `fedserv-api` SDK crate.
   pseudo-clients, each a crate implementing `Service`. OperServ and others follow
   the same shape.
 
+Writing your own module — a service or a new ircd protocol — is documented in
+[MODULES.md](MODULES.md); `example/` is a minimal service to copy from.
+
 ## Replication
 
 Each log entry carries an `origin`, a per-origin `seq`, and a Lamport clock. Peers

@@ -286,6 +286,7 @@ dependencies = [
  "base64",
  "fedserv-api",
  "fedserv-chanserv",
+ "fedserv-example",
  "fedserv-inspircd",
  "fedserv-nickserv",
  "hmac",
@@ -312,6 +313,13 @@ version = "0.0.1"
 
 [[package]]
 name = "fedserv-chanserv"
+version = "0.0.1"
+dependencies = [
+ "fedserv-api",
+]
+
+[[package]]
+name = "fedserv-example"
 version = "0.0.1"
 dependencies = [
  "fedserv-api",

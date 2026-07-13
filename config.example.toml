@@ -35,3 +35,8 @@ protocol = 1206            # InspIRCd link protocol version (1206 = insp4, 1205 
 # [grpc.tls]                # omit for plaintext (fine on a private/loopback hop)
 # cert = "certs/node.crt"
 # key  = "certs/node.key"
+
+# Which service modules to start. Omit this section for the built-in NickServ +
+# ChanServ. Add "example" to also start the example template service.
+# [modules]
+# services = ["nickserv", "chanserv"]

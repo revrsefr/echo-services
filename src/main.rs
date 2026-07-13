@@ -15,6 +15,7 @@ use tokio::sync::Mutex;
 
 use engine::Engine;
 use fedserv_chanserv::ChanServ;
+use fedserv_example::ExampleServ;
 use fedserv_inspircd::InspIrcd;
 use fedserv_nickserv::NickServ;
 
@@ -39,16 +40,28 @@ async fn main() -> Result<()> {
         ts,
     ));
 
-    let services: Vec<Box<dyn engine::service::Service>> = vec![
-        Box::new(NickServ {
+    // Bring up the service modules named in [modules] (default NickServ +
+    // ChanServ). Each keeps a fixed uid suffix so its identity is stable no
+    // matter which others are enabled.
+    let enabled = |name: &str| cfg.modules.services.iter().any(|s| s == name);
+    let mut services: Vec<Box<dyn engine::service::Service>> = Vec::new();
+    if enabled("nickserv") {
+        services.push(Box::new(NickServ {
             uid: format!("{}AAAAAA", cfg.server.sid),
             guest_nick: cfg.server.guest_nick.clone(),
             guest_seq: (ts % 100_000) as u32,
-        }),
-        Box::new(ChanServ {
+        }));
+    }
+    if enabled("chanserv") {
+        services.push(Box::new(ChanServ {
             uid: format!("{}AAAAAB", cfg.server.sid),
-        }),
-    ];
+        }));
+    }
+    if enabled("example") {
+        services.push(Box::new(ExampleServ {
+            uid: format!("{}AAAAAC", cfg.server.sid),
+        }));
+    }
     let (gossip_tx, _) = tokio::sync::broadcast::channel::<engine::db::LogEntry>(1024);
     let mut db = engine::db::Db::open("fedserv.db.jsonl", &cfg.server.sid);
     db.scram_iterations = cfg.server.scram_iterations;

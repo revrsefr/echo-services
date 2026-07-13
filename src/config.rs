@@ -16,6 +16,28 @@ pub struct Config {
     // directory. Absent = the RPC server does not start.
     #[serde(default)]
     pub grpc: Option<Grpc>,
+    // Which service modules to start. Absent = the built-in NickServ + ChanServ.
+    #[serde(default)]
+    pub modules: Modules,
+}
+
+// The service modules to bring up at burst. Each name maps to a compiled-in
+// module crate the daemon knows how to construct (see main.rs). Names not built
+// in are ignored.
+#[derive(Debug, Deserialize)]
+pub struct Modules {
+    #[serde(default = "default_services")]
+    pub services: Vec<String>,
+}
+
+impl Default for Modules {
+    fn default() -> Self {
+        Modules { services: default_services() }
+    }
+}
+
+fn default_services() -> Vec<String> {
+    vec!["nickserv".to_string(), "chanserv".to_string()]
 }
 
 #[derive(Debug, Deserialize, Clone)]
