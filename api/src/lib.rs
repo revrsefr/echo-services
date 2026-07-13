@@ -295,6 +295,7 @@ pub struct ChannelView {
     pub signkick: bool,
     pub private: bool,
     pub peace: bool,
+    pub secureops: bool,
 }
 
 // A single ChanServ SET option, named for the typed `set_channel_setting` call.
@@ -303,6 +304,7 @@ pub enum ChanSetting {
     SignKick,
     Private,
     Peace,
+    SecureOps,
 }
 
 impl ChannelView {

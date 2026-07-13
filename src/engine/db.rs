@@ -160,6 +160,9 @@ pub struct ChanSettings {
     // Forbid using ChanServ to act against someone with equal-or-higher access.
     #[serde(default)]
     pub peace: bool,
+    // Strip channel-operator status from anyone without op-level access.
+    #[serde(default)]
+    pub secureops: bool,
 }
 
 // A registered channel and who owns it.
@@ -589,7 +592,7 @@ impl Db {
             if !c.entrymsg.is_empty() {
                 snapshot.push(Event::ChannelEntryMsgSet { channel: c.name.clone(), msg: c.entrymsg.clone() });
             }
-            if c.settings.signkick || c.settings.private || c.settings.peace {
+            if c.settings.signkick || c.settings.private || c.settings.peace || c.settings.secureops {
                 snapshot.push(Event::ChannelSettingsSet { channel: c.name.clone(), settings: c.settings });
             }
         }
@@ -1119,6 +1122,7 @@ impl Db {
             ChanSetting::SignKick => settings.signkick = on,
             ChanSetting::Private => settings.private = on,
             ChanSetting::Peace => settings.peace = on,
+            ChanSetting::SecureOps => settings.secureops = on,
         }
         self.log
             .append(Event::ChannelSettingsSet { channel: channel.to_string(), settings })
@@ -1484,6 +1488,7 @@ fn channel_view(c: &ChannelInfo) -> ChannelView {
         signkick: c.settings.signkick,
         private: c.settings.private,
         peace: c.settings.peace,
+        secureops: c.settings.secureops,
     }
 }
 

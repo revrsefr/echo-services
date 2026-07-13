@@ -426,6 +426,11 @@ impl Engine {
                 let mode = account.as_deref().and_then(|a| self.db.channel(&channel).and_then(|c| c.join_mode(a)));
                 let entrymsg = self.db.channel(&channel).map(|c| c.entrymsg.clone()).filter(|m| !m.is_empty());
                 let mut out = Vec::new();
+                // SECUREOPS: a user who arrives opped (FJOIN prefix) but lacks op-level
+                // access loses it, unless we're about to grant it to them anyway.
+                if op && mode != Some("+o") && self.db.channel(&channel).is_some_and(|c| c.settings.secureops) {
+                    out.push(NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: format!("-o {uid}") });
+                }
                 match mode {
                     // A user with access gets their status mode, plus the entry message.
                     Some(m) => {
@@ -465,6 +470,15 @@ impl Engine {
             }
             NetEvent::ChannelOp { channel, uid, op } => {
                 self.network.set_op(&channel, &uid, op);
+                // SECUREOPS: a user who gains +o without op-level access loses it.
+                if op {
+                    if let Some(c) = self.db.channel(&channel) {
+                        if c.settings.secureops && !self.network.account_of(&uid).is_some_and(|a| c.join_mode(a) == Some("+o")) {
+                            let from = self.chan_service.clone().unwrap_or_default();
+                            return vec![NetAction::ChannelMode { from, channel, modes: format!("-o {uid}") }];
+                        }
+                    }
+                }
                 Vec::new()
             }
             NetEvent::ChannelKey { channel, key } => {
@@ -1467,6 +1481,29 @@ mod tests {
             from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY ghost whatever".into(),
         });
         assert!(missing.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't registered"))), "{missing:?}");
+    }
+
+    // SECUREOPS strips channel-operator status from a user without op-level access.
+    #[test]
+    fn secureops_strips_op_from_a_user_without_access() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-secureops.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.register_channel("#c", "boss").unwrap();
+        db.set_channel_setting("#c", db::ChanSetting::SecureOps, true).unwrap();
+        let mut e = Engine::new(vec![Box::new(ChanServ { uid: "42SAAAAAB".into() })], db);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "rando".into(), host: "h".into() });
+        // rando holds no access; being opped triggers a -o from ChanServ.
+        let out = e.handle(NetEvent::ChannelOp { channel: "#c".into(), uid: "000AAAAAB".into(), op: true });
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "-o 000AAAAAB")),
+            "SECUREOPS strips the op: {out:?}"
+        );
+        // With SECUREOPS off, the same op is left alone.
+        e.db.set_channel_setting("#c", db::ChanSetting::SecureOps, false).unwrap();
+        let out = e.handle(NetEvent::ChannelOp { channel: "#c".into(), uid: "000AAAAAB".into(), op: true });
+        assert!(out.is_empty(), "no enforcement when SECUREOPS is off: {out:?}");
     }
 
     // ChanServ: registration needs identification, INFO shows the founder, and

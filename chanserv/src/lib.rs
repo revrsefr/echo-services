@@ -105,6 +105,7 @@ impl Service for ChanServ {
                         if info.signkick { opts.push("SIGNKICK"); }
                         if info.private { opts.push("PRIVATE"); }
                         if info.peace { opts.push("PEACE"); }
+                        if info.secureops { opts.push("SECUREOPS"); }
                         if !opts.is_empty() {
                             ctx.notice(me, from.uid, format!("  Options    : {}", opts.join(", ")));
                         }
