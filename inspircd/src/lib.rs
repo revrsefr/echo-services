@@ -165,6 +165,17 @@ impl Protocol for InspIrcd {
                     _ => vec![],
                 }
             }
+            // :<src> FTOPIC <chan> <chants> <topicts> [setby] :<topic> — a topic
+            // change. Skip changes we made ourselves so enforcement can't loop.
+            "FTOPIC" => {
+                let a: Vec<&str> = tokens.collect();
+                match (source.as_deref(), a.first()) {
+                    (Some(src), Some(chan)) if !src.starts_with(self.sid.as_str()) && chan.starts_with('#') => {
+                        vec![NetEvent::TopicChange { channel: chan.to_string(), setter: src.to_string(), topic: trailing(rest) }]
+                    }
+                    _ => vec![],
+                }
+            }
             "QUIT" => vec![NetEvent::Quit { uid: source.unwrap_or_default() }],
             // account-registration relay from an ircd:
             // ACCTREGISTER <reqid> <origin> <kind> <account> <p2> :<p3>
@@ -410,6 +421,21 @@ mod tests {
         );
         let ev = proto().parse(":42S FMODE #chan 1783845132 -m");
         assert!(!ev.iter().any(|e| matches!(e, NetEvent::ChannelModeChange { .. })), "own change filtered: {ev:?}");
+    }
+
+    #[test]
+    fn parses_ftopic_and_filters_own() {
+        let ev = proto().parse(":0IRAAAAAB FTOPIC #chan 1783845132 1783845140 :Welcome all");
+        assert!(
+            matches!(ev.as_slice(), [NetEvent::TopicChange { channel, setter, topic }] if channel == "#chan" && setter == "0IRAAAAAB" && topic == "Welcome all"),
+            "{ev:?}"
+        );
+        // The burst/RESYNC form carries a setby field before the topic.
+        let ev = proto().parse(":0IRAAAAAB FTOPIC #chan 1783845132 1783845140 someone!u@h :Hi there");
+        assert!(matches!(ev.as_slice(), [NetEvent::TopicChange { topic, .. }] if topic == "Hi there"), "{ev:?}");
+        // Our own topic changes are filtered so enforcement can't loop.
+        let ev = proto().parse(":42S FTOPIC #chan 1 1 :nope");
+        assert!(!ev.iter().any(|e| matches!(e, NetEvent::TopicChange { .. })), "own change filtered: {ev:?}");
     }
 
     // FJOIN members and IJOIN both surface as Join events.

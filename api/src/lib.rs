@@ -33,6 +33,9 @@ pub enum NetEvent {
     ChannelModeChange { channel: String, modes: String },
     // A channel's key (+k/-k) changed, tracked so GETKEY can report it.
     ChannelKey { channel: String, key: Option<String> },
+    // A channel's topic changed (FTOPIC), for KEEPTOPIC / TOPICLOCK. `setter` is
+    // the source uid; our own changes are filtered out by the protocol layer.
+    TopicChange { channel: String, setter: String, topic: String },
     Quit { uid: String },
     // An ircd relaying an IRCv3 account-registration request to us as the authority.
     AccountRequest { reqid: String, origin: String, kind: String, account: String, p2: String, p3: String },
@@ -296,6 +299,10 @@ pub struct ChannelView {
     pub private: bool,
     pub peace: bool,
     pub secureops: bool,
+    pub keeptopic: bool,
+    pub topiclock: bool,
+    // Last known topic (for KEEPTOPIC / TOPICLOCK).
+    pub topic: String,
 }
 
 // A single ChanServ SET option, named for the typed `set_channel_setting` call.
@@ -305,6 +312,8 @@ pub enum ChanSetting {
     Private,
     Peace,
     SecureOps,
+    KeepTopic,
+    TopicLock,
 }
 
 impl ChannelView {
@@ -432,6 +441,7 @@ pub trait Store {
     fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError>;
     fn set_desc(&mut self, channel: &str, desc: &str) -> Result<(), ChanError>;
     fn set_channel_setting(&mut self, channel: &str, setting: ChanSetting, on: bool) -> Result<(), ChanError>;
+    fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError>;
     fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError>;
     fn set_founder(&mut self, channel: &str, account: &str) -> Result<(), ChanError>;
     fn access_add(&mut self, channel: &str, account: &str, level: &str) -> Result<(), ChanError>;

@@ -405,7 +405,14 @@ impl Engine {
             NetEvent::ChannelCreate { channel } => {
                 let from = self.chan_service.clone().unwrap_or_default();
                 match self.db.channel(&channel) {
-                    Some(info) => vec![NetAction::ChannelMode { from, channel, modes: info.lock_modes() }],
+                    Some(info) => {
+                        let mut out = vec![NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: info.lock_modes() }];
+                        // KEEPTOPIC: restore the remembered topic on a recreated channel.
+                        if info.settings.keeptopic && !info.topic.is_empty() {
+                            out.push(NetAction::Topic { from, channel, topic: info.topic.clone() });
+                        }
+                        out
+                    }
                     None => Vec::new(),
                 }
             }
@@ -484,6 +491,24 @@ impl Engine {
             NetEvent::ChannelKey { channel, key } => {
                 self.network.set_channel_key(&channel, key);
                 Vec::new()
+            }
+            NetEvent::TopicChange { channel, setter, topic } => {
+                let info = self.db.channel(&channel).map(|c| (c.settings.keeptopic, c.settings.topiclock, c.topic.clone()));
+                // The setter may change a locked topic only with op-level access.
+                let authorized = self.network.account_of(&setter).and_then(|a| self.db.channel(&channel).map(|c| c.join_mode(a) == Some("+o"))).unwrap_or(false);
+                match info {
+                    // TOPICLOCK + unauthorised: put the kept topic back.
+                    Some((_, true, stored)) if !authorized => {
+                        let from = self.chan_service.clone().unwrap_or_default();
+                        vec![NetAction::Topic { from, channel, topic: stored }]
+                    }
+                    // Otherwise remember the new topic if the channel keeps it.
+                    Some((keep, lock, _)) if keep || lock => {
+                        let _ = self.db.set_channel_topic(&channel, &topic);
+                        Vec::new()
+                    }
+                    _ => Vec::new(),
+                }
             }
             NetEvent::Quit { uid } => {
                 self.network.user_quit(&uid);
@@ -1504,6 +1529,28 @@ mod tests {
         e.db.set_channel_setting("#c", db::ChanSetting::SecureOps, false).unwrap();
         let out = e.handle(NetEvent::ChannelOp { channel: "#c".into(), uid: "000AAAAAB".into(), op: true });
         assert!(out.is_empty(), "no enforcement when SECUREOPS is off: {out:?}");
+    }
+
+    // TOPICLOCK reverts an unauthorised topic change; KEEPTOPIC restores the
+    // remembered topic when the channel is recreated.
+    #[test]
+    fn topiclock_reverts_and_keeptopic_restores() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-topic.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.register_channel("#c", "boss").unwrap();
+        db.set_channel_setting("#c", db::ChanSetting::KeepTopic, true).unwrap();
+        db.set_channel_setting("#c", db::ChanSetting::TopicLock, true).unwrap();
+        db.set_channel_topic("#c", "Official topic").unwrap();
+        let mut e = Engine::new(vec![Box::new(ChanServ { uid: "42SAAAAAB".into() })], db);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "rando".into(), host: "h".into() });
+        // A user without access changes the topic -> reverted to the stored one.
+        let out = e.handle(NetEvent::TopicChange { channel: "#c".into(), setter: "000AAAAAB".into(), topic: "hacked".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Topic { topic, .. } if topic == "Official topic")), "topiclock reverts: {out:?}");
+        // KEEPTOPIC restores the remembered topic on channel (re)creation.
+        let out = e.handle(NetEvent::ChannelCreate { channel: "#c".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Topic { topic, .. } if topic == "Official topic")), "keeptopic restores: {out:?}");
     }
 
     // ChanServ: registration needs identification, INFO shows the founder, and

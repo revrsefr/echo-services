@@ -83,6 +83,7 @@ pub enum Event {
     ChannelDescSet { channel: String, desc: String },
     ChannelEntryMsgSet { channel: String, msg: String },
     ChannelSettingsSet { channel: String, settings: ChanSettings },
+    ChannelTopicSet { channel: String, topic: String },
 }
 
 // Whether an event replicates across the federation. Account identity is Global
@@ -119,7 +120,8 @@ impl Event {
             | Event::ChannelFounderSet { .. }
             | Event::ChannelDescSet { .. }
             | Event::ChannelEntryMsgSet { .. }
-            | Event::ChannelSettingsSet { .. } => Scope::Local,
+            | Event::ChannelSettingsSet { .. }
+            | Event::ChannelTopicSet { .. } => Scope::Local,
         }
     }
 }
@@ -163,6 +165,12 @@ pub struct ChanSettings {
     // Strip channel-operator status from anyone without op-level access.
     #[serde(default)]
     pub secureops: bool,
+    // Remember the topic and restore it when the channel is recreated.
+    #[serde(default)]
+    pub keeptopic: bool,
+    // Revert topic changes made by users without op-level access.
+    #[serde(default)]
+    pub topiclock: bool,
 }
 
 // A registered channel and who owns it.
@@ -189,6 +197,9 @@ pub struct ChannelInfo {
     // On/off options set via ChanServ SET.
     #[serde(default)]
     pub settings: ChanSettings,
+    // Last known topic, kept for KEEPTOPIC / TOPICLOCK.
+    #[serde(default)]
+    pub topic: String,
 }
 
 impl ChannelInfo {
@@ -592,8 +603,11 @@ impl Db {
             if !c.entrymsg.is_empty() {
                 snapshot.push(Event::ChannelEntryMsgSet { channel: c.name.clone(), msg: c.entrymsg.clone() });
             }
-            if c.settings.signkick || c.settings.private || c.settings.peace || c.settings.secureops {
+            if c.settings.signkick || c.settings.private || c.settings.peace || c.settings.secureops || c.settings.keeptopic || c.settings.topiclock {
                 snapshot.push(Event::ChannelSettingsSet { channel: c.name.clone(), settings: c.settings });
+            }
+            if !c.topic.is_empty() {
+                snapshot.push(Event::ChannelTopicSet { channel: c.name.clone(), topic: c.topic.clone() });
             }
         }
         for (nick, account) in &self.grouped {
@@ -977,7 +991,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default() });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new() });
         Ok(())
     }
 
@@ -1123,11 +1137,26 @@ impl Db {
             ChanSetting::Private => settings.private = on,
             ChanSetting::Peace => settings.peace = on,
             ChanSetting::SecureOps => settings.secureops = on,
+            ChanSetting::KeepTopic => settings.keeptopic = on,
+            ChanSetting::TopicLock => settings.topiclock = on,
         }
         self.log
             .append(Event::ChannelSettingsSet { channel: channel.to_string(), settings })
             .map_err(|_| ChanError::Internal)?;
         self.channels.get_mut(&k).unwrap().settings = settings;
+        Ok(())
+    }
+
+    /// Remember a channel's topic (KEEPTOPIC / TOPICLOCK).
+    pub fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError> {
+        let k = key(channel);
+        if !self.channels.contains_key(&k) {
+            return Err(ChanError::NoChannel);
+        }
+        self.log
+            .append(Event::ChannelTopicSet { channel: channel.to_string(), topic: topic.to_string() })
+            .map_err(|_| ChanError::Internal)?;
+        self.channels.get_mut(&k).unwrap().topic = topic.to_string();
         Ok(())
     }
 
@@ -1232,7 +1261,7 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             grouped.remove(&key(&nick));
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default() });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new() });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
@@ -1278,6 +1307,11 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::ChannelSettingsSet { channel, settings } => {
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.settings = settings;
+            }
+        }
+        Event::ChannelTopicSet { channel, topic } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.topic = topic;
             }
         }
         Event::ChannelEntryMsgSet { channel, msg } => {
@@ -1454,6 +1488,9 @@ impl Store for Db {
     fn set_channel_setting(&mut self, channel: &str, setting: ChanSetting, on: bool) -> Result<(), ChanError> {
         Db::set_channel_setting(self, channel, setting, on)
     }
+    fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError> {
+        Db::set_channel_topic(self, channel, topic)
+    }
     fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError> {
         Db::set_entrymsg(self, channel, msg)
     }
@@ -1489,6 +1526,9 @@ fn channel_view(c: &ChannelInfo) -> ChannelView {
         private: c.settings.private,
         peace: c.settings.peace,
         secureops: c.settings.secureops,
+        keeptopic: c.settings.keeptopic,
+        topiclock: c.settings.topiclock,
+        topic: c.topic.clone(),
     }
 }
 
