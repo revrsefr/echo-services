@@ -8,6 +8,8 @@ use fedserv_api::{NetView, Sender, Service, ServiceCtx, Store};
 mod bot;
 #[path = "assign.rs"]
 mod assign;
+#[path = "info.rs"]
+mod info;
 
 pub struct BotServ {
     pub uid: String,
@@ -30,7 +32,8 @@ impl Service for BotServ {
             Some("BOT") => bot::handle(me, from, args, ctx, db),
             Some("ASSIGN") => assign::handle(me, from, args, ctx, db, true),
             Some("UNASSIGN") => assign::handle(me, from, args, ctx, db, false),
-            Some("HELP") | None => ctx.notice(me, from.uid, "BotServ keeps service bots for your channels: \x02ASSIGN\x02 <#channel> <bot> puts a bot in your channel, \x02UNASSIGN\x02 <#channel> removes it. Operators also have \x02BOT\x02 ADD|DEL|LIST."),
+            Some("INFO") => info::handle(me, from, args, ctx, db),
+            Some("HELP") | None => ctx.notice(me, from.uid, "BotServ keeps service bots for your channels: \x02ASSIGN\x02 <#channel> <bot> puts a bot in your channel, \x02UNASSIGN\x02 <#channel> removes it, \x02INFO\x02 <bot|#channel> shows details. Operators also have \x02BOT\x02 ADD|DEL|LIST."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
         }
     }
