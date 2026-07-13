@@ -603,6 +603,9 @@ pub trait Store {
     fn request_vhost(&mut self, account: &str, host: &str) -> Result<(), RegError>;
     fn take_vhost_request(&mut self, account: &str) -> Result<Option<String>, RegError>;
     fn vhost_requests(&self) -> Vec<(String, String)>;
+    fn vhost_offer_add(&mut self, host: &str) -> Result<bool, RegError>;
+    fn vhost_offer_del(&mut self, index: usize) -> Result<Option<String>, RegError>;
+    fn vhost_offers(&self) -> Vec<String>;
     fn group_nick(&mut self, nick: &str, account: &str) -> Result<(), RegError>;
     fn ungroup_nick(&mut self, nick: &str) -> Result<bool, RegError>;
     fn drop_account(&mut self, account: &str) -> Result<bool, RegError>;

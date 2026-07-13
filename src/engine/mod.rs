@@ -2686,6 +2686,47 @@ mod tests {
         assert!(hs(&mut e, "000AAAAAB", "SET alice not a host").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't a valid host"))), "host validated");
     }
 
+    // The vhost OFFER menu: operators OFFER specs, users TAKE them self-serve.
+    #[test]
+    fn hostserv_offer_menu() {
+        use fedserv_hostserv::HostServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-hsoffer.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("alice", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(HostServ { uid: "42SAAAAAG".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAV", "IDENTIFY password1");
+        let says = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        // An operator offers a vhost; anyone can list it.
+        hs(&mut e, "000AAAAAB", "OFFER free.cloak.example");
+        assert!(says(&hs(&mut e, "000AAAAAV", "OFFERLIST"), "free.cloak.example"), "listed");
+        // A user takes it and it applies to them.
+        let out = hs(&mut e, "000AAAAAV", "TAKE 1");
+        assert!(out.iter().any(|a| matches!(a, NetAction::SetHost { uid, host } if uid == "000AAAAAV" && host == "free.cloak.example")), "TAKE applies: {out:?}");
+        // The operator removes it; a non-operator can't offer.
+        assert!(says(&hs(&mut e, "000AAAAAB", "OFFERDEL 1"), "Removed"), "removed");
+        assert!(says(&hs(&mut e, "000AAAAAV", "OFFER x.example"), "Access denied"), "oper-gated");
+    }
+
     // An ident@host vhost applies both the ident (CHGIDENT) and the host.
     #[test]
     fn hostserv_ident_at_host() {

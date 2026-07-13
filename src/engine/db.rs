@@ -148,6 +148,8 @@ pub enum Event {
     ChannelBotUnassigned { channel: String },
     BotAdded(Bot),
     BotRemoved { nick: String },
+    VhostOfferAdded { host: String },
+    VhostOfferRemoved { host: String },
 }
 
 // Whether an event replicates across the federation. Account identity is Global
@@ -204,7 +206,9 @@ impl Event {
             | Event::ChannelBotAssigned { .. }
             | Event::ChannelBotUnassigned { .. }
             | Event::BotAdded(_)
-            | Event::BotRemoved { .. } => Scope::Local,
+            | Event::BotRemoved { .. }
+            | Event::VhostOfferAdded { .. }
+            | Event::VhostOfferRemoved { .. } => Scope::Local,
         }
     }
 }
@@ -776,6 +780,8 @@ pub struct Db {
     auth_fails: HashMap<String, AuthThrottle>,
     // Registered service bots (BotServ), keyed by casefolded nick.
     bots: HashMap<String, Bot>,
+    // HostServ vhost offers: a menu of specs users may self-assign with TAKE.
+    vhost_offers: Vec<String>,
 }
 
 // A pending emailed code and how many wrong guesses remain before it is burned.
@@ -814,11 +820,12 @@ impl Db {
         let mut channels = HashMap::new();
         let mut grouped = HashMap::new();
         let mut bots = HashMap::new();
+        let mut vhost_offers = Vec::new();
         for event in events {
-            apply(&mut accounts, &mut channels, &mut grouped, &mut bots, event);
+            apply(&mut accounts, &mut channels, &mut grouped, &mut bots, &mut vhost_offers, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), bots }
+        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), bots, vhost_offers }
     }
 
     /// Fold an entry authored by another node into the store — the services-side
@@ -834,7 +841,7 @@ impl Db {
             _ => None,
         };
         if let Some(event) = self.log.ingest(entry)? {
-            apply(&mut self.accounts, &mut self.channels, &mut self.grouped, &mut self.bots, event);
+            apply(&mut self.accounts, &mut self.channels, &mut self.grouped, &mut self.bots, &mut self.vhost_offers, event);
         }
         if let Some((name, prev_home)) = watched {
             match (prev_home, self.account(&name).map(|c| c.home.clone())) {
@@ -894,6 +901,9 @@ impl Db {
         }
         for b in self.bots.values() {
             snapshot.push(Event::BotAdded(b.clone()));
+        }
+        for host in &self.vhost_offers {
+            snapshot.push(Event::VhostOfferAdded { host: host.clone() });
         }
         self.log.compact(snapshot)?;
         tracing::info!(before, after = self.log.len(), "compacted event log");
@@ -1195,10 +1205,6 @@ impl Db {
         Ok(true)
     }
 
-    /// `account`'s vhost, if any.
-    pub fn vhost(&self, account: &str) -> Option<&Vhost> {
-        self.accounts.get(&key(account)).and_then(|a| a.vhost.as_ref())
-    }
 
     /// Record a pending vhost request for `account` (awaiting approval).
     pub fn request_vhost(&mut self, account: &str, host: &str) -> Result<(), RegError> {
@@ -1236,6 +1242,32 @@ impl Db {
             .collect();
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out
+    }
+
+    /// Add a vhost offer to the self-serve menu. Ok(false) if already offered.
+    pub fn vhost_offer_add(&mut self, host: &str) -> Result<bool, RegError> {
+        if self.vhost_offers.iter().any(|o| o == host) {
+            return Ok(false);
+        }
+        self.log.append(Event::VhostOfferAdded { host: host.to_string() }).map_err(|_| RegError::Internal)?;
+        self.vhost_offers.push(host.to_string());
+        Ok(true)
+    }
+
+    /// Remove the offer at 1-based `index`. Returns the removed spec, if valid.
+    pub fn vhost_offer_del(&mut self, index: usize) -> Result<Option<String>, RegError> {
+        if index == 0 || index > self.vhost_offers.len() {
+            return Ok(None);
+        }
+        let host = self.vhost_offers[index - 1].clone();
+        self.log.append(Event::VhostOfferRemoved { host: host.clone() }).map_err(|_| RegError::Internal)?;
+        self.vhost_offers.retain(|o| o != &host);
+        Ok(Some(host))
+    }
+
+    /// The self-serve vhost offer menu.
+    pub fn vhost_offers(&self) -> &[String] {
+        &self.vhost_offers
     }
 
     /// Every account that has a vhost, as (account, host, setter).
@@ -2033,7 +2065,7 @@ fn owns_over(held: &Account, claim: &Account) -> bool {
 
 // Fold one event into the store. Shared by log replay (`open`) and gossip
 // ingest, so both routes reconstruct identical state.
-fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String, ChannelInfo>, grouped: &mut HashMap<String, String>, bots: &mut HashMap<String, Bot>, event: Event) {
+fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String, ChannelInfo>, grouped: &mut HashMap<String, String>, bots: &mut HashMap<String, Bot>, offers: &mut Vec<String>, event: Event) {
     match event {
         Event::AccountRegistered(a) => {
             // Resolve a concurrent registration of the same name deterministically:
@@ -2245,6 +2277,14 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::BotRemoved { nick } => {
             bots.remove(&key(&nick));
         }
+        Event::VhostOfferAdded { host } => {
+            if !offers.iter().any(|o| o == &host) {
+                offers.push(host);
+            }
+        }
+        Event::VhostOfferRemoved { host } => {
+            offers.retain(|o| o != &host);
+        }
         Event::ChannelEntryMsgSet { channel, msg } => {
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.entrymsg = msg;
@@ -2401,6 +2441,15 @@ impl Store for Db {
     }
     fn vhost_requests(&self) -> Vec<(String, String)> {
         Db::vhost_requests(self)
+    }
+    fn vhost_offer_add(&mut self, host: &str) -> Result<bool, RegError> {
+        Db::vhost_offer_add(self, host)
+    }
+    fn vhost_offer_del(&mut self, index: usize) -> Result<Option<String>, RegError> {
+        Db::vhost_offer_del(self, index)
+    }
+    fn vhost_offers(&self) -> Vec<String> {
+        Db::vhost_offers(self).to_vec()
     }
     fn group_nick(&mut self, nick: &str, account: &str) -> Result<(), RegError> {
         Db::group_nick(self, nick, account)
@@ -2644,9 +2693,9 @@ mod tests {
             ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None,
         };
         let converge = |first: &Account, second: &Account| {
-            let (mut acc, mut ch, mut gr, mut bo) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new());
-            apply(&mut acc, &mut ch, &mut gr, &mut bo, Event::AccountRegistered(first.clone()));
-            apply(&mut acc, &mut ch, &mut gr, &mut bo, Event::AccountRegistered(second.clone()));
+            let (mut acc, mut ch, mut gr, mut bo, mut of) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), Vec::new());
+            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut of, Event::AccountRegistered(first.clone()));
+            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut of, Event::AccountRegistered(second.clone()));
             acc["alice"].password_hash.clone()
         };
         // Earlier registration wins, regardless of which claim applies first.

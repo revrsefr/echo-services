@@ -21,6 +21,10 @@ mod request;
 mod waiting;
 #[path = "approve.rs"]
 mod approve;
+#[path = "offer.rs"]
+mod offer;
+#[path = "take.rs"]
+mod take;
 
 pub struct HostServ {
     pub uid: String,
@@ -42,14 +46,21 @@ impl Service for HostServ {
         match args.first().map(|s| s.to_ascii_uppercase()).as_deref() {
             Some("ON") => on::handle(me, from, ctx, db),
             Some("OFF") => off::handle(me, from, ctx, net, db),
-            Some("SET") => set::handle(me, from, args, ctx, net, db),
-            Some("DEL") => del::handle(me, from, args, ctx, net, db),
+            // SET(ALL)/DEL(ALL): the per-account model already covers every
+            // grouped nick, so ALL is an alias, and GROUP is a no-op reassurance.
+            Some("SET") | Some("SETALL") => set::handle(me, from, args, ctx, net, db),
+            Some("DEL") | Some("DELALL") => del::handle(me, from, args, ctx, net, db),
+            Some("GROUP") => ctx.notice(me, from.uid, "Your vhost already applies to all your grouped nicks — nothing to sync."),
             Some("LIST") => list::handle(me, from, ctx, db),
             Some("REQUEST") => request::handle(me, from, args, ctx, db),
             Some("WAITING") => waiting::handle(me, from, ctx, db),
             Some("ACTIVATE") | Some("APPROVE") => approve::handle(me, from, args, ctx, net, db, true),
             Some("REJECT") => approve::handle(me, from, args, ctx, net, db, false),
-            Some("HELP") | None => ctx.notice(me, from.uid, "HostServ gives you a vhost: \x02ON\x02 activates your assigned vhost, \x02OFF\x02 restores your normal host, \x02REQUEST\x02 <host> asks for one. Operators use \x02SET\x02/\x02DEL\x02 <account>, \x02LIST\x02, and \x02WAITING\x02 + \x02ACTIVATE\x02/\x02REJECT\x02 <account> for requests."),
+            Some("OFFER") => offer::add(me, from, args, ctx, db),
+            Some("OFFERLIST") => offer::list(me, from, ctx, db),
+            Some("OFFERDEL") => offer::del(me, from, args, ctx, db),
+            Some("TAKE") => take::handle(me, from, args, ctx, db),
+            Some("HELP") | None => ctx.notice(me, from.uid, "HostServ gives you a vhost: \x02ON\x02 activates your assigned vhost, \x02OFF\x02 restores your normal host, \x02REQUEST\x02 <host> asks for one, \x02OFFERLIST\x02 + \x02TAKE\x02 <n> pick from the menu. Operators use \x02SET\x02/\x02DEL\x02 <account>, \x02LIST\x02, \x02WAITING\x02 + \x02ACTIVATE\x02/\x02REJECT\x02, and \x02OFFER\x02/\x02OFFERDEL\x02 for the menu."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
         }
     }
