@@ -26,6 +26,16 @@ pub struct Config {
     // Services operators: accounts granted privileges. Absent = no opers.
     #[serde(default)]
     pub oper: Vec<Oper>,
+    // Staff audit feed. Absent = no audit log is emitted.
+    #[serde(default)]
+    pub log: Option<Log>,
+}
+
+// The staff audit feed: notable service actions are announced to this channel
+// so operators can see who did what.
+#[derive(Debug, Deserialize, Clone)]
+pub struct Log {
+    pub channel: String,
 }
 
 // One services operator: an account and the privileges it holds.

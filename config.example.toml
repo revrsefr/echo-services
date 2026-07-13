@@ -47,3 +47,11 @@ protocol = 1206            # InspIRCd link protocol version (1206 = insp4, 1205 
 # [[oper]]
 # account = "yournick"
 # privs = ["auspex", "suspend", "admin"]
+
+# Staff audit feed: notable service actions (registrations, drops, vhosts,
+# suspensions, akicks, access and bot changes, oper host config) are announced
+# to this channel so operators can see who did what. Private material (memo
+# bodies, password/verifier data) and cosmetic self-service tweaks are never
+# surfaced. Omit the section to disable the feed.
+# [log]
+# channel = "#services"

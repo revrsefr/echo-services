@@ -683,6 +683,13 @@ impl EventLog {
         self.outbound = Some(tx);
     }
 
+    // The events appended at or after `mark`, cloned. Used by the audit feed to
+    // see exactly what a just-run command changed (the log only ever grows during
+    // a command, so `[mark..]` is that command's footprint).
+    fn events_from(&self, mark: usize) -> Vec<Event> {
+        self.entries.get(mark..).into_iter().flatten().map(|e| e.event.clone()).collect()
+    }
+
     // Our version vector: highest seq applied per origin.
     fn version_vector(&self) -> HashMap<String, u64> {
         self.versions.clone()
@@ -949,6 +956,16 @@ impl Db {
     /// Wire the log to a broadcast channel; each new entry is pushed to peers.
     pub fn set_outbound(&mut self, tx: broadcast::Sender<LogEntry>) {
         self.log.set_outbound(tx);
+    }
+
+    /// The number of entries in the log, a mark to later diff against.
+    pub fn log_len(&self) -> usize {
+        self.log.len()
+    }
+
+    /// The events appended since `mark` (a value from an earlier [`log_len`]).
+    pub fn events_since(&self, mark: usize) -> Vec<Event> {
+        self.log.events_from(mark)
     }
 
     /// Our version vector, advertised to peers so they can send what we lack.

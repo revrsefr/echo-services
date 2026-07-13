@@ -105,6 +105,7 @@ async fn main() -> Result<()> {
     engine.lock().await.set_irc_out(irc_tx);
     engine.lock().await.set_opers(cfg.opers());
     engine.lock().await.set_sid(cfg.server.sid.clone());
+    engine.lock().await.set_log_channel(cfg.log.as_ref().map(|l| l.channel.clone()));
 
     if let Some(gossip) = cfg.gossip.clone() {
         tracing::info!(peers = cfg.peer.len(), "starting gossip");

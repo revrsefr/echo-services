@@ -121,6 +121,9 @@ pub struct Engine {
     // In-flight community !votekick/!voteban tallies, keyed by (channel_lc,
     // target_nick_lc). Ephemeral; expire after VOTE_TTL.
     votes: HashMap<(String, String), VoteState>,
+    // Staff audit channel: notable service actions are announced here. None =
+    // no audit feed.
+    log_channel: Option<String>,
 }
 
 struct VoteState {
@@ -192,6 +195,7 @@ impl Engine {
             trigger_cache: HashMap::new(),
             pending_unbans: Vec::new(),
             votes: HashMap::new(),
+            log_channel: None,
         }
     }
 
@@ -243,6 +247,11 @@ impl Engine {
     // Our services SID, needed to mint valid bot uids.
     pub fn set_sid(&mut self, sid: String) {
         self.sid = sid;
+    }
+
+    // The staff channel notable service actions are announced to.
+    pub fn set_log_channel(&mut self, channel: Option<String>) {
+        self.log_channel = channel;
     }
 
     // Bring the network's bot pseudo-clients in line with the registry: introduce
@@ -1002,6 +1011,8 @@ impl Engine {
         let account = self.network.account_of(from).map(str::to_string);
         let privs = account.as_deref().map(|a| self.oper_privs(a)).unwrap_or_default();
         let mut ctx = ServiceCtx::default();
+        // Mark the log so we can tell exactly which events this command appends.
+        let audit_mark = self.db.log_len();
         let sender = Sender { uid: from, nick: &nick, account: account.as_deref(), privs };
         if to.starts_with('#') || to.starts_with('&') {
             // A community !votekick/!voteban is handled on its own; otherwise the
@@ -1049,7 +1060,36 @@ impl Engine {
         // A command may have changed the bot registry (BotServ BOT ADD/DEL).
         let mut out = ctx.actions;
         out.extend(self.reconcile_bots());
+        // Announce whatever this command changed to the staff audit channel.
+        out.extend(self.audit_feed(audit_mark, &nick, account.as_deref()));
         out
+    }
+
+    // Announce the state changes a just-run command made (the events appended
+    // since `mark`) to the staff audit channel, sourced from the services server
+    // so it reaches the channel without a pseudo-client having to be present.
+    // Private and purely cosmetic events are deliberately not surfaced.
+    fn audit_feed(&self, mark: usize, nick: &str, account: Option<&str>) -> Vec<NetAction> {
+        let Some(channel) = self.log_channel.clone() else { return Vec::new() };
+        if self.sid.is_empty() {
+            return Vec::new();
+        }
+        // Name the actor by nick, plus the account they are identified to when it
+        // differs — the account is the identity that outlives the nick.
+        let actor = match account {
+            Some(a) if !a.eq_ignore_ascii_case(nick) => format!("\x02{nick}\x02 ({a})"),
+            _ => format!("\x02{nick}\x02"),
+        };
+        self.db
+            .events_since(mark)
+            .iter()
+            .filter_map(audit_summary)
+            .map(|summary| NetAction::Notice {
+                from: self.sid.clone(),
+                to: channel.clone(),
+                text: format!("{actor} {summary}"),
+            })
+            .collect()
     }
 
     // The greet a channel's bot shows when a member logged into `account` joins:
@@ -1359,6 +1399,63 @@ impl Engine {
             resource_action(a, &csuid, &botuid);
         }
     }
+}
+
+// A one-line, human-readable summary of a logged event for the staff audit
+// feed, or None for events that are private (memos), cosmetic self-service
+// (greets, auto-join, personal settings), or otherwise not worth surfacing.
+// Never include secrets: password/verifier material and memo bodies are elided.
+fn audit_summary(event: &db::Event) -> Option<String> {
+    use db::Event::*;
+    let s = match event {
+        AccountRegistered(a) => format!("registered account \x02{}\x02", a.name),
+        AccountDropped { account } => format!("dropped account \x02{account}\x02"),
+        AccountVerified { account } => format!("verified account \x02{account}\x02"),
+        AccountPasswordSet { account, .. } => format!("changed the password on \x02{account}\x02"),
+        AccountEmailSet { account, email } => match email {
+            Some(_) => format!("set the email on \x02{account}\x02"),
+            None => format!("cleared the email on \x02{account}\x02"),
+        },
+        CertAdded { account, fp } => format!("added cert \x02{fp}\x02 to \x02{account}\x02"),
+        CertRemoved { account, fp } => format!("removed cert \x02{fp}\x02 from \x02{account}\x02"),
+        AccountSuspended { account, reason, .. } => format!("suspended account \x02{account}\x02 ({reason})"),
+        AccountUnsuspended { account } => format!("unsuspended account \x02{account}\x02"),
+        NickGrouped { nick, account } => format!("grouped nick \x02{nick}\x02 to \x02{account}\x02"),
+        NickUngrouped { nick } => format!("ungrouped nick \x02{nick}\x02"),
+        VhostSet { account, host, expires, .. } => {
+            let kind = if expires.is_some() { " (temporary)" } else { "" };
+            format!("set vhost \x02{host}\x02 on \x02{account}\x02{kind}")
+        }
+        VhostDeleted { account } => format!("removed the vhost on \x02{account}\x02"),
+        ChannelRegistered { name, founder, .. } => format!("registered channel \x02{name}\x02 (founder \x02{founder}\x02)"),
+        ChannelDropped { name } => format!("dropped channel \x02{name}\x02"),
+        ChannelFounderSet { channel, founder } => format!("set founder of \x02{channel}\x02 to \x02{founder}\x02"),
+        ChannelAccessAdd { channel, account, level } => format!("set \x02{account}\x02 to {level} on \x02{channel}\x02"),
+        ChannelAccessDel { channel, account } => format!("removed \x02{account}\x02 from \x02{channel}\x02 access"),
+        ChannelAkickAdd { channel, mask, reason } => format!("added akick \x02{mask}\x02 on \x02{channel}\x02 ({reason})"),
+        ChannelAkickDel { channel, mask } => format!("removed akick \x02{mask}\x02 on \x02{channel}\x02"),
+        ChannelSuspended { channel, reason, .. } => format!("suspended channel \x02{channel}\x02 ({reason})"),
+        ChannelUnsuspended { channel } => format!("unsuspended channel \x02{channel}\x02"),
+        ChannelBotAssigned { channel, bot } => format!("assigned bot \x02{bot}\x02 to \x02{channel}\x02"),
+        ChannelBotUnassigned { channel } => format!("removed the bot from \x02{channel}\x02"),
+        BotAdded(b) => format!("added bot \x02{}\x02", b.nick),
+        BotRemoved { nick } => format!("removed bot \x02{nick}\x02"),
+        VhostOfferAdded { host } => format!("added vhost offer \x02{host}\x02"),
+        VhostOfferRemoved { host } => format!("removed vhost offer \x02{host}\x02"),
+        VhostForbidAdded { pattern } => format!("forbade vhost pattern \x02{pattern}\x02"),
+        VhostForbidRemoved { pattern } => format!("un-forbade vhost pattern \x02{pattern}\x02"),
+        VhostTemplateSet { template } => match template {
+            Some(t) => format!("set the vhost template to \x02{t}\x02"),
+            None => "cleared the vhost template".to_string(),
+        },
+        // Private, self-service, or cosmetic — not surfaced.
+        AjoinAdded { .. } | AjoinRemoved { .. } | AccountGreetSet { .. } | VhostRequested { .. }
+        | VhostRequestCleared { .. } | MemoSent { .. } | MemoRead { .. } | MemoDeleted { .. }
+        | ChannelMlock { .. } | ChannelDescSet { .. } | ChannelEntryMsgSet { .. } | ChannelSettingsSet { .. }
+        | ChannelKickerSet { .. } | ChannelBadwordsSet { .. } | ChannelTriggersSet { .. }
+        | ChannelTopicSet { .. } => return None,
+    };
+    Some(s)
 }
 
 // Rewrite the source uid of an action from `old` to `new`, where the variant
@@ -3454,6 +3551,57 @@ mod tests {
         let out = to_cs(&mut e, "000AAAAAB", "DROP #room");
         assert!(notice(&out, "dropped"));
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#room" && modes == "-r")), "drop clears +r: {out:?}");
+    }
+
+    // Notable service actions are announced to the staff audit channel, sourced
+    // from the services server; private/cosmetic events are not, and no channel
+    // means no feed.
+    #[test]
+    fn audit_feed_announces_notable_actions() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-audit.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        e.set_log_channel(Some("#services".into()));
+        let to_cs = |e: &mut Engine, from: &str, text: &str| {
+            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+        };
+        // The audit line is a Notice to the log channel, from the services SID.
+        let audit = |out: &[NetAction], needle: &str| {
+            out.iter().any(|a| matches!(a, NetAction::Notice { from, to, text }
+                if from == "42S" && to == "#services" && text.contains(needle)))
+        };
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "host.example".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: true });
+
+        // Registering a channel is announced with the actor and the founder.
+        let out = to_cs(&mut e, "000AAAAAB", "REGISTER #room");
+        assert!(audit(&out, "registered channel \x02#room\x02"), "reg announced: {out:?}");
+        assert!(audit(&out, "alice"), "names the actor");
+
+        // A cosmetic mode lock is not surfaced (only its user-facing reply is).
+        let out = to_cs(&mut e, "000AAAAAB", "MLOCK #room +nt");
+        assert!(!out.iter().any(|a| matches!(a, NetAction::Notice { to, .. } if to == "#services")), "mlock not audited: {out:?}");
+
+        // Dropping the channel is announced.
+        assert!(audit(&to_cs(&mut e, "000AAAAAB", "DROP #room"), "dropped channel \x02#room\x02"), "drop announced");
+
+        // With no log channel configured, nothing is emitted to it.
+        e.set_log_channel(None);
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#other".into(), op: true });
+        let out = to_cs(&mut e, "000AAAAAB", "REGISTER #other");
+        assert!(!out.iter().any(|a| matches!(a, NetAction::Notice { to, .. } if to == "#services")), "no feed when unset: {out:?}");
     }
 
     // ChanServ moderation: an op can op/kick/ban users; a non-op is refused.
