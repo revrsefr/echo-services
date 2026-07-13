@@ -127,6 +127,8 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::AccountGreetSet { .. }
         | Event::AjoinAdded { .. }
         | Event::AjoinRemoved { .. }
+        | Event::VhostSet { .. }
+        | Event::VhostDeleted { .. }
         | Event::AccountSuspended { .. }
         | Event::AccountUnsuspended { .. }
         | Event::MemoSent { .. }
@@ -397,6 +399,7 @@ mod tests {
             suspension: None,
             memos: vec![],
             greet: String::new(),
+            vhost: None,
         };
         let registered = LogEntry::for_test("A", 0, 1, Event::AccountRegistered(acct));
         let wire = to_wire(&registered).expect("account registration replicates");

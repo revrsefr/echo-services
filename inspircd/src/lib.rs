@@ -270,6 +270,11 @@ impl Protocol for InspIrcd {
             NetAction::QuitUser { uid, reason } => vec![format!(":{} QUIT :{}", uid, reason)],
             NetAction::ServiceJoin { uid, channel } => vec![format!(":{} IJOIN {}", uid, channel)],
             NetAction::ServicePart { uid, channel } => vec![format!(":{} PART {}", uid, channel)],
+            // ENCAP the target's server: CHGHOST <uid> <newhost>, to set a vhost.
+            NetAction::SetHost { uid, host } => {
+                let target = uid.get(..3).unwrap_or(uid.as_str());
+                vec![self.from_us(format!("ENCAP {} CHGHOST {} {}", target, uid, host))]
+            }
             NetAction::ForceNick { uid, nick } => {
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(self.ts);
                 vec![self.from_us(format!("SVSNICK {} {} {}", uid, nick, now))]
@@ -446,6 +451,13 @@ mod tests {
         // A +v join prefix surfaces a voice event alongside the Join.
         let ev = proto().parse(":0IR FJOIN #chan 1783845132 +tn :v,0IRAAAAAD");
         assert!(ev.iter().any(|e| matches!(e, NetEvent::ChannelVoice { uid, voice: true, .. } if uid == "0IRAAAAAD")), "join voice: {ev:?}");
+    }
+
+    // A vhost is set by ENCAP'ing the target's own server with CHGHOST.
+    #[test]
+    fn serializes_set_host() {
+        let lines = proto().serialize(&NetAction::SetHost { uid: "0IRAAAAAB".into(), host: "cool.example".into() });
+        assert_eq!(lines, vec![":42S ENCAP 0IR CHGHOST 0IRAAAAAB cool.example".to_string()]);
     }
 
     #[test]

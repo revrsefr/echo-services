@@ -1914,7 +1914,7 @@ mod tests {
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), password_hash: "OTHER".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(),
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None,
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(winner));
         e.gossip_ingest(entry).unwrap();
@@ -2636,6 +2636,54 @@ mod tests {
         assert!(!kicked(&vote(&mut e, "000AAAAAB", "!votekick victim")), "same voter doesn't double-count");
         // A second distinct voter reaches the threshold.
         assert!(kicked(&vote(&mut e, "000AAAAAC", "!votekick victim")), "2 distinct votes: kicked");
+    }
+
+    // HostServ: a vhost is applied on identify and by SET, listed and removed by
+    // operators, and its administration is oper-gated with host validation.
+    #[test]
+    fn hostserv_assigns_and_applies_vhosts() {
+        use fedserv_hostserv::HostServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-hostserv.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("alice", "password1", None).unwrap();
+        db.set_vhost("alice", "alice.vhost.example", "system").unwrap(); // pre-assigned
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(HostServ { uid: "42SAAAAAG".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() });
+        let sethost = |out: &[NetAction], uid: &str, host: &str| out.iter().any(|a| matches!(a, NetAction::SetHost { uid: u, host: h } if u == uid && h == host));
+
+        // Identifying applies the pre-assigned vhost.
+        assert!(sethost(&ns(&mut e, "000AAAAAV", "IDENTIFY password1"), "000AAAAAV", "alice.vhost.example"), "vhost applied on identify");
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+
+        // An operator SET applies at once to the online session.
+        assert!(sethost(&hs(&mut e, "000AAAAAB", "SET alice new.host.example"), "000AAAAAV", "new.host.example"), "SET applies online");
+        // ON re-activates the account's vhost.
+        assert!(sethost(&hs(&mut e, "000AAAAAV", "ON"), "000AAAAAV", "new.host.example"), "ON re-applies");
+        // LIST shows it.
+        assert!(hs(&mut e, "000AAAAAB", "LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("alice") && text.contains("new.host.example"))), "listed");
+        // DEL restores the real host on the online session.
+        assert!(sethost(&hs(&mut e, "000AAAAAB", "DEL alice"), "000AAAAAV", "realhost"), "DEL restores real host");
+
+        // Non-operators can't SET; invalid hosts are rejected.
+        assert!(hs(&mut e, "000AAAAAV", "SET boss x.y").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "oper-gated");
+        assert!(hs(&mut e, "000AAAAAB", "SET alice not a host").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't a valid host"))), "host validated");
     }
 
     // StatServ reports per-channel activity (#channel) and the global registry

@@ -59,6 +59,10 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             for entry in db.ajoin_list(&account) {
                 ctx.force_join(from.uid, &entry.channel, &entry.key);
             }
+            // Apply the account's vhost (HostServ), if it has one.
+            if let Some(v) = db.vhost(&account) {
+                ctx.set_host(from.uid, &v.host);
+            }
             // Let them know about waiting memos.
             let unread = db.unread_memos(&account);
             if unread > 0 {

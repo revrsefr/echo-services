@@ -64,6 +64,8 @@ pub enum NetAction {
     // Force a user's nick (SVSNICK), e.g. renaming to a guest nick on logout.
     // The protocol stamps the new nick's timestamp.
     ForceNick { uid: String, nick: String },
+    // Set a user's displayed host (a vhost), or restore it.
+    SetHost { uid: String, host: String },
     // Force a user into a channel (SVSJOIN), e.g. applying an account's auto-join
     // list on identify. `key` is empty for keyless channels.
     ForceJoin { uid: String, channel: String, key: String },
@@ -255,6 +257,14 @@ impl ServiceCtx {
         });
     }
 
+    // Set (or restore) a user's displayed host — a HostServ vhost.
+    pub fn set_host(&mut self, uid: &str, host: &str) {
+        self.actions.push(NetAction::SetHost {
+            uid: uid.to_string(),
+            host: host.to_string(),
+        });
+    }
+
     // Force a user into a channel (SVSJOIN), e.g. an account's auto-join list.
     pub fn force_join(&mut self, uid: &str, channel: &str, key: &str) {
         self.actions.push(NetAction::ForceJoin {
@@ -352,6 +362,13 @@ pub struct TriggerView {
     pub pattern: String,
     pub response: String,
     pub cooldown: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct VhostView {
+    pub account: String,
+    pub host: String,
+    pub setter: String,
 }
 
 #[derive(Debug, Clone)]
@@ -564,6 +581,11 @@ pub trait Store {
     fn verify_account(&mut self, account: &str) -> Result<(), RegError>;
     fn set_email(&mut self, account: &str, email: Option<String>) -> Result<(), RegError>;
     fn set_greet(&mut self, account: &str, greet: &str) -> Result<(), RegError>;
+    // HostServ vhosts.
+    fn set_vhost(&mut self, account: &str, host: &str, setter: &str) -> Result<(), RegError>;
+    fn del_vhost(&mut self, account: &str) -> Result<bool, RegError>;
+    fn vhost(&self, account: &str) -> Option<VhostView>;
+    fn vhosts(&self) -> Vec<VhostView>;
     fn group_nick(&mut self, nick: &str, account: &str) -> Result<(), RegError>;
     fn ungroup_nick(&mut self, nick: &str) -> Result<bool, RegError>;
     fn drop_account(&mut self, account: &str) -> Result<bool, RegError>;

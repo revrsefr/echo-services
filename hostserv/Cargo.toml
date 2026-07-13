@@ -1,0 +1,8 @@
+[package]
+name = "fedserv-hostserv"
+version = "0.0.1"
+edition = "2021"
+description = "HostServ: assign and apply virtual hosts (vhosts)."
+
+[dependencies]
+fedserv-api = { path = "../api" }
