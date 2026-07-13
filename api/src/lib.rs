@@ -403,6 +403,19 @@ pub enum ChanSetting {
     BotGreet,
 }
 
+// A BotServ kicker: the assigned bot kicks a message that trips an enabled one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kicker {
+    Caps,
+    Bolds,
+    Colors,
+    Underlines,
+    Reverses,
+    Italics,
+    // Exemption, not a rule: never kick channel operators.
+    DontKickOps,
+}
+
 impl ChannelView {
     // The channel mode this account is entitled to on join (+o founder/op, +v
     // voice), or None if it holds no access.
@@ -534,6 +547,8 @@ pub trait Store {
     fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError>;
     fn set_desc(&mut self, channel: &str, desc: &str) -> Result<(), ChanError>;
     fn set_channel_setting(&mut self, channel: &str, setting: ChanSetting, on: bool) -> Result<(), ChanError>;
+    fn set_kicker(&mut self, channel: &str, kicker: Kicker, on: bool) -> Result<(), ChanError>;
+    fn set_caps_kicker(&mut self, channel: &str, caps_min: u16, caps_percent: u16) -> Result<(), ChanError>;
     fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError>;
     fn suspend_channel(&mut self, channel: &str, by: &str, reason: &str, expires: Option<u64>) -> Result<(), ChanError>;
     fn unsuspend_channel(&mut self, channel: &str) -> Result<bool, ChanError>;

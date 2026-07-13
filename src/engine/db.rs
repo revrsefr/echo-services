@@ -15,7 +15,7 @@ use super::scram::{self, Hash};
 // fedserv-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use fedserv_api::{
-    AccountView, AjoinView, BotView, MemoView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, RegError, Store,
+    AccountView, AjoinView, BotView, MemoView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +98,7 @@ pub enum Event {
     ChannelDescSet { channel: String, desc: String },
     ChannelEntryMsgSet { channel: String, msg: String },
     ChannelSettingsSet { channel: String, settings: ChanSettings },
+    ChannelKickerSet { channel: String, kickers: KickerSettings },
     ChannelTopicSet { channel: String, topic: String },
     ChannelSuspended { channel: String, by: String, reason: String, ts: u64, expires: Option<u64> },
     ChannelUnsuspended { channel: String },
@@ -148,6 +149,7 @@ impl Event {
             | Event::ChannelDescSet { .. }
             | Event::ChannelEntryMsgSet { .. }
             | Event::ChannelSettingsSet { .. }
+            | Event::ChannelKickerSet { .. }
             | Event::ChannelTopicSet { .. }
             | Event::ChannelSuspended { .. }
             | Event::ChannelUnsuspended { .. }
@@ -272,6 +274,74 @@ pub struct ChannelInfo {
     // BotServ bot assigned to sit in this channel, if any (its nick).
     #[serde(default)]
     pub assigned_bot: Option<String>,
+    // BotServ kicker configuration (the bot kicks on caps/formatting/etc.).
+    #[serde(default)]
+    pub kickers: KickerSettings,
+}
+
+// BotServ's per-channel "kickers": the assigned bot kicks a message that trips
+// an enabled rule. Typed, like ChanSettings — a new kicker is one field.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct KickerSettings {
+    #[serde(default)]
+    pub caps: bool,
+    // Only messages at least this long are caps-checked (0 = the default, 10).
+    #[serde(default)]
+    pub caps_min: u16,
+    // Percentage of letters that must be uppercase to trip (0 = default, 25).
+    #[serde(default)]
+    pub caps_percent: u16,
+    #[serde(default)]
+    pub bolds: bool,
+    #[serde(default)]
+    pub colors: bool,
+    #[serde(default)]
+    pub underlines: bool,
+    #[serde(default)]
+    pub reverses: bool,
+    #[serde(default)]
+    pub italics: bool,
+    // Don't kick channel operators, whatever they send.
+    #[serde(default)]
+    pub dontkickops: bool,
+}
+
+impl KickerSettings {
+    // Any kicker enabled? (dontkickops alone doesn't count.)
+    pub fn any(&self) -> bool {
+        self.caps || self.bolds || self.colors || self.underlines || self.reverses || self.italics
+    }
+
+    // The reason to kick `text` for, or None if it trips no enabled kicker.
+    pub fn violation(&self, text: &str) -> Option<&'static str> {
+        if self.bolds && text.contains('\x02') {
+            return Some("Don't use bold formatting on this channel.");
+        }
+        if self.colors && text.contains('\x03') {
+            return Some("Don't use colour codes on this channel.");
+        }
+        if self.underlines && text.contains('\x1f') {
+            return Some("Don't use underline formatting on this channel.");
+        }
+        if self.reverses && text.contains('\x16') {
+            return Some("Don't use reverse formatting on this channel.");
+        }
+        if self.italics && text.contains('\x1d') {
+            return Some("Don't use italic formatting on this channel.");
+        }
+        if self.caps {
+            let min = if self.caps_min == 0 { 10 } else { self.caps_min } as usize;
+            let percent = if self.caps_percent == 0 { 25 } else { self.caps_percent } as u32;
+            if text.chars().count() >= min {
+                let upper = text.chars().filter(|c| c.is_ascii_uppercase()).count() as u32;
+                let lower = text.chars().filter(|c| c.is_ascii_lowercase()).count() as u32;
+                if upper as usize >= min && upper + lower > 0 && upper * 100 / (upper + lower) >= percent {
+                    return Some("Turn caps lock off!");
+                }
+            }
+        }
+        None
+    }
 }
 
 impl ChannelInfo {
@@ -689,6 +759,9 @@ impl Db {
             }
             if let Some(bot) = &c.assigned_bot {
                 snapshot.push(Event::ChannelBotAssigned { channel: c.name.clone(), bot: bot.clone() });
+            }
+            if c.kickers.any() || c.kickers.dontkickops {
+                snapshot.push(Event::ChannelKickerSet { channel: c.name.clone(), kickers: c.kickers.clone() });
             }
         }
         for (nick, account) in &self.grouped {
@@ -1132,7 +1205,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() });
         Ok(())
     }
 
@@ -1286,6 +1359,42 @@ impl Db {
             .append(Event::ChannelSettingsSet { channel: channel.to_string(), settings })
             .map_err(|_| ChanError::Internal)?;
         self.channels.get_mut(&k).unwrap().settings = settings;
+        Ok(())
+    }
+
+    /// Turn one BotServ kicker on or off. Caps thresholds are set via
+    /// `set_caps_kicker`; passing `Kicker::Caps` here only toggles it off.
+    pub fn set_kicker(&mut self, channel: &str, kicker: Kicker, on: bool) -> Result<(), ChanError> {
+        self.update_kickers(channel, |k| match kicker {
+            Kicker::Caps => k.caps = on,
+            Kicker::Bolds => k.bolds = on,
+            Kicker::Colors => k.colors = on,
+            Kicker::Underlines => k.underlines = on,
+            Kicker::Reverses => k.reverses = on,
+            Kicker::Italics => k.italics = on,
+            Kicker::DontKickOps => k.dontkickops = on,
+        })
+    }
+
+    /// Enable the caps kicker with its length/percentage thresholds (0 = default).
+    pub fn set_caps_kicker(&mut self, channel: &str, caps_min: u16, caps_percent: u16) -> Result<(), ChanError> {
+        self.update_kickers(channel, |k| {
+            k.caps = true;
+            k.caps_min = caps_min;
+            k.caps_percent = caps_percent;
+        })
+    }
+
+    // Read-modify-write the whole kicker struct through one event.
+    fn update_kickers(&mut self, channel: &str, f: impl FnOnce(&mut KickerSettings)) -> Result<(), ChanError> {
+        let k = key(channel);
+        let Some(c) = self.channels.get(&k) else { return Err(ChanError::NoChannel) };
+        let mut kickers = c.kickers.clone();
+        f(&mut kickers);
+        self.log
+            .append(Event::ChannelKickerSet { channel: channel.to_string(), kickers: kickers.clone() })
+            .map_err(|_| ChanError::Internal)?;
+        self.channels.get_mut(&k).unwrap().kickers = kickers;
         Ok(())
     }
 
@@ -1574,7 +1683,7 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             grouped.remove(&key(&nick));
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
@@ -1620,6 +1729,11 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::ChannelSettingsSet { channel, settings } => {
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.settings = settings;
+            }
+        }
+        Event::ChannelKickerSet { channel, kickers } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.kickers = kickers;
             }
         }
         Event::ChannelTopicSet { channel, topic } => {
@@ -1842,6 +1956,12 @@ impl Store for Db {
     }
     fn set_channel_setting(&mut self, channel: &str, setting: ChanSetting, on: bool) -> Result<(), ChanError> {
         Db::set_channel_setting(self, channel, setting, on)
+    }
+    fn set_kicker(&mut self, channel: &str, kicker: Kicker, on: bool) -> Result<(), ChanError> {
+        Db::set_kicker(self, channel, kicker, on)
+    }
+    fn set_caps_kicker(&mut self, channel: &str, caps_min: u16, caps_percent: u16) -> Result<(), ChanError> {
+        Db::set_caps_kicker(self, channel, caps_min, caps_percent)
     }
     fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError> {
         Db::set_channel_topic(self, channel, topic)

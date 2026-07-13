@@ -860,9 +860,12 @@ impl Engine {
         let mut ctx = ServiceCtx::default();
         let sender = Sender { uid: from, nick: &nick, account: account.as_deref(), privs };
         if to.starts_with('#') || to.starts_with('&') {
-            // In-channel: the only thing we act on is a fantasy command (!op …)
-            // spoken in a channel that has a bot assigned.
+            // In-channel: a fantasy command (!op …) if a bot is assigned, plus a
+            // BotServ kicker check on every line.
             self.fantasy(&sender, to, text, &mut ctx);
+            if let Some(k) = self.kicker_check(from, to, text) {
+                ctx.actions.push(k);
+            }
         } else {
             let Self { services, network, db, .. } = self;
             for svc in services.iter_mut() {
@@ -895,6 +898,23 @@ impl Engine {
         }
         let botuid = self.network.uid_by_nick(&bot)?.to_string();
         Some(NetAction::Privmsg { from: botuid, to: channel.to_string(), text: format!("[{acc}] {greet}") })
+    }
+
+    // A BotServ kicker verdict for a channel line: if the channel has an active
+    // kicker the message trips (and the sender isn't an exempt operator), the
+    // assigned bot kicks them.
+    fn kicker_check(&self, from: &str, channel: &str, text: &str) -> Option<NetAction> {
+        let c = self.db.channel(channel)?;
+        if !c.kickers.any() {
+            return None;
+        }
+        if c.kickers.dontkickops && self.network.is_op(channel, from) {
+            return None;
+        }
+        let reason = c.kickers.violation(text)?;
+        let bot = c.assigned_bot.clone()?;
+        let botuid = self.network.uid_by_nick(&bot)?.to_string();
+        Some(NetAction::Kick { from: botuid, channel: channel.to_string(), uid: from.to_string(), reason: reason.to_string() })
     }
 
     // Fantasy commands: `!op nick`, `!kick nick`, `!topic …` spoken in a channel
@@ -1877,6 +1897,55 @@ mod tests {
         let out = bs(&mut e, "000AAAAAR", "SAY #c nope");
         assert!(!out.iter().any(|a| matches!(a, NetAction::Privmsg { .. })), "non-op blocked: {out:?}");
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "denied notice: {out:?}");
+    }
+
+    // The caps kicker makes the assigned bot kick a shouting message, exempts
+    // operators when DONTKICKOPS is on, and leaves ordinary lines alone.
+    #[test]
+    fn botserv_caps_kicker_kicks() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bskick.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "#c".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAR".into(), nick: "rando".into(), host: "h".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        bs(&mut e, "000AAAAAB", "BOT ADD Bendy bot serv.host Helper");
+        bs(&mut e, "000AAAAAB", "ASSIGN #c Bendy");
+        bs(&mut e, "000AAAAAB", "KICK #c CAPS ON");
+        e.handle(NetEvent::Join { uid: "000AAAAAR".into(), channel: "#c".into(), op: false });
+
+        // Shouting is kicked, sourced from the bot.
+        let out = say(&mut e, "000AAAAAR", "HELLO EVERYONE LISTEN UP");
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::Kick { from, channel, uid, .. } if from.starts_with("42SB") && channel == "#c" && uid == "000AAAAAR")),
+            "caps kicked: {out:?}"
+        );
+        // A normal line is fine.
+        assert!(!say(&mut e, "000AAAAAR", "hello everyone").iter().any(|a| matches!(a, NetAction::Kick { .. })), "quiet line ok");
+        // With DONTKICKOPS, an operator can shout.
+        bs(&mut e, "000AAAAAB", "KICK #c DONTKICKOPS ON");
+        e.network.set_op("#c", "000AAAAAR", true);
+        assert!(!say(&mut e, "000AAAAAR", "SHOUTING BUT I AM OP").iter().any(|a| matches!(a, NetAction::Kick { .. })), "op exempt");
     }
 
     // A member's personal greet is shown by the assigned bot on join, once the

@@ -1,4 +1,4 @@
-use fedserv_api::{Priv, Sender, ServiceCtx, Store};
+use fedserv_api::{Sender, ServiceCtx, Store};
 
 // ASSIGN <#channel> <bot> / UNASSIGN <#channel>: put a bot in a channel (or take
 // it out). Channel founder only (or a services admin).
@@ -8,12 +8,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         ctx.notice(me, from.uid, syntax);
         return;
     };
-    let Some(founder) = db.channel(chan).map(|c| c.founder) else {
-        ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
-        return;
-    };
-    if from.account != Some(founder.as_str()) && !from.privs.has(Priv::Admin) {
-        ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can assign a bot to it."));
+    if !super::require_channel_admin(me, from, chan, ctx, db) {
         return;
     }
     if !assigning {
