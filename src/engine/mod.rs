@@ -20,6 +20,9 @@ use state::Network;
 // `sasl=` capability value (IRCv3 SASL 3.2 mechanism list) and the set we accept.
 const SASL_MECHS: &str = "EXTERNAL,SCRAM-SHA-512,SCRAM-SHA-256,PLAIN";
 
+// The in-channel fantasy trigger, e.g. `!op`. Matches Anope's default.
+const FANTASY_PREFIX: &str = "!";
+
 // A client's base64 response is split into chunks of this length; a chunk
 // shorter than this (or a lone "+") marks the end of the response (SASL 3.1).
 const MAX_AUTHENTICATE: usize = 400;
@@ -849,7 +852,11 @@ impl Engine {
         let privs = account.as_deref().map(|a| self.oper_privs(a)).unwrap_or_default();
         let mut ctx = ServiceCtx::default();
         let sender = Sender { uid: from, nick: &nick, account: account.as_deref(), privs };
-        {
+        if to.starts_with('#') || to.starts_with('&') {
+            // In-channel: the only thing we act on is a fantasy command (!op …)
+            // spoken in a channel that has a bot assigned.
+            self.fantasy(&sender, to, text, &mut ctx);
+        } else {
             let Self { services, network, db, .. } = self;
             for svc in services.iter_mut() {
                 if to.eq_ignore_ascii_case(svc.uid()) || to.eq_ignore_ascii_case(svc.nick()) {
@@ -863,6 +870,60 @@ impl Engine {
         let mut out = ctx.actions;
         out.extend(self.reconcile_bots());
         out
+    }
+
+    // Fantasy commands: `!op nick`, `!kick nick`, `!topic …` spoken in a channel
+    // that has a bot assigned. We reuse ChanServ's real command handlers — the
+    // fantasy word becomes the command and the channel is injected as its first
+    // argument — then re-source the resulting actions from the bot, so the bot is
+    // the visible actor (Anope routes fantasy through the assigned bot too).
+    fn fantasy(&mut self, sender: &Sender, chan: &str, text: &str, ctx: &mut ServiceCtx) {
+        let Some(rest) = text.strip_prefix(FANTASY_PREFIX) else { return };
+        let mut words = rest.split_whitespace();
+        let Some(cmd) = words.next() else { return };
+        // Fantasy only works through an assigned, live bot.
+        let Some(botnick) = self.db.channel(chan).and_then(|c| c.assigned_bot.clone()) else { return };
+        let Some(botuid) = self.network.uid_by_nick(&botnick).map(str::to_string) else { return };
+        let Some(csuid) = self
+            .services
+            .iter()
+            .find(|s| s.nick().eq_ignore_ascii_case("ChanServ"))
+            .map(|s| s.uid().to_string())
+        else {
+            return;
+        };
+        // Rewrite `!cmd args…` into `CMD #channel args…` for ChanServ.
+        let mut args: Vec<&str> = Vec::new();
+        args.push(cmd);
+        args.push(chan);
+        args.extend(words);
+        {
+            let Self { services, network, db, .. } = self;
+            if let Some(cs) = services.iter_mut().find(|s| s.uid() == csuid) {
+                cs.on_command(sender, &args, ctx, network, db);
+            }
+        }
+        // Make the bot the source of everything ChanServ just emitted.
+        for a in ctx.actions.iter_mut() {
+            resource_action(a, &csuid, &botuid);
+        }
+    }
+}
+
+// Rewrite the source uid of an action from `old` to `new`, where the variant
+// carries a `from`. Used to make fantasy output appear to come from the bot.
+fn resource_action(a: &mut NetAction, old: &str, new: &str) {
+    let from = match a {
+        NetAction::Notice { from, .. }
+        | NetAction::Privmsg { from, .. }
+        | NetAction::ChannelMode { from, .. }
+        | NetAction::Kick { from, .. }
+        | NetAction::Topic { from, .. }
+        | NetAction::Invite { from, .. } => from,
+        _ => return,
+    };
+    if from == old {
+        *from = new.to_string();
     }
 }
 
@@ -1791,6 +1852,53 @@ mod tests {
         let out = bs(&mut e, "000AAAAAR", "SAY #c nope");
         assert!(!out.iter().any(|a| matches!(a, NetAction::Privmsg { .. })), "non-op blocked: {out:?}");
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "denied notice: {out:?}");
+    }
+
+    // Fantasy commands typed in-channel route through ChanServ and are sourced
+    // from the assigned bot.
+    #[test]
+    fn botserv_fantasy_routes_through_bot() {
+        use fedserv_botserv::BotServ;
+        use fedserv_chanserv::ChanServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bsfantasy.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        db.register_channel("#d", "boss").unwrap(); // registered, no bot
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let chan = |e: &mut Engine, uid: &str, c: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: c.into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        bs(&mut e, "000AAAAAB", "BOT ADD Bendy bot serv.host Helper");
+        bs(&mut e, "000AAAAAB", "ASSIGN #c Bendy");
+
+        // `!op` (founder, no target) ops the invoker, sourced from the bot uid.
+        let out = chan(&mut e, "000AAAAAB", "#c", "!op");
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::ChannelMode { from, channel, modes } if from.starts_with("42SB") && channel == "#c" && modes.contains("+o") && modes.contains("000AAAAAB"))),
+            "fantasy op via bot: {out:?}"
+        );
+        // Ordinary chatter is ignored.
+        assert!(chan(&mut e, "000AAAAAB", "#c", "hello everyone").is_empty(), "chatter ignored");
+        // Fantasy in a channel with no bot does nothing.
+        assert!(chan(&mut e, "000AAAAAB", "#d", "!op").is_empty(), "no bot, no fantasy");
     }
 
     // MemoServ delivers a memo to an offline account and notifies them on login.
