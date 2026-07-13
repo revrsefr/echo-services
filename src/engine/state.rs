@@ -13,6 +13,10 @@ pub struct Network {
     channels: HashMap<String, Channel>, // keyed by lowercase name
     accounts: HashMap<String, String>, // UID -> logged-in account, until logout/quit
     seen: HashMap<String, Seen>,       // lowercase nick -> last activity
+    // Our own service bots (lowercase nick -> live uid). Kept separate from
+    // `users` so a reconnect can clear them wholesale without disturbing the
+    // uplink-sourced user map.
+    bots: HashMap<String, String>,
 }
 
 pub struct User {
@@ -49,9 +53,27 @@ impl Network {
         self.users.insert(uid.clone(), User { uid, nick, host });
     }
 
-    // Resolve a nick to its uid (case-insensitive).
+    // Resolve a nick to its uid (case-insensitive). Checks real users first,
+    // then our own service bots.
     pub fn uid_by_nick(&self, nick: &str) -> Option<&str> {
-        self.users.values().find(|u| u.nick.eq_ignore_ascii_case(nick)).map(|u| u.uid.as_str())
+        self.users
+            .values()
+            .find(|u| u.nick.eq_ignore_ascii_case(nick))
+            .map(|u| u.uid.as_str())
+            .or_else(|| self.bots.get(&nick.to_ascii_lowercase()).map(String::as_str))
+    }
+
+    // Track / forget one of our service bots by lowercase nick.
+    pub fn bot_connect(&mut self, nick: &str, uid: &str) {
+        self.bots.insert(nick.to_ascii_lowercase(), uid.to_string());
+    }
+
+    pub fn bot_forget(&mut self, nick_lc: &str) {
+        self.bots.remove(nick_lc);
+    }
+
+    pub fn clear_bots(&mut self) {
+        self.bots.clear();
     }
 
     pub fn host_of(&self, uid: &str) -> Option<&str> {

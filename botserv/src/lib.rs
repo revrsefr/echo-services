@@ -10,6 +10,8 @@ mod bot;
 mod assign;
 #[path = "info.rs"]
 mod info;
+#[path = "say.rs"]
+mod say;
 
 pub struct BotServ {
     pub uid: String,
@@ -26,14 +28,16 @@ impl Service for BotServ {
         "Bot Services"
     }
 
-    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, _net: &dyn NetView, db: &mut dyn Store) {
+    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
         let me = self.uid.as_str();
         match args.first().map(|s| s.to_ascii_uppercase()).as_deref() {
             Some("BOT") => bot::handle(me, from, args, ctx, db),
             Some("ASSIGN") => assign::handle(me, from, args, ctx, db, true),
             Some("UNASSIGN") => assign::handle(me, from, args, ctx, db, false),
             Some("INFO") => info::handle(me, from, args, ctx, db),
-            Some("HELP") | None => ctx.notice(me, from.uid, "BotServ keeps service bots for your channels: \x02ASSIGN\x02 <#channel> <bot> puts a bot in your channel, \x02UNASSIGN\x02 <#channel> removes it, \x02INFO\x02 <bot|#channel> shows details. Operators also have \x02BOT\x02 ADD|DEL|LIST."),
+            Some("SAY") => say::handle(me, from, args, ctx, net, db, false),
+            Some("ACT") => say::handle(me, from, args, ctx, net, db, true),
+            Some("HELP") | None => ctx.notice(me, from.uid, "BotServ keeps service bots for your channels: \x02ASSIGN\x02 <#channel> <bot> puts a bot in your channel, \x02UNASSIGN\x02 <#channel> removes it, \x02INFO\x02 <bot|#channel> shows details, \x02SAY\x02/\x02ACT\x02 <#channel> <text> speaks through the bot. Operators also have \x02BOT\x02 ADD|DEL|LIST."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
         }
     }

@@ -178,6 +178,16 @@ impl ServiceCtx {
         });
     }
 
+    // A channel/target message sourced from one of our pseudo-clients (e.g. a
+    // bot answering a fantasy command, or BotServ SAY).
+    pub fn privmsg(&mut self, from: &str, to: &str, text: impl Into<String>) {
+        self.actions.push(NetAction::Privmsg {
+            from: from.to_string(),
+            to: to.to_string(),
+            text: text.into(),
+        });
+    }
+
     // Hand a registration to the engine to finish: its password derivation runs
     // off the reactor, then the engine commits it and answers `reply`.
     pub fn defer_register(&mut self, account: impl Into<String>, password: impl Into<String>, email: Option<String>, reply: RegReply) {

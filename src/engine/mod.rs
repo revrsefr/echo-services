@@ -152,6 +152,7 @@ impl Engine {
                 let uid = format!("{}B{:05}", self.sid, self.next_bot_index);
                 self.next_bot_index += 1;
                 out.push(NetAction::IntroduceUser { uid: uid.clone(), nick: nick.clone(), ident: user.clone(), host: host.clone(), gecos: gecos.clone() });
+                self.network.bot_connect(nick, &uid);
                 self.bot_uids.insert(k, uid);
             }
         }
@@ -161,6 +162,7 @@ impl Engine {
             if let Some(uid) = self.bot_uids.remove(&k) {
                 out.push(NetAction::QuitUser { uid, reason: "Bot removed".to_string() });
             }
+            self.network.bot_forget(&k);
             self.bot_channels.retain(|(b, _)| *b != k); // its channel memberships go with it
         }
         // Join assigned channels, part unassigned ones (for still-live bots).
@@ -451,6 +453,7 @@ impl Engine {
         // Fresh link: forget bot uids minted on any previous connection.
         self.bot_uids.clear();
         self.bot_channels.clear();
+        self.network.clear_bots();
         self.next_bot_index = 0;
         let mut out = vec![NetAction::Burst];
         for svc in &self.services {
@@ -1737,6 +1740,57 @@ mod tests {
         // Unassigning parts it.
         let out = bs(&mut e, "000AAAAAB", "UNASSIGN #c");
         assert!(out.iter().any(|a| matches!(a, NetAction::ServicePart { channel, .. } if channel == "#c")), "parts on unassign: {out:?}");
+    }
+
+    // SAY/ACT speak through the channel's assigned bot, sourced from the bot's uid.
+    #[test]
+    fn botserv_say_speaks_through_bot() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bssay.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("rando", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAR".into(), nick: "rando".into(), host: "h".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAR", "IDENTIFY password1");
+        bs(&mut e, "000AAAAAB", "BOT ADD Bendy bot serv.host Helper");
+        bs(&mut e, "000AAAAAB", "ASSIGN #c Bendy");
+
+        // Founder SAY: a PRIVMSG to the channel sourced from the bot's uid.
+        let out = bs(&mut e, "000AAAAAB", "SAY #c hello there");
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text } if from.starts_with("42SB") && to == "#c" && text == "hello there")),
+            "bot says: {out:?}"
+        );
+        // ACT wraps the text in a CTCP ACTION.
+        let out = bs(&mut e, "000AAAAAB", "ACT #c waves");
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::Privmsg { text, .. } if text == "\x01ACTION waves\x01")),
+            "bot acts: {out:?}"
+        );
+        // A non-op can't drive the bot.
+        let out = bs(&mut e, "000AAAAAR", "SAY #c nope");
+        assert!(!out.iter().any(|a| matches!(a, NetAction::Privmsg { .. })), "non-op blocked: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "denied notice: {out:?}");
     }
 
     // MemoServ delivers a memo to an offline account and notifies them on login.
