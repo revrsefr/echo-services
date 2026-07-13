@@ -412,6 +412,8 @@ pub enum Kicker {
     Underlines,
     Reverses,
     Italics,
+    Flood,
+    Repeat,
     // Exemption, not a rule: never kick channel operators.
     DontKickOps,
 }
@@ -549,6 +551,8 @@ pub trait Store {
     fn set_channel_setting(&mut self, channel: &str, setting: ChanSetting, on: bool) -> Result<(), ChanError>;
     fn set_kicker(&mut self, channel: &str, kicker: Kicker, on: bool) -> Result<(), ChanError>;
     fn set_caps_kicker(&mut self, channel: &str, caps_min: u16, caps_percent: u16) -> Result<(), ChanError>;
+    fn set_flood_kicker(&mut self, channel: &str, lines: u16, secs: u16) -> Result<(), ChanError>;
+    fn set_repeat_kicker(&mut self, channel: &str, times: u16) -> Result<(), ChanError>;
     fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError>;
     fn suspend_channel(&mut self, channel: &str, by: &str, reason: &str, expires: Option<u64>) -> Result<(), ChanError>;
     fn unsuspend_channel(&mut self, channel: &str) -> Result<bool, ChanError>;

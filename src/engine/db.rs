@@ -301,6 +301,20 @@ pub struct KickerSettings {
     pub reverses: bool,
     #[serde(default)]
     pub italics: bool,
+    // Kick users who send too many lines too fast.
+    #[serde(default)]
+    pub flood: bool,
+    // Lines within `flood_secs` that trip the flood kicker (0 = default, 6).
+    #[serde(default)]
+    pub flood_lines: u16,
+    #[serde(default)]
+    pub flood_secs: u16,
+    // Kick users who repeat the same line.
+    #[serde(default)]
+    pub repeat: bool,
+    // Consecutive repeats that trip the repeat kicker (0 = default, 3).
+    #[serde(default)]
+    pub repeat_times: u16,
     // Don't kick channel operators, whatever they send.
     #[serde(default)]
     pub dontkickops: bool,
@@ -309,7 +323,16 @@ pub struct KickerSettings {
 impl KickerSettings {
     // Any kicker enabled? (dontkickops alone doesn't count.)
     pub fn any(&self) -> bool {
-        self.caps || self.bolds || self.colors || self.underlines || self.reverses || self.italics
+        self.caps || self.bolds || self.colors || self.underlines || self.reverses || self.italics || self.flood || self.repeat
+    }
+
+    // Resolved thresholds, applying Anope's defaults for a 0 (unset) value.
+    pub fn flood_thresholds(&self) -> (u16, u16) {
+        (if self.flood_lines < 2 { 6 } else { self.flood_lines }, if self.flood_secs == 0 { 10 } else { self.flood_secs })
+    }
+
+    pub fn repeat_threshold(&self) -> u16 {
+        if self.repeat_times == 0 { 3 } else { self.repeat_times }
     }
 
     // The reason to kick `text` for, or None if it trips no enabled kicker.
@@ -1372,6 +1395,8 @@ impl Db {
             Kicker::Underlines => k.underlines = on,
             Kicker::Reverses => k.reverses = on,
             Kicker::Italics => k.italics = on,
+            Kicker::Flood => k.flood = on,
+            Kicker::Repeat => k.repeat = on,
             Kicker::DontKickOps => k.dontkickops = on,
         })
     }
@@ -1382,6 +1407,23 @@ impl Db {
             k.caps = true;
             k.caps_min = caps_min;
             k.caps_percent = caps_percent;
+        })
+    }
+
+    /// Enable the flood kicker with its lines/seconds thresholds (0 = default).
+    pub fn set_flood_kicker(&mut self, channel: &str, lines: u16, secs: u16) -> Result<(), ChanError> {
+        self.update_kickers(channel, |k| {
+            k.flood = true;
+            k.flood_lines = lines;
+            k.flood_secs = secs;
+        })
+    }
+
+    /// Enable the repeat kicker with its repeat-count threshold (0 = default).
+    pub fn set_repeat_kicker(&mut self, channel: &str, times: u16) -> Result<(), ChanError> {
+        self.update_kickers(channel, |k| {
+            k.repeat = true;
+            k.repeat_times = times;
         })
     }
 
@@ -1962,6 +2004,12 @@ impl Store for Db {
     }
     fn set_caps_kicker(&mut self, channel: &str, caps_min: u16, caps_percent: u16) -> Result<(), ChanError> {
         Db::set_caps_kicker(self, channel, caps_min, caps_percent)
+    }
+    fn set_flood_kicker(&mut self, channel: &str, lines: u16, secs: u16) -> Result<(), ChanError> {
+        Db::set_flood_kicker(self, channel, lines, secs)
+    }
+    fn set_repeat_kicker(&mut self, channel: &str, times: u16) -> Result<(), ChanError> {
+        Db::set_repeat_kicker(self, channel, times)
     }
     fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError> {
         Db::set_channel_topic(self, channel, topic)

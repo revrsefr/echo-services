@@ -98,6 +98,21 @@ pub struct Engine {
     bot_uids: HashMap<String, String>, // casefolded bot nick -> live uid (per connection)
     next_bot_index: u32,
     bot_channels: std::collections::HashSet<(String, String)>, // (bot nick lc, channel) the bot has joined
+    // Ephemeral per-channel, per-user chatter tracking for the FLOOD and REPEAT
+    // kickers. Only channels with one of those kickers ever get an entry; a
+    // user's entry is dropped when they part or quit, so this stays bounded.
+    // Keyed by the uplink-canonical channel string (never event-logged).
+    chatter: HashMap<String, HashMap<String, ChatterState>>,
+    now_override: Option<u64>, // test clock (unix secs); None = real wall time
+}
+
+// One user's recent-chatter counters in one channel (FLOOD + REPEAT kickers).
+#[derive(Default)]
+struct ChatterState {
+    flood_start: u64, // window start (unix secs)
+    flood_lines: u16, // lines since flood_start
+    last_hash: u64,   // case-insensitive hash of the previous line
+    repeats: u16,     // consecutive identical lines seen so far (0 on the first)
 }
 
 impl Engine {
@@ -118,7 +133,15 @@ impl Engine {
             bot_uids: HashMap::new(),
             next_bot_index: 0,
             bot_channels: std::collections::HashSet::new(),
+            chatter: HashMap::new(),
+            now_override: None,
         }
+    }
+
+    // Wall-clock seconds, overridable in tests so the time-based FLOOD kicker is
+    // deterministic.
+    fn now_secs(&self) -> u64 {
+        self.now_override.unwrap_or_else(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0))
     }
 
     // Wire the channel the link layer drains, so the engine can push actions to the
@@ -577,6 +600,7 @@ impl Engine {
             }
             NetEvent::Part { uid, channel } => {
                 self.network.channel_part(&channel, &uid);
+                self.forget_chatter(&channel, &uid);
                 Vec::new()
             }
             NetEvent::ChannelOp { channel, uid, op } => {
@@ -617,6 +641,7 @@ impl Engine {
             NetEvent::Quit { uid } => {
                 self.network.user_quit(&uid);
                 self.sasl_sessions.remove(&uid); // drop any half-finished exchange
+                self.forget_chatter_everywhere(&uid);
                 Vec::new()
             }
             NetEvent::Privmsg { from, to, text } => self.dispatch(&from, &to, &text),
@@ -902,19 +927,87 @@ impl Engine {
 
     // A BotServ kicker verdict for a channel line: if the channel has an active
     // kicker the message trips (and the sender isn't an exempt operator), the
-    // assigned bot kicks them.
-    fn kicker_check(&self, from: &str, channel: &str, text: &str) -> Option<NetAction> {
+    // assigned bot kicks them. `&mut self` because the FLOOD/REPEAT kickers keep
+    // per-user counters. Hot path: one HashMap lookup for a channel with no
+    // kickers, and no heap allocation for a returning speaker.
+    fn kicker_check(&mut self, from: &str, channel: &str, text: &str) -> Option<NetAction> {
+        // `c` borrows self.db; self.network and self.chatter are disjoint fields,
+        // so they can be touched while it is alive.
         let c = self.db.channel(channel)?;
-        if !c.kickers.any() {
+        let k = &c.kickers;
+        if !k.any() {
             return None;
         }
-        if c.kickers.dontkickops && self.network.is_op(channel, from) {
+        if k.dontkickops && self.network.is_op(channel, from) {
             return None;
         }
-        let reason = c.kickers.violation(text)?;
-        let bot = c.assigned_bot.clone()?;
-        let botuid = self.network.uid_by_nick(&bot)?.to_string();
-        Some(NetAction::Kick { from: botuid, channel: channel.to_string(), uid: from.to_string(), reason: reason.to_string() })
+        let botuid = self.network.uid_by_nick(c.assigned_bot.as_deref()?)?.to_string();
+        let kick = |reason: &str| Some(NetAction::Kick { from: botuid.clone(), channel: channel.to_string(), uid: from.to_string(), reason: reason.to_string() });
+
+        // Stateless kickers first (cheapest, and they don't touch counters).
+        if let Some(reason) = k.violation(text) {
+            return kick(reason);
+        }
+        if !k.flood && !k.repeat {
+            return None;
+        }
+        let (flood_lines, flood_secs) = k.flood_thresholds();
+        let (flood, repeat, repeat_times) = (k.flood, k.repeat, k.repeat_threshold());
+        let now = self.now_secs();
+
+        // Get (or lazily create) this speaker's counters. get_mut avoids any
+        // allocation for a channel/user already being tracked.
+        if !self.chatter.contains_key(channel) {
+            self.chatter.insert(channel.to_string(), HashMap::new());
+        }
+        let bucket = self.chatter.get_mut(channel).unwrap();
+        if !bucket.contains_key(from) {
+            bucket.insert(from.to_string(), ChatterState::default());
+        }
+        let state = bucket.get_mut(from).unwrap();
+
+        if flood {
+            if now.saturating_sub(state.flood_start) > flood_secs as u64 {
+                state.flood_start = now;
+                state.flood_lines = 0;
+            }
+            state.flood_lines = state.flood_lines.saturating_add(1);
+            if state.flood_lines >= flood_lines {
+                return kick("Stop flooding!");
+            }
+        }
+        if repeat {
+            let h = ci_hash(text);
+            if h == state.last_hash {
+                state.repeats = state.repeats.saturating_add(1);
+            } else {
+                state.repeats = 0;
+                state.last_hash = h;
+            }
+            if state.repeats >= repeat_times {
+                return kick("Stop repeating yourself!");
+            }
+        }
+        None
+    }
+
+    // Drop a user's chatter counters for a channel (on part), and the channel's
+    // bucket once empty, so kicker state never outlives the people it tracks.
+    fn forget_chatter(&mut self, channel: &str, uid: &str) {
+        if let Some(bucket) = self.chatter.get_mut(channel) {
+            bucket.remove(uid);
+            if bucket.is_empty() {
+                self.chatter.remove(channel);
+            }
+        }
+    }
+
+    // Drop a user's chatter counters across every channel (on quit).
+    fn forget_chatter_everywhere(&mut self, uid: &str) {
+        self.chatter.retain(|_, bucket| {
+            bucket.remove(uid);
+            !bucket.is_empty()
+        });
     }
 
     // Fantasy commands: `!op nick`, `!kick nick`, `!topic …` spoken in a channel
@@ -974,6 +1067,18 @@ fn resource_action(a: &mut NetAction, old: &str, new: &str) {
 
 // Decode a SASL PLAIN payload (authzid \0 authcid \0 passwd) and authenticate
 // it, returning the canonical account name on success.
+// A case-insensitive 64-bit hash of a line, for the REPEAT kicker. Allocation-
+// free (folds each byte to lowercase in place) so it stays cheap on the hot
+// path; a 64-bit collision causing a spurious kick is astronomically unlikely.
+fn ci_hash(text: &str) -> u64 {
+    use std::hash::Hasher;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for b in text.bytes() {
+        h.write_u8(b.to_ascii_lowercase());
+    }
+    h.finish()
+}
+
 fn login_plain(b64: &str, db: &Db) -> Option<String> {
     let raw = STANDARD.decode(b64).ok()?;
     let parts: Vec<&[u8]> = raw.split(|&b| b == 0).collect();
@@ -1946,6 +2051,74 @@ mod tests {
         bs(&mut e, "000AAAAAB", "KICK #c DONTKICKOPS ON");
         e.network.set_op("#c", "000AAAAAR", true);
         assert!(!say(&mut e, "000AAAAAR", "SHOUTING BUT I AM OP").iter().any(|a| matches!(a, NetAction::Kick { .. })), "op exempt");
+    }
+
+    // The repeat kicker counts consecutive identical lines (case-insensitively)
+    // and kicks once the threshold is reached; a different line resets it.
+    #[test]
+    fn botserv_repeat_kicker_kicks() {
+        let (mut e, _p) = kicker_fixture("bsrepeat");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        bs(&mut e, "KICK #c REPEAT ON 2"); // kick on the third identical line
+
+        let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { from, uid, .. } if from.starts_with("42SB") && uid == "000AAAAAS"));
+        assert!(!kicked(&say(&mut e, "spam")), "1st ok");
+        assert!(!kicked(&say(&mut e, "SPAM")), "2nd (case-fold) ok");
+        assert!(kicked(&say(&mut e, "Spam")), "3rd identical kicks");
+        // A different line clears the streak.
+        assert!(!kicked(&say(&mut e, "something else entirely")), "reset on new line");
+    }
+
+    // The flood kicker counts lines within a window; the window resets after it
+    // elapses. Uses the injectable clock so it is deterministic.
+    #[test]
+    fn botserv_flood_kicker_kicks() {
+        let (mut e, _p) = kicker_fixture("bsflood");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        bs(&mut e, "KICK #c FLOOD ON 3 10"); // 3 lines in 10 seconds
+        let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAS"));
+
+        e.now_override = Some(1000);
+        assert!(!kicked(&say(&mut e, "a")), "line 1");
+        assert!(!kicked(&say(&mut e, "b")), "line 2");
+        // The window elapses before the 3rd line, so it resets instead of kicking.
+        e.now_override = Some(1011);
+        assert!(!kicked(&say(&mut e, "c")), "window reset");
+        // Three lines inside the window now trip it.
+        assert!(!kicked(&say(&mut e, "d")), "line 2 of new window");
+        assert!(kicked(&say(&mut e, "e")), "3rd in-window line kicks");
+    }
+
+    // Registers #c with founder boss (admin), a live assigned bot Bendy, and
+    // returns the engine ready for KICK configuration + a spammer uid 000AAAAAS.
+    fn kicker_fixture(tag: &str) -> (Engine, std::path::PathBuf) {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join(format!("fedserv-{tag}.jsonl"));
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "spammer".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "BOT ADD Bendy bot serv.host Helper".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "ASSIGN #c Bendy".into() });
+        (e, path)
     }
 
     // A member's personal greet is shown by the assigned bot on join, once the
