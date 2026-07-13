@@ -308,6 +308,16 @@ pub struct ChanAkickView {
     pub reason: String,
 }
 
+// A services suspension on an account: who, why, when, and an optional expiry
+// (absolute unix seconds; None = until manually lifted).
+#[derive(Debug, Clone)]
+pub struct SuspensionView {
+    pub by: String,
+    pub reason: String,
+    pub ts: u64,
+    pub expires: Option<u64>,
+}
+
 // One auto-join entry: a channel joined on identify, with an optional key.
 #[derive(Debug, Clone)]
 pub struct AjoinView {
@@ -470,6 +480,11 @@ pub trait Store {
     fn ajoin_list(&self, account: &str) -> Vec<AjoinView>;
     fn ajoin_add(&mut self, account: &str, channel: &str, key: &str) -> Result<bool, RegError>;
     fn ajoin_del(&mut self, account: &str, channel: &str) -> Result<bool, RegError>;
+    // Suspension (oper-only, gated on Priv::Suspend at the command layer).
+    fn suspend_account(&mut self, account: &str, by: &str, reason: &str, expires: Option<u64>) -> Result<(), RegError>;
+    fn unsuspend_account(&mut self, account: &str) -> Result<bool, RegError>;
+    fn is_suspended(&self, account: &str) -> bool;
+    fn suspension(&self, account: &str) -> Option<SuspensionView>;
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError>;
     fn drop_channel(&mut self, name: &str) -> Result<(), ChanError>;
     fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError>;

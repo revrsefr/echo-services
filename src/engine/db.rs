@@ -15,7 +15,7 @@ use super::scram::{self, Hash};
 // fedserv-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use fedserv_api::{
-    AccountView, AjoinView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, RegError, Store,
+    AccountView, AjoinView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, RegError, Store,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +49,9 @@ pub struct Account {
     // Channels this account is auto-joined to on identify (AJOIN).
     #[serde(default)]
     pub ajoin: Vec<AjoinEntry>,
+    // Services suspension, if any (login blocked while set and unexpired).
+    #[serde(default)]
+    pub suspension: Option<Suspension>,
 }
 
 fn verified_default() -> bool {
@@ -70,6 +73,8 @@ pub enum Event {
     AccountVerified { account: String },
     AjoinAdded { account: String, channel: String, key: String },
     AjoinRemoved { account: String, channel: String },
+    AccountSuspended { account: String, by: String, reason: String, ts: u64, expires: Option<u64> },
+    AccountUnsuspended { account: String },
     NickGrouped { nick: String, account: String },
     NickUngrouped { nick: String },
     ChannelRegistered { name: String, founder: String, ts: u64 },
@@ -108,6 +113,8 @@ impl Event {
             | Event::AccountVerified { .. }
             | Event::AjoinAdded { .. }
             | Event::AjoinRemoved { .. }
+            | Event::AccountSuspended { .. }
+            | Event::AccountUnsuspended { .. }
             | Event::NickGrouped { .. }
             | Event::NickUngrouped { .. } => Scope::Global,
             Event::ChannelRegistered { .. }
@@ -138,6 +145,17 @@ pub struct ChanAccess {
 pub struct ChanAkick {
     pub mask: String,
     pub reason: String,
+}
+
+// A services suspension on an account: who set it, why, when, and an optional
+// absolute-unix-seconds expiry (None = until manually lifted).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Suspension {
+    pub by: String,
+    pub reason: String,
+    pub ts: u64,
+    #[serde(default)]
+    pub expires: Option<u64>,
 }
 
 // An auto-join entry: a channel this account is joined to on identify, with an
@@ -714,6 +732,7 @@ impl Db {
             certfps: Vec::new(),
             verified,
             ajoin: Vec::new(),
+            suspension: None,
         };
         self.log.append(Event::AccountRegistered(account.clone())).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
@@ -979,6 +998,49 @@ impl Db {
             .map_err(|_| RegError::Internal)?;
         self.accounts.get_mut(&k).unwrap().ajoin.retain(|e| !e.channel.eq_ignore_ascii_case(channel));
         Ok(true)
+    }
+
+    /// Suspend an account. `expires` is an absolute unix time (None = permanent).
+    pub fn suspend_account(&mut self, account: &str, by: &str, reason: &str, expires: Option<u64>) -> Result<(), RegError> {
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return Err(RegError::Internal);
+        }
+        let ts = now();
+        self.log
+            .append(Event::AccountSuspended { account: account.to_string(), by: by.to_string(), reason: reason.to_string(), ts, expires })
+            .map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().suspension = Some(Suspension { by: by.to_string(), reason: reason.to_string(), ts, expires });
+        Ok(())
+    }
+
+    /// Lift a suspension. Returns whether one was set.
+    pub fn unsuspend_account(&mut self, account: &str) -> Result<bool, RegError> {
+        let k = key(account);
+        match self.accounts.get(&k) {
+            None => return Err(RegError::Internal),
+            Some(a) if a.suspension.is_none() => return Ok(false),
+            Some(_) => {}
+        }
+        self.log.append(Event::AccountUnsuspended { account: account.to_string() }).map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().suspension = None;
+        Ok(true)
+    }
+
+    /// Whether an account has a set, unexpired suspension (evaluated lazily — no timer).
+    pub fn is_suspended(&self, account: &str) -> bool {
+        self.accounts
+            .get(&key(account))
+            .and_then(|a| a.suspension.as_ref())
+            .is_some_and(|s| s.expires.is_none_or(|e| e > now()))
+    }
+
+    /// The account's suspension record, if any (shown in INFO even once expired).
+    pub fn suspension(&self, account: &str) -> Option<SuspensionView> {
+        self.accounts
+            .get(&key(account))
+            .and_then(|a| a.suspension.as_ref())
+            .map(|s| SuspensionView { by: s.by.clone(), reason: s.reason.clone(), ts: s.ts, expires: s.expires })
     }
 
     /// Register `name` to `founder` (an account name).
@@ -1254,6 +1316,16 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
                 a.ajoin.retain(|e| !e.channel.eq_ignore_ascii_case(&channel));
             }
         }
+        Event::AccountSuspended { account, by, reason, ts, expires } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.suspension = Some(Suspension { by, reason, ts, expires });
+            }
+        }
+        Event::AccountUnsuspended { account } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.suspension = None;
+            }
+        }
         Event::NickGrouped { nick, account } => {
             grouped.insert(key(&nick), account);
         }
@@ -1473,6 +1545,18 @@ impl Store for Db {
     fn ajoin_del(&mut self, account: &str, channel: &str) -> Result<bool, RegError> {
         Db::ajoin_del(self, account, channel)
     }
+    fn suspend_account(&mut self, account: &str, by: &str, reason: &str, expires: Option<u64>) -> Result<(), RegError> {
+        Db::suspend_account(self, account, by, reason, expires)
+    }
+    fn unsuspend_account(&mut self, account: &str) -> Result<bool, RegError> {
+        Db::unsuspend_account(self, account)
+    }
+    fn is_suspended(&self, account: &str) -> bool {
+        Db::is_suspended(self, account)
+    }
+    fn suspension(&self, account: &str) -> Option<SuspensionView> {
+        Db::suspension(self, account)
+    }
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
         Db::register_channel(self, name, founder)
     }
@@ -1566,7 +1650,7 @@ mod tests {
     fn account_conflict_resolves_deterministically() {
         let alice = |hash: &str, ts: u64, home: &str| Account {
             name: "alice".into(), password_hash: hash.into(), email: None,
-            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![],
+            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None,
         };
         let converge = |first: &Account, second: &Account| {
             let (mut acc, mut ch, mut gr) = (HashMap::new(), HashMap::new(), HashMap::new());
@@ -1678,6 +1762,33 @@ mod tests {
         assert_eq!(cv.access_rank(None), 0);
     }
 
+    // Suspension sets/lifts, expires lazily, and replays from the log.
+    #[test]
+    fn suspend_lifts_expires_and_persists() {
+        let p = tmp("suspend");
+        {
+            let mut db = Db::open(&p, "N1");
+            db.scram_iterations = 4096;
+            db.register("alice", "password1", None).unwrap();
+            assert!(!db.is_suspended("alice"));
+            db.suspend_account("alice", "oper", "spamming", None).unwrap();
+            assert!(db.is_suspended("alice"));
+            assert_eq!(db.suspension("alice").unwrap().reason, "spamming");
+            assert!(db.unsuspend_account("alice").unwrap());
+            assert!(!db.is_suspended("alice"));
+            assert!(!db.unsuspend_account("alice").unwrap(), "already lifted");
+            // A past expiry is not active, but the record still shows in INFO.
+            db.suspend_account("alice", "oper", "temp", Some(1)).unwrap();
+            assert!(!db.is_suspended("alice"), "expired suspension is inactive");
+            assert!(db.suspension("alice").is_some());
+        }
+        {
+            let mut db = Db::open(&p, "N1");
+            db.suspend_account("alice", "oper", "again", None).unwrap();
+        }
+        assert!(Db::open(&p, "N1").is_suspended("alice"), "suspension replays from the log");
+    }
+
     // A wrong code is tolerated a few times, then the code is burned so it can't
     // be ground down online even though it is short.
     #[test]
@@ -1752,7 +1863,7 @@ mod tests {
         db.register("alice", "pw", None).unwrap();
         let bob = Account {
             name: "bob".into(), password_hash: "x".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![],
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None,
         };
         let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, event: Event::AccountRegistered(bob) };
         db.ingest(entry).unwrap();

@@ -127,6 +127,14 @@ impl Engine {
         self.opers.get(&account.to_ascii_lowercase()).copied().unwrap_or_default()
     }
 
+    // Finish a SASL login, unless the account is suspended.
+    fn sasl_login(&self, agent: &str, client: &str, account: String) -> Vec<NetAction> {
+        if self.db.is_suspended(&account) {
+            return sasl_fail(agent, client);
+        }
+        sasl_success(agent, client, account)
+    }
+
     fn emit_irc(&self, action: NetAction) {
         if let Some(tx) = &self.irc_out {
             let _ = tx.send(action); // unbounded: never blocks; only fails if the link is down
@@ -612,7 +620,7 @@ impl Engine {
                             return Vec::new(); // more chunks still to come
                         }
                         match login_plain(&response, &self.db) {
-                            Some(account) => sasl_success(&agent, &client, account),
+                            Some(account) => self.sasl_login(&agent, &client, account),
                             None => mk("D", vec!["F".to_string()]),
                         }
                     }
@@ -677,7 +685,7 @@ impl Engine {
                 }
             }
             // Client acknowledged our server-final ("+"); apply the login.
-            ScramStep::Ack { account } => sasl_success(agent, client, account),
+            ScramStep::Ack { account } => self.sasl_login(agent, client, account),
         }
     }
 
@@ -696,7 +704,7 @@ impl Engine {
         match fingerprints.iter().find_map(|fp| self.db.certfp_owner(fp)) {
             Some(account) if authzid.is_empty() || authzid.eq_ignore_ascii_case(account) => {
                 let account = account.to_string();
-                sasl_success(agent, client, account)
+                self.sasl_login(agent, client, account)
             }
             _ => sasl_fail(agent, client),
         }
@@ -1295,7 +1303,7 @@ mod tests {
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), password_hash: "OTHER".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![],
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None,
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(winner));
         e.gossip_ingest(entry).unwrap();
@@ -1543,6 +1551,38 @@ mod tests {
         e.db.set_channel_setting("#c", db::ChanSetting::SecureOps, false).unwrap();
         let out = e.handle(NetEvent::ChannelOp { channel: "#c".into(), uid: "000AAAAAB".into(), op: true });
         assert!(out.is_empty(), "no enforcement when SECUREOPS is off: {out:?}");
+    }
+
+    // SUSPEND is oper-gated, blocks the victim's login, and UNSUSPEND restores it.
+    #[test]
+    fn suspend_blocks_login_and_needs_oper() {
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-suspendcmd.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("victim", "password1", None).unwrap();
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Suspend));
+        e.set_opers(opers);
+        let to_ns = |e: &mut Engine, uid: &str, text: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: text.into() });
+        let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "victim".into(), host: "h".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "staff".into(), host: "h".into() });
+
+        // A non-oper cannot suspend.
+        assert!(notice(&to_ns(&mut e, "000AAAAAB", "SUSPEND victim"), "Access denied"));
+        // The oper identifies and suspends the victim.
+        to_ns(&mut e, "000AAAAAC", "IDENTIFY password1");
+        assert!(notice(&to_ns(&mut e, "000AAAAAC", "SUSPEND victim being a nuisance"), "now suspended"));
+        // The victim can no longer identify.
+        assert!(notice(&to_ns(&mut e, "000AAAAAB", "IDENTIFY password1"), "suspended"));
+        // UNSUSPEND lets them back in.
+        assert!(notice(&to_ns(&mut e, "000AAAAAC", "UNSUSPEND victim"), "no longer suspended"));
+        assert!(notice(&to_ns(&mut e, "000AAAAAB", "IDENTIFY password1"), "now identified"));
     }
 
     // An auspex oper sees another account's hidden INFO (email); a non-oper does not.

@@ -32,6 +32,8 @@ mod resetpass;
 mod confirm;
 #[path = "ajoin.rs"]
 mod ajoin;
+#[path = "suspend.rs"]
+mod suspend;
 #[path = "password.rs"]
 mod password;
 
@@ -75,7 +77,9 @@ impl Service for NickServ {
             Some("RESETPASS") => resetpass::handle(me, from, args, ctx, db),
             Some("CONFIRM") => confirm::handle(me, from, args, ctx, db),
             Some("AJOIN") => ajoin::handle(me, from, args, ctx, db),
-            Some("HELP") => ctx.notice(me, from.uid, "NickServ looks after your nickname. Commands: \x02REGISTER\x02 <password> [email], \x02IDENTIFY\x02 [account] <password>, \x02INFO\x02 [account], \x02ALIST\x02, \x02GROUP\x02/\x02GLIST\x02/\x02UNGROUP\x02, \x02GHOST\x02 <nick> [password], \x02SET\x02 PASSWORD|EMAIL, \x02AJOIN\x02 ADD|DEL|LIST, \x02RESETPASS\x02 <account>, \x02CONFIRM\x02 <code>, \x02DROP\x02 <password>, \x02LOGOUT\x02, \x02CERT\x02 ADD|DEL|LIST <password> [fingerprint]."),
+            Some("SUSPEND") => suspend::handle(me, from, args, ctx, net, db, true),
+            Some("UNSUSPEND") => suspend::handle(me, from, args, ctx, net, db, false),
+            Some("HELP") => ctx.notice(me, from.uid, "NickServ looks after your nickname. Commands: \x02REGISTER\x02 <password> [email], \x02IDENTIFY\x02 [account] <password>, \x02INFO\x02 [account], \x02ALIST\x02, \x02GROUP\x02/\x02GLIST\x02/\x02UNGROUP\x02, \x02GHOST\x02 <nick> [password], \x02SET\x02 PASSWORD|EMAIL, \x02AJOIN\x02 ADD|DEL|LIST, \x02RESETPASS\x02 <account>, \x02CONFIRM\x02 <code>, \x02DROP\x02 <password>, \x02LOGOUT\x02, \x02CERT\x02 ADD|DEL|LIST <password> [fingerprint]. Operators also have \x02SUSPEND\x02/\x02UNSUSPEND\x02."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
         }

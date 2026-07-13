@@ -1,4 +1,4 @@
-use fedserv_api::Store;
+use fedserv_api::{human_time, Store};
 use fedserv_api::{Sender, ServiceCtx};
 
 // IDENTIFY [account] <password>: log in. The account defaults to the current
@@ -16,6 +16,27 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     if !db.exists(account_name) {
         ctx.notice(me, from.uid, format!("\x02{account_name}\x02 isn't registered."));
         return;
+    }
+    // A suspended account can't be logged into (checked before the password so it
+    // doesn't reveal whether the password was right). Tell them who, when and why,
+    // and when it lifts, so they know what happened and who to reach.
+    if let Some(acc) = db.resolve_account(account_name).map(str::to_string) {
+        if db.is_suspended(&acc) {
+            if let Some(s) = db.suspension(&acc) {
+                let mut msg = format!("\x02{acc}\x02 is suspended, so you can't log in to it right now. It was suspended by \x02{}\x02 on {}", s.by, human_time(s.ts));
+                if s.reason.trim().is_empty() {
+                    msg.push('.');
+                } else {
+                    msg.push_str(&format!(" — reason: {}", s.reason));
+                }
+                if let Some(exp) = s.expires {
+                    msg.push_str(&format!(" The suspension is due to lift on {}.", human_time(exp)));
+                }
+                msg.push_str(" If you think this is a mistake, please contact the network staff.");
+                ctx.notice(me, from.uid, msg);
+            }
+            return;
+        }
     }
     // Refuse while throttled, so a password can't be brute-forced.
     if let Some(secs) = db.auth_lockout(account_name) {

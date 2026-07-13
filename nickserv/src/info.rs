@@ -14,6 +14,9 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     ctx.notice(me, from.uid, format!("  Registered : {}", human_time(acct.ts)));
     let is_owner = from.account == Some(acct.name.as_str());
     if is_owner || from.privs.has(Priv::Auspex) {
+        if let Some(s) = db.suspension(&acct.name) {
+            ctx.notice(me, from.uid, format!("  Suspended  : by \x02{}\x02 — {}", s.by, s.reason));
+        }
         match &acct.email {
             Some(email) if acct.verified => ctx.notice(me, from.uid, format!("  Email      : {email}")),
             Some(email) => ctx.notice(me, from.uid, format!("  Email      : {email} (unconfirmed)")),
