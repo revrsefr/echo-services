@@ -12,6 +12,7 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &dyn Store) {
     }
     ctx.notice(me, from.uid, format!("Assigned vhosts ({}):", vhosts.len()));
     for v in &vhosts {
-        ctx.notice(me, from.uid, format!("  \x02{}\x02 — {} (by {})", v.account, v.host, v.setter));
+        let temp = if v.expires.is_some() { ", temporary" } else { "" };
+        ctx.notice(me, from.uid, format!("  \x02{}\x02 — {} (by {}{temp})", v.account, v.host, v.setter));
     }
 }

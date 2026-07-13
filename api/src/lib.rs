@@ -383,6 +383,7 @@ pub struct VhostView {
     pub account: String,
     pub host: String,
     pub setter: String,
+    pub expires: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -596,7 +597,7 @@ pub trait Store {
     fn set_email(&mut self, account: &str, email: Option<String>) -> Result<(), RegError>;
     fn set_greet(&mut self, account: &str, greet: &str) -> Result<(), RegError>;
     // HostServ vhosts.
-    fn set_vhost(&mut self, account: &str, host: &str, setter: &str) -> Result<(), RegError>;
+    fn set_vhost(&mut self, account: &str, host: &str, setter: &str, ttl: Option<u64>) -> Result<(), RegError>;
     fn del_vhost(&mut self, account: &str) -> Result<bool, RegError>;
     fn vhost(&self, account: &str) -> Option<VhostView>;
     fn vhosts(&self) -> Vec<VhostView>;

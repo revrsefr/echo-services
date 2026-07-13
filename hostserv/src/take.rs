@@ -14,7 +14,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         ctx.notice(me, from.uid, format!("There's no offer #\x02{n}\x02. See \x02OFFERLIST\x02."));
         return;
     };
-    match db.set_vhost(account, &host, "offer") {
+    match db.set_vhost(account, &host, "offer", None) {
         Ok(()) => {
             ctx.apply_vhost(from.uid, &host);
             ctx.notice(me, from.uid, format!("You now have the vhost \x02{host}\x02."));

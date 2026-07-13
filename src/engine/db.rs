@@ -94,6 +94,9 @@ pub struct Vhost {
     pub host: String,
     pub setter: String,
     pub ts: u64,
+    // Absolute unix-seconds expiry, or None for a permanent vhost.
+    #[serde(default)]
+    pub expires: Option<u64>,
 }
 
 fn verified_default() -> bool {
@@ -116,7 +119,7 @@ pub enum Event {
     AccountVerified { account: String },
     AjoinAdded { account: String, channel: String, key: String },
     AjoinRemoved { account: String, channel: String },
-    VhostSet { account: String, host: String, setter: String, ts: u64 },
+    VhostSet { account: String, host: String, setter: String, ts: u64, expires: Option<u64> },
     VhostDeleted { account: String },
     VhostRequested { account: String, host: String, ts: u64 },
     VhostRequestCleared { account: String },
@@ -1206,15 +1209,17 @@ impl Db {
         Ok(())
     }
 
-    /// Assign a vhost to `account`. `setter` is who did it, for the record.
-    pub fn set_vhost(&mut self, account: &str, host: &str, setter: &str) -> Result<(), RegError> {
+    /// Assign a vhost to `account`. `setter` is who did it; `ttl` is seconds until
+    /// it expires, or None for a permanent vhost.
+    pub fn set_vhost(&mut self, account: &str, host: &str, setter: &str, ttl: Option<u64>) -> Result<(), RegError> {
         let k = key(account);
         if !self.accounts.contains_key(&k) {
             return Err(RegError::Internal);
         }
         let ts = now();
-        self.log.append(Event::VhostSet { account: account.to_string(), host: host.to_string(), setter: setter.to_string(), ts }).map_err(|_| RegError::Internal)?;
-        self.accounts.get_mut(&k).unwrap().vhost = Some(Vhost { host: host.to_string(), setter: setter.to_string(), ts });
+        let expires = ttl.map(|t| ts + t);
+        self.log.append(Event::VhostSet { account: account.to_string(), host: host.to_string(), setter: setter.to_string(), ts, expires }).map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().vhost = Some(Vhost { host: host.to_string(), setter: setter.to_string(), ts, expires });
         Ok(())
     }
 
@@ -1351,12 +1356,12 @@ impl Db {
         self.host_cfg.template.as_deref()
     }
 
-    /// Every account that has a vhost, as (account, host, setter).
-    pub fn vhosts(&self) -> Vec<(String, String, String)> {
-        let mut out: Vec<(String, String, String)> = self
+    /// Every account that has a vhost, as (account, host, setter, expires).
+    pub fn vhosts(&self) -> Vec<(String, String, String, Option<u64>)> {
+        let mut out: Vec<(String, String, String, Option<u64>)> = self
             .accounts
             .values()
-            .filter_map(|a| a.vhost.as_ref().map(|v| (a.name.clone(), v.host.clone(), v.setter.clone())))
+            .filter_map(|a| a.vhost.as_ref().map(|v| (a.name.clone(), v.host.clone(), v.setter.clone(), v.expires)))
             .collect();
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out
@@ -2208,9 +2213,9 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
                 a.ajoin.retain(|e| !e.channel.eq_ignore_ascii_case(&channel));
             }
         }
-        Event::VhostSet { account, host, setter, ts } => {
+        Event::VhostSet { account, host, setter, ts, expires } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {
-                a.vhost = Some(Vhost { host, setter, ts });
+                a.vhost = Some(Vhost { host, setter, ts, expires });
             }
         }
         Event::VhostDeleted { account } => {
@@ -2513,17 +2518,19 @@ impl Store for Db {
     fn set_greet(&mut self, account: &str, greet: &str) -> Result<(), RegError> {
         Db::set_greet(self, account, greet)
     }
-    fn set_vhost(&mut self, account: &str, host: &str, setter: &str) -> Result<(), RegError> {
-        Db::set_vhost(self, account, host, setter)
+    fn set_vhost(&mut self, account: &str, host: &str, setter: &str, ttl: Option<u64>) -> Result<(), RegError> {
+        Db::set_vhost(self, account, host, setter, ttl)
     }
     fn del_vhost(&mut self, account: &str) -> Result<bool, RegError> {
         Db::del_vhost(self, account)
     }
     fn vhost(&self, account: &str) -> Option<VhostView> {
-        Db::account(self, account).and_then(|a| a.vhost.as_ref().map(|v| VhostView { account: a.name.clone(), host: v.host.clone(), setter: v.setter.clone() }))
+        Db::account(self, account).and_then(|a| {
+            a.vhost.as_ref().filter(|v| v.expires.is_none_or(|e| e > now())).map(|v| VhostView { account: a.name.clone(), host: v.host.clone(), setter: v.setter.clone(), expires: v.expires })
+        })
     }
     fn vhosts(&self) -> Vec<VhostView> {
-        Db::vhosts(self).into_iter().map(|(account, host, setter)| VhostView { account, host, setter }).collect()
+        Db::vhosts(self).into_iter().map(|(account, host, setter, expires)| VhostView { account, host, setter, expires }).collect()
     }
     fn request_vhost(&mut self, account: &str, host: &str) -> Result<(), RegError> {
         Db::request_vhost(self, account, host)

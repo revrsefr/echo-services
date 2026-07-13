@@ -22,7 +22,7 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store)
         ctx.notice(me, from.uid, "Sorry, a vhost couldn't be generated for your account.");
         return;
     }
-    match db.set_vhost(account, &host, "template") {
+    match db.set_vhost(account, &host, "template", None) {
         Ok(()) => {
             ctx.apply_vhost(from.uid, &host);
             ctx.notice(me, from.uid, format!("You now have the vhost \x02{host}\x02."));
