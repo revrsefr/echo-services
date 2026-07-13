@@ -25,6 +25,21 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         return;
     }
 
+    // TEST dry-runs the content kickers against a line, kicking nobody — so an
+    // op can tune caps%/badword patterns safely.
+    if kind.eq_ignore_ascii_case("TEST") {
+        if args.len() < 4 {
+            ctx.notice(me, from.uid, "Syntax: KICK <#channel> TEST <message>");
+            return;
+        }
+        let text = args[3..].join(" ");
+        match db.kicker_test(chan, &text) {
+            Some(reason) => ctx.notice(me, from.uid, format!("That line \x02would be kicked\x02: {reason}")),
+            None => ctx.notice(me, from.uid, "That line trips no content kicker (flood/repeat depend on timing and repetition, so they aren't tested here)."),
+        }
+        return;
+    }
+
     let on = match args.get(3).map(|s| s.to_ascii_uppercase()).as_deref() {
         Some("ON") | Some("TRUE") => true,
         Some("OFF") | Some("FALSE") => false,

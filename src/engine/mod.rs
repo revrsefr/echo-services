@@ -1013,7 +1013,7 @@ impl Engine {
         if reason.is_none() && k.badwords && !c.badwords.is_empty() {
             let rev = c.badwords_rev;
             if self.badword_cache.get(channel).map(|cb| cb.rev) != Some(rev) {
-                let set = build_badword_set(&c.badwords);
+                let set = db::build_badword_set(&c.badwords);
                 self.badword_cache.insert(channel.to_string(), CachedBadwords { rev, set });
             }
             if self.badword_cache.get(channel).unwrap().set.is_match(text) {
@@ -1191,17 +1191,6 @@ fn ci_hash(text: &str) -> u64 {
         h.write_u8(b.to_ascii_lowercase());
     }
     h.finish()
-}
-
-// Compile a channel's badword patterns into one RegexSet. Case-insensitive by
-// default (Anope's default; a pattern can opt out with `(?-i)`), size-limited,
-// and tolerant of a bad entry so one pattern can't disable the whole set.
-fn build_badword_set(patterns: &[String]) -> regex::RegexSet {
-    regex::RegexSetBuilder::new(patterns)
-        .case_insensitive(true)
-        .size_limit(db::BADWORD_SIZE_LIMIT)
-        .build()
-        .unwrap_or_else(|_| regex::RegexSet::empty())
 }
 
 fn login_plain(b64: &str, db: &Db) -> Option<String> {
@@ -2363,6 +2352,21 @@ mod tests {
         let out = bs(&mut e, "BADWORDS #c ADD [unclosed");
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("valid regular expression"))), "invalid rejected: {out:?}");
         assert!(!say(&mut e, "[unclosed bracket text").iter().any(|a| matches!(a, NetAction::Kick { .. })), "bad pattern not stored");
+    }
+
+    // KICK TEST dry-runs the content kickers against a line without kicking.
+    #[test]
+    fn botserv_kick_test_dry_run() {
+        let (mut e, _p) = kicker_fixture("bskicktest");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        bs(&mut e, "KICK #c CAPS ON");
+        bs(&mut e, "BADWORDS #c ADD fr[ao]g");
+        bs(&mut e, "KICK #c BADWORDS ON");
+        let says = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        assert!(says(&bs(&mut e, "KICK #c TEST HELLO EVERYONE LOUD"), "would be kicked"), "caps flagged");
+        assert!(says(&bs(&mut e, "KICK #c TEST i love frogs"), "would be kicked"), "badword flagged");
+        assert!(says(&bs(&mut e, "KICK #c TEST hello there"), "trips no content kicker"), "clean line ok");
     }
 
     // Times-to-ban: after TTB kicks the bot bans the user, and BANEXPIRE lifts

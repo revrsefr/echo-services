@@ -5,6 +5,17 @@ use std::path::PathBuf;
 // Ceiling on a single compiled badword regex, so one pattern can't consume huge
 // memory. Shared by add-time validation and the engine's match-time build.
 pub const BADWORD_SIZE_LIMIT: usize = 1 << 20;
+
+/// Compile a channel's badword patterns into one RegexSet. Case-insensitive by
+/// default (Anope's default; a pattern can opt out with `(?-i)`), size-limited,
+/// and tolerant of a bad entry so one pattern can't disable the whole set.
+pub fn build_badword_set(patterns: &[String]) -> regex::RegexSet {
+    regex::RegexSetBuilder::new(patterns)
+        .case_insensitive(true)
+        .size_limit(BADWORD_SIZE_LIMIT)
+        .build()
+        .unwrap_or_else(|_| regex::RegexSet::empty())
+}
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use argon2::password_hash::rand_core::{OsRng, RngCore};
@@ -1515,6 +1526,19 @@ impl Db {
         self.channels.get(&key(channel)).map_or(&[], |c| c.badwords.as_slice())
     }
 
+    /// Dry-run the content kickers against a line: the reason it would be kicked,
+    /// or None. Flood/repeat are stateful/time-based and are not simulated here.
+    pub fn kicker_test(&self, channel: &str, text: &str) -> Option<String> {
+        let c = self.channels.get(&key(channel))?;
+        if let Some(reason) = c.kickers.violation(text) {
+            return Some(reason.to_string());
+        }
+        if c.kickers.badwords && !c.badwords.is_empty() && build_badword_set(&c.badwords).is_match(text) {
+            return Some("matches a badword".to_string());
+        }
+        None
+    }
+
     // Persist a new badword list (whole-list event) and apply it.
     fn write_badwords(&mut self, channel: &str, k: &str, list: Vec<String>) -> Result<(), ChanError> {
         self.log
@@ -2193,6 +2217,9 @@ impl Store for Db {
     }
     fn badwords(&self, channel: &str) -> Vec<String> {
         Db::badwords(self, channel).to_vec()
+    }
+    fn kicker_test(&self, channel: &str, text: &str) -> Option<String> {
+        Db::kicker_test(self, channel, text)
     }
     fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError> {
         Db::set_channel_topic(self, channel, topic)

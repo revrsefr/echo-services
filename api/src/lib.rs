@@ -572,6 +572,8 @@ pub trait Store {
     fn badword_del(&mut self, channel: &str, pattern: &str) -> Result<bool, ChanError>;
     fn badword_clear(&mut self, channel: &str) -> Result<usize, ChanError>;
     fn badwords(&self, channel: &str) -> Vec<String>;
+    // Dry-run the content kickers against a line; Some(reason) if it would kick.
+    fn kicker_test(&self, channel: &str, text: &str) -> Option<String>;
     fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError>;
     fn suspend_channel(&mut self, channel: &str, by: &str, reason: &str, expires: Option<u64>) -> Result<(), ChanError>;
     fn unsuspend_channel(&mut self, channel: &str) -> Result<bool, ChanError>;
