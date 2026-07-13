@@ -25,6 +25,12 @@ mod approve;
 mod offer;
 #[path = "take.rs"]
 mod take;
+#[path = "forbid.rs"]
+mod forbid;
+#[path = "template.rs"]
+mod template;
+#[path = "default.rs"]
+mod default;
 
 pub struct HostServ {
     pub uid: String,
@@ -60,6 +66,11 @@ impl Service for HostServ {
             Some("OFFERLIST") => offer::list(me, from, ctx, db),
             Some("OFFERDEL") => offer::del(me, from, args, ctx, db),
             Some("TAKE") => take::handle(me, from, args, ctx, db),
+            Some("FORBID") => forbid::add(me, from, args, ctx, db),
+            Some("FORBIDLIST") => forbid::list(me, from, ctx, db),
+            Some("FORBIDDEL") => forbid::del(me, from, args, ctx, db),
+            Some("TEMPLATE") => template::handle(me, from, args, ctx, db),
+            Some("DEFAULT") => default::handle(me, from, ctx, db),
             Some("HELP") | None => ctx.notice(me, from.uid, "HostServ gives you a vhost: \x02ON\x02 activates your assigned vhost, \x02OFF\x02 restores your normal host, \x02REQUEST\x02 <host> asks for one, \x02OFFERLIST\x02 + \x02TAKE\x02 <n> pick from the menu. Operators use \x02SET\x02/\x02DEL\x02 <account>, \x02LIST\x02, \x02WAITING\x02 + \x02ACTIVATE\x02/\x02REJECT\x02, and \x02OFFER\x02/\x02OFFERDEL\x02 for the menu."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
         }

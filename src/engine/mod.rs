@@ -2686,6 +2686,49 @@ mod tests {
         assert!(hs(&mut e, "000AAAAAB", "SET alice not a host").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't a valid host"))), "host validated");
     }
 
+    // Forbidden patterns block impersonating requests; the template + DEFAULT
+    // gives a user a $account-based vhost.
+    #[test]
+    fn hostserv_forbid_and_template() {
+        use fedserv_hostserv::HostServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-hsforbid.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("alice", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(HostServ { uid: "42SAAAAAG".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAV", "IDENTIFY password1");
+        let says = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        // Forbid impersonating hosts; a matching request is refused, others pass.
+        hs(&mut e, "000AAAAAB", "FORBID (?i)(admin|staff)");
+        assert!(says(&hs(&mut e, "000AAAAAV", "REQUEST admin.example"), "isn't allowed"), "impersonating request blocked");
+        assert!(says(&hs(&mut e, "000AAAAAV", "REQUEST cool.example"), "will review"), "clean request allowed");
+        assert!(says(&hs(&mut e, "000AAAAAV", "FORBID x"), "Access denied"), "FORBID oper-gated");
+
+        // A template lets a user self-serve a $account vhost.
+        hs(&mut e, "000AAAAAB", "TEMPLATE $account.users.example");
+        let out = hs(&mut e, "000AAAAAV", "DEFAULT");
+        assert!(out.iter().any(|a| matches!(a, NetAction::SetHost { uid, host } if uid == "000AAAAAV" && host == "alice.users.example")), "template applied: {out:?}");
+    }
+
     // The vhost OFFER menu: operators OFFER specs, users TAKE them self-serve.
     #[test]
     fn hostserv_offer_menu() {

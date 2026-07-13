@@ -154,7 +154,10 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::BotAdded(_)
         | Event::BotRemoved { .. }
         | Event::VhostOfferAdded { .. }
-        | Event::VhostOfferRemoved { .. } => return None,
+        | Event::VhostOfferRemoved { .. }
+        | Event::VhostForbidAdded { .. }
+        | Event::VhostForbidRemoved { .. }
+        | Event::VhostTemplateSet { .. } => return None,
     };
     Some(ReplicationEvent { origin: entry.origin().to_string(), seq: entry.seq(), lamport: entry.lamport(), kind: Some(kind) })
 }

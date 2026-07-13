@@ -150,6 +150,9 @@ pub enum Event {
     BotRemoved { nick: String },
     VhostOfferAdded { host: String },
     VhostOfferRemoved { host: String },
+    VhostForbidAdded { pattern: String },
+    VhostForbidRemoved { pattern: String },
+    VhostTemplateSet { template: Option<String> },
 }
 
 // Whether an event replicates across the federation. Account identity is Global
@@ -208,7 +211,10 @@ impl Event {
             | Event::BotAdded(_)
             | Event::BotRemoved { .. }
             | Event::VhostOfferAdded { .. }
-            | Event::VhostOfferRemoved { .. } => Scope::Local,
+            | Event::VhostOfferRemoved { .. }
+            | Event::VhostForbidAdded { .. }
+            | Event::VhostForbidRemoved { .. }
+            | Event::VhostTemplateSet { .. } => Scope::Local,
         }
     }
 }
@@ -780,8 +786,20 @@ pub struct Db {
     auth_fails: HashMap<String, AuthThrottle>,
     // Registered service bots (BotServ), keyed by casefolded nick.
     bots: HashMap<String, Bot>,
-    // HostServ vhost offers: a menu of specs users may self-assign with TAKE.
-    vhost_offers: Vec<String>,
+    // HostServ node config: the self-serve offer menu, the forbidden-pattern
+    // blocklist, and the auto-vhost template.
+    host_cfg: HostConfig,
+}
+
+// Network-wide HostServ configuration, rebuilt from the event log.
+#[derive(Debug, Clone, Default)]
+pub struct HostConfig {
+    // Specs users may self-assign with TAKE.
+    pub offers: Vec<String>,
+    // Regex patterns a user-requested/taken vhost may not match (anti-impersonation).
+    pub forbidden: Vec<String>,
+    // Auto-vhost template, e.g. "$account.users.example" (DEFAULT substitutes).
+    pub template: Option<String>,
 }
 
 // A pending emailed code and how many wrong guesses remain before it is burned.
@@ -820,12 +838,12 @@ impl Db {
         let mut channels = HashMap::new();
         let mut grouped = HashMap::new();
         let mut bots = HashMap::new();
-        let mut vhost_offers = Vec::new();
+        let mut host_cfg = HostConfig::default();
         for event in events {
-            apply(&mut accounts, &mut channels, &mut grouped, &mut bots, &mut vhost_offers, event);
+            apply(&mut accounts, &mut channels, &mut grouped, &mut bots, &mut host_cfg, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), bots, vhost_offers }
+        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), bots, host_cfg }
     }
 
     /// Fold an entry authored by another node into the store — the services-side
@@ -841,7 +859,7 @@ impl Db {
             _ => None,
         };
         if let Some(event) = self.log.ingest(entry)? {
-            apply(&mut self.accounts, &mut self.channels, &mut self.grouped, &mut self.bots, &mut self.vhost_offers, event);
+            apply(&mut self.accounts, &mut self.channels, &mut self.grouped, &mut self.bots, &mut self.host_cfg, event);
         }
         if let Some((name, prev_home)) = watched {
             match (prev_home, self.account(&name).map(|c| c.home.clone())) {
@@ -902,8 +920,14 @@ impl Db {
         for b in self.bots.values() {
             snapshot.push(Event::BotAdded(b.clone()));
         }
-        for host in &self.vhost_offers {
+        for host in &self.host_cfg.offers {
             snapshot.push(Event::VhostOfferAdded { host: host.clone() });
+        }
+        for pattern in &self.host_cfg.forbidden {
+            snapshot.push(Event::VhostForbidAdded { pattern: pattern.clone() });
+        }
+        if self.host_cfg.template.is_some() {
+            snapshot.push(Event::VhostTemplateSet { template: self.host_cfg.template.clone() });
         }
         self.log.compact(snapshot)?;
         tracing::info!(before, after = self.log.len(), "compacted event log");
@@ -1246,28 +1270,73 @@ impl Db {
 
     /// Add a vhost offer to the self-serve menu. Ok(false) if already offered.
     pub fn vhost_offer_add(&mut self, host: &str) -> Result<bool, RegError> {
-        if self.vhost_offers.iter().any(|o| o == host) {
+        if self.host_cfg.offers.iter().any(|o| o == host) {
             return Ok(false);
         }
         self.log.append(Event::VhostOfferAdded { host: host.to_string() }).map_err(|_| RegError::Internal)?;
-        self.vhost_offers.push(host.to_string());
+        self.host_cfg.offers.push(host.to_string());
         Ok(true)
     }
 
     /// Remove the offer at 1-based `index`. Returns the removed spec, if valid.
     pub fn vhost_offer_del(&mut self, index: usize) -> Result<Option<String>, RegError> {
-        if index == 0 || index > self.vhost_offers.len() {
+        if index == 0 || index > self.host_cfg.offers.len() {
             return Ok(None);
         }
-        let host = self.vhost_offers[index - 1].clone();
+        let host = self.host_cfg.offers[index - 1].clone();
         self.log.append(Event::VhostOfferRemoved { host: host.clone() }).map_err(|_| RegError::Internal)?;
-        self.vhost_offers.retain(|o| o != &host);
+        self.host_cfg.offers.retain(|o| o != &host);
         Ok(Some(host))
     }
 
     /// The self-serve vhost offer menu.
     pub fn vhost_offers(&self) -> &[String] {
-        &self.vhost_offers
+        &self.host_cfg.offers
+    }
+
+    /// Add a forbidden vhost regex (anti-impersonation). Validates it compiles;
+    /// Ok(false) if already present.
+    pub fn vhost_forbid_add(&mut self, pattern: &str) -> Result<bool, RegError> {
+        if regex::RegexBuilder::new(pattern).size_limit(BADWORD_SIZE_LIMIT).build().is_err() {
+            return Err(RegError::Internal);
+        }
+        if self.host_cfg.forbidden.iter().any(|p| p == pattern) {
+            return Ok(false);
+        }
+        self.log.append(Event::VhostForbidAdded { pattern: pattern.to_string() }).map_err(|_| RegError::Internal)?;
+        self.host_cfg.forbidden.push(pattern.to_string());
+        Ok(true)
+    }
+
+    /// Remove the forbidden pattern at 1-based `index`; returns it if valid.
+    pub fn vhost_forbid_del(&mut self, index: usize) -> Result<Option<String>, RegError> {
+        if index == 0 || index > self.host_cfg.forbidden.len() {
+            return Ok(None);
+        }
+        let pattern = self.host_cfg.forbidden[index - 1].clone();
+        self.log.append(Event::VhostForbidRemoved { pattern: pattern.clone() }).map_err(|_| RegError::Internal)?;
+        self.host_cfg.forbidden.retain(|p| p != &pattern);
+        Ok(Some(pattern))
+    }
+
+    pub fn vhost_forbidden(&self) -> &[String] {
+        &self.host_cfg.forbidden
+    }
+
+    /// Whether `host` matches a forbidden pattern (case-insensitive).
+    pub fn vhost_is_forbidden(&self, host: &str) -> bool {
+        !self.host_cfg.forbidden.is_empty() && build_badword_set(&self.host_cfg.forbidden).is_match(host)
+    }
+
+    /// Set (or clear) the auto-vhost template, e.g. "$account.users.example".
+    pub fn set_vhost_template(&mut self, template: Option<String>) -> Result<(), RegError> {
+        self.log.append(Event::VhostTemplateSet { template: template.clone() }).map_err(|_| RegError::Internal)?;
+        self.host_cfg.template = template;
+        Ok(())
+    }
+
+    pub fn vhost_template(&self) -> Option<&str> {
+        self.host_cfg.template.as_deref()
     }
 
     /// Every account that has a vhost, as (account, host, setter).
@@ -2065,7 +2134,7 @@ fn owns_over(held: &Account, claim: &Account) -> bool {
 
 // Fold one event into the store. Shared by log replay (`open`) and gossip
 // ingest, so both routes reconstruct identical state.
-fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String, ChannelInfo>, grouped: &mut HashMap<String, String>, bots: &mut HashMap<String, Bot>, offers: &mut Vec<String>, event: Event) {
+fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String, ChannelInfo>, grouped: &mut HashMap<String, String>, bots: &mut HashMap<String, Bot>, host_cfg: &mut HostConfig, event: Event) {
     match event {
         Event::AccountRegistered(a) => {
             // Resolve a concurrent registration of the same name deterministically:
@@ -2278,12 +2347,23 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             bots.remove(&key(&nick));
         }
         Event::VhostOfferAdded { host } => {
-            if !offers.iter().any(|o| o == &host) {
-                offers.push(host);
+            if !host_cfg.offers.iter().any(|o| o == &host) {
+                host_cfg.offers.push(host);
             }
         }
         Event::VhostOfferRemoved { host } => {
-            offers.retain(|o| o != &host);
+            host_cfg.offers.retain(|o| o != &host);
+        }
+        Event::VhostForbidAdded { pattern } => {
+            if !host_cfg.forbidden.iter().any(|p| p == &pattern) {
+                host_cfg.forbidden.push(pattern);
+            }
+        }
+        Event::VhostForbidRemoved { pattern } => {
+            host_cfg.forbidden.retain(|p| p != &pattern);
+        }
+        Event::VhostTemplateSet { template } => {
+            host_cfg.template = template;
         }
         Event::ChannelEntryMsgSet { channel, msg } => {
             if let Some(c) = channels.get_mut(&key(&channel)) {
@@ -2450,6 +2530,24 @@ impl Store for Db {
     }
     fn vhost_offers(&self) -> Vec<String> {
         Db::vhost_offers(self).to_vec()
+    }
+    fn vhost_forbid_add(&mut self, pattern: &str) -> Result<bool, RegError> {
+        Db::vhost_forbid_add(self, pattern)
+    }
+    fn vhost_forbid_del(&mut self, index: usize) -> Result<Option<String>, RegError> {
+        Db::vhost_forbid_del(self, index)
+    }
+    fn vhost_forbidden(&self) -> Vec<String> {
+        Db::vhost_forbidden(self).to_vec()
+    }
+    fn vhost_is_forbidden(&self, host: &str) -> bool {
+        Db::vhost_is_forbidden(self, host)
+    }
+    fn set_vhost_template(&mut self, template: Option<String>) -> Result<(), RegError> {
+        Db::set_vhost_template(self, template)
+    }
+    fn vhost_template(&self) -> Option<String> {
+        Db::vhost_template(self).map(str::to_string)
     }
     fn group_nick(&mut self, nick: &str, account: &str) -> Result<(), RegError> {
         Db::group_nick(self, nick, account)
@@ -2693,9 +2791,9 @@ mod tests {
             ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None,
         };
         let converge = |first: &Account, second: &Account| {
-            let (mut acc, mut ch, mut gr, mut bo, mut of) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), Vec::new());
-            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut of, Event::AccountRegistered(first.clone()));
-            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut of, Event::AccountRegistered(second.clone()));
+            let (mut acc, mut ch, mut gr, mut bo, mut hc) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HostConfig::default());
+            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, Event::AccountRegistered(first.clone()));
+            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, Event::AccountRegistered(second.clone()));
             acc["alice"].password_hash.clone()
         };
         // Earlier registration wins, regardless of which claim applies first.
