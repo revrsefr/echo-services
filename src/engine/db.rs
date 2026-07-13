@@ -89,6 +89,8 @@ pub enum Event {
     ChannelEntryMsgSet { channel: String, msg: String },
     ChannelSettingsSet { channel: String, settings: ChanSettings },
     ChannelTopicSet { channel: String, topic: String },
+    ChannelSuspended { channel: String, by: String, reason: String, ts: u64, expires: Option<u64> },
+    ChannelUnsuspended { channel: String },
 }
 
 // Whether an event replicates across the federation. Account identity is Global
@@ -128,7 +130,9 @@ impl Event {
             | Event::ChannelDescSet { .. }
             | Event::ChannelEntryMsgSet { .. }
             | Event::ChannelSettingsSet { .. }
-            | Event::ChannelTopicSet { .. } => Scope::Local,
+            | Event::ChannelTopicSet { .. }
+            | Event::ChannelSuspended { .. }
+            | Event::ChannelUnsuspended { .. } => Scope::Local,
         }
     }
 }
@@ -218,6 +222,9 @@ pub struct ChannelInfo {
     // Last known topic, kept for KEEPTOPIC / TOPICLOCK.
     #[serde(default)]
     pub topic: String,
+    // Services suspension, if any (channel frozen while set and unexpired).
+    #[serde(default)]
+    pub suspension: Option<Suspension>,
 }
 
 impl ChannelInfo {
@@ -626,6 +633,9 @@ impl Db {
             }
             if !c.topic.is_empty() {
                 snapshot.push(Event::ChannelTopicSet { channel: c.name.clone(), topic: c.topic.clone() });
+            }
+            if let Some(s) = &c.suspension {
+                snapshot.push(Event::ChannelSuspended { channel: c.name.clone(), by: s.by.clone(), reason: s.reason.clone(), ts: s.ts, expires: s.expires });
             }
         }
         for (nick, account) in &self.grouped {
@@ -1053,7 +1063,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new() });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None });
         Ok(())
     }
 
@@ -1222,6 +1232,41 @@ impl Db {
         Ok(())
     }
 
+    /// Suspend a channel. `expires` is absolute unix time (None = permanent).
+    pub fn suspend_channel(&mut self, channel: &str, by: &str, reason: &str, expires: Option<u64>) -> Result<(), ChanError> {
+        let k = key(channel);
+        if !self.channels.contains_key(&k) {
+            return Err(ChanError::NoChannel);
+        }
+        let ts = now();
+        self.log.append(Event::ChannelSuspended { channel: channel.to_string(), by: by.to_string(), reason: reason.to_string(), ts, expires }).map_err(|_| ChanError::Internal)?;
+        self.channels.get_mut(&k).unwrap().suspension = Some(Suspension { by: by.to_string(), reason: reason.to_string(), ts, expires });
+        Ok(())
+    }
+
+    /// Lift a channel suspension. Returns whether one was set.
+    pub fn unsuspend_channel(&mut self, channel: &str) -> Result<bool, ChanError> {
+        let k = key(channel);
+        match self.channels.get(&k) {
+            None => return Err(ChanError::NoChannel),
+            Some(c) if c.suspension.is_none() => return Ok(false),
+            Some(_) => {}
+        }
+        self.log.append(Event::ChannelUnsuspended { channel: channel.to_string() }).map_err(|_| ChanError::Internal)?;
+        self.channels.get_mut(&k).unwrap().suspension = None;
+        Ok(true)
+    }
+
+    /// Whether a channel has a set, unexpired suspension (lazy — no timer).
+    pub fn is_channel_suspended(&self, channel: &str) -> bool {
+        self.channels.get(&key(channel)).and_then(|c| c.suspension.as_ref()).is_some_and(|s| s.expires.is_none_or(|e| e > now()))
+    }
+
+    /// The channel's suspension record, if any.
+    pub fn channel_suspension(&self, channel: &str) -> Option<SuspensionView> {
+        self.channels.get(&key(channel)).and_then(|c| c.suspension.as_ref()).map(|s| SuspensionView { by: s.by.clone(), reason: s.reason.clone(), ts: s.ts, expires: s.expires })
+    }
+
     /// Set `channel`'s entry message (empty clears it).
     pub fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError> {
         let k = key(channel);
@@ -1333,7 +1378,7 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             grouped.remove(&key(&nick));
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new() });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
@@ -1384,6 +1429,16 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::ChannelTopicSet { channel, topic } => {
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.topic = topic;
+            }
+        }
+        Event::ChannelSuspended { channel, by, reason, ts, expires } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.suspension = Some(Suspension { by, reason, ts, expires });
+            }
+        }
+        Event::ChannelUnsuspended { channel } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.suspension = None;
             }
         }
         Event::ChannelEntryMsgSet { channel, msg } => {
@@ -1575,6 +1630,18 @@ impl Store for Db {
     fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError> {
         Db::set_channel_topic(self, channel, topic)
     }
+    fn suspend_channel(&mut self, channel: &str, by: &str, reason: &str, expires: Option<u64>) -> Result<(), ChanError> {
+        Db::suspend_channel(self, channel, by, reason, expires)
+    }
+    fn unsuspend_channel(&mut self, channel: &str) -> Result<bool, ChanError> {
+        Db::unsuspend_channel(self, channel)
+    }
+    fn is_channel_suspended(&self, channel: &str) -> bool {
+        Db::is_channel_suspended(self, channel)
+    }
+    fn channel_suspension(&self, channel: &str) -> Option<SuspensionView> {
+        Db::channel_suspension(self, channel)
+    }
     fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError> {
         Db::set_entrymsg(self, channel, msg)
     }
@@ -1613,6 +1680,7 @@ fn channel_view(c: &ChannelInfo) -> ChannelView {
         keeptopic: c.settings.keeptopic,
         topiclock: c.settings.topiclock,
         topic: c.topic.clone(),
+        suspended: c.suspension.as_ref().is_some_and(|s| s.expires.is_none_or(|e| e > now())),
     }
 }
 
@@ -1787,6 +1855,23 @@ mod tests {
             db.suspend_account("alice", "oper", "again", None).unwrap();
         }
         assert!(Db::open(&p, "N1").is_suspended("alice"), "suspension replays from the log");
+    }
+
+    // A channel suspension lifts, expires lazily, and survives compaction + reopen.
+    #[test]
+    fn channel_suspend_lifts_persists_and_compacts() {
+        let p = tmp("chansuspend");
+        let mut db = Db::open(&p, "N1");
+        db.register_channel("#c", "boss").unwrap();
+        db.suspend_channel("#c", "oper", "raided", Some(1)).unwrap();
+        assert!(!db.is_channel_suspended("#c"), "a past expiry is inactive");
+        db.suspend_channel("#c", "oper", "raided", None).unwrap();
+        assert!(db.is_channel_suspended("#c"));
+        db.compact().unwrap(); // the snapshot must retain the suspension
+        drop(db);
+        let db = Db::open(&p, "N1");
+        assert!(db.is_channel_suspended("#c"), "survives compaction + reopen");
+        assert_eq!(db.channel_suspension("#c").unwrap().by, "oper");
     }
 
     // A wrong code is tolerated a few times, then the code is burned so it can't

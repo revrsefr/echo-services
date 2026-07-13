@@ -38,6 +38,8 @@ mod enforce;
 mod clone;
 #[path = "xop.rs"]
 mod xop;
+#[path = "suspend.rs"]
+mod suspend;
 
 pub struct ChanServ {
     pub uid: String,
@@ -101,6 +103,9 @@ impl Service for ChanServ {
                             ctx.notice(me, from.uid, format!("  Description: {}", info.desc));
                         }
                         ctx.notice(me, from.uid, format!("  Registered : {}", fedserv_api::human_time(info.ts)));
+                        if let Some(s) = db.channel_suspension(chan) {
+                            ctx.notice(me, from.uid, format!("  Suspended  : by \x02{}\x02 — {}", s.by, s.reason));
+                        }
                         let mut opts = Vec::new();
                         if info.signkick { opts.push("SIGNKICK"); }
                         if info.private { opts.push("PRIVATE"); }
@@ -130,6 +135,9 @@ impl Service for ChanServ {
                 };
                 if from.account != Some(founder.as_str()) {
                     ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can drop it."));
+                    return;
+                }
+                if suspended_block(me, from, chan, ctx, db) {
                     return;
                 }
                 match db.drop_channel(chan) {
@@ -168,6 +176,9 @@ impl Service for ChanServ {
                     ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can set its mode lock."));
                     return;
                 }
+                if suspended_block(me, from, chan, ctx, db) {
+                    return;
+                }
                 let (on, off) = parse_mlock(&args[2..].concat());
                 match db.set_mlock(chan, &on, &off) {
                     Ok(()) => {
@@ -192,6 +203,8 @@ impl Service for ChanServ {
             Some("INVITE") => invite::handle(me, from, args, ctx, net, db),
             Some("AKICK") => akick::handle(me, from, args, ctx, db),
             Some("STATUS") => status::handle(me, from, args, ctx, net, db),
+            Some("SUSPEND") => suspend::handle(me, from, args, ctx, net, db, true),
+            Some("UNSUSPEND") => suspend::handle(me, from, args, ctx, net, db, false),
             Some("LIST") => list::handle(me, from, args, ctx, db),
             Some("SET") => set::handle(me, from, args, ctx, db),
             Some("ENTRYMSG") => entrymsg::handle(me, from, args, ctx, db),
@@ -211,6 +224,9 @@ impl Service for ChanServ {
 
 // True if `from` is the channel's founder; otherwise notices why and returns false.
 fn require_founder(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &dyn Store) -> bool {
+    if suspended_block(me, from, chan, ctx, db) {
+        return false;
+    }
     match db.channel(chan) {
         None => {
             ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
@@ -226,6 +242,9 @@ fn require_founder(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db
 
 // True if `from` is the founder or an access-list op of `chan`; else notices why.
 fn require_op(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &dyn Store) -> bool {
+    if suspended_block(me, from, chan, ctx, db) {
+        return false;
+    }
     match (from.account, db.channel(chan)) {
         (_, None) => {
             ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
@@ -237,6 +256,15 @@ fn require_op(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &dy
             false
         }
     }
+}
+
+// A suspended channel is frozen: ChanServ won't manage it (returns true + notices).
+fn suspended_block(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &dyn Store) -> bool {
+    if db.is_channel_suspended(chan) {
+        ctx.notice(me, from.uid, format!("\x02{chan}\x02 is suspended by network staff and can't be managed right now."));
+        return true;
+    }
+    false
 }
 
 // PEACE: returns true (and notices) if `from` may not act against `target_uid`

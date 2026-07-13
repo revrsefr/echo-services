@@ -345,6 +345,7 @@ pub struct ChannelView {
     pub secureops: bool,
     pub keeptopic: bool,
     pub topiclock: bool,
+    pub suspended: bool,
     // Last known topic (for KEEPTOPIC / TOPICLOCK).
     pub topic: String,
 }
@@ -491,6 +492,10 @@ pub trait Store {
     fn set_desc(&mut self, channel: &str, desc: &str) -> Result<(), ChanError>;
     fn set_channel_setting(&mut self, channel: &str, setting: ChanSetting, on: bool) -> Result<(), ChanError>;
     fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError>;
+    fn suspend_channel(&mut self, channel: &str, by: &str, reason: &str, expires: Option<u64>) -> Result<(), ChanError>;
+    fn unsuspend_channel(&mut self, channel: &str) -> Result<bool, ChanError>;
+    fn is_channel_suspended(&self, channel: &str) -> bool;
+    fn channel_suspension(&self, channel: &str) -> Option<SuspensionView>;
     fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError>;
     fn set_founder(&mut self, channel: &str, account: &str) -> Result<(), ChanError>;
     fn access_add(&mut self, channel: &str, account: &str, level: &str) -> Result<(), ChanError>;
@@ -533,6 +538,20 @@ pub trait Service: Send {
         false
     }
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, store: &mut dyn Store);
+}
+
+// Parse a duration like "30d", "12h", "45m", "90s", or bare seconds. Shared by
+// the SUSPEND commands.
+pub fn parse_duration(s: &str) -> Option<u64> {
+    let (num, mult) = match s.chars().last()? {
+        'd' | 'D' => (&s[..s.len() - 1], 86_400),
+        'h' | 'H' => (&s[..s.len() - 1], 3_600),
+        'm' | 'M' => (&s[..s.len() - 1], 60),
+        's' | 'S' => (&s[..s.len() - 1], 1),
+        c if c.is_ascii_digit() => (s, 1),
+        _ => return None,
+    };
+    num.parse::<u64>().ok().map(|n| n * mult)
 }
 
 // Case-insensitive hostmask glob: `*` (any run) and `?` (one char).

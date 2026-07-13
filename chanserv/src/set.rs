@@ -17,6 +17,9 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can change its settings."));
         return;
     }
+    if super::suspended_block(me, from, chan, ctx, db) {
+        return;
+    }
     match args.get(2).map(|s| s.to_ascii_uppercase()).as_deref() {
         Some("FOUNDER") => {
             let Some(&account) = args.get(3) else {

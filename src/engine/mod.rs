@@ -449,6 +449,10 @@ impl Engine {
             // members their status mode, and send the entry message.
             NetEvent::Join { uid, channel, op } => {
                 self.network.channel_join(&channel, &uid, op);
+                // A suspended channel is frozen: no auto-op, akick, or entry message.
+                if self.db.is_channel_suspended(&channel) {
+                    return Vec::new();
+                }
                 let account = self.network.account_of(&uid).map(str::to_string);
                 let from = self.chan_service.clone().unwrap_or_default();
                 let mode = account.as_deref().and_then(|a| self.db.channel(&channel).and_then(|c| c.join_mode(a)));
@@ -1551,6 +1555,48 @@ mod tests {
         e.db.set_channel_setting("#c", db::ChanSetting::SecureOps, false).unwrap();
         let out = e.handle(NetEvent::ChannelOp { channel: "#c".into(), uid: "000AAAAAB".into(), op: true });
         assert!(out.is_empty(), "no enforcement when SECUREOPS is off: {out:?}");
+    }
+
+    // Channel SUSPEND is oper-gated and freezes founder management until lifted.
+    #[test]
+    fn channel_suspend_is_oper_gated_and_freezes_management() {
+        use fedserv_chanserv::ChanServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-chansuspendcmd.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("staff", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Suspend));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "staff".into(), host: "h".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAC", "IDENTIFY password1");
+
+        // A non-oper cannot suspend a channel.
+        assert!(notice(&cs(&mut e, "000AAAAAB", "SUSPEND #c"), "Access denied"));
+        // The oper suspends it.
+        assert!(notice(&cs(&mut e, "000AAAAAC", "SUSPEND #c raided"), "now suspended"));
+        // The founder can no longer manage it.
+        assert!(notice(&cs(&mut e, "000AAAAAB", "SET #c SIGNKICK ON"), "suspended"));
+        // UNSUSPEND restores management.
+        assert!(notice(&cs(&mut e, "000AAAAAC", "UNSUSPEND #c"), "no longer suspended"));
+        assert!(notice(&cs(&mut e, "000AAAAAB", "SET #c SIGNKICK ON"), "is now"));
     }
 
     // SUSPEND is oper-gated, blocks the victim's login, and UNSUSPEND restores it.
