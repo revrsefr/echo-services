@@ -17,6 +17,7 @@ use engine::Engine;
 use fedserv_botserv::BotServ;
 use fedserv_chanserv::ChanServ;
 use fedserv_memoserv::MemoServ;
+use fedserv_statserv::StatServ;
 use fedserv_example::ExampleServ;
 use fedserv_inspircd::InspIrcd;
 use fedserv_nickserv::NickServ;
@@ -67,6 +68,11 @@ async fn main() -> Result<()> {
     if enabled("memoserv") {
         services.push(Box::new(MemoServ {
             uid: format!("{}AAAAAE", cfg.server.sid),
+        }));
+    }
+    if enabled("statserv") {
+        services.push(Box::new(StatServ {
+            uid: format!("{}AAAAAF", cfg.server.sid),
         }));
     }
     if enabled("example") {

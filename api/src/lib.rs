@@ -646,6 +646,8 @@ pub trait NetView {
     fn last_seen(&self, nick: &str) -> Option<SeenView>;
     // BOTSTATS: (lines seen this session, top talkers by count desc).
     fn channel_activity(&self, channel: &str) -> Option<(u64, Vec<(String, u64)>)>;
+    // The shared stat counters (namespaced key -> count), for StatServ.
+    fn stat_counters(&self) -> Vec<(String, u64)>;
 }
 
 // A pseudo-client (NickServ, ChanServ, ...). Introduced at burst, receives the

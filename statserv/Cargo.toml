@@ -1,0 +1,8 @@
+[package]
+name = "fedserv-statserv"
+version = "0.0.1"
+edition = "2021"
+description = "StatServ: surface the shared stats registry and per-channel activity."
+
+[dependencies]
+fedserv-api = { path = "../api" }

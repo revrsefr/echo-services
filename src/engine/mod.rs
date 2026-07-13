@@ -118,10 +118,6 @@ pub struct Engine {
     trigger_cache: HashMap<String, CachedTriggers>,
     // Kicker bans (times-to-ban) awaiting BANEXPIRE removal. Swept on each event.
     pending_unbans: Vec<PendingUnban>,
-    // Shared, namespaced stat counters any service contributes to (via
-    // ServiceCtx::count) plus engine-internal events; exposed over the gRPC
-    // Stats API. Ordered so a snapshot is stable.
-    stats: std::collections::BTreeMap<String, u64>,
     // In-flight community !votekick/!voteban tallies, keyed by (channel_lc,
     // target_nick_lc). Ephemeral; expire after VOTE_TTL.
     votes: HashMap<(String, String), VoteState>,
@@ -195,20 +191,20 @@ impl Engine {
             badword_cache: HashMap::new(),
             trigger_cache: HashMap::new(),
             pending_unbans: Vec::new(),
-            stats: std::collections::BTreeMap::new(),
             votes: HashMap::new(),
         }
     }
 
-    // Increment a shared stat counter.
+    // Increment a shared stat counter (held on the network view, so services and
+    // the gRPC API read from one place).
     pub fn bump(&mut self, key: &str) {
-        *self.stats.entry(key.to_string()).or_insert(0) += 1;
+        self.network.bump(key);
     }
 
     // The shared counters plus live gauges derived from the store, for the gRPC
     // Stats API. Any service's counters ride in here alongside these.
     pub fn stats_snapshot(&self) -> std::collections::BTreeMap<String, u64> {
-        let mut m = self.stats.clone();
+        let mut m: std::collections::BTreeMap<String, u64> = self.network.stat_counters().clone();
         m.insert("accounts.total".to_string(), self.db.accounts().count() as u64);
         m.insert("channels.total".to_string(), self.db.channels().count() as u64);
         m.insert("bots.total".to_string(), self.db.bots().count() as u64);
@@ -1019,7 +1015,7 @@ impl Engine {
                     }
                 }
             }
-            // BOTSTATS: count activity in channels that have a bot.
+            // Record activity in bot channels (surfaced by StatServ).
             if self.db.channel(to).is_some_and(|c| c.assigned_bot.is_some()) {
                 self.network.record_line(to, &nick);
                 self.bump("botserv.messages");
@@ -2637,18 +2633,51 @@ mod tests {
         assert!(kicked(&vote(&mut e, "000AAAAAC", "!votekick victim")), "2 distinct votes: kicked");
     }
 
-    // BOTSTATS reports per-channel activity the bot has seen this session.
+    // StatServ reports per-channel activity (#channel) and the global registry
+    // (SERVER, operators only).
     #[test]
-    fn botserv_botstats_reports_activity() {
-        let (mut e, _p) = kicker_fixture("bsbotstats");
+    fn statserv_reports_channel_and_global() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        use fedserv_statserv::StatServ;
+        let path = std::env::temp_dir().join("fedserv-statserv.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+                Box::new(StatServ { uid: "42SAAAAAF".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin).with(fedserv_api::Priv::Auspex));
+        e.set_opers(opers);
         let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let ss = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAF".into(), text: t.into() });
         let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "spammer".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        bs(&mut e, "BOT ADD Bendy bot serv.host Helper");
+        bs(&mut e, "ASSIGN #c Bendy");
         say(&mut e, "one");
         say(&mut e, "two");
         say(&mut e, "three");
-        let out = bs(&mut e, "BOTSTATS #c");
-        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("line(s) seen this session"))), "line count: {out:?}");
-        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("spammer") && text.contains("3"))), "top talker listed: {out:?}");
+
+        // Per-channel view.
+        let out = ss(&mut e, "#c");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("line(s) seen this session"))), "channel lines: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("spammer") && text.contains("3"))), "top talker: {out:?}");
+        // Global view (oper) shows the shared counters.
+        let out = ss(&mut e, "SERVER");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("botserv.messages"))), "global counters: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("channels.total"))), "gauge shown");
     }
 
     // The shared stats registry gathers per-service command counts, BotServ

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // The read-only network view a module sees; re-exported so the engine keeps
@@ -17,6 +17,9 @@ pub struct Network {
     // `users` so a reconnect can clear them wholesale without disturbing the
     // uplink-sourced user map.
     bots: HashMap<String, String>,
+    // Shared, namespaced stat counters any service contributes to (ephemeral,
+    // ordered for a stable snapshot). Read by StatServ and the gRPC Stats API.
+    stats: BTreeMap<String, u64>,
 }
 
 pub struct User {
@@ -196,6 +199,16 @@ impl Network {
         }
     }
 
+    // Increment a shared stat counter.
+    pub fn bump(&mut self, key: &str) {
+        *self.stats.entry(key.to_string()).or_insert(0) += 1;
+    }
+
+    // The raw shared counters (sorted). Gauges are merged in by the reader.
+    pub fn stat_counters(&self) -> &BTreeMap<String, u64> {
+        &self.stats
+    }
+
     // BOTSTATS view: (total lines, top talkers by count, descending).
     pub fn channel_activity(&self, channel: &str) -> Option<(u64, Vec<(String, u64)>)> {
         let c = self.channels.get(&lc(channel))?;
@@ -259,5 +272,8 @@ impl NetView for Network {
     }
     fn channel_activity(&self, channel: &str) -> Option<(u64, Vec<(String, u64)>)> {
         Network::channel_activity(self, channel)
+    }
+    fn stat_counters(&self) -> Vec<(String, u64)> {
+        Network::stat_counters(self).iter().map(|(k, v)| (k.clone(), *v)).collect()
     }
 }
