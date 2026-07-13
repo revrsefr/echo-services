@@ -34,6 +34,7 @@ tokio-rustls = "0.26.4"
 rustls-pemfile = "2.2.0"
 tonic = { version = "0.12", features = ["tls"] }
 axum = "0.7"
+axum-server = { version = "0.7", features = ["tls-rustls"] }
 prost = "0.13"
 tokio-stream = "0.1"
 

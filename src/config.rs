@@ -105,6 +105,10 @@ pub struct JsonRpc {
     // ["https://tchatou.fr", "https://swaygo.fr"]. Empty = no browser access.
     #[serde(default)]
     pub origins: Vec<String>,
+    // Terminate TLS here (enabling HTTP/2). Absent = plain HTTP, for when a
+    // reverse proxy does TLS. Reuses the same cert/key shape as [grpc].
+    #[serde(default)]
+    pub tls: Option<ServerTls>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

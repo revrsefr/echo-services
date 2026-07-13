@@ -38,18 +38,39 @@ pub async fn run(engine: Shared, cfg: JsonRpcCfg) {
     if cfg.token.is_empty() {
         return tracing::error!("jsonrpc token is empty; refusing to start an unauthenticated stats endpoint");
     }
+    let tls = cfg.tls.clone();
     let state = AppState { engine, token: cfg.token, origins: Arc::new(cfg.origins) };
     let app = Router::new()
         .route("/", post(handle).options(preflight))
         .layer(DefaultBodyLimit::max(64 * 1024))
         .with_state(state);
-    let listener = match tokio::net::TcpListener::bind(addr).await {
-        Ok(l) => l,
-        Err(e) => return tracing::error!(%e, %addr, "jsonrpc bind failed"),
-    };
-    tracing::info!(%addr, "jsonrpc stats API listening");
-    if let Err(e) = axum::serve(listener, app).await {
-        tracing::error!(%e, "jsonrpc server exited");
+
+    match tls {
+        // TLS terminated here → HTTP/2 (ALPN) plus HTTP/1.1, encrypted to fedserv.
+        Some(t) => {
+            // The dependency tree carries more than one rustls crypto provider, so
+            // pin one before building any TLS config (ignored if already set).
+            let _ = tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default();
+            let config = match axum_server::tls_rustls::RustlsConfig::from_pem_file(&t.cert, &t.key).await {
+                Ok(c) => c,
+                Err(e) => return tracing::error!(%e, "jsonrpc TLS cert/key unreadable"),
+            };
+            tracing::info!(%addr, "jsonrpc stats API listening (TLS, HTTP/2)");
+            if let Err(e) = axum_server::bind_rustls(addr, config).serve(app.into_make_service()).await {
+                tracing::error!(%e, "jsonrpc server exited");
+            }
+        }
+        // Plain HTTP, for when a reverse proxy terminates TLS/HTTP-2/HTTP-3.
+        None => {
+            let listener = match tokio::net::TcpListener::bind(addr).await {
+                Ok(l) => l,
+                Err(e) => return tracing::error!(%e, %addr, "jsonrpc bind failed"),
+            };
+            tracing::info!(%addr, "jsonrpc stats API listening");
+            if let Err(e) = axum::serve(listener, app).await {
+                tracing::error!(%e, "jsonrpc server exited");
+            }
+        }
     }
 }
 
