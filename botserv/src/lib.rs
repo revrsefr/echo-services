@@ -18,6 +18,8 @@ mod set;
 mod kick;
 #[path = "badwords.rs"]
 mod badwords;
+#[path = "copy.rs"]
+mod copy;
 
 // Shared gate: the sender may administer <chan>'s bot options only as its
 // founder or a services admin. Notices and returns false on failure.
@@ -60,6 +62,7 @@ impl Service for BotServ {
             Some("SET") => set::handle(me, from, args, ctx, db),
             Some("KICK") => kick::handle(me, from, args, ctx, db),
             Some("BADWORDS") => badwords::handle(me, from, args, ctx, db),
+            Some("COPY") => copy::handle(me, from, args, ctx, db),
             Some("HELP") | None => ctx.notice(me, from.uid, "BotServ keeps service bots for your channels: \x02ASSIGN\x02 <#channel> <bot> puts a bot in your channel, \x02UNASSIGN\x02 <#channel> removes it, \x02INFO\x02 <bot|#channel> shows details, \x02SAY\x02/\x02ACT\x02 <#channel> <text> speaks through the bot, \x02SET\x02 <#channel> GREET <on|off> toggles greets, \x02KICK\x02 <#channel> <type> <on|off> configures kickers, \x02BADWORDS\x02 <#channel> ADD|DEL|LIST manages badword regexes. Operators also have \x02BOT\x02 ADD|DEL|LIST."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
         }

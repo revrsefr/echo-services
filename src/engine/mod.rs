@@ -2354,6 +2354,45 @@ mod tests {
         assert!(!say(&mut e, "[unclosed bracket text").iter().any(|a| matches!(a, NetAction::Kick { .. })), "bad pattern not stored");
     }
 
+    // COPY clones one channel's kicker/badword config onto another.
+    #[test]
+    fn botserv_copy_bot_config() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bscopy.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        db.register_channel("#d", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        bs(&mut e, "KICK #c CAPS ON");
+        bs(&mut e, "BADWORDS #c ADD fr[ao]g");
+        bs(&mut e, "KICK #c BADWORDS ON");
+        let says = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        // #d starts blank, so nothing trips.
+        assert!(says(&bs(&mut e, "KICK #d TEST SHOUTING LOUD ALLCAPS"), "trips no content kicker"), "blank #d");
+        bs(&mut e, "COPY #c #d");
+        // Now #d has #c's caps and badword config.
+        assert!(says(&bs(&mut e, "KICK #d TEST SHOUTING LOUD ALLCAPS"), "would be kicked"), "caps copied");
+        assert!(says(&bs(&mut e, "KICK #d TEST i love frogs"), "would be kicked"), "badwords copied");
+    }
+
     // KICK TEST dry-runs the content kickers against a line without kicking.
     #[test]
     fn botserv_kick_test_dry_run() {

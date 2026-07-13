@@ -1539,6 +1539,25 @@ impl Db {
         None
     }
 
+    /// Copy one channel's BotServ configuration — kickers, badwords, greet and
+    /// nobot — onto another. Both channels must be registered.
+    pub fn copy_bot_config(&mut self, src: &str, dst: &str) -> Result<(), ChanError> {
+        let (kickers, badwords, bot_greet, nobot) = {
+            let s = self.channels.get(&key(src)).ok_or(ChanError::NoChannel)?;
+            (s.kickers.clone(), s.badwords.clone(), s.settings.bot_greet, s.settings.nobot)
+        };
+        let dk = key(dst);
+        if !self.channels.contains_key(&dk) {
+            return Err(ChanError::NoChannel);
+        }
+        self.log.append(Event::ChannelKickerSet { channel: dst.to_string(), kickers: kickers.clone() }).map_err(|_| ChanError::Internal)?;
+        self.channels.get_mut(&dk).unwrap().kickers = kickers;
+        self.write_badwords(dst, &dk, badwords)?;
+        self.set_channel_setting(dst, ChanSetting::BotGreet, bot_greet)?;
+        self.set_channel_setting(dst, ChanSetting::NoBot, nobot)?;
+        Ok(())
+    }
+
     // Persist a new badword list (whole-list event) and apply it.
     fn write_badwords(&mut self, channel: &str, k: &str, list: Vec<String>) -> Result<(), ChanError> {
         self.log
@@ -2220,6 +2239,9 @@ impl Store for Db {
     }
     fn kicker_test(&self, channel: &str, text: &str) -> Option<String> {
         Db::kicker_test(self, channel, text)
+    }
+    fn copy_bot_config(&mut self, src: &str, dst: &str) -> Result<(), ChanError> {
+        Db::copy_bot_config(self, src, dst)
     }
     fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError> {
         Db::set_channel_topic(self, channel, topic)
