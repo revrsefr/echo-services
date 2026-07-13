@@ -1,10 +1,10 @@
-use crate::engine::db::Db;
+use crate::engine::db::Store;
 use crate::engine::service::{Sender, ServiceCtx};
-use crate::engine::state::Network;
+use crate::engine::state::NetView;
 
 // OP/DEOP/VOICE/DEVOICE <#channel> [nick]: set a status mode on a user (self if
 // no nick given). `mode` is the mode to apply, e.g. "+o".
-pub fn handle(me: &str, from: &Sender, mode: &str, args: &[&str], ctx: &mut ServiceCtx, net: &Network, db: &Db) {
+pub fn handle(me: &str, from: &Sender, mode: &str, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &dyn Store) {
     let Some(&chan) = args.get(1) else {
         ctx.notice(me, from.uid, "Syntax: OP/DEOP/VOICE/DEVOICE <#channel> [nick]");
         return;

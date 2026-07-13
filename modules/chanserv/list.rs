@@ -1,9 +1,9 @@
-use crate::engine::db::Db;
+use crate::engine::db::Store;
 use crate::engine::service::{Sender, ServiceCtx};
 
 // LIST: show all registered channels.
-pub fn handle(me: &str, from: &Sender, _args: &[&str], ctx: &mut ServiceCtx, db: &Db) {
-    let mut names: Vec<&str> = db.channels().map(|c| c.name.as_str()).collect();
+pub fn handle(me: &str, from: &Sender, _args: &[&str], ctx: &mut ServiceCtx, db: &dyn Store) {
+    let mut names: Vec<String> = db.channels().into_iter().map(|c| c.name).collect();
     if names.is_empty() {
         ctx.notice(me, from.uid, "No channels are registered.");
         return;

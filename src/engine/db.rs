@@ -11,6 +11,13 @@ use tokio::sync::broadcast;
 
 use super::scram::{self, Hash};
 
+// Error kinds, the emailed-code purpose, and the module-facing views live in the
+// fedserv-api SDK crate; re-exported so the engine keeps naming them locally and
+// modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
+pub use fedserv_api::{
+    AccountView, ChanAccessView, ChanAkickView, ChanError, ChannelView, CertError, CodeKind, RegError, Store,
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
     pub name: String,
@@ -156,11 +163,6 @@ impl ChannelInfo {
             .iter()
             .find(|a| a.account.eq_ignore_ascii_case(account))
             .map(|a| if a.level == "voice" { "+v" } else { "+o" })
-    }
-
-    /// Whether `account` has operator access (founder or access-list op).
-    pub fn is_op(&self, account: &str) -> bool {
-        self.join_mode(account) == Some("+o")
     }
 
     /// The matching auto-kick entry for `hostmask` (nick!user@host), if any.
@@ -421,32 +423,11 @@ impl EventLog {
     }
 }
 
-#[derive(Debug)]
-pub enum RegError {
-    Exists,
-    Internal,
-}
-
 // What an ingested entry did to a locally-known account, so the engine can log
 // out sessions that were relying on it.
 pub enum AccountChange {
     TakenOver(String),
     Dropped(String),
-}
-
-#[derive(Debug)]
-pub enum CertError {
-    Invalid,    // not a plausible fingerprint
-    InUse,      // already registered (to any account)
-    NoAccount,  // target account does not exist
-    Internal,   // persistence failed
-}
-
-#[derive(Debug)]
-pub enum ChanError {
-    Exists,     // channel already registered
-    NoChannel,  // channel is not registered
-    Internal,   // persistence failed
 }
 
 // A fingerprint is hex (hash digest), optionally colon-separated. Bound the
@@ -480,13 +461,6 @@ pub struct Db {
     email_logo: String,
     // Node-local, non-persisted email codes: account -> (purpose, code, expiry).
     codes: HashMap<String, (CodeKind, String, Instant)>,
-}
-
-// What an emailed code authorises.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum CodeKind {
-    Reset,
-    Confirm,
 }
 
 fn key(name: &str) -> String {
@@ -1208,6 +1182,131 @@ fn verify_password(password: &str, hash: &str) -> bool {
     PasswordHash::new(hash)
         .map(|parsed| Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok())
         .unwrap_or(false)
+}
+
+// The module-facing account/channel store. Every method forwards to Db's own
+// (fully-qualified so it is the inherent method, never this trait method), with
+// reads projected into credential-free views. Internal callers keep using the
+// richer inherent methods directly.
+impl Store for Db {
+    fn exists(&self, name: &str) -> bool {
+        Db::exists(self, name)
+    }
+    fn account(&self, name: &str) -> Option<AccountView> {
+        Db::account(self, name).map(|a| AccountView {
+            name: a.name.clone(),
+            email: a.email.clone(),
+            ts: a.ts,
+            verified: a.verified,
+        })
+    }
+    fn resolve_account(&self, name: &str) -> Option<&str> {
+        Db::resolve_account(self, name)
+    }
+    fn authenticate(&self, name: &str, password: &str) -> Option<&str> {
+        Db::authenticate(self, name, password)
+    }
+    fn grouped_nicks(&self, account: &str) -> Vec<String> {
+        Db::grouped_nicks(self, account)
+    }
+    fn certfps(&self, account: &str) -> &[String] {
+        Db::certfps(self, account)
+    }
+    fn is_verified(&self, account: &str) -> bool {
+        Db::is_verified(self, account)
+    }
+    fn channel(&self, name: &str) -> Option<ChannelView> {
+        Db::channel(self, name).map(channel_view)
+    }
+    fn channels(&self) -> Vec<ChannelView> {
+        Db::channels(self).map(channel_view).collect()
+    }
+    fn channels_owned_by(&self, account: &str) -> Vec<String> {
+        Db::channels_owned_by(self, account)
+    }
+    fn email_enabled(&self) -> bool {
+        Db::email_enabled(self)
+    }
+    fn email_brand(&self) -> &str {
+        Db::email_brand(self)
+    }
+    fn email_accent(&self) -> &str {
+        Db::email_accent(self)
+    }
+    fn email_logo(&self) -> &str {
+        Db::email_logo(self)
+    }
+    fn issue_code(&mut self, account: &str, kind: CodeKind) -> String {
+        Db::issue_code(self, account, kind)
+    }
+    fn take_code(&mut self, account: &str, kind: CodeKind, code: &str) -> bool {
+        Db::take_code(self, account, kind, code)
+    }
+    fn verify_account(&mut self, account: &str) -> Result<(), RegError> {
+        Db::verify_account(self, account)
+    }
+    fn set_email(&mut self, account: &str, email: Option<String>) -> Result<(), RegError> {
+        Db::set_email(self, account, email)
+    }
+    fn group_nick(&mut self, nick: &str, account: &str) -> Result<(), RegError> {
+        Db::group_nick(self, nick, account)
+    }
+    fn ungroup_nick(&mut self, nick: &str) -> Result<bool, RegError> {
+        Db::ungroup_nick(self, nick)
+    }
+    fn drop_account(&mut self, account: &str) -> Result<bool, RegError> {
+        Db::drop_account(self, account)
+    }
+    fn certfp_add(&mut self, account: &str, fp: &str) -> Result<(), CertError> {
+        Db::certfp_add(self, account, fp)
+    }
+    fn certfp_del(&mut self, account: &str, fp: &str) -> Result<bool, CertError> {
+        Db::certfp_del(self, account, fp)
+    }
+    fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
+        Db::register_channel(self, name, founder)
+    }
+    fn drop_channel(&mut self, name: &str) -> Result<(), ChanError> {
+        Db::drop_channel(self, name)
+    }
+    fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError> {
+        Db::set_mlock(self, name, on, off)
+    }
+    fn set_desc(&mut self, channel: &str, desc: &str) -> Result<(), ChanError> {
+        Db::set_desc(self, channel, desc)
+    }
+    fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError> {
+        Db::set_entrymsg(self, channel, msg)
+    }
+    fn set_founder(&mut self, channel: &str, account: &str) -> Result<(), ChanError> {
+        Db::set_founder(self, channel, account)
+    }
+    fn access_add(&mut self, channel: &str, account: &str, level: &str) -> Result<(), ChanError> {
+        Db::access_add(self, channel, account, level)
+    }
+    fn access_del(&mut self, channel: &str, account: &str) -> Result<bool, ChanError> {
+        Db::access_del(self, channel, account)
+    }
+    fn akick_add(&mut self, channel: &str, mask: &str, reason: &str) -> Result<(), ChanError> {
+        Db::akick_add(self, channel, mask, reason)
+    }
+    fn akick_del(&mut self, channel: &str, mask: &str) -> Result<bool, ChanError> {
+        Db::akick_del(self, channel, mask)
+    }
+}
+
+fn channel_view(c: &ChannelInfo) -> ChannelView {
+    ChannelView {
+        name: c.name.clone(),
+        founder: c.founder.clone(),
+        ts: c.ts,
+        lock_on: c.lock_on.clone(),
+        lock_off: c.lock_off.clone(),
+        access: c.access.iter().map(|a| ChanAccessView { account: a.account.clone(), level: a.level.clone() }).collect(),
+        akick: c.akick.iter().map(|k| ChanAkickView { mask: k.mask.clone(), reason: k.reason.clone() }).collect(),
+        desc: c.desc.clone(),
+        entrymsg: c.entrymsg.clone(),
+    }
 }
 
 #[cfg(test)]

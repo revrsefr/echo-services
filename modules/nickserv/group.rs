@@ -1,9 +1,9 @@
-use crate::engine::db::Db;
+use crate::engine::db::Store;
 use crate::engine::service::{Sender, ServiceCtx};
 
 // GROUP <account> <password>: link your current nick to an existing account, so
 // you can identify to it under this nick too.
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut Db) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
     let (Some(&account), Some(&password)) = (args.get(1), args.get(2)) else {
         ctx.notice(me, from.uid, "Syntax: GROUP <account> <password>");
         return;

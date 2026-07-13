@@ -1,8 +1,8 @@
-use crate::engine::db::{CodeKind, Db};
+use crate::engine::db::{CodeKind, Store};
 use crate::engine::service::{Sender, ServiceCtx};
 
 // CONFIRM <code>: confirm your account's email with the code you were emailed.
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut Db) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
     let Some(&code) = args.get(1) else {
         ctx.notice(me, from.uid, "Syntax: CONFIRM <code>");
         return;

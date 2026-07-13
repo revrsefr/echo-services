@@ -223,3 +223,228 @@ impl ServiceCtx {
         });
     }
 }
+
+// ---------------------------------------------------------------------------
+// Store vocabulary
+// ---------------------------------------------------------------------------
+//
+// A service reads and writes accounts and channels through the Store / NetView
+// traits, never the concrete storage engine: the append-only log, gossip and
+// credential material stay out of reach. Reads hand back plain views that carry
+// only non-secret fields (never a password hash or SCRAM verifier).
+
+// A registered account, minus anything credential-shaped.
+#[derive(Debug, Clone)]
+pub struct AccountView {
+    pub name: String,
+    pub email: Option<String>,
+    pub ts: u64,
+    pub verified: bool,
+}
+
+// One channel access-list entry (account -> level, e.g. "op" / "voice").
+#[derive(Debug, Clone)]
+pub struct ChanAccessView {
+    pub account: String,
+    pub level: String,
+}
+
+// One auto-kick entry (a hostmask and the reason shown on kick).
+#[derive(Debug, Clone)]
+pub struct ChanAkickView {
+    pub mask: String,
+    pub reason: String,
+}
+
+// A registered channel and its ops lists.
+#[derive(Debug, Clone)]
+pub struct ChannelView {
+    pub name: String,
+    pub founder: String,
+    pub ts: u64,
+    // Mode-lock: chars services keep set / unset (besides the implicit +r).
+    pub lock_on: String,
+    pub lock_off: String,
+    pub access: Vec<ChanAccessView>,
+    pub akick: Vec<ChanAkickView>,
+    pub desc: String,
+    pub entrymsg: String,
+}
+
+impl ChannelView {
+    // The channel mode this account is entitled to on join (+o founder/op, +v
+    // voice), or None if it holds no access.
+    pub fn join_mode(&self, account: &str) -> Option<&'static str> {
+        if self.founder.eq_ignore_ascii_case(account) {
+            return Some("+o");
+        }
+        self.access
+            .iter()
+            .find(|a| a.account.eq_ignore_ascii_case(account))
+            .map(|a| if a.level == "voice" { "+v" } else { "+o" })
+    }
+
+    // Whether this account holds channel-operator access (founder or op level).
+    pub fn is_op(&self, account: &str) -> bool {
+        self.join_mode(account) == Some("+o")
+    }
+
+    // The mode-lock rendered as an applyable mode string, e.g. "+rnt-s".
+    pub fn lock_modes(&self) -> String {
+        let mut s = format!("+r{}", self.lock_on);
+        if !self.lock_off.is_empty() {
+            s.push('-');
+            s.push_str(&self.lock_off);
+        }
+        s
+    }
+
+    // The first auto-kick entry whose mask matches the given hostmask.
+    pub fn akick_match(&self, hostmask: &str) -> Option<&ChanAkickView> {
+        self.akick.iter().find(|k| glob_match(&k.mask, hostmask))
+    }
+}
+
+// When a nick was last seen, and doing what.
+#[derive(Debug, Clone)]
+pub struct SeenView {
+    pub nick: String,
+    pub ts: u64,
+    pub what: String,
+}
+
+#[derive(Debug)]
+pub enum RegError {
+    Exists,
+    Internal,
+}
+
+#[derive(Debug)]
+pub enum CertError {
+    Invalid,    // not a plausible fingerprint
+    InUse,      // already registered (to any account)
+    NoAccount,  // target account does not exist
+    Internal,   // persistence failed
+}
+
+#[derive(Debug)]
+pub enum ChanError {
+    Exists,     // channel already registered
+    NoChannel,  // channel is not registered
+    Internal,   // persistence failed
+}
+
+// What an emailed code authorises.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CodeKind {
+    Reset,
+    Confirm,
+}
+
+// The account and channel store a service reads and writes. The engine hands a
+// service `&mut dyn Store`; the concrete implementation keeps its log, gossip
+// and credentials to itself.
+pub trait Store {
+    fn exists(&self, name: &str) -> bool;
+    fn account(&self, name: &str) -> Option<AccountView>;
+    // Canonical account name for a nick (following a grouping), if registered.
+    fn resolve_account(&self, name: &str) -> Option<&str>;
+    // The canonical account name if the password is correct, else None.
+    fn authenticate(&self, name: &str, password: &str) -> Option<&str>;
+    fn grouped_nicks(&self, account: &str) -> Vec<String>;
+    fn certfps(&self, account: &str) -> &[String];
+    fn is_verified(&self, account: &str) -> bool;
+    fn channel(&self, name: &str) -> Option<ChannelView>;
+    fn channels(&self) -> Vec<ChannelView>;
+    fn channels_owned_by(&self, account: &str) -> Vec<String>;
+    fn email_enabled(&self) -> bool;
+    fn email_brand(&self) -> &str;
+    fn email_accent(&self) -> &str;
+    fn email_logo(&self) -> &str;
+
+    fn issue_code(&mut self, account: &str, kind: CodeKind) -> String;
+    fn take_code(&mut self, account: &str, kind: CodeKind, code: &str) -> bool;
+    fn verify_account(&mut self, account: &str) -> Result<(), RegError>;
+    fn set_email(&mut self, account: &str, email: Option<String>) -> Result<(), RegError>;
+    fn group_nick(&mut self, nick: &str, account: &str) -> Result<(), RegError>;
+    fn ungroup_nick(&mut self, nick: &str) -> Result<bool, RegError>;
+    fn drop_account(&mut self, account: &str) -> Result<bool, RegError>;
+    fn certfp_add(&mut self, account: &str, fp: &str) -> Result<(), CertError>;
+    fn certfp_del(&mut self, account: &str, fp: &str) -> Result<bool, CertError>;
+    fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError>;
+    fn drop_channel(&mut self, name: &str) -> Result<(), ChanError>;
+    fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError>;
+    fn set_desc(&mut self, channel: &str, desc: &str) -> Result<(), ChanError>;
+    fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError>;
+    fn set_founder(&mut self, channel: &str, account: &str) -> Result<(), ChanError>;
+    fn access_add(&mut self, channel: &str, account: &str, level: &str) -> Result<(), ChanError>;
+    fn access_del(&mut self, channel: &str, account: &str) -> Result<bool, ChanError>;
+    fn akick_add(&mut self, channel: &str, mask: &str, reason: &str) -> Result<(), ChanError>;
+    fn akick_del(&mut self, channel: &str, mask: &str) -> Result<bool, ChanError>;
+}
+
+// The live network state a service reads (never mutates directly; changes go out
+// as actions on the ServiceCtx).
+pub trait NetView {
+    fn uid_by_nick(&self, nick: &str) -> Option<&str>;
+    fn nick_of(&self, uid: &str) -> Option<&str>;
+    fn host_of(&self, uid: &str) -> Option<&str>;
+    fn account_of(&self, uid: &str) -> Option<&str>;
+    fn uids_logged_into(&self, account: &str) -> Vec<String>;
+    fn is_op(&self, channel: &str, uid: &str) -> bool;
+    fn channel_members(&self, channel: &str) -> Vec<String>;
+    fn channel_key(&self, channel: &str) -> Option<&str>;
+    fn last_seen(&self, nick: &str) -> Option<SeenView>;
+}
+
+// A pseudo-client (NickServ, ChanServ, ...). Introduced at burst, receives the
+// commands users message it, reads/writes the store, and pushes actions.
+pub trait Service: Send {
+    fn nick(&self) -> &str;
+    fn uid(&self) -> &str;
+    fn host(&self) -> &str {
+        "services.local"
+    }
+    fn gecos(&self) -> &str;
+    // Whether this service owns channel modes (ChanServ), so the engine can source
+    // channel mode changes from it.
+    fn manages_channels(&self) -> bool {
+        false
+    }
+    // Whether this is the account service (NickServ), so the engine can source
+    // account-related notices from it.
+    fn manages_accounts(&self) -> bool {
+        false
+    }
+    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, store: &mut dyn Store);
+}
+
+// Case-insensitive hostmask glob: `*` (any run) and `?` (one char).
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let (p, t): (Vec<char>, Vec<char>) = (
+        pattern.chars().flat_map(char::to_lowercase).collect(),
+        text.chars().flat_map(char::to_lowercase).collect(),
+    );
+    let (mut pi, mut ti) = (0, 0);
+    let (mut star, mut mark) = (None, 0);
+    while ti < t.len() {
+        if pi < p.len() && (p[pi] == '?' || p[pi] == t[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < p.len() && p[pi] == '*' {
+            star = Some(pi);
+            mark = ti;
+            pi += 1;
+        } else if let Some(s) = star {
+            pi = s + 1;
+            mark += 1;
+            ti = mark;
+        } else {
+            return false;
+        }
+    }
+    while pi < p.len() && p[pi] == '*' {
+        pi += 1;
+    }
+    pi == p.len()
+}

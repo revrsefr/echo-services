@@ -1,9 +1,9 @@
-use crate::engine::db::{CodeKind, Db};
+use crate::engine::db::{CodeKind, Store};
 use crate::engine::service::{Sender, ServiceCtx};
 
 // RESETPASS <account>: email a reset code to the address on file.
 // RESETPASS <account> <code> <newpassword>: complete the reset with that code.
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut Db) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
     if !db.email_enabled() {
         ctx.notice(me, from.uid, "Password reset by email isn't available here.");
         return;

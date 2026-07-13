@@ -1,10 +1,10 @@
-use crate::engine::db::Db;
+use crate::engine::db::Store;
 use crate::engine::service::{Sender, ServiceCtx};
-use crate::engine::state::Network;
+use crate::engine::state::NetView;
 
 // GHOST/RECOVER <nick> [password]: rename off a session using a nick you own,
 // either by being identified to its account or giving that account's password.
-pub fn handle(me: &str, guest_nick: &str, guest_seq: &mut u32, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &Network, db: &Db) {
+pub fn handle(me: &str, guest_nick: &str, guest_seq: &mut u32, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &dyn Store) {
     let Some(&target) = args.get(1) else {
         ctx.notice(me, from.uid, "Syntax: GHOST <nick> [password]");
         return;

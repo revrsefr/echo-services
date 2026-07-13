@@ -1,9 +1,9 @@
-use crate::engine::db::Db;
+use crate::engine::db::Store;
 use crate::engine::service::{Sender, ServiceCtx};
-use crate::engine::state::Network;
+use crate::engine::state::NetView;
 
 // KICK <#channel> <nick> [reason]: kick a user.
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &Network, db: &Db) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &dyn Store) {
     let (Some(&chan), Some(&nick)) = (args.get(1), args.get(2)) else {
         ctx.notice(me, from.uid, "Syntax: KICK <#channel> <nick> [reason]");
         return;

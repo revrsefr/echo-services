@@ -1,9 +1,9 @@
-use crate::engine::db::Db;
+use crate::engine::db::Store;
 use crate::engine::service::{Sender, ServiceCtx};
-use crate::engine::state::Network;
+use crate::engine::state::NetView;
 
 // STATUS <#channel> [nick]: show a user's access level (self if no nick).
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &Network, db: &Db) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &dyn Store) {
     let Some(&chan) = args.get(1) else {
         ctx.notice(me, from.uid, "Syntax: STATUS <#channel> [nick]");
         return;

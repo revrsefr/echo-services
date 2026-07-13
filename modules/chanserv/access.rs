@@ -1,8 +1,8 @@
-use crate::engine::db::Db;
+use crate::engine::db::Store;
 use crate::engine::service::{Sender, ServiceCtx};
 
 // ACCESS <#channel> LIST | ADD <account> <op|voice> | DEL <account>
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut Db) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
     let Some(&chan) = args.get(1) else {
         ctx.notice(me, from.uid, "Syntax: ACCESS <#channel> LIST | ADD <account> <op|voice> | DEL <account>");
         return;
@@ -55,7 +55,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
 }
 
 // True if `from` is the channel's founder; otherwise notices why and returns false.
-fn is_founder(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &Db) -> bool {
+fn is_founder(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &dyn Store) -> bool {
     match db.channel(chan) {
         None => {
             ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));

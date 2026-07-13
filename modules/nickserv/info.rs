@@ -1,9 +1,9 @@
-use crate::engine::db::{human_time, Db};
+use crate::engine::db::{human_time, Store};
 use crate::engine::service::{Sender, ServiceCtx};
 
 // INFO [account]: show an account's registration details. The email is shown
 // only to the account's own owner.
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &Db) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &dyn Store) {
     let name = args.get(1).copied().unwrap_or(from.nick);
     let Some(acct) = db.account(name) else {
         ctx.notice(me, from.uid, format!("\x02{name}\x02 isn't registered."));

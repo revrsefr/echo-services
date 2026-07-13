@@ -1,6 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// The read-only network view a module sees; re-exported so the engine keeps
+// naming it locally.
+pub use fedserv_api::{NetView, SeenView};
+
 // Live network view, rebuilt from the uplink's burst each connect (ephemeral —
 // unlike the account store, which persists).
 #[derive(Default)]
@@ -153,5 +157,41 @@ impl Network {
 
     pub fn last_seen(&self, nick: &str) -> Option<&Seen> {
         self.seen.get(&lc(nick))
+    }
+}
+
+// The module-facing network view. Reads forward to Network's own accessors,
+// with the seen record projected into a plain view.
+impl NetView for Network {
+    fn uid_by_nick(&self, nick: &str) -> Option<&str> {
+        Network::uid_by_nick(self, nick)
+    }
+    fn nick_of(&self, uid: &str) -> Option<&str> {
+        Network::nick_of(self, uid)
+    }
+    fn host_of(&self, uid: &str) -> Option<&str> {
+        Network::host_of(self, uid)
+    }
+    fn account_of(&self, uid: &str) -> Option<&str> {
+        Network::account_of(self, uid)
+    }
+    fn uids_logged_into(&self, account: &str) -> Vec<String> {
+        Network::uids_logged_into(self, account)
+    }
+    fn is_op(&self, channel: &str, uid: &str) -> bool {
+        Network::is_op(self, channel, uid)
+    }
+    fn channel_members(&self, channel: &str) -> Vec<String> {
+        Network::channel_members(self, channel).map(str::to_string).collect()
+    }
+    fn channel_key(&self, channel: &str) -> Option<&str> {
+        Network::channel_key(self, channel)
+    }
+    fn last_seen(&self, nick: &str) -> Option<SeenView> {
+        Network::last_seen(self, nick).map(|s| SeenView {
+            nick: s.nick.clone(),
+            ts: s.ts,
+            what: s.what.clone(),
+        })
     }
 }

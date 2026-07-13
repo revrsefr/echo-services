@@ -1,8 +1,8 @@
-use crate::engine::db::Db;
+use crate::engine::db::Store;
 use crate::engine::service::{Sender, ServiceCtx};
 
 // TOPIC <#channel> <text>: set the channel topic (empty clears it).
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &Db) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &dyn Store) {
     let Some(&chan) = args.get(1) else {
         ctx.notice(me, from.uid, "Syntax: TOPIC <#channel> <text>");
         return;

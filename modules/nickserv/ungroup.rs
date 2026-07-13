@@ -1,8 +1,8 @@
-use crate::engine::db::Db;
+use crate::engine::db::Store;
 use crate::engine::service::{Sender, ServiceCtx};
 
 // UNGROUP [nick]: remove a nick grouped to your account (defaults to your current nick).
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut Db) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
     let Some(account) = from.account else {
         ctx.notice(me, from.uid, "You need to be logged in. Identify to NickServ first.");
         return;

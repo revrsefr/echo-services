@@ -1,8 +1,8 @@
-use crate::engine::db::Db;
+use crate::engine::db::Store;
 use crate::engine::service::{Sender, ServiceCtx};
 
 // ALIST: list the channels the sender's account founds or has access on.
-pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &Db) {
+pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &dyn Store) {
     let Some(account) = from.account else {
         ctx.notice(me, from.uid, "You need to be logged in. Identify to NickServ first.");
         return;

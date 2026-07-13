@@ -1,14 +1,14 @@
-use crate::engine::db::Db;
+use crate::engine::db::Store;
 use crate::engine::service::{Sender, ServiceCtx};
 
 // CLONE <source> <target>: copy a channel's settings (mode lock, access,
 // auto-kick, description, entry message) into another. Founder of both.
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut Db) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
     let (Some(&src), Some(&dest)) = (args.get(1), args.get(2)) else {
         ctx.notice(me, from.uid, "Syntax: CLONE <source> <target>");
         return;
     };
-    let (Some(sinfo), Some(dinfo)) = (db.channel(src).cloned(), db.channel(dest).cloned()) else {
+    let (Some(sinfo), Some(dinfo)) = (db.channel(src), db.channel(dest)) else {
         ctx.notice(me, from.uid, "Both channels must be registered.");
         return;
     };

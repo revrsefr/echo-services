@@ -1,10 +1,10 @@
-use crate::engine::db::Db;
+use crate::engine::db::Store;
 use crate::engine::service::{Sender, ServiceCtx};
-use crate::engine::state::Network;
+use crate::engine::state::NetView;
 
 // ENFORCE <#channel>: re-apply the channel's settings to everyone present —
 // the mode lock, access status modes, and the auto-kick list.
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &Network, db: &Db) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &dyn Store) {
     let Some(&chan) = args.get(1) else {
         ctx.notice(me, from.uid, "Syntax: ENFORCE <#channel>");
         return;
@@ -12,11 +12,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
     if !super::require_op(me, from, chan, ctx, db) {
         return;
     }
-    let Some(info) = db.channel(chan).cloned() else {
+    let Some(info) = db.channel(chan) else {
         return;
     };
     ctx.channel_mode(me, chan, &info.lock_modes());
-    let members: Vec<String> = net.channel_members(chan).map(str::to_string).collect();
+    let members: Vec<String> = net.channel_members(chan);
     for uid in members {
         match net.account_of(&uid).and_then(|a| info.join_mode(a)) {
             Some(m) => ctx.channel_mode(me, chan, &format!("{m} {uid}")),

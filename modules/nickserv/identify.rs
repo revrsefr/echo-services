@@ -1,9 +1,9 @@
-use crate::engine::db::Db;
+use crate::engine::db::Store;
 use crate::engine::service::{Sender, ServiceCtx};
 
 // IDENTIFY [account] <password>: log in. The account defaults to the current
 // nick, so both the bare-password and account+password forms work.
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &Db) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &dyn Store) {
     let (account_name, password) = match (args.get(1), args.get(2)) {
         (Some(account), Some(password)) => (*account, *password),
         (Some(password), None) => (from.nick, *password),

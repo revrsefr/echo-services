@@ -1,11 +1,11 @@
-use crate::engine::db::{CertError, Db};
+use crate::engine::db::{CertError, Store};
 use crate::engine::service::{Sender, ServiceCtx};
 
 // CERT ADD|DEL|LIST <password> [fingerprint]: manage the TLS certificate
 // fingerprints that may log in to your account via SASL EXTERNAL. Each
 // subcommand is password-gated, so it needs no identified-session state.
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut Db) {
-    let auth = |db: &Db, password: &str| db.authenticate(from.nick, password).map(str::to_string);
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
+    let auth = |db: &dyn Store, password: &str| db.authenticate(from.nick, password).map(str::to_string);
     match args.get(1).map(|s| s.to_ascii_uppercase()).as_deref() {
         Some("LIST") => {
             let Some(password) = args.get(2) else {

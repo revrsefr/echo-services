@@ -1,6 +1,6 @@
-use crate::engine::db::Db;
+use crate::engine::db::Store;
 use crate::engine::service::{Sender, Service, ServiceCtx};
-use crate::engine::state::Network;
+use crate::engine::state::NetView;
 
 #[path = "register.rs"]
 mod register;
@@ -53,7 +53,7 @@ impl Service for NickServ {
         true
     }
 
-    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &Network, db: &mut Db) {
+    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
         let me = self.uid.as_str();
         match args.first().map(|s| s.to_ascii_uppercase()).as_deref() {
             Some("REGISTER") => register::handle(me, from, args, ctx),

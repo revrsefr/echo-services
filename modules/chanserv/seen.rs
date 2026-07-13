@@ -1,8 +1,8 @@
 use crate::engine::service::{Sender, ServiceCtx};
-use crate::engine::state::Network;
+use crate::engine::state::NetView;
 
 // SEEN <nick>: when a nick was last seen, and doing what.
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &Network) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView) {
     let Some(&nick) = args.get(1) else {
         ctx.notice(me, from.uid, "Syntax: SEEN <nick>");
         return;

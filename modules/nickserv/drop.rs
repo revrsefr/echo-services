@@ -1,10 +1,10 @@
-use crate::engine::db::Db;
+use crate::engine::db::Store;
 use crate::engine::service::{Sender, ServiceCtx};
-use crate::engine::state::Network;
+use crate::engine::state::NetView;
 
 // DROP <password>: delete your account. Re-authenticates as confirmation, releases
 // and drops the channels you found, and logs you out.
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &Network, db: &mut Db) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
     let Some(account) = from.account else {
         ctx.notice(me, from.uid, "You need to be logged in. Identify to NickServ first.");
         return;

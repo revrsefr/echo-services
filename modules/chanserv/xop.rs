@@ -1,10 +1,10 @@
-use crate::engine::db::Db;
+use crate::engine::db::Store;
 use crate::engine::service::{Sender, ServiceCtx};
 
 // AOP/SOP/VOP <#channel> ADD <account> | DEL <account> | LIST — tiered
 // shortcuts over the access list. `level` is the access level they map to
 // ("op" for AOP/SOP, "voice" for VOP); `word` is what the user typed.
-pub fn handle(me: &str, from: &Sender, word: &str, level: &str, args: &[&str], ctx: &mut ServiceCtx, db: &mut Db) {
+pub fn handle(me: &str, from: &Sender, word: &str, level: &str, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
     let Some(&chan) = args.get(1) else {
         ctx.notice(me, from.uid, format!("Syntax: {word} <#channel> ADD <account> | DEL <account> | LIST"));
         return;

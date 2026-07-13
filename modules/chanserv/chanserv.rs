@@ -1,6 +1,6 @@
-use crate::engine::db::{ChanError, ChannelInfo, Db};
+use crate::engine::db::{ChanError, ChannelView, Store};
 use crate::engine::service::{Sender, Service, ServiceCtx};
-use crate::engine::state::Network;
+use crate::engine::state::NetView;
 
 #[path = "mode.rs"]
 mod mode;
@@ -57,7 +57,7 @@ impl Service for ChanServ {
         true
     }
 
-    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &Network, db: &mut Db) {
+    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
         let me = self.uid.as_str();
         match args.first().map(|s| s.to_ascii_uppercase()).as_deref() {
             Some("REGISTER") => {
@@ -142,7 +142,7 @@ impl Service for ChanServ {
                         Some(info) if info.lock_on.is_empty() && info.lock_off.is_empty() => {
                             ctx.notice(me, from.uid, format!("\x02{}\x02 has no mode lock set.", info.name));
                         }
-                        Some(info) => ctx.notice(me, from.uid, format!("Mode lock for \x02{}\x02: \x02{}\x02", info.name, show_mlock(info))),
+                        Some(info) => ctx.notice(me, from.uid, format!("Mode lock for \x02{}\x02: \x02{}\x02", info.name, show_mlock(&info))),
                     }
                     return;
                 }
@@ -200,7 +200,7 @@ impl Service for ChanServ {
 }
 
 // True if `from` is the channel's founder; otherwise notices why and returns false.
-fn require_founder(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &Db) -> bool {
+fn require_founder(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &dyn Store) -> bool {
     match db.channel(chan) {
         None => {
             ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
@@ -215,7 +215,7 @@ fn require_founder(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db
 }
 
 // True if `from` is the founder or an access-list op of `chan`; else notices why.
-fn require_op(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &Db) -> bool {
+fn require_op(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &dyn Store) -> bool {
     match (from.account, db.channel(chan)) {
         (_, None) => {
             ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
@@ -255,7 +255,7 @@ fn parse_mlock(spec: &str) -> (String, String) {
 }
 
 // Render a channel's lock as "+on-off" for display.
-fn show_mlock(info: &ChannelInfo) -> String {
+fn show_mlock(info: &ChannelView) -> String {
     let mut s = String::new();
     if !info.lock_on.is_empty() {
         s.push('+');
