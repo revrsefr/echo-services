@@ -27,6 +27,10 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             let account = account.to_string();
             ctx.login(from.uid, &account);
             ctx.notice(me, from.uid, format!("You're now identified as \x02{}\x02. Welcome back!", account));
+            // Apply the account's auto-join list (AJOIN).
+            for entry in db.ajoin_list(&account) {
+                ctx.force_join(from.uid, &entry.channel, &entry.key);
+            }
         }
         None => ctx.notice(me, from.uid, "Invalid password. Please try again."),
     }

@@ -59,6 +59,9 @@ pub enum NetAction {
     // Force a user's nick (SVSNICK), e.g. renaming to a guest nick on logout.
     // The protocol stamps the new nick's timestamp.
     ForceNick { uid: String, nick: String },
+    // Force a user into a channel (SVSJOIN), e.g. applying an account's auto-join
+    // list on identify. `key` is empty for keyless channels.
+    ForceJoin { uid: String, channel: String, key: String },
     // Set channel modes from services, e.g. +r on a registered channel. `from` is
     // the pseudoclient uid to source it from (empty = the services server). The
     // protocol stamps a timestamp the ircd will accept.
@@ -189,6 +192,15 @@ impl ServiceCtx {
         });
     }
 
+    // Force a user into a channel (SVSJOIN), e.g. an account's auto-join list.
+    pub fn force_join(&mut self, uid: &str, channel: &str, key: &str) {
+        self.actions.push(NetAction::ForceJoin {
+            uid: uid.to_string(),
+            channel: channel.to_string(),
+            key: key.to_string(),
+        });
+    }
+
     // Set channel modes, sourced from pseudoclient `from` (e.g. ChanServ).
     pub fn channel_mode(&mut self, from: &str, channel: &str, modes: &str) {
         self.actions.push(NetAction::ChannelMode {
@@ -257,6 +269,13 @@ pub struct ChanAccessView {
 pub struct ChanAkickView {
     pub mask: String,
     pub reason: String,
+}
+
+// One auto-join entry: a channel joined on identify, with an optional key.
+#[derive(Debug, Clone)]
+pub struct AjoinView {
+    pub channel: String,
+    pub key: String,
 }
 
 // A registered channel and its ops lists.
@@ -374,6 +393,10 @@ pub trait Store {
     fn drop_account(&mut self, account: &str) -> Result<bool, RegError>;
     fn certfp_add(&mut self, account: &str, fp: &str) -> Result<(), CertError>;
     fn certfp_del(&mut self, account: &str, fp: &str) -> Result<bool, CertError>;
+    // Per-account auto-join list (AJOIN): channels the user is SVSJOINed to on identify.
+    fn ajoin_list(&self, account: &str) -> Vec<AjoinView>;
+    fn ajoin_add(&mut self, account: &str, channel: &str, key: &str) -> Result<bool, RegError>;
+    fn ajoin_del(&mut self, account: &str, channel: &str) -> Result<bool, RegError>;
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError>;
     fn drop_channel(&mut self, name: &str) -> Result<(), ChanError>;
     fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError>;

@@ -15,7 +15,7 @@ use super::scram::{self, Hash};
 // fedserv-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use fedserv_api::{
-    AccountView, ChanAccessView, ChanAkickView, ChanError, ChannelView, CertError, CodeKind, RegError, Store,
+    AccountView, AjoinView, ChanAccessView, ChanAkickView, ChanError, ChannelView, CertError, CodeKind, RegError, Store,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +46,9 @@ pub struct Account {
     // as verified.
     #[serde(default = "verified_default")]
     pub verified: bool,
+    // Channels this account is auto-joined to on identify (AJOIN).
+    #[serde(default)]
+    pub ajoin: Vec<AjoinEntry>,
 }
 
 fn verified_default() -> bool {
@@ -65,6 +68,8 @@ pub enum Event {
     AccountPasswordSet { account: String, password_hash: String, scram256: String, scram512: String },
     AccountDropped { account: String },
     AccountVerified { account: String },
+    AjoinAdded { account: String, channel: String, key: String },
+    AjoinRemoved { account: String, channel: String },
     NickGrouped { nick: String, account: String },
     NickUngrouped { nick: String },
     ChannelRegistered { name: String, founder: String, ts: u64 },
@@ -99,6 +104,8 @@ impl Event {
             | Event::AccountPasswordSet { .. }
             | Event::AccountDropped { .. }
             | Event::AccountVerified { .. }
+            | Event::AjoinAdded { .. }
+            | Event::AjoinRemoved { .. }
             | Event::NickGrouped { .. }
             | Event::NickUngrouped { .. } => Scope::Global,
             Event::ChannelRegistered { .. }
@@ -127,6 +134,15 @@ pub struct ChanAccess {
 pub struct ChanAkick {
     pub mask: String,
     pub reason: String,
+}
+
+// An auto-join entry: a channel this account is joined to on identify, with an
+// optional key for keyed channels.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AjoinEntry {
+    pub channel: String,
+    #[serde(default)]
+    pub key: String,
 }
 
 // A registered channel and who owns it.
@@ -634,6 +650,7 @@ impl Db {
             scram512: Some(creds.scram512),
             certfps: Vec::new(),
             verified,
+            ajoin: Vec::new(),
         };
         self.log.append(Event::AccountRegistered(account.clone())).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
@@ -827,6 +844,40 @@ impl Db {
         }
         self.log.append(Event::CertRemoved { account: account.to_string(), fp: fp.clone() }).map_err(|_| CertError::Internal)?;
         self.accounts.get_mut(&k).unwrap().certfps.retain(|c| *c != fp);
+        Ok(true)
+    }
+
+    /// The account's auto-join list.
+    pub fn ajoin_list(&self, account: &str) -> &[AjoinEntry] {
+        self.accounts.get(&key(account)).map_or(&[], |a| a.ajoin.as_slice())
+    }
+
+    /// Add a channel to the account's auto-join list (updating the key if it was
+    /// already listed). Returns whether it was newly added.
+    pub fn ajoin_add(&mut self, account: &str, channel: &str, join_key: &str) -> Result<bool, RegError> {
+        let k = key(account);
+        let Some(a) = self.accounts.get(&k) else { return Err(RegError::Internal) };
+        let existed = a.ajoin.iter().any(|e| e.channel.eq_ignore_ascii_case(channel));
+        self.log
+            .append(Event::AjoinAdded { account: account.to_string(), channel: channel.to_string(), key: join_key.to_string() })
+            .map_err(|_| RegError::Internal)?;
+        let a = self.accounts.get_mut(&k).unwrap();
+        a.ajoin.retain(|e| !e.channel.eq_ignore_ascii_case(channel));
+        a.ajoin.push(AjoinEntry { channel: channel.to_string(), key: join_key.to_string() });
+        Ok(!existed)
+    }
+
+    /// Remove a channel from the account's auto-join list. Returns whether it was present.
+    pub fn ajoin_del(&mut self, account: &str, channel: &str) -> Result<bool, RegError> {
+        let k = key(account);
+        let Some(a) = self.accounts.get(&k) else { return Err(RegError::Internal) };
+        if !a.ajoin.iter().any(|e| e.channel.eq_ignore_ascii_case(channel)) {
+            return Ok(false);
+        }
+        self.log
+            .append(Event::AjoinRemoved { account: account.to_string(), channel: channel.to_string() })
+            .map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().ajoin.retain(|e| !e.channel.eq_ignore_ascii_case(channel));
         Ok(true)
     }
 
@@ -1058,6 +1109,18 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
                 a.verified = true;
             }
         }
+        Event::AjoinAdded { account, channel, key: join_key } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                // Idempotent (safe to replay over a snapshot): last write wins per channel.
+                a.ajoin.retain(|e| !e.channel.eq_ignore_ascii_case(&channel));
+                a.ajoin.push(AjoinEntry { channel, key: join_key });
+            }
+        }
+        Event::AjoinRemoved { account, channel } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.ajoin.retain(|e| !e.channel.eq_ignore_ascii_case(&channel));
+            }
+        }
         Event::NickGrouped { nick, account } => {
             grouped.insert(key(&nick), account);
         }
@@ -1244,6 +1307,18 @@ impl Store for Db {
     fn certfp_del(&mut self, account: &str, fp: &str) -> Result<bool, CertError> {
         Db::certfp_del(self, account, fp)
     }
+    fn ajoin_list(&self, account: &str) -> Vec<AjoinView> {
+        Db::ajoin_list(self, account)
+            .iter()
+            .map(|e| AjoinView { channel: e.channel.clone(), key: e.key.clone() })
+            .collect()
+    }
+    fn ajoin_add(&mut self, account: &str, channel: &str, key: &str) -> Result<bool, RegError> {
+        Db::ajoin_add(self, account, channel, key)
+    }
+    fn ajoin_del(&mut self, account: &str, channel: &str) -> Result<bool, RegError> {
+        Db::ajoin_del(self, account, channel)
+    }
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
         Db::register_channel(self, name, founder)
     }
@@ -1324,7 +1399,7 @@ mod tests {
     fn account_conflict_resolves_deterministically() {
         let alice = |hash: &str, ts: u64, home: &str| Account {
             name: "alice".into(), password_hash: hash.into(), email: None,
-            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true,
+            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![],
         };
         let converge = |first: &Account, second: &Account| {
             let (mut acc, mut ch, mut gr) = (HashMap::new(), HashMap::new(), HashMap::new());
@@ -1381,6 +1456,28 @@ mod tests {
         assert!(db.channel("#c").unwrap().akick.is_empty());
     }
 
+    // The auto-join list adds, updates a key in place, removes case-insensitively,
+    // and replays from the event log after a reopen.
+    #[test]
+    fn ajoin_add_del_and_persist() {
+        let p = tmp("ajoin");
+        {
+            let mut db = Db::open(&p, "N1");
+            db.scram_iterations = 4096;
+            db.register("alice", "pw", None).unwrap();
+            assert!(db.ajoin_add("alice", "#chat", "").unwrap(), "newly added");
+            assert!(!db.ajoin_add("alice", "#chat", "sekret").unwrap(), "re-add updates the key, not newly added");
+            db.ajoin_add("alice", "#dev", "").unwrap();
+            assert_eq!(db.ajoin_list("alice").len(), 2);
+            assert_eq!(db.ajoin_list("alice")[0].key, "sekret", "key updated in place");
+            assert!(db.ajoin_del("alice", "#CHAT").unwrap(), "case-insensitive remove");
+            assert!(!db.ajoin_del("alice", "#chat").unwrap(), "already gone");
+        }
+        let db = Db::open(&p, "N1");
+        assert_eq!(db.ajoin_list("alice").len(), 1, "list replays from the log");
+        assert_eq!(db.ajoin_list("alice")[0].channel, "#dev");
+    }
+
     // Locally-authored events get an incrementing per-origin seq and a ticking
     // Lamport clock.
     #[test]
@@ -1429,7 +1526,7 @@ mod tests {
         db.register("alice", "pw", None).unwrap();
         let bob = Account {
             name: "bob".into(), password_hash: "x".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![],
         };
         let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, event: Event::AccountRegistered(bob) };
         db.ingest(entry).unwrap();

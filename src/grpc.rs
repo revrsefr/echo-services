@@ -122,6 +122,8 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         Event::CertAdded { .. }
         | Event::CertRemoved { .. }
         | Event::AccountPasswordSet { .. }
+        | Event::AjoinAdded { .. }
+        | Event::AjoinRemoved { .. }
         | Event::ChannelMlock { .. }
         | Event::ChannelAccessAdd { .. }
         | Event::ChannelAccessDel { .. }
@@ -351,6 +353,7 @@ mod tests {
             scram512: None,
             certfps: vec!["deadbeef".into()],
             verified: true,
+            ajoin: vec![],
         };
         let registered = LogEntry::for_test("A", 0, 1, Event::AccountRegistered(acct));
         let wire = to_wire(&registered).expect("account registration replicates");

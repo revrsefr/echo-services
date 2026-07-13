@@ -254,6 +254,15 @@ impl Protocol for InspIrcd {
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(self.ts);
                 vec![self.from_us(format!("SVSNICK {} {} {}", uid, nick, now))]
             }
+            // SVSJOIN <uid> <chan> [key]: force a user into a channel, sourced from
+            // the services server. Used to apply an account's auto-join list.
+            NetAction::ForceJoin { uid, channel, key } => {
+                if key.is_empty() {
+                    vec![self.from_us(format!("SVSJOIN {} {}", uid, channel))]
+                } else {
+                    vec![self.from_us(format!("SVSJOIN {} {} {}", uid, channel, key))]
+                }
+            }
             // FMODE <chan> <ts> <modes>. The ircd drops an FMODE whose TS is newer
             // than the channel's, so we send TS 1 to guarantee it applies. Sourced
             // from the given pseudoclient (e.g. ChanServ) so users see who set it,

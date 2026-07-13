@@ -17,5 +17,9 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             Some(email) => ctx.notice(me, from.uid, format!("  Email      : {email} (unconfirmed)")),
             None => ctx.notice(me, from.uid, "  Email      : (none set)"),
         }
+        let ajoin = db.ajoin_list(&acct.name);
+        if !ajoin.is_empty() {
+            ctx.notice(me, from.uid, format!("  Auto-join  : {} channel(s) — see \x02AJOIN LIST\x02", ajoin.len()));
+        }
     }
 }
