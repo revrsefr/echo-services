@@ -40,9 +40,16 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         }
         Some("DEL") => {
             let Some(&nick) = args.get(2) else {
-                ctx.notice(me, from.uid, "Syntax: BOT DEL <nick>");
+                ctx.notice(me, from.uid, "Syntax: BOT DEL <nick> (or \x02*\x02 for all)");
                 return;
             };
+            if nick == "*" {
+                match db.bot_del_all() {
+                    Ok(n) => ctx.notice(me, from.uid, format!("Removed all \x02{n}\x02 bot(s).")),
+                    Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+                }
+                return;
+            }
             match db.bot_del(nick) {
                 Ok(true) => ctx.notice(me, from.uid, format!("Bot \x02{nick}\x02 deleted.")),
                 Ok(false) => ctx.notice(me, from.uid, format!("There's no bot named \x02{nick}\x02.")),

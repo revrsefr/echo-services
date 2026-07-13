@@ -1610,6 +1610,16 @@ impl Db {
         Ok(true)
     }
 
+    /// Delete every service bot at once (BOT DEL *). Returns how many went.
+    pub fn bot_del_all(&mut self) -> Result<usize, ChanError> {
+        let nicks: Vec<String> = self.bots.values().map(|b| b.nick.clone()).collect();
+        for n in &nicks {
+            self.log.append(Event::BotRemoved { nick: n.clone() }).map_err(|_| ChanError::Internal)?;
+        }
+        self.bots.clear();
+        Ok(nicks.len())
+    }
+
     /// Delete a service bot. Returns whether it existed.
     pub fn bot_del(&mut self, nick: &str) -> Result<bool, ChanError> {
         let k = key(nick);
@@ -2210,6 +2220,9 @@ impl Store for Db {
     }
     fn bot_del(&mut self, nick: &str) -> Result<bool, ChanError> {
         Db::bot_del(self, nick)
+    }
+    fn bot_del_all(&mut self) -> Result<usize, ChanError> {
+        Db::bot_del_all(self)
     }
     fn bots(&self) -> Vec<BotView> {
         Db::bots(self).map(|b| BotView { nick: b.nick.clone(), user: b.user.clone(), host: b.host.clone(), gecos: b.gecos.clone(), private: b.private }).collect()

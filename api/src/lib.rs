@@ -582,6 +582,7 @@ pub trait Store {
     fn bot_change(&mut self, old: &str, new_nick: &str, user: &str, host: &str, gecos: &str) -> Result<(), ChanError>;
     fn bot_set_private(&mut self, nick: &str, private: bool) -> Result<bool, ChanError>;
     fn bot_del(&mut self, nick: &str) -> Result<bool, ChanError>;
+    fn bot_del_all(&mut self) -> Result<usize, ChanError>;
     fn bots(&self) -> Vec<BotView>;
     fn assign_bot(&mut self, channel: &str, bot: &str) -> Result<(), ChanError>;
     fn unassign_bot(&mut self, channel: &str) -> Result<bool, ChanError>;

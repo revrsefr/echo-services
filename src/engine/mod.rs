@@ -2078,6 +2078,40 @@ mod tests {
         assert!(out.iter().any(|a| matches!(a, NetAction::ServicePart { channel, .. } if channel == "#c")), "parts on unassign: {out:?}");
     }
 
+    // BOT DEL * removes every bot at once (Anope issue #315), quitting each.
+    #[test]
+    fn botserv_mass_bot_removal() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bsmass.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        bs(&mut e, "BOT ADD One a serv.host Bot");
+        bs(&mut e, "BOT ADD Two b serv.host Bot");
+
+        let out = bs(&mut e, "BOT DEL *");
+        let quits = out.iter().filter(|a| matches!(a, NetAction::QuitUser { .. })).count();
+        assert_eq!(quits, 2, "both bots quit: {out:?}");
+        // The registry is empty afterwards.
+        assert!(!bs(&mut e, "BOT LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("One") || text.contains("Two"))), "registry cleared");
+    }
+
     // BOT CHANGE renames a bot (moving its channel assignments) and reintroduces
     // it when only the identity changes; the network client is refreshed both ways.
     #[test]
@@ -2119,6 +2153,53 @@ mod tests {
         assert!(out.iter().any(|a| matches!(a, NetAction::QuitUser { .. })), "stale client quit");
         assert!(out.iter().any(|a| matches!(a, NetAction::IntroduceUser { nick, host, .. } if nick == "Roger" && host == "new.host")), "reintroduced with new host: {out:?}");
         assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, .. } if channel == "#c")), "rejoins #c after re-identify");
+    }
+
+    // NOBOT (channel) and PRIVATE (bot) both reserve assignment for operators:
+    // the founder is refused, a services admin is allowed.
+    #[test]
+    fn botserv_nobot_and_private_gate_assign() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bsprot.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap(); // admin
+        db.register("owner", "password1", None).unwrap(); // plain founder
+        db.register_channel("#c", "owner").unwrap();
+        db.register_channel("#d", "owner").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let boss = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let owner = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAO".into(), to: "42SAAAAAD".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAO".into(), nick: "owner".into(), host: "h".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAO", "IDENTIFY password1");
+        boss(&mut e, "BOT ADD Bendy bot serv.host Helper");
+        let joined = |out: &[NetAction], ch: &str| out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, .. } if channel == ch));
+        let denied = |out: &[NetAction], word: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(word)));
+
+        // NOBOT on #c: the founder is refused, the admin isn't.
+        boss(&mut e, "SET #c NOBOT ON");
+        assert!(denied(&owner(&mut e, "ASSIGN #c Bendy"), "NOBOT"), "founder blocked by NOBOT");
+        assert!(joined(&boss(&mut e, "ASSIGN #c Bendy"), "#c"), "admin overrides NOBOT");
+
+        // Private bot on #d: the founder is refused, the admin isn't.
+        boss(&mut e, "SET Bendy PRIVATE ON");
+        assert!(denied(&owner(&mut e, "ASSIGN #d Bendy"), "private"), "founder blocked from private bot");
+        assert!(joined(&boss(&mut e, "ASSIGN #d Bendy"), "#d"), "admin assigns private bot");
     }
 
     // SAY/ACT speak through the channel's assigned bot, sourced from the bot's uid.
