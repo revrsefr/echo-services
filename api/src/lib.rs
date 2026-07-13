@@ -414,6 +414,8 @@ pub enum Kicker {
     Italics,
     Flood,
     Repeat,
+    // Kick lines matching a configured badword regex (patterns via BADWORDS).
+    Badwords,
     // Exemption, not a rule: never kick channel operators.
     DontKickOps,
 }
@@ -488,9 +490,10 @@ pub enum CertError {
 
 #[derive(Debug)]
 pub enum ChanError {
-    Exists,     // channel already registered
-    NoChannel,  // channel is not registered
-    Internal,   // persistence failed
+    Exists,         // channel already registered
+    NoChannel,      // channel is not registered
+    InvalidPattern, // a badword regex didn't compile
+    Internal,       // persistence failed
 }
 
 // What an emailed code authorises.
@@ -553,6 +556,11 @@ pub trait Store {
     fn set_caps_kicker(&mut self, channel: &str, caps_min: u16, caps_percent: u16) -> Result<(), ChanError>;
     fn set_flood_kicker(&mut self, channel: &str, lines: u16, secs: u16) -> Result<(), ChanError>;
     fn set_repeat_kicker(&mut self, channel: &str, times: u16) -> Result<(), ChanError>;
+    // BADWORDS list (regex patterns). add validates the pattern compiles.
+    fn badword_add(&mut self, channel: &str, pattern: &str) -> Result<bool, ChanError>;
+    fn badword_del(&mut self, channel: &str, pattern: &str) -> Result<bool, ChanError>;
+    fn badword_clear(&mut self, channel: &str) -> Result<usize, ChanError>;
+    fn badwords(&self, channel: &str) -> Vec<String>;
     fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError>;
     fn suspend_channel(&mut self, channel: &str, by: &str, reason: &str, expires: Option<u64>) -> Result<(), ChanError>;
     fn unsuspend_channel(&mut self, channel: &str) -> Result<bool, ChanError>;

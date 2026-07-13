@@ -294,6 +294,7 @@ dependencies = [
  "hmac",
  "pbkdf2",
  "prost",
+ "regex",
  "rustls-pemfile",
  "serde",
  "serde_json",

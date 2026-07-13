@@ -104,6 +104,16 @@ pub struct Engine {
     // Keyed by the uplink-canonical channel string (never event-logged).
     chatter: HashMap<String, HashMap<String, ChatterState>>,
     now_override: Option<u64>, // test clock (unix secs); None = real wall time
+    // Compiled BADWORDS matchers, one RegexSet per channel, rebuilt lazily when
+    // the channel's badword revision changes. A RegexSet matches a line against
+    // every pattern in a single linear pass (and the regex crate is backtracking-
+    // free, so user patterns can't blow up). Never event-logged.
+    badword_cache: HashMap<String, CachedBadwords>,
+}
+
+struct CachedBadwords {
+    rev: u64,
+    set: regex::RegexSet,
 }
 
 // One user's recent-chatter counters in one channel (FLOOD + REPEAT kickers).
@@ -135,6 +145,7 @@ impl Engine {
             bot_channels: std::collections::HashSet::new(),
             chatter: HashMap::new(),
             now_override: None,
+            badword_cache: HashMap::new(),
         }
     }
 
@@ -948,6 +959,18 @@ impl Engine {
         if let Some(reason) = k.violation(text) {
             return kick(reason);
         }
+        // BADWORDS: match the line against the channel's compiled regex set,
+        // rebuilding the cache only when the badword list has changed.
+        if k.badwords && !c.badwords.is_empty() {
+            let rev = c.badwords_rev;
+            if self.badword_cache.get(channel).map(|cb| cb.rev) != Some(rev) {
+                let set = build_badword_set(&c.badwords);
+                self.badword_cache.insert(channel.to_string(), CachedBadwords { rev, set });
+            }
+            if self.badword_cache.get(channel).unwrap().set.is_match(text) {
+                return kick("Watch your language!");
+            }
+        }
         if !k.flood && !k.repeat {
             return None;
         }
@@ -1077,6 +1100,17 @@ fn ci_hash(text: &str) -> u64 {
         h.write_u8(b.to_ascii_lowercase());
     }
     h.finish()
+}
+
+// Compile a channel's badword patterns into one RegexSet. Case-insensitive by
+// default (Anope's default; a pattern can opt out with `(?-i)`), size-limited,
+// and tolerant of a bad entry so one pattern can't disable the whole set.
+fn build_badword_set(patterns: &[String]) -> regex::RegexSet {
+    regex::RegexSetBuilder::new(patterns)
+        .case_insensitive(true)
+        .size_limit(db::BADWORD_SIZE_LIMIT)
+        .build()
+        .unwrap_or_else(|_| regex::RegexSet::empty())
 }
 
 fn login_plain(b64: &str, db: &Db) -> Option<String> {
@@ -2089,6 +2123,31 @@ mod tests {
         // Three lines inside the window now trip it.
         assert!(!kicked(&say(&mut e, "d")), "line 2 of new window");
         assert!(kicked(&say(&mut e, "e")), "3rd in-window line kicks");
+    }
+
+    // The badwords kicker matches user-supplied regexes (case-insensitively),
+    // rebuilds its compiled set when the list changes, and rejects bad patterns.
+    #[test]
+    fn botserv_badwords_kicker_kicks() {
+        let (mut e, _p) = kicker_fixture("bsbadwords");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { from, uid, .. } if from.starts_with("42SB") && uid == "000AAAAAS"));
+
+        bs(&mut e, "BADWORDS #c ADD fr[ao]g");
+        bs(&mut e, "KICK #c BADWORDS ON");
+        // Matching line (case-insensitive) is kicked; clean line is not.
+        assert!(kicked(&say(&mut e, "i love FROGS")), "matched badword kicked");
+        assert!(!kicked(&say(&mut e, "hello world")), "clean line ok");
+
+        // Adding a pattern bumps the revision, so the cached set rebuilds.
+        bs(&mut e, "BADWORDS #c ADD wibble");
+        assert!(kicked(&say(&mut e, "wibble wobble")), "new pattern matches after rebuild");
+
+        // An invalid regex is rejected and not stored.
+        let out = bs(&mut e, "BADWORDS #c ADD [unclosed");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("valid regular expression"))), "invalid rejected: {out:?}");
+        assert!(!say(&mut e, "[unclosed bracket text").iter().any(|a| matches!(a, NetAction::Kick { .. })), "bad pattern not stored");
     }
 
     // Registers #c with founder boss (admin), a live assigned bot Bendy, and

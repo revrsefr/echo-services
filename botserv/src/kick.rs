@@ -66,6 +66,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         "UNDERLINES" => Kicker::Underlines,
         "REVERSES" => Kicker::Reverses,
         "ITALICS" => Kicker::Italics,
+        "BADWORDS" => Kicker::Badwords,
         "DONTKICKOPS" => Kicker::DontKickOps,
         other => {
             ctx.notice(me, from.uid, format!("Unknown kicker \x02{other}\x02. Try CAPS, FLOOD, REPEAT, BOLDS, COLORS, UNDERLINES, REVERSES, ITALICS or DONTKICKOPS."));
@@ -85,6 +86,7 @@ fn label(kicker: Kicker) -> &'static str {
         Kicker::Italics => "italics",
         Kicker::Flood => "flood",
         Kicker::Repeat => "repeat",
+        Kicker::Badwords => "badwords",
         Kicker::DontKickOps => "dontkickops",
     }
 }

@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
+
+// Ceiling on a single compiled badword regex, so one pattern can't consume huge
+// memory. Shared by add-time validation and the engine's match-time build.
+pub const BADWORD_SIZE_LIMIT: usize = 1 << 20;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use argon2::password_hash::rand_core::{OsRng, RngCore};
@@ -99,6 +103,7 @@ pub enum Event {
     ChannelEntryMsgSet { channel: String, msg: String },
     ChannelSettingsSet { channel: String, settings: ChanSettings },
     ChannelKickerSet { channel: String, kickers: KickerSettings },
+    ChannelBadwordsSet { channel: String, badwords: Vec<String> },
     ChannelTopicSet { channel: String, topic: String },
     ChannelSuspended { channel: String, by: String, reason: String, ts: u64, expires: Option<u64> },
     ChannelUnsuspended { channel: String },
@@ -150,6 +155,7 @@ impl Event {
             | Event::ChannelEntryMsgSet { .. }
             | Event::ChannelSettingsSet { .. }
             | Event::ChannelKickerSet { .. }
+            | Event::ChannelBadwordsSet { .. }
             | Event::ChannelTopicSet { .. }
             | Event::ChannelSuspended { .. }
             | Event::ChannelUnsuspended { .. }
@@ -277,6 +283,13 @@ pub struct ChannelInfo {
     // BotServ kicker configuration (the bot kicks on caps/formatting/etc.).
     #[serde(default)]
     pub kickers: KickerSettings,
+    // BADWORDS: user-configured regex patterns the badwords kicker matches.
+    #[serde(default)]
+    pub badwords: Vec<String>,
+    // Bumped whenever `badwords` changes, so the engine's compiled-RegexSet
+    // cache knows to rebuild. Session-local; never serialized.
+    #[serde(skip)]
+    pub badwords_rev: u64,
 }
 
 // BotServ's per-channel "kickers": the assigned bot kicks a message that trips
@@ -315,6 +328,9 @@ pub struct KickerSettings {
     // Consecutive repeats that trip the repeat kicker (0 = default, 3).
     #[serde(default)]
     pub repeat_times: u16,
+    // Kick lines matching one of the channel's badword regexes.
+    #[serde(default)]
+    pub badwords: bool,
     // Don't kick channel operators, whatever they send.
     #[serde(default)]
     pub dontkickops: bool,
@@ -323,7 +339,7 @@ pub struct KickerSettings {
 impl KickerSettings {
     // Any kicker enabled? (dontkickops alone doesn't count.)
     pub fn any(&self) -> bool {
-        self.caps || self.bolds || self.colors || self.underlines || self.reverses || self.italics || self.flood || self.repeat
+        self.caps || self.bolds || self.colors || self.underlines || self.reverses || self.italics || self.flood || self.repeat || self.badwords
     }
 
     // Resolved thresholds, applying Anope's defaults for a 0 (unset) value.
@@ -786,6 +802,9 @@ impl Db {
             if c.kickers.any() || c.kickers.dontkickops {
                 snapshot.push(Event::ChannelKickerSet { channel: c.name.clone(), kickers: c.kickers.clone() });
             }
+            if !c.badwords.is_empty() {
+                snapshot.push(Event::ChannelBadwordsSet { channel: c.name.clone(), badwords: c.badwords.clone() });
+            }
         }
         for (nick, account) in &self.grouped {
             snapshot.push(Event::NickGrouped { nick: nick.clone(), account: account.clone() });
@@ -1228,7 +1247,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 });
         Ok(())
     }
 
@@ -1397,6 +1416,7 @@ impl Db {
             Kicker::Italics => k.italics = on,
             Kicker::Flood => k.flood = on,
             Kicker::Repeat => k.repeat = on,
+            Kicker::Badwords => k.badwords = on,
             Kicker::DontKickOps => k.dontkickops = on,
         })
     }
@@ -1425,6 +1445,61 @@ impl Db {
             k.repeat = true;
             k.repeat_times = times;
         })
+    }
+
+    /// Add a badword regex. Validates it compiles within the size limit; returns
+    /// Ok(false) if the exact pattern is already present.
+    pub fn badword_add(&mut self, channel: &str, pattern: &str) -> Result<bool, ChanError> {
+        if regex::RegexBuilder::new(pattern).size_limit(BADWORD_SIZE_LIMIT).build().is_err() {
+            return Err(ChanError::InvalidPattern);
+        }
+        let k = key(channel);
+        let Some(c) = self.channels.get(&k) else { return Err(ChanError::NoChannel) };
+        if c.badwords.iter().any(|w| w == pattern) {
+            return Ok(false);
+        }
+        let mut list = c.badwords.clone();
+        list.push(pattern.to_string());
+        self.write_badwords(channel, &k, list)?;
+        Ok(true)
+    }
+
+    /// Remove a badword by exact pattern. Ok(false) if it wasn't listed.
+    pub fn badword_del(&mut self, channel: &str, pattern: &str) -> Result<bool, ChanError> {
+        let k = key(channel);
+        let Some(c) = self.channels.get(&k) else { return Err(ChanError::NoChannel) };
+        if !c.badwords.iter().any(|w| w == pattern) {
+            return Ok(false);
+        }
+        let list: Vec<String> = c.badwords.iter().filter(|w| *w != pattern).cloned().collect();
+        self.write_badwords(channel, &k, list)?;
+        Ok(true)
+    }
+
+    /// Clear all badwords; returns how many were removed.
+    pub fn badword_clear(&mut self, channel: &str) -> Result<usize, ChanError> {
+        let k = key(channel);
+        let Some(c) = self.channels.get(&k) else { return Err(ChanError::NoChannel) };
+        let n = c.badwords.len();
+        if n > 0 {
+            self.write_badwords(channel, &k, Vec::new())?;
+        }
+        Ok(n)
+    }
+
+    pub fn badwords(&self, channel: &str) -> &[String] {
+        self.channels.get(&key(channel)).map_or(&[], |c| c.badwords.as_slice())
+    }
+
+    // Persist a new badword list (whole-list event) and apply it.
+    fn write_badwords(&mut self, channel: &str, k: &str, list: Vec<String>) -> Result<(), ChanError> {
+        self.log
+            .append(Event::ChannelBadwordsSet { channel: channel.to_string(), badwords: list.clone() })
+            .map_err(|_| ChanError::Internal)?;
+        let c = self.channels.get_mut(k).unwrap();
+        c.badwords = list;
+        c.badwords_rev = c.badwords_rev.wrapping_add(1);
+        Ok(())
     }
 
     // Read-modify-write the whole kicker struct through one event.
@@ -1725,7 +1800,7 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             grouped.remove(&key(&nick));
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
@@ -1776,6 +1851,12 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::ChannelKickerSet { channel, kickers } => {
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.kickers = kickers;
+            }
+        }
+        Event::ChannelBadwordsSet { channel, badwords } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.badwords = badwords;
+                c.badwords_rev = c.badwords_rev.wrapping_add(1);
             }
         }
         Event::ChannelTopicSet { channel, topic } => {
@@ -2010,6 +2091,18 @@ impl Store for Db {
     }
     fn set_repeat_kicker(&mut self, channel: &str, times: u16) -> Result<(), ChanError> {
         Db::set_repeat_kicker(self, channel, times)
+    }
+    fn badword_add(&mut self, channel: &str, pattern: &str) -> Result<bool, ChanError> {
+        Db::badword_add(self, channel, pattern)
+    }
+    fn badword_del(&mut self, channel: &str, pattern: &str) -> Result<bool, ChanError> {
+        Db::badword_del(self, channel, pattern)
+    }
+    fn badword_clear(&mut self, channel: &str) -> Result<usize, ChanError> {
+        Db::badword_clear(self, channel)
+    }
+    fn badwords(&self, channel: &str) -> Vec<String> {
+        Db::badwords(self, channel).to_vec()
     }
     fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError> {
         Db::set_channel_topic(self, channel, topic)
