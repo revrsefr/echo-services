@@ -90,6 +90,7 @@ async fn main() -> Result<()> {
     let (irc_tx, irc_rx) = tokio::sync::mpsc::unbounded_channel();
     engine.lock().await.set_irc_out(irc_tx);
     engine.lock().await.set_opers(cfg.opers());
+    engine.lock().await.set_sid(cfg.server.sid.clone());
 
     if let Some(gossip) = cfg.gossip.clone() {
         tracing::info!(peers = cfg.peer.len(), "starting gossip");

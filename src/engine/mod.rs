@@ -91,6 +91,9 @@ pub struct Engine {
     nick_service: Option<String>, // uid of the account service (NickServ), for its notices
     irc_out: Option<mpsc::UnboundedSender<NetAction>>, // services-initiated actions -> the uplink
     opers: HashMap<String, Privs>, // casefolded account -> privileges (from [[oper]] config)
+    sid: String, // our services SID, for minting bot uids
+    bot_uids: HashMap<String, String>, // casefolded bot nick -> live uid (per connection)
+    next_bot_index: u32,
 }
 
 impl Engine {
@@ -107,6 +110,9 @@ impl Engine {
             nick_service,
             irc_out: None,
             opers: HashMap::new(),
+            sid: String::new(),
+            bot_uids: HashMap::new(),
+            next_bot_index: 0,
         }
     }
 
@@ -125,6 +131,36 @@ impl Engine {
     // The privileges an account holds, empty if it is not an oper.
     fn oper_privs(&self, account: &str) -> Privs {
         self.opers.get(&account.to_ascii_lowercase()).copied().unwrap_or_default()
+    }
+
+    // Our services SID, needed to mint valid bot uids.
+    pub fn set_sid(&mut self, sid: String) {
+        self.sid = sid;
+    }
+
+    // Bring the network's bot pseudo-clients in line with the registry: introduce
+    // any new bots, quit any that were deleted. Run at burst and after commands.
+    fn reconcile_bots(&mut self) -> Vec<NetAction> {
+        let mut out = Vec::new();
+        let live: Vec<(String, String, String, String)> =
+            self.db.bots().map(|b| (b.nick.clone(), b.user.clone(), b.host.clone(), b.gecos.clone())).collect();
+        for (nick, user, host, gecos) in &live {
+            let k = nick.to_ascii_lowercase();
+            if !self.bot_uids.contains_key(&k) {
+                let uid = format!("{}B{:05}", self.sid, self.next_bot_index);
+                self.next_bot_index += 1;
+                out.push(NetAction::IntroduceUser { uid: uid.clone(), nick: nick.clone(), ident: user.clone(), host: host.clone(), gecos: gecos.clone() });
+                self.bot_uids.insert(k, uid);
+            }
+        }
+        let live_keys: std::collections::HashSet<String> = live.iter().map(|(n, ..)| n.to_ascii_lowercase()).collect();
+        let removed: Vec<String> = self.bot_uids.keys().filter(|k| !live_keys.contains(*k)).cloned().collect();
+        for k in removed {
+            if let Some(uid) = self.bot_uids.remove(&k) {
+                out.push(NetAction::QuitUser { uid, reason: "Bot removed".to_string() });
+            }
+        }
+        out
     }
 
     // Finish a SASL login, unless the account is suspended.
@@ -387,7 +423,10 @@ impl Engine {
     }
 
     // Sent right after the SERVER line: burst, introduce every service, endburst.
-    pub fn startup_actions(&self) -> Vec<NetAction> {
+    pub fn startup_actions(&mut self) -> Vec<NetAction> {
+        // Fresh link: forget bot uids minted on any previous connection.
+        self.bot_uids.clear();
+        self.next_bot_index = 0;
         let mut out = vec![NetAction::Burst];
         for svc in &self.services {
             out.push(NetAction::IntroduceUser {
@@ -400,6 +439,8 @@ impl Engine {
         }
         // Advertise our SASL mechanisms so the uplink can offer `sasl=PLAIN` to
         // clients in CAP LS (IRCv3 SASL 3.2).
+        // Introduce the registered bots too.
+        out.extend(self.reconcile_bots());
         out.push(NetAction::Metadata {
             target: "*".to_string(),
             key: "saslmechlist".to_string(),
@@ -780,15 +821,20 @@ impl Engine {
         let privs = account.as_deref().map(|a| self.oper_privs(a)).unwrap_or_default();
         let mut ctx = ServiceCtx::default();
         let sender = Sender { uid: from, nick: &nick, account: account.as_deref(), privs };
-        let Self { services, network, db, .. } = self;
-        for svc in services.iter_mut() {
-            if to.eq_ignore_ascii_case(svc.uid()) || to.eq_ignore_ascii_case(svc.nick()) {
-                let args: Vec<&str> = text.split_whitespace().collect();
-                svc.on_command(&sender, &args, &mut ctx, network, db);
-                break;
+        {
+            let Self { services, network, db, .. } = self;
+            for svc in services.iter_mut() {
+                if to.eq_ignore_ascii_case(svc.uid()) || to.eq_ignore_ascii_case(svc.nick()) {
+                    let args: Vec<&str> = text.split_whitespace().collect();
+                    svc.on_command(&sender, &args, &mut ctx, network, db);
+                    break;
+                }
             }
         }
-        ctx.actions
+        // A command may have changed the bot registry (BotServ BOT ADD/DEL).
+        let mut out = ctx.actions;
+        out.extend(self.reconcile_bots());
+        out
     }
 }
 
@@ -1589,6 +1635,43 @@ mod tests {
         e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         assert!(notice(&bs(&mut e, "000AAAAAC", "BOT ADD Bendy bot serv.host A Helper"), "added"));
         assert!(notice(&bs(&mut e, "000AAAAAC", "BOT LIST"), "Bendy"));
+    }
+
+    // A bot is introduced on the network when added, and quit when deleted.
+    #[test]
+    fn botserv_introduces_and_quits_bots() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-botintro.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "staff".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+
+        // Adding a bot introduces it on the network with a SID-prefixed uid.
+        let out = bs(&mut e, "000AAAAAC", "BOT ADD Bendy bot serv.host A Helper");
+        assert!(out.iter().any(|a| matches!(a, NetAction::IntroduceUser { nick, uid, .. } if nick == "Bendy" && uid.starts_with("42SB"))), "introduced: {out:?}");
+        // A later command doesn't re-introduce an already-live bot.
+        assert!(!bs(&mut e, "000AAAAAC", "BOT LIST").iter().any(|a| matches!(a, NetAction::IntroduceUser { .. })), "no duplicate introduce");
+        // Deleting it quits the pseudo-client.
+        assert!(bs(&mut e, "000AAAAAC", "BOT DEL Bendy").iter().any(|a| matches!(a, NetAction::QuitUser { .. })), "quit on delete");
+        // A registered bot is introduced at burst.
+        bs(&mut e, "000AAAAAC", "BOT ADD Roger svc host Bot");
+        assert!(e.startup_actions().iter().any(|a| matches!(a, NetAction::IntroduceUser { nick, .. } if nick == "Roger")), "introduced at burst");
     }
 
     // MemoServ delivers a memo to an offline account and notifies them on login.
