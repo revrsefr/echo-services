@@ -337,6 +337,12 @@ pub struct MemoView {
 
 // A service bot registered with BotServ.
 #[derive(Debug, Clone)]
+pub struct TriggerView {
+    pub pattern: String,
+    pub response: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct BotView {
     pub nick: String,
     pub user: String,
@@ -578,6 +584,11 @@ pub trait Store {
     fn kicker_test(&self, channel: &str, text: &str) -> Option<String>;
     // Copy one channel's BotServ config (kickers/badwords/greet/nobot) to another.
     fn copy_bot_config(&mut self, src: &str, dst: &str) -> Result<(), ChanError>;
+    // Auto-response triggers (regex -> response).
+    fn trigger_add(&mut self, channel: &str, pattern: &str, response: &str) -> Result<bool, ChanError>;
+    fn trigger_del(&mut self, channel: &str, index: usize) -> Result<bool, ChanError>;
+    fn trigger_clear(&mut self, channel: &str) -> Result<usize, ChanError>;
+    fn triggers(&self, channel: &str) -> Vec<TriggerView>;
     fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError>;
     fn suspend_channel(&mut self, channel: &str, by: &str, reason: &str, expires: Option<u64>) -> Result<(), ChanError>;
     fn unsuspend_channel(&mut self, channel: &str) -> Result<bool, ChanError>;

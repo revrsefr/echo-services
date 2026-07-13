@@ -30,7 +30,7 @@ use super::scram::{self, Hash};
 // fedserv-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use fedserv_api::{
-    AccountView, AjoinView, BotView, MemoView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store,
+    AccountView, AjoinView, BotView, MemoView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,6 +115,7 @@ pub enum Event {
     ChannelSettingsSet { channel: String, settings: ChanSettings },
     ChannelKickerSet { channel: String, kickers: KickerSettings },
     ChannelBadwordsSet { channel: String, badwords: Vec<String> },
+    ChannelTriggersSet { channel: String, triggers: Vec<Trigger> },
     ChannelTopicSet { channel: String, topic: String },
     ChannelSuspended { channel: String, by: String, reason: String, ts: u64, expires: Option<u64> },
     ChannelUnsuspended { channel: String },
@@ -167,6 +168,7 @@ impl Event {
             | Event::ChannelSettingsSet { .. }
             | Event::ChannelKickerSet { .. }
             | Event::ChannelBadwordsSet { .. }
+            | Event::ChannelTriggersSet { .. }
             | Event::ChannelTopicSet { .. }
             | Event::ChannelSuspended { .. }
             | Event::ChannelUnsuspended { .. }
@@ -307,6 +309,19 @@ pub struct ChannelInfo {
     // cache knows to rebuild. Session-local; never serialized.
     #[serde(skip)]
     pub badwords_rev: u64,
+    // TRIGGERs: regex -> response the bot speaks when a line matches.
+    #[serde(default)]
+    pub triggers: Vec<Trigger>,
+    #[serde(skip)]
+    pub triggers_rev: u64,
+}
+
+// A bot auto-response: when a channel line matches `pattern`, the assigned bot
+// says `response` (with $nick replaced by the speaker's nick).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Trigger {
+    pub pattern: String,
+    pub response: String,
 }
 
 // BotServ's per-channel "kickers": the assigned bot kicks a message that trips
@@ -832,6 +847,9 @@ impl Db {
             if !c.badwords.is_empty() {
                 snapshot.push(Event::ChannelBadwordsSet { channel: c.name.clone(), badwords: c.badwords.clone() });
             }
+            if !c.triggers.is_empty() {
+                snapshot.push(Event::ChannelTriggersSet { channel: c.name.clone(), triggers: c.triggers.clone() });
+            }
         }
         for (nick, account) in &self.grouped {
             snapshot.push(Event::NickGrouped { nick: nick.clone(), account: account.clone() });
@@ -1274,7 +1292,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0 });
         Ok(())
     }
 
@@ -1528,6 +1546,61 @@ impl Db {
 
     pub fn badwords(&self, channel: &str) -> &[String] {
         self.channels.get(&key(channel)).map_or(&[], |c| c.badwords.as_slice())
+    }
+
+    /// Add an auto-response trigger. Validates the pattern; Ok(false) if the same
+    /// pattern is already present.
+    pub fn trigger_add(&mut self, channel: &str, pattern: &str, response: &str) -> Result<bool, ChanError> {
+        if regex::RegexBuilder::new(pattern).size_limit(BADWORD_SIZE_LIMIT).build().is_err() {
+            return Err(ChanError::InvalidPattern);
+        }
+        let k = key(channel);
+        let Some(c) = self.channels.get(&k) else { return Err(ChanError::NoChannel) };
+        if c.triggers.iter().any(|t| t.pattern == pattern) {
+            return Ok(false);
+        }
+        let mut list = c.triggers.clone();
+        list.push(Trigger { pattern: pattern.to_string(), response: response.to_string() });
+        self.write_triggers(channel, &k, list)?;
+        Ok(true)
+    }
+
+    /// Remove the trigger at 1-based `index`. Ok(false) if out of range.
+    pub fn trigger_del(&mut self, channel: &str, index: usize) -> Result<bool, ChanError> {
+        let k = key(channel);
+        let Some(c) = self.channels.get(&k) else { return Err(ChanError::NoChannel) };
+        if index == 0 || index > c.triggers.len() {
+            return Ok(false);
+        }
+        let mut list = c.triggers.clone();
+        list.remove(index - 1);
+        self.write_triggers(channel, &k, list)?;
+        Ok(true)
+    }
+
+    /// Clear all triggers; returns how many were removed.
+    pub fn trigger_clear(&mut self, channel: &str) -> Result<usize, ChanError> {
+        let k = key(channel);
+        let Some(c) = self.channels.get(&k) else { return Err(ChanError::NoChannel) };
+        let n = c.triggers.len();
+        if n > 0 {
+            self.write_triggers(channel, &k, Vec::new())?;
+        }
+        Ok(n)
+    }
+
+    pub fn triggers(&self, channel: &str) -> &[Trigger] {
+        self.channels.get(&key(channel)).map_or(&[], |c| c.triggers.as_slice())
+    }
+
+    fn write_triggers(&mut self, channel: &str, k: &str, list: Vec<Trigger>) -> Result<(), ChanError> {
+        self.log
+            .append(Event::ChannelTriggersSet { channel: channel.to_string(), triggers: list.clone() })
+            .map_err(|_| ChanError::Internal)?;
+        let c = self.channels.get_mut(k).unwrap();
+        c.triggers = list;
+        c.triggers_rev = c.triggers_rev.wrapping_add(1);
+        Ok(())
     }
 
     /// Dry-run the content kickers against a line: the reason it would be kicked,
@@ -1931,7 +2004,7 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             grouped.remove(&key(&nick));
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0 });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
@@ -1988,6 +2061,12 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.badwords = badwords;
                 c.badwords_rev = c.badwords_rev.wrapping_add(1);
+            }
+        }
+        Event::ChannelTriggersSet { channel, triggers } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.triggers = triggers;
+                c.triggers_rev = c.triggers_rev.wrapping_add(1);
             }
         }
         Event::ChannelTopicSet { channel, topic } => {
@@ -2246,6 +2325,18 @@ impl Store for Db {
     }
     fn copy_bot_config(&mut self, src: &str, dst: &str) -> Result<(), ChanError> {
         Db::copy_bot_config(self, src, dst)
+    }
+    fn trigger_add(&mut self, channel: &str, pattern: &str, response: &str) -> Result<bool, ChanError> {
+        Db::trigger_add(self, channel, pattern, response)
+    }
+    fn trigger_del(&mut self, channel: &str, index: usize) -> Result<bool, ChanError> {
+        Db::trigger_del(self, channel, index)
+    }
+    fn trigger_clear(&mut self, channel: &str) -> Result<usize, ChanError> {
+        Db::trigger_clear(self, channel)
+    }
+    fn triggers(&self, channel: &str) -> Vec<TriggerView> {
+        Db::triggers(self, channel).iter().map(|t| TriggerView { pattern: t.pattern.clone(), response: t.response.clone() }).collect()
     }
     fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError> {
         Db::set_channel_topic(self, channel, topic)

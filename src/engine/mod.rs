@@ -110,6 +110,9 @@ pub struct Engine {
     // every pattern in a single linear pass (and the regex crate is backtracking-
     // free, so user patterns can't blow up). Never event-logged.
     badword_cache: HashMap<String, CachedBadwords>,
+    // Compiled auto-response TRIGGER matchers, one per channel, rebuilt lazily on
+    // a revision change (same scheme as badwords). Never event-logged.
+    trigger_cache: HashMap<String, CachedTriggers>,
     // Kicker bans (times-to-ban) awaiting BANEXPIRE removal. Swept on each event.
     pending_unbans: Vec<PendingUnban>,
 }
@@ -117,6 +120,12 @@ pub struct Engine {
 struct CachedBadwords {
     rev: u64,
     set: regex::RegexSet,
+}
+
+struct CachedTriggers {
+    rev: u64,
+    set: regex::RegexSet,
+    responses: Vec<String>, // parallel to the set's patterns
 }
 
 // One user's recent-chatter counters in one channel (FLOOD + REPEAT kickers,
@@ -161,6 +170,7 @@ impl Engine {
             chatter: HashMap::new(),
             now_override: None,
             badword_cache: HashMap::new(),
+            trigger_cache: HashMap::new(),
             pending_unbans: Vec::new(),
         }
     }
@@ -951,7 +961,14 @@ impl Engine {
             // BotServ kicker check on every line.
             self.fantasy(&sender, to, text, &mut ctx);
             let kicks = self.kicker_check(from, to, text);
+            let kicked = kicks.iter().any(|a| matches!(a, NetAction::Kick { .. }));
             ctx.actions.extend(kicks);
+            // Don't reward a line the bot just kicked for with a response.
+            if !kicked {
+                if let Some(resp) = self.trigger_response(from, to, text) {
+                    ctx.actions.push(resp);
+                }
+            }
         } else {
             let Self { services, network, db, .. } = self;
             for svc in services.iter_mut() {
@@ -1094,6 +1111,31 @@ impl Engine {
         }
         out.push(NetAction::Kick { from: botuid, channel: channel.to_string(), uid: from.to_string(), reason: reason.to_string() });
         out
+    }
+
+    // An auto-response for a channel line: if it matches a TRIGGER pattern, the
+    // assigned bot says the trigger's response (with $nick substituted). Only the
+    // first matching trigger fires. Cache rebuilt only when the list changes.
+    fn trigger_response(&mut self, from: &str, channel: &str, text: &str) -> Option<NetAction> {
+        let c = self.db.channel(channel)?;
+        if c.triggers.is_empty() {
+            return None;
+        }
+        let bot = c.assigned_bot.as_deref()?;
+        let botuid = self.network.uid_by_nick(bot)?.to_string();
+        let rev = c.triggers_rev;
+        if self.trigger_cache.get(channel).map(|ct| ct.rev) != Some(rev) {
+            let patterns: Vec<String> = c.triggers.iter().map(|t| t.pattern.clone()).collect();
+            let set = db::build_badword_set(&patterns);
+            let responses = c.triggers.iter().map(|t| t.response.clone()).collect();
+            self.trigger_cache.insert(channel.to_string(), CachedTriggers { rev, set, responses });
+        }
+        let cached = self.trigger_cache.get(channel).unwrap();
+        let idx = cached.set.matches(text).iter().next()?;
+        let response = cached.responses.get(idx)?.clone();
+        let nick = self.network.nick_of(from).unwrap_or(from);
+        let response = response.replace("$nick", nick);
+        Some(NetAction::Privmsg { from: botuid, to: channel.to_string(), text: response })
     }
 
     // Get (or lazily create) a speaker's counters in a channel. get_mut avoids
@@ -2406,6 +2448,25 @@ mod tests {
         // Now #d has #c's caps and badword config.
         assert!(says(&bs(&mut e, "KICK #d TEST SHOUTING LOUD ALLCAPS"), "would be kicked"), "caps copied");
         assert!(says(&bs(&mut e, "KICK #d TEST i love frogs"), "would be kicked"), "badwords copied");
+    }
+
+    // TRIGGER makes the assigned bot auto-respond to a matching line, with $nick
+    // substituted for the speaker.
+    #[test]
+    fn botserv_trigger_auto_responds() {
+        let (mut e, _p) = kicker_fixture("bstrigger");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        bs(&mut e, "TRIGGER #c ADD (?i)hello|Hi $nick, welcome!");
+
+        // A matching line gets a bot response addressed with the speaker's nick.
+        let out = say(&mut e, "hello everyone");
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text } if from.starts_with("42SB") && to == "#c" && text == "Hi spammer, welcome!")),
+            "auto-response: {out:?}"
+        );
+        // A non-matching line is ignored.
+        assert!(!say(&mut e, "goodbye all").iter().any(|a| matches!(a, NetAction::Privmsg { .. })), "no response on miss");
     }
 
     // WARN gives a one-time warning before the first real kick.
