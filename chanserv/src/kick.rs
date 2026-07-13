@@ -15,6 +15,10 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         ctx.notice(me, from.uid, format!("\x02{nick}\x02 isn't here."));
         return;
     };
-    let reason = if args.len() > 3 { args[3..].join(" ") } else { "Kicked".to_string() };
+    let mut reason = if args.len() > 3 { args[3..].join(" ") } else { "Kicked".to_string() };
+    // SIGNKICK: attribute the kick to whoever asked for it.
+    if db.channel(chan).is_some_and(|c| c.signkick) {
+        reason = format!("{reason} (requested by {})", from.nick);
+    }
     ctx.kick(me, chan, target, &reason);
 }

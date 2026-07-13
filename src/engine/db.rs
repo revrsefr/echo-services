@@ -15,7 +15,7 @@ use super::scram::{self, Hash};
 // fedserv-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use fedserv_api::{
-    AccountView, AjoinView, ChanAccessView, ChanAkickView, ChanError, ChannelView, CertError, CodeKind, RegError, Store,
+    AccountView, AjoinView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, RegError, Store,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +82,7 @@ pub enum Event {
     ChannelFounderSet { channel: String, founder: String },
     ChannelDescSet { channel: String, desc: String },
     ChannelEntryMsgSet { channel: String, msg: String },
+    ChannelSettingsSet { channel: String, settings: ChanSettings },
 }
 
 // Whether an event replicates across the federation. Account identity is Global
@@ -117,7 +118,8 @@ impl Event {
             | Event::ChannelAkickDel { .. }
             | Event::ChannelFounderSet { .. }
             | Event::ChannelDescSet { .. }
-            | Event::ChannelEntryMsgSet { .. } => Scope::Local,
+            | Event::ChannelEntryMsgSet { .. }
+            | Event::ChannelSettingsSet { .. } => Scope::Local,
         }
     }
 }
@@ -145,6 +147,18 @@ pub struct AjoinEntry {
     pub key: String,
 }
 
+// A channel's on/off options (ChanServ SET). Typed, not a bag of string flags,
+// so a new option is one field and the compiler proves every place handles it.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct ChanSettings {
+    // Append "(requested by <nick>)" to ChanServ KICK reasons.
+    #[serde(default)]
+    pub signkick: bool,
+    // Hide the channel from ChanServ LIST.
+    #[serde(default)]
+    pub private: bool,
+}
+
 // A registered channel and who owns it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelInfo {
@@ -166,6 +180,9 @@ pub struct ChannelInfo {
     // Message noticed to users as they join.
     #[serde(default)]
     pub entrymsg: String,
+    // On/off options set via ChanServ SET.
+    #[serde(default)]
+    pub settings: ChanSettings,
 }
 
 impl ChannelInfo {
@@ -569,6 +586,9 @@ impl Db {
             if !c.entrymsg.is_empty() {
                 snapshot.push(Event::ChannelEntryMsgSet { channel: c.name.clone(), msg: c.entrymsg.clone() });
             }
+            if c.settings.signkick || c.settings.private {
+                snapshot.push(Event::ChannelSettingsSet { channel: c.name.clone(), settings: c.settings });
+            }
         }
         for (nick, account) in &self.grouped {
             snapshot.push(Event::NickGrouped { nick: nick.clone(), account: account.clone() });
@@ -951,7 +971,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new() });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default() });
         Ok(())
     }
 
@@ -1087,6 +1107,22 @@ impl Db {
         Ok(())
     }
 
+    /// Turn one ChanServ SET option on or off for a channel.
+    pub fn set_channel_setting(&mut self, channel: &str, setting: ChanSetting, on: bool) -> Result<(), ChanError> {
+        let k = key(channel);
+        let Some(c) = self.channels.get(&k) else { return Err(ChanError::NoChannel) };
+        let mut settings = c.settings;
+        match setting {
+            ChanSetting::SignKick => settings.signkick = on,
+            ChanSetting::Private => settings.private = on,
+        }
+        self.log
+            .append(Event::ChannelSettingsSet { channel: channel.to_string(), settings })
+            .map_err(|_| ChanError::Internal)?;
+        self.channels.get_mut(&k).unwrap().settings = settings;
+        Ok(())
+    }
+
     /// Set `channel`'s entry message (empty clears it).
     pub fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError> {
         let k = key(channel);
@@ -1188,7 +1224,7 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             grouped.remove(&key(&nick));
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new() });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default() });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
@@ -1229,6 +1265,11 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::ChannelDescSet { channel, desc } => {
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.desc = desc;
+            }
+        }
+        Event::ChannelSettingsSet { channel, settings } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.settings = settings;
             }
         }
         Event::ChannelEntryMsgSet { channel, msg } => {
@@ -1402,6 +1443,9 @@ impl Store for Db {
     fn set_desc(&mut self, channel: &str, desc: &str) -> Result<(), ChanError> {
         Db::set_desc(self, channel, desc)
     }
+    fn set_channel_setting(&mut self, channel: &str, setting: ChanSetting, on: bool) -> Result<(), ChanError> {
+        Db::set_channel_setting(self, channel, setting, on)
+    }
     fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError> {
         Db::set_entrymsg(self, channel, msg)
     }
@@ -1433,6 +1477,8 @@ fn channel_view(c: &ChannelInfo) -> ChannelView {
         akick: c.akick.iter().map(|k| ChanAkickView { mask: k.mask.clone(), reason: k.reason.clone() }).collect(),
         desc: c.desc.clone(),
         entrymsg: c.entrymsg.clone(),
+        signkick: c.settings.signkick,
+        private: c.settings.private,
     }
 }
 
@@ -1547,6 +1593,24 @@ mod tests {
         let db = Db::open(&p, "N1");
         assert_eq!(db.ajoin_list("alice").len(), 1, "list replays from the log");
         assert_eq!(db.ajoin_list("alice")[0].channel, "#dev");
+    }
+
+    // Channel SET options default off, toggle, and replay from the log.
+    #[test]
+    fn channel_settings_toggle_and_persist() {
+        let p = tmp("chansettings");
+        {
+            let mut db = Db::open(&p, "N1");
+            db.register_channel("#c", "boss").unwrap();
+            assert!(!db.channel("#c").unwrap().settings.signkick, "defaults off");
+            db.set_channel_setting("#c", ChanSetting::SignKick, true).unwrap();
+            db.set_channel_setting("#c", ChanSetting::Private, true).unwrap();
+            db.set_channel_setting("#c", ChanSetting::Private, false).unwrap();
+            let s = db.channel("#c").unwrap().settings;
+            assert!(s.signkick && !s.private, "one flag on, the other flipped back off");
+        }
+        let s = Db::open(&p, "N1").channel("#c").unwrap().settings;
+        assert!(s.signkick && !s.private, "settings replay from the log");
     }
 
     // A wrong code is tolerated a few times, then the code is burned so it can't

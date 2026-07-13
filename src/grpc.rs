@@ -129,7 +129,8 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::ChannelAccessDel { .. }
         | Event::ChannelAkickAdd { .. }
         | Event::ChannelAkickDel { .. }
-        | Event::ChannelEntryMsgSet { .. } => return None,
+        | Event::ChannelEntryMsgSet { .. }
+        | Event::ChannelSettingsSet { .. } => return None,
     };
     Some(ReplicationEvent { origin: entry.origin().to_string(), seq: entry.seq(), lamport: entry.lamport(), kind: Some(kind) })
 }

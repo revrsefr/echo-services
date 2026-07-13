@@ -1,5 +1,4 @@
-use fedserv_api::Store;
-use fedserv_api::{Sender, ServiceCtx};
+use fedserv_api::{ChanSetting, Sender, ServiceCtx, Store};
 
 // SET <#channel> FOUNDER <account> | DESC <text>: founder-only channel settings.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -40,6 +39,24 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
-        _ => ctx.notice(me, from.uid, "Syntax: SET <#channel> FOUNDER <account> | DESC <text>"),
+        Some("SIGNKICK") => toggle(me, from, ctx, db, chan, ChanSetting::SignKick, args.get(3).copied(), "SIGNKICK"),
+        Some("PRIVATE") => toggle(me, from, ctx, db, chan, ChanSetting::Private, args.get(3).copied(), "PRIVATE"),
+        _ => ctx.notice(me, from.uid, "Syntax: SET <#channel> FOUNDER <account> | DESC <text> | SIGNKICK {ON|OFF} | PRIVATE {ON|OFF}"),
+    }
+}
+
+// Flip one on/off channel option, reporting the new state.
+fn toggle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store, chan: &str, setting: ChanSetting, arg: Option<&str>, name: &str) {
+    let on = match arg.map(|s| s.to_ascii_uppercase()).as_deref() {
+        Some("ON") => true,
+        Some("OFF") => false,
+        _ => {
+            ctx.notice(me, from.uid, format!("Syntax: SET <#channel> {name} {{ON|OFF}}"));
+            return;
+        }
+    };
+    match db.set_channel_setting(chan, setting, on) {
+        Ok(()) => ctx.notice(me, from.uid, format!("\x02{name}\x02 for \x02{chan}\x02 is now \x02{}\x02.", if on { "on" } else { "off" })),
+        Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
 }

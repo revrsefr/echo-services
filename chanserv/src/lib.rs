@@ -101,6 +101,12 @@ impl Service for ChanServ {
                             ctx.notice(me, from.uid, format!("  Description: {}", info.desc));
                         }
                         ctx.notice(me, from.uid, format!("  Registered : {}", fedserv_api::human_time(info.ts)));
+                        let mut opts = Vec::new();
+                        if info.signkick { opts.push("SIGNKICK"); }
+                        if info.private { opts.push("PRIVATE"); }
+                        if !opts.is_empty() {
+                            ctx.notice(me, from.uid, format!("  Options    : {}", opts.join(", ")));
+                        }
                     }
                     None => ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered.")),
                 }

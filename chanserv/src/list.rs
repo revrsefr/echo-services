@@ -3,7 +3,8 @@ use fedserv_api::{Sender, ServiceCtx};
 
 // LIST: show all registered channels.
 pub fn handle(me: &str, from: &Sender, _args: &[&str], ctx: &mut ServiceCtx, db: &dyn Store) {
-    let mut names: Vec<String> = db.channels().into_iter().map(|c| c.name).collect();
+    // PRIVATE channels are hidden from LIST.
+    let mut names: Vec<String> = db.channels().into_iter().filter(|c| !c.private).map(|c| c.name).collect();
     if names.is_empty() {
         ctx.notice(me, from.uid, "No channels are registered.");
         return;

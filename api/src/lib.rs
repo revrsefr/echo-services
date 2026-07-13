@@ -291,6 +291,16 @@ pub struct ChannelView {
     pub akick: Vec<ChanAkickView>,
     pub desc: String,
     pub entrymsg: String,
+    // ChanServ SET options.
+    pub signkick: bool,
+    pub private: bool,
+}
+
+// A single ChanServ SET option, named for the typed `set_channel_setting` call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChanSetting {
+    SignKick,
+    Private,
 }
 
 impl ChannelView {
@@ -405,6 +415,7 @@ pub trait Store {
     fn drop_channel(&mut self, name: &str) -> Result<(), ChanError>;
     fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError>;
     fn set_desc(&mut self, channel: &str, desc: &str) -> Result<(), ChanError>;
+    fn set_channel_setting(&mut self, channel: &str, setting: ChanSetting, on: bool) -> Result<(), ChanError>;
     fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError>;
     fn set_founder(&mut self, channel: &str, account: &str) -> Result<(), ChanError>;
     fn access_add(&mut self, channel: &str, account: &str, level: &str) -> Result<(), ChanError>;
