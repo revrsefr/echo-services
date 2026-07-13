@@ -5,6 +5,7 @@ mod config;
 mod engine;
 mod gossip;
 mod grpc;
+mod jsonrpc;
 mod link;
 mod proto;
 
@@ -108,6 +109,11 @@ async fn main() -> Result<()> {
     // directory update in real time without touching IRC at all.
     if let Some(grpc_cfg) = cfg.grpc.clone() {
         tokio::spawn(grpc::run(engine.clone(), grpc_cfg, gossip_tx));
+    }
+
+    // JSON-RPC stats endpoint (plain HTTP), for a website's stats pages.
+    if let Some(jsonrpc_cfg) = cfg.jsonrpc.clone() {
+        tokio::spawn(jsonrpc::run(engine.clone(), jsonrpc_cfg));
     }
 
     // Periodically fold log churn into a snapshot when it grows past the accounts.

@@ -16,6 +16,10 @@ pub struct Config {
     // directory. Absent = the RPC server does not start.
     #[serde(default)]
     pub grpc: Option<Grpc>,
+    // JSON-RPC stats endpoint (plain HTTP+JSON) for a website's stats pages.
+    // Absent = it does not start. Bind to localhost; a token is required.
+    #[serde(default)]
+    pub jsonrpc: Option<JsonRpc>,
     // Which service modules to start. Absent = the built-in NickServ + ChanServ.
     #[serde(default)]
     pub modules: Modules,
@@ -88,6 +92,14 @@ pub struct Grpc {
 pub struct ServerTls {
     pub cert: String, // certificate chain (PEM)
     pub key: String,  // private key (PEM)
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct JsonRpc {
+    // Address to accept HTTP on, e.g. "127.0.0.1:5601". Keep it on localhost.
+    pub bind: String,
+    // Bearer token every request must present (`authorization: Bearer <token>`).
+    pub token: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]

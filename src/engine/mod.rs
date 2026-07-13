@@ -201,6 +201,11 @@ impl Engine {
         self.network.bump(key);
     }
 
+    // Per-channel activity (lines + top talkers) for the stats APIs.
+    pub fn channel_activity(&self, channel: &str) -> Option<(u64, Vec<(String, u64)>)> {
+        self.network.channel_activity(channel)
+    }
+
     // The shared counters plus live gauges derived from the store, for the gRPC
     // Stats API. Any service's counters ride in here alongside these.
     pub fn stats_snapshot(&self) -> std::collections::BTreeMap<String, u64> {
