@@ -1147,6 +1147,9 @@ impl Engine {
     // outright, and rate-limit the rest so a REGISTER flood can't pin CPU. Returns
     // the rejection response if refused, or None to proceed (spending a token).
     pub fn pre_register_check(&mut self, account: &str, reply: &RegReply) -> Option<Vec<NetAction>> {
+        if self.db.external_accounts() {
+            return Some(reg_reply(reply, RegOutcome::External, account));
+        }
         if self.db.registrations_frozen() {
             return Some(reg_reply(reply, RegOutcome::Frozen, account));
         }
@@ -1779,6 +1782,7 @@ enum RegOutcome {
     Exists,
     RateLimited,
     Frozen,
+    External,
     Internal,
 }
 
@@ -1792,6 +1796,7 @@ fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAct
                 RegOutcome::Exists => ("error", "ACCOUNT_EXISTS", "That account name is already registered."),
                 RegOutcome::RateLimited => ("error", "TEMPORARILY_UNAVAILABLE", "Too many registrations, please wait a moment."),
                 RegOutcome::Frozen => ("error", "TEMPORARILY_UNAVAILABLE", "Registrations are temporarily frozen by network staff."),
+                RegOutcome::External => ("error", "ACCOUNT_REGISTRATION_DISABLED", "Accounts are managed on the website; register there."),
                 RegOutcome::Internal => ("error", "TEMPORARILY_UNAVAILABLE", "Registration is unavailable, try again later."),
             };
             vec![NetAction::AccountResponse {
@@ -1814,6 +1819,7 @@ fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAct
                 RegOutcome::Exists => vec![notice(format!("\x02{nick}\x02 is already registered. If it's yours, use \x02IDENTIFY <password>\x02."))],
                 RegOutcome::RateLimited => vec![notice("Registrations are busy right now. Please try again in a moment.".to_string())],
                 RegOutcome::Frozen => vec![notice("Registrations are temporarily frozen by network staff. Please try again later.".to_string())],
+                RegOutcome::External => vec![notice("Accounts are managed on the website — register there.".to_string())],
                 RegOutcome::Internal => vec![notice("Sorry, that didn't work. Please try again in a moment.".to_string())],
             }
         }
@@ -4311,6 +4317,49 @@ mod tests {
         // DEL squits the fake server.
         assert!(os(&mut e, "000AAAAAS", "JUPE DEL rogue.example").iter().any(|a| matches!(a, NetAction::Squit { .. })), "squit on lift");
         assert!(!e.startup_actions().iter().any(|a| matches!(a, NetAction::JupeServer { .. })), "gone after DEL");
+    }
+
+    // External-account mode: IRC can log in against pushed-in accounts but can't
+    // register or change identity; channels (fedserv's own domain) still work.
+    #[test]
+    fn external_accounts_delegate_identity() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-external.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        // Simulates an account pushed in by the external authority (the website).
+        db.register("alice", "password1", None).unwrap();
+        db.set_external_accounts(true);
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+
+        // Login against the pushed-in account still works.
+        let out = ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "alice")), "identify works: {out:?}");
+
+        // But creating or changing identity from IRC is refused.
+        assert!(has(&ns(&mut e, "000AAAAAB", "REGISTER newpass a@b.c"), "website"), "register refused");
+        assert!(has(&ns(&mut e, "000AAAAAB", "SET PASSWORD hunter2"), "website"), "set password refused");
+        assert!(has(&ns(&mut e, "000AAAAAB", "DROP password1"), "website"), "drop refused");
+        // The IRCv3 registration relay is refused too.
+        let reply = crate::proto::RegReply::NickServ { agent: "42SAAAAAA".into(), uid: "000AAAAAB".into(), nick: "bob".into() };
+        assert!(e.pre_register_check("bob", &reply).is_some_and(|r| r.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("website")))), "relay refused");
+
+        // Channels are fedserv's own domain — still registerable.
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: true });
+        assert!(has(&cs(&mut e, "000AAAAAB", "REGISTER #room"), "now registered"), "channels still work");
     }
 
     // OperServ DEFCON: each level tightens the network — announce on change, freeze

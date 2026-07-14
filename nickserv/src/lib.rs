@@ -62,7 +62,14 @@ impl Service for NickServ {
 
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
         let me = self.uid.as_str();
-        match args.first().map(|s| s.to_ascii_uppercase()).as_deref() {
+        let cmd = args.first().map(|s| s.to_ascii_uppercase());
+        // When identity is owned externally (the website), IRC can log in but not
+        // create or change an account — those commands are refused.
+        if db.external_accounts() && matches!(cmd.as_deref(), Some("REGISTER" | "DROP" | "RESETPASS" | "CONFIRM" | "CERT" | "GROUP" | "UNGROUP")) {
+            ctx.notice(me, from.uid, "Your account is managed on the website — register or change it there. From IRC you can only \x02IDENTIFY\x02.");
+            return;
+        }
+        match cmd.as_deref() {
             Some("REGISTER") => register::handle(me, from, args, ctx),
             Some("IDENTIFY") | Some("ID") => identify::handle(me, from, args, ctx, db),
             Some("LOGOUT") | Some("LOGOFF") => logout::handle(me, &self.guest_nick, &mut self.guest_seq, from, ctx),

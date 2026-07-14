@@ -74,3 +74,13 @@ protocol = 1206            # InspIRCd link protocol version (1206 = insp4, 1205 
 # per IP-mask (an exception limit of 0 means unlimited). 0 or omitted = off.
 # [session]
 # default_limit = 3
+
+# Account authority. Omit this section (the default) and fedserv owns accounts
+# itself: NickServ REGISTER / IDENTIFY / SET PASSWORD all work standalone, no
+# external service needed. Set external = true to hand identity to an outside
+# authority (e.g. your website): IRC can then only IDENTIFY — REGISTER, DROP,
+# SET PASSWORD/EMAIL, RESETPASS, CONFIRM, CERT and GROUP are refused, and the
+# authority pushes accounts in via the gRPC Accounts API (see [grpc]). fedserv
+# still owns all channel/vhost/ban data, keyed by the account name.
+# [auth]
+# external = true

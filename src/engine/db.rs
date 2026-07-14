@@ -985,6 +985,10 @@ pub struct Db {
     // Network defence level (OperServ DEFCON), 5 = normal down to 1 = lockdown.
     // Node-local; the derived restrictions are read by the engine and services.
     defcon: u8,
+    // When set, account identity is owned by an external authority (e.g. the
+    // website): IRC can't register or change credentials, only authenticate
+    // against accounts pushed in (via the gRPC Accounts API). Node-local config.
+    external_accounts: bool,
 }
 
 // A juped server: the held name, the fake server id we allocated for it, and why.
@@ -1048,7 +1052,7 @@ impl Db {
             apply(&mut accounts, &mut channels, &mut grouped, &mut bots, &mut host_cfg, &mut net, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), bots, host_cfg, net, ignores: Vec::new(), jupes: Vec::new(), jupe_seq: 0, defcon: 5 }
+        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), bots, host_cfg, net, ignores: Vec::new(), jupes: Vec::new(), jupe_seq: 0, defcon: 5, external_accounts: false }
     }
 
     /// Fold an entry authored by another node into the store — the services-side
@@ -2051,6 +2055,16 @@ impl Db {
             .filter(|n| n.kind == kind)
             .map(|n| NewsView { id: n.id, text: n.text.clone(), setter: n.setter.clone(), ts: n.ts })
             .collect()
+    }
+
+    /// Whether account identity is owned by an external authority.
+    pub fn external_accounts(&self) -> bool {
+        self.external_accounts
+    }
+
+    /// Set external-account mode (from config, at startup).
+    pub fn set_external_accounts(&mut self, on: bool) {
+        self.external_accounts = on;
     }
 
     /// The network defence level (5 = normal, 1 = full lockdown).
@@ -3358,6 +3372,9 @@ impl Store for Db {
     }
     fn channel_regs_frozen(&self) -> bool {
         Db::channel_regs_frozen(self)
+    }
+    fn external_accounts(&self) -> bool {
+        Db::external_accounts(self)
     }
     fn set_account_note(&mut self, account: &str, note: Option<String>) -> bool {
         Db::set_account_note(self, account, note)

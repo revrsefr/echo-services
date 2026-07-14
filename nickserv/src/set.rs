@@ -7,7 +7,13 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         ctx.notice(me, from.uid, "You need to be logged in. Identify to NickServ first.");
         return;
     };
-    match args.get(1).map(|s| s.to_ascii_uppercase()).as_deref() {
+    let sub = args.get(1).map(|s| s.to_ascii_uppercase());
+    // Credential/identity fields are owned by the website in external mode.
+    if db.external_accounts() && matches!(sub.as_deref(), Some("PASSWORD" | "PASS" | "EMAIL")) {
+        ctx.notice(me, from.uid, "That's managed on the website — change it there.");
+        return;
+    }
+    match sub.as_deref() {
         Some("PASSWORD") | Some("PASS") => {
             let Some(&password) = args.get(2) else {
                 ctx.notice(me, from.uid, "Syntax: SET PASSWORD <newpassword>");

@@ -35,6 +35,18 @@ pub struct Config {
     // Per-IP session limiting. Absent = unlimited.
     #[serde(default)]
     pub session: Option<Session>,
+    // Account authority. Absent = built-in (fedserv owns accounts). With
+    // `external = true`, an outside authority (e.g. the website) owns identity
+    // and pushes accounts in; IRC can only authenticate.
+    #[serde(default)]
+    pub auth: Option<Auth>,
+}
+
+// Account-authority configuration.
+#[derive(Debug, Deserialize, Clone)]
+pub struct Auth {
+    #[serde(default)]
+    pub external: bool,
 }
 
 // Session limiting: the default connections allowed per IP (0/absent = off),

@@ -776,6 +776,9 @@ pub trait Store {
     fn set_defcon(&mut self, level: u8);
     fn registrations_frozen(&self) -> bool;
     fn channel_regs_frozen(&self) -> bool;
+    // Whether account identity is owned externally (website); when true, IRC
+    // can't register or change credentials — it only authenticates.
+    fn external_accounts(&self) -> bool;
     // Staff notes on accounts/channels (oper-only), shown in INFO to operators.
     fn set_account_note(&mut self, account: &str, note: Option<String>) -> bool;
     fn account_note(&self, account: &str) -> Option<String>;
