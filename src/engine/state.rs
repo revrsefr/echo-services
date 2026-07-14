@@ -1,9 +1,12 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // The read-only network view a module sees; re-exported so the engine keeps
 // naming it locally.
-pub use fedserv_api::{NetView, SeenView};
+pub use fedserv_api::{IncidentView, NetView, SeenView};
+
+// The most recent moderation/action incidents kept for LOGSEARCH.
+const INCIDENT_CAP: usize = 10_000;
 
 // Live network view, rebuilt from the uplink's burst each connect (ephemeral —
 // unlike the account store, which persists).
@@ -22,6 +25,33 @@ pub struct Network {
     stats: BTreeMap<String, u64>,
     // Live session count per connecting IP, for OperServ session limiting.
     sessions: HashMap<String, u32>,
+    // Recent moderation/action incidents (bounded ring), for OperServ LOGSEARCH.
+    incidents: VecDeque<Incident>,
+    incident_seq: u64,
+}
+
+// One recorded action: a short id (also stamped into the action's reason), the
+// unix time it happened, and a human summary.
+struct Incident {
+    id: String,
+    ts: u64,
+    summary: String,
+}
+
+// A short uppercase base-36 incident code from a monotonic counter.
+fn incident_code(seq: u64) -> String {
+    const C: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    if seq == 0 {
+        return "0".to_string();
+    }
+    let mut n = seq;
+    let mut out = Vec::new();
+    while n > 0 {
+        out.push(C[(n % 36) as usize]);
+        n /= 36;
+    }
+    out.reverse();
+    String::from_utf8(out).unwrap()
 }
 
 pub struct User {
@@ -76,6 +106,31 @@ impl Network {
         let mut v: Vec<(String, u32)> = self.sessions.iter().filter(|(_, &n)| n >= min).map(|(ip, &n)| (ip.clone(), n)).collect();
         v.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
         v
+    }
+
+    // Record an action in the incident log and return its short id (to stamp into
+    // the action's reason). The ring is bounded, dropping the oldest.
+    pub fn record_incident(&mut self, summary: String, now: u64) -> String {
+        let id = incident_code(self.incident_seq);
+        self.incident_seq += 1;
+        self.incidents.push_back(Incident { id: id.clone(), ts: now, summary });
+        while self.incidents.len() > INCIDENT_CAP {
+            self.incidents.pop_front();
+        }
+        id
+    }
+
+    // Incidents matching `pattern` (id-exact or summary-substring, case-
+    // insensitive; empty = all), newest first, capped at `limit`.
+    pub fn search_incidents(&self, pattern: &str, limit: usize) -> Vec<IncidentView> {
+        let p = pattern.to_ascii_lowercase();
+        self.incidents
+            .iter()
+            .rev()
+            .filter(|i| p.is_empty() || i.id.eq_ignore_ascii_case(&p) || i.summary.to_ascii_lowercase().contains(&p))
+            .take(limit)
+            .map(|i| IncidentView { id: i.id.clone(), ts: i.ts, summary: i.summary.clone() })
+            .collect()
     }
 
     // Resolve a nick to its uid (case-insensitive). Checks real users first,
@@ -306,5 +361,8 @@ impl NetView for Network {
     }
     fn sessions_over(&self, min: u32) -> Vec<(String, u32)> {
         Network::sessions_over(self, min)
+    }
+    fn search_incidents(&self, pattern: &str, limit: usize) -> Vec<IncidentView> {
+        Network::search_incidents(self, pattern, limit)
     }
 }

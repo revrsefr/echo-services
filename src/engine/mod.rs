@@ -905,7 +905,34 @@ impl Engine {
         };
         self.track_accounts(&evout);
         out.extend(evout);
+        // Give every user-removal a traceable incident id, stamped into its reason
+        // and recorded in the searchable log (OperServ LOGSEARCH).
+        self.stamp_incidents(&mut out);
         out
+    }
+
+    // Mint an incident id for each kick/kill in `actions`, append `[#id]` to its
+    // reason, and record a searchable summary. One choke-point so every removal —
+    // from a bot kicker, a fantasy command, a vote, or an operator — is logged.
+    fn stamp_incidents(&mut self, actions: &mut [NetAction]) {
+        let now = self.now_secs();
+        for a in actions.iter_mut() {
+            match a {
+                NetAction::Kick { channel, uid, reason, .. } => {
+                    let target = self.network.nick_of(uid).unwrap_or(uid).to_string();
+                    let summary = format!("kicked \x02{target}\x02 from \x02{channel}\x02: {reason}");
+                    let id = self.network.record_incident(summary, now);
+                    reason.push_str(&format!(" [#{id}]"));
+                }
+                NetAction::KillUser { uid, reason, .. } => {
+                    let target = self.network.nick_of(uid).unwrap_or(uid).to_string();
+                    let summary = format!("killed \x02{target}\x02: {reason}");
+                    let id = self.network.record_incident(summary, now);
+                    reason.push_str(&format!(" [#{id}]"));
+                }
+                _ => {}
+            }
+        }
     }
 
     // Remove kicker bans whose BANEXPIRE has elapsed, sourced from ChanServ.
@@ -4091,6 +4118,48 @@ mod tests {
             assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-admin refused {cmd}");
             assert!(!out.iter().any(|a| matches!(a, NetAction::ChannelMode { .. } | NetAction::Kick { .. })), "no action from non-admin {cmd}");
         }
+    }
+
+    // Every user-removal gets a traceable incident id stamped into its reason and
+    // recorded in the searchable log.
+    #[test]
+    fn removals_get_incident_ids() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-incident.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAT".into(), nick: "troll".into(), host: "h".into(), ip: "0.0.0.0".into() });
+
+        // The kick reason carries a bracketed id, and the incident is searchable.
+        let out = os(&mut e, "000AAAAAS", "KICK #room troll flooding");
+        let reason = out.iter().find_map(|a| match a {
+            NetAction::Kick { reason, .. } => Some(reason.clone()),
+            _ => None,
+        }).expect("a kick was issued");
+        assert!(reason.contains("flooding") && reason.contains("[#"), "id stamped into reason: {reason}");
+        // The id in the reason and the incident log agree, and search finds it.
+        let id = reason.split("[#").nth(1).and_then(|s| s.split(']').next()).unwrap().to_string();
+        let hits = e.network.search_incidents(&id, 10);
+        assert_eq!(hits.len(), 1, "searchable by id");
+        assert!(hits[0].summary.contains("troll"), "summary names the target: {}", hits[0].summary);
+        assert!(e.network.search_incidents("kicked", 10).iter().any(|i| i.summary.contains("troll")), "searchable by keyword");
     }
 
     // OperServ CHANKILL: AKILL every host in a channel at once, deduped, never

@@ -861,6 +861,19 @@ pub trait NetView {
     // Session limiting: live sessions from an IP, and IPs at/over a threshold.
     fn session_count(&self, ip: &str) -> u32;
     fn sessions_over(&self, min: u32) -> Vec<(String, u32)>;
+    // Search the recent moderation/action incident log (newest first, capped at
+    // `limit`). An empty pattern returns the most recent; otherwise matches the
+    // id or a case-insensitive substring of the summary.
+    fn search_incidents(&self, pattern: &str, limit: usize) -> Vec<IncidentView>;
+}
+
+// One recorded action from the incident log: a short id (also stamped into the
+// action's reason), when it happened, and a human summary.
+#[derive(Debug, Clone)]
+pub struct IncidentView {
+    pub id: String,
+    pub ts: u64,
+    pub summary: String,
 }
 
 // A pseudo-client (NickServ, ChanServ, ...). Introduced at burst, receives the
