@@ -1,4 +1,4 @@
-use fedserv_api::{ChanError, ChannelView, Store};
+use fedserv_api::{ChanError, ChannelView, Priv, Store};
 use fedserv_api::{Sender, Service, ServiceCtx};
 use fedserv_api::NetView;
 
@@ -117,6 +117,12 @@ impl Service for ChanServ {
                         if info.topiclock { opts.push("TOPICLOCK"); }
                         if !opts.is_empty() {
                             ctx.notice(me, from.uid, format!("  Options    : {}", opts.join(", ")));
+                        }
+                        // A staff note is shown to operators only.
+                        if from.privs.has(Priv::Auspex) {
+                            if let Some(note) = db.channel_note(chan) {
+                                ctx.notice(me, from.uid, format!("  Staff note : {note}"));
+                            }
                         }
                     }
                     None => ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered.")),

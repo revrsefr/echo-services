@@ -21,6 +21,8 @@ mod ignore;
 mod stats;
 #[path = "svs.rs"]
 mod svs;
+#[path = "info.rs"]
+mod info;
 
 pub struct OperServ {
     pub uid: String,
@@ -55,6 +57,7 @@ impl Service for OperServ {
             Some(cmd) if cmd.eq_ignore_ascii_case("STATS") => stats::handle(me, from, db, ctx),
             Some(cmd) if cmd.eq_ignore_ascii_case("SVSNICK") => svs::nick(me, from, args, ctx, net),
             Some(cmd) if cmd.eq_ignore_ascii_case("SVSJOIN") => svs::join(me, from, args, ctx, net),
+            Some(cmd) if cmd.eq_ignore_ascii_case("INFO") => info::handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("HELP") => help(me, from, ctx),
             None => help(me, from, ctx),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02HELP\x02.")),
@@ -63,5 +66,5 @@ impl Service for OperServ {
 }
 
 fn help(me: &str, from: &Sender, ctx: &mut ServiceCtx) {
-    ctx.notice(me, from.uid, "OperServ holds network operator tools (Priv::Admin): \x02AKILL\x02 ADD|DEL|LIST (user@host bans), \x02SQLINE\x02 ADD|DEL|LIST (nick bans), \x02GLOBAL\x02 <message> (announce to everyone), \x02KILL\x02 <nick> [reason] (disconnect a user), \x02KICK\x02 <#chan> <nick> [reason], \x02MODE\x02 <#chan> <modes> [params], \x02IGNORE\x02 ADD|DEL|LIST (silence a user from services), \x02STATS\x02 (enforcement overview), \x02SVSNICK\x02 <nick> <newnick>, \x02SVSJOIN\x02 <nick> <#chan> [key].");
+    ctx.notice(me, from.uid, "OperServ holds network operator tools (Priv::Admin): \x02AKILL\x02 ADD|DEL|LIST (user@host bans), \x02SQLINE\x02 ADD|DEL|LIST (nick bans), \x02GLOBAL\x02 <message> (announce to everyone), \x02KILL\x02 <nick> [reason] (disconnect a user), \x02KICK\x02 <#chan> <nick> [reason], \x02MODE\x02 <#chan> <modes> [params], \x02IGNORE\x02 ADD|DEL|LIST (silence a user from services), \x02STATS\x02 (enforcement overview), \x02SVSNICK\x02 <nick> <newnick>, \x02SVSJOIN\x02 <nick> <#chan> [key], \x02INFO\x02 ADD|DEL <target> (staff notes).");
 }

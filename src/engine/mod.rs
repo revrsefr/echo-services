@@ -1574,6 +1574,14 @@ fn audit_summary(event: &db::Event) -> Option<String> {
             format!("set a {} on \x02{mask}\x02{temp} ({reason})", ban_kind_label(kind))
         }
         AkillRemoved { kind, mask } => format!("lifted the {} on \x02{mask}\x02", ban_kind_label(kind)),
+        AccountOperNoteSet { account, note } => match note {
+            Some(_) => format!("set a staff note on \x02{account}\x02"),
+            None => format!("cleared the staff note on \x02{account}\x02"),
+        },
+        ChannelOperNoteSet { channel, note } => match note {
+            Some(_) => format!("set a staff note on \x02{channel}\x02"),
+            None => format!("cleared the staff note on \x02{channel}\x02"),
+        },
         AccountNoExpire { account, on } => {
             let verb = if *on { "pinned" } else { "unpinned" };
             format!("{verb} account \x02{account}\x02 against expiry")
@@ -2148,7 +2156,7 @@ mod tests {
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), password_hash: "OTHER".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)));
         e.gossip_ingest(entry).unwrap();
@@ -4014,6 +4022,60 @@ mod tests {
             assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-admin refused {cmd}");
             assert!(!out.iter().any(|a| matches!(a, NetAction::ChannelMode { .. } | NetAction::Kick { .. })), "no action from non-admin {cmd}");
         }
+    }
+
+    // OperServ INFO staff notes: an admin annotates an account/channel; the note
+    // shows in that service's INFO to opers only, never to the account owner.
+    #[test]
+    fn operserv_info_staff_notes() {
+        use fedserv_chanserv::ChanServ;
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-osinfo.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("alice", "password1", None).unwrap();
+        db.register_channel("#room", "staff").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin).with(fedserv_api::Priv::Auspex));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let has = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAL".into(), nick: "alice".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAL".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+
+        // Admin attaches a note; it shows in NickServ INFO to the oper.
+        os(&mut e, "000AAAAAS", "INFO ADD alice known troublemaker");
+        assert!(has(&ns(&mut e, "000AAAAAS", "INFO alice"), "known troublemaker"), "note shown to oper in NS INFO");
+        assert!(has(&os(&mut e, "000AAAAAS", "INFO alice"), "known troublemaker"), "note shown via OperServ INFO");
+        // The account's own owner never sees the staff note.
+        assert!(!has(&ns(&mut e, "000AAAAAL", "INFO alice"), "Staff note"), "owner doesn't see the note");
+
+        // Channel notes show in ChanServ INFO to the oper.
+        os(&mut e, "000AAAAAS", "INFO ADD #room watch for drama");
+        assert!(has(&cs(&mut e, "000AAAAAS", "INFO #room"), "watch for drama"), "channel note in CS INFO");
+
+        // DEL clears it.
+        os(&mut e, "000AAAAAS", "INFO DEL alice");
+        assert!(!has(&ns(&mut e, "000AAAAAS", "INFO alice"), "Staff note"), "note cleared");
+
+        // A non-admin can't set notes.
+        assert!(has(&os(&mut e, "000AAAAAL", "INFO ADD staff x"), "Access denied"), "non-admin refused");
     }
 
     // OperServ SVSNICK / SVSJOIN: force a user's nick or channel join, admin-gated.

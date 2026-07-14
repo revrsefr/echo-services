@@ -168,7 +168,9 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::AkillAdded { .. }
         | Event::AkillRemoved { .. }
         | Event::AccountExpiryWarned { .. }
-        | Event::ChannelExpiryWarned { .. } => return None,
+        | Event::ChannelExpiryWarned { .. }
+        | Event::AccountOperNoteSet { .. }
+        | Event::ChannelOperNoteSet { .. } => return None,
     };
     Some(ReplicationEvent { origin: entry.origin().to_string(), seq: entry.seq(), lamport: entry.lamport(), kind: Some(kind) })
 }
@@ -428,6 +430,7 @@ mod tests {
             last_seen: 111,
             noexpire: false,
             expiry_warned: false,
+            oper_note: None,
         };
         let registered = LogEntry::for_test("A", 0, 1, Event::AccountRegistered(Box::new(acct)));
         let wire = to_wire(&registered).expect("account registration replicates");

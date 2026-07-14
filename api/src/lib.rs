@@ -713,6 +713,11 @@ pub trait Store {
     fn ignore_add(&mut self, mask: &str, reason: &str, expires: Option<u64>);
     fn ignore_del(&mut self, mask: &str) -> bool;
     fn ignores(&self) -> Vec<IgnoreView>;
+    // Staff notes on accounts/channels (oper-only), shown in INFO to operators.
+    fn set_account_note(&mut self, account: &str, note: Option<String>) -> bool;
+    fn account_note(&self, account: &str) -> Option<String>;
+    fn set_channel_note(&mut self, channel: &str, note: Option<String>) -> bool;
+    fn channel_note(&self, channel: &str) -> Option<String>;
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError>;
     fn drop_channel(&mut self, name: &str) -> Result<(), ChanError>;
     fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError>;

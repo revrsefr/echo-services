@@ -90,6 +90,9 @@ pub struct Account {
     // the next activity, so each idle spell warns at most once).
     #[serde(default)]
     pub expiry_warned: bool,
+    // A staff note (OperServ INFO), shown only to operators.
+    #[serde(default)]
+    pub oper_note: Option<String>,
 }
 
 // A requested vhost awaiting approval.
@@ -179,6 +182,9 @@ pub enum Event {
     // An impending-expiry warning email was sent; cleared by the next Seen/Used.
     AccountExpiryWarned { account: String },
     ChannelExpiryWarned { channel: String },
+    // A staff note set or cleared (OperServ INFO).
+    AccountOperNoteSet { account: String, note: Option<String> },
+    ChannelOperNoteSet { channel: String, note: Option<String> },
     // Network bans (OperServ AKILL / SQLINE). Global: a ban covers the whole
     // network, so every node holds the list and re-applies it at burst. `kind`
     // is the ircd X-line type and defaults to "G" for records predating it.
@@ -235,6 +241,7 @@ impl Event {
             | Event::AccountSeen { .. }
             | Event::AccountNoExpire { .. }
             | Event::AccountExpiryWarned { .. }
+            | Event::AccountOperNoteSet { .. }
             | Event::AkillAdded { .. }
             | Event::AkillRemoved { .. } => Scope::Global,
             Event::ChannelRegistered { .. }
@@ -265,7 +272,8 @@ impl Event {
             | Event::VhostTemplateSet { .. }
             | Event::ChannelUsed { .. }
             | Event::ChannelNoExpire { .. }
-            | Event::ChannelExpiryWarned { .. } => Scope::Local,
+            | Event::ChannelExpiryWarned { .. }
+            | Event::ChannelOperNoteSet { .. } => Scope::Local,
         }
     }
 }
@@ -444,6 +452,9 @@ pub struct ChannelInfo {
     // Whether an impending-expiry warning email has already been sent.
     #[serde(default)]
     pub expiry_warned: bool,
+    // A staff note (OperServ INFO), shown only to operators.
+    #[serde(default)]
+    pub oper_note: Option<String>,
 }
 
 // A bot auto-response: when a channel line matches `pattern`, the assigned bot
@@ -1018,6 +1029,9 @@ impl Db {
             if !c.triggers.is_empty() {
                 snapshot.push(Event::ChannelTriggersSet { channel: c.name.clone(), triggers: c.triggers.clone() });
             }
+            if let Some(note) = &c.oper_note {
+                snapshot.push(Event::ChannelOperNoteSet { channel: c.name.clone(), note: Some(note.clone()) });
+            }
         }
         for (nick, account) in &self.grouped {
             snapshot.push(Event::NickGrouped { nick: nick.clone(), account: account.clone() });
@@ -1158,6 +1172,7 @@ impl Db {
             last_seen: now(),
             noexpire: false,
             expiry_warned: false,
+            oper_note: None,
         };
         self.log.append(Event::AccountRegistered(Box::new(account.clone()))).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
@@ -1772,6 +1787,38 @@ impl Db {
         }
     }
 
+    /// Set or clear an account's staff note. Returns whether the account exists.
+    pub fn set_account_note(&mut self, account: &str, note: Option<String>) -> bool {
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return false;
+        }
+        let _ = self.log.append(Event::AccountOperNoteSet { account: account.to_string(), note: note.clone() });
+        self.accounts.get_mut(&k).unwrap().oper_note = note;
+        true
+    }
+
+    /// An account's staff note, if any.
+    pub fn account_note(&self, account: &str) -> Option<String> {
+        self.accounts.get(&key(account)).and_then(|a| a.oper_note.clone())
+    }
+
+    /// Set or clear a channel's staff note. Returns whether the channel exists.
+    pub fn set_channel_note(&mut self, channel: &str, note: Option<String>) -> bool {
+        let k = key(channel);
+        if !self.channels.contains_key(&k) {
+            return false;
+        }
+        let _ = self.log.append(Event::ChannelOperNoteSet { channel: channel.to_string(), note: note.clone() });
+        self.channels.get_mut(&k).unwrap().oper_note = note;
+        true
+    }
+
+    /// A channel's staff note, if any.
+    pub fn channel_note(&self, channel: &str) -> Option<String> {
+        self.channels.get(&key(channel)).and_then(|c| c.oper_note.clone())
+    }
+
     /// Add (or refresh) a `kind` network ban. Returns whether it was newly added.
     pub fn akill_add(&mut self, kind: &str, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
         let same = |a: &Akill| a.kind == kind && a.mask.eq_ignore_ascii_case(mask);
@@ -1866,7 +1913,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
         Ok(())
     }
 
@@ -2604,7 +2651,7 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             grouped.remove(&key(&nick));
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
@@ -2763,6 +2810,16 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::ChannelExpiryWarned { channel } => {
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.expiry_warned = true;
+            }
+        }
+        Event::AccountOperNoteSet { account, note } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.oper_note = note;
+            }
+        }
+        Event::ChannelOperNoteSet { channel, note } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.oper_note = note;
             }
         }
     }
@@ -3015,6 +3072,18 @@ impl Store for Db {
     fn ignores(&self) -> Vec<IgnoreView> {
         Db::ignores(self)
     }
+    fn set_account_note(&mut self, account: &str, note: Option<String>) -> bool {
+        Db::set_account_note(self, account, note)
+    }
+    fn account_note(&self, account: &str) -> Option<String> {
+        Db::account_note(self, account)
+    }
+    fn set_channel_note(&mut self, channel: &str, note: Option<String>) -> bool {
+        Db::set_channel_note(self, channel, note)
+    }
+    fn channel_note(&self, channel: &str) -> Option<String> {
+        Db::channel_note(self, channel)
+    }
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
         Db::register_channel(self, name, founder)
     }
@@ -3215,7 +3284,7 @@ mod tests {
     fn account_conflict_resolves_deterministically() {
         let alice = |hash: &str, ts: u64, home: &str| Account {
             name: "alice".into(), password_hash: hash.into(), email: None,
-            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: ts, noexpire: false, expiry_warned: false,
+            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: ts, noexpire: false, expiry_warned: false, oper_note: None,
         };
         let converge = |first: &Account, second: &Account| {
             let (mut acc, mut ch, mut gr, mut bo, mut hc, mut ak) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HostConfig::default(), Vec::new());
@@ -3491,7 +3560,7 @@ mod tests {
         db.register("alice", "pw", None).unwrap();
         let bob = Account {
             name: "bob".into(), password_hash: "x".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
         };
         let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, event: Event::AccountRegistered(Box::new(bob)) };
         db.ingest(entry).unwrap();

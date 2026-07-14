@@ -31,4 +31,10 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             ctx.notice(me, from.uid, format!("  Auto-join  : {} channel(s) — see \x02AJOIN LIST\x02", ajoin.len()));
         }
     }
+    // A staff note is for operators' eyes only, never the account's owner.
+    if from.privs.has(Priv::Auspex) {
+        if let Some(note) = db.account_note(&acct.name) {
+            ctx.notice(me, from.uid, format!("  Staff note : {note}"));
+        }
+    }
 }
