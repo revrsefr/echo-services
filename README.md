@@ -23,8 +23,9 @@ workspace, each depending only on the `fedserv-api` SDK crate.
 - **`inspircd/`** (`fedserv-inspircd`) the ircd link layer. A `Protocol` impl maps
   raw server-to-server lines to and from the normalized model, so the engine never
   touches a raw line and a new ircd is one new crate.
-- **`nickserv/`, `chanserv/`** (`fedserv-nickserv`, `fedserv-chanserv`) the
-  pseudo-clients, each a crate implementing `Service`. OperServ and others follow
+- **`nickserv/`, `chanserv/`, `botserv/`, `memoserv/`, `statserv/`, `hostserv/`,
+  `operserv/`** the pseudo-clients, each a crate implementing `Service`. OperServ
+  holds the network-operator tools (AKILL network bans to start); the rest follow
   the same shape.
 
 Writing your own module — a service or a new ircd protocol — is documented in
