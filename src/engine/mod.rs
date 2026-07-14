@@ -3947,6 +3947,8 @@ mod tests {
         assert!(out.iter().any(|a| matches!(a, NetAction::AddLine { kind, mask, .. } if kind == "Q" && mask == "*bot*")), "Q-line added: {out:?}");
         // A rejected @-shaped mask (that belongs to AKILL, not SQLINE).
         assert!(os(&mut e, "000AAAAAS", "SQLINE ADD a@b spam").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("valid"))), "nick mask rejects user@host");
+        // STATS reflects the live ban counts.
+        assert!(os(&mut e, "000AAAAAS", "STATS").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("1") && text.contains("SQLINE"))), "stats shows the sqline count");
 
         // GLOBAL fans out to every user via the $* server glob.
         let out = os(&mut e, "000AAAAAS", "GLOBAL rebooting in 5");
