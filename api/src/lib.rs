@@ -771,6 +771,11 @@ pub trait Store {
     fn jupe_add(&mut self, name: &str, reason: &str) -> String;
     fn jupe_del(&mut self, name: &str) -> Option<String>;
     fn jupes(&self) -> Vec<(String, String, String)>;
+    // Network defence level (OperServ DEFCON) and its derived registration freezes.
+    fn defcon(&self) -> u8;
+    fn set_defcon(&mut self, level: u8);
+    fn registrations_frozen(&self) -> bool;
+    fn channel_regs_frozen(&self) -> bool;
     // Staff notes on accounts/channels (oper-only), shown in INFO to operators.
     fn set_account_note(&mut self, account: &str, note: Option<String>) -> bool;
     fn account_note(&self, account: &str) -> Option<String>;

@@ -982,6 +982,9 @@ pub struct Db {
     // so they aren't federated (that would collide SIDs across nodes).
     jupes: Vec<Jupe>,
     jupe_seq: u32,
+    // Network defence level (OperServ DEFCON), 5 = normal down to 1 = lockdown.
+    // Node-local; the derived restrictions are read by the engine and services.
+    defcon: u8,
 }
 
 // A juped server: the held name, the fake server id we allocated for it, and why.
@@ -1045,7 +1048,7 @@ impl Db {
             apply(&mut accounts, &mut channels, &mut grouped, &mut bots, &mut host_cfg, &mut net, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), bots, host_cfg, net, ignores: Vec::new(), jupes: Vec::new(), jupe_seq: 0 }
+        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), bots, host_cfg, net, ignores: Vec::new(), jupes: Vec::new(), jupe_seq: 0, defcon: 5 }
     }
 
     /// Fold an entry authored by another node into the store — the services-side
@@ -2048,6 +2051,26 @@ impl Db {
             .filter(|n| n.kind == kind)
             .map(|n| NewsView { id: n.id, text: n.text.clone(), setter: n.setter.clone(), ts: n.ts })
             .collect()
+    }
+
+    /// The network defence level (5 = normal, 1 = full lockdown).
+    pub fn defcon(&self) -> u8 {
+        self.defcon
+    }
+
+    /// Set the defence level, clamped to 1..=5.
+    pub fn set_defcon(&mut self, level: u8) {
+        self.defcon = level.clamp(1, 5);
+    }
+
+    /// Whether new nick/account registrations are frozen (defcon 3 or lower).
+    pub fn registrations_frozen(&self) -> bool {
+        self.defcon <= 3
+    }
+
+    /// Whether new channel registrations are frozen (defcon 4 or lower).
+    pub fn channel_regs_frozen(&self) -> bool {
+        self.defcon <= 4
     }
 
     /// Jupe a server name: allocate a fake sid, store it, return the sid to
@@ -3323,6 +3346,18 @@ impl Store for Db {
     }
     fn jupes(&self) -> Vec<(String, String, String)> {
         Db::jupes(self)
+    }
+    fn defcon(&self) -> u8 {
+        Db::defcon(self)
+    }
+    fn set_defcon(&mut self, level: u8) {
+        Db::set_defcon(self, level)
+    }
+    fn registrations_frozen(&self) -> bool {
+        Db::registrations_frozen(self)
+    }
+    fn channel_regs_frozen(&self) -> bool {
+        Db::channel_regs_frozen(self)
     }
     fn set_account_note(&mut self, account: &str, note: Option<String>) -> bool {
         Db::set_account_note(self, account, note)

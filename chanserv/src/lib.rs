@@ -72,6 +72,10 @@ impl Service for ChanServ {
                     ctx.notice(me, from.uid, "Channel names start with \x02#\x02.");
                     return;
                 }
+                if db.channel_regs_frozen() {
+                    ctx.notice(me, from.uid, "Channel registrations are temporarily frozen by network staff. Please try again later.");
+                    return;
+                }
                 // The founder is the account the sender is identified to.
                 let Some(account) = from.account else {
                     ctx.notice(me, from.uid, "You need to be logged in to register a channel. Identify to NickServ first.");

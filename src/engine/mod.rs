@@ -286,9 +286,10 @@ impl Engine {
     }
 
     // The effective session limit for `ip`: a matching exception's allowance, else
-    // the default. None means unlimited (limiting off, or an exception of 0).
+    // the default. None means unlimited (limiting off, or an exception of 0). At
+    // DEFCON 2 or lower the base tightens to a single session regardless of config.
     fn session_limit_for(&self, ip: &str) -> Option<u32> {
-        let default = self.session_limit?;
+        let default = if self.db.defcon() <= 2 { 1 } else { self.session_limit? };
         let limit = self.db.session_exception_for(ip).unwrap_or(default);
         (limit > 0).then_some(limit)
     }
@@ -740,6 +741,14 @@ impl Engine {
             NetEvent::Ping { token, from } => vec![NetAction::Pong { token, from }],
             NetEvent::UserConnect { uid, nick, host, ip } => {
                 self.network.user_connect(uid.clone(), nick, host, ip.clone());
+                // DEFCON 1 is a full lockdown: no new connections are accepted.
+                if self.db.defcon() == 1 && !self.sid.is_empty() {
+                    return vec![NetAction::KillUser {
+                        from: self.sid.clone(),
+                        uid,
+                        reason: "The network is in lockdown (DEFCON 1). Please try again later.".to_string(),
+                    }];
+                }
                 // Enforce the session limit: kill the connection that puts an IP
                 // over its allowance (default limit, raised/lowered by exceptions).
                 if let Some(limit) = self.session_limit_for(&ip) {
@@ -1138,6 +1147,9 @@ impl Engine {
     // outright, and rate-limit the rest so a REGISTER flood can't pin CPU. Returns
     // the rejection response if refused, or None to proceed (spending a token).
     pub fn pre_register_check(&mut self, account: &str, reply: &RegReply) -> Option<Vec<NetAction>> {
+        if self.db.registrations_frozen() {
+            return Some(reg_reply(reply, RegOutcome::Frozen, account));
+        }
         if self.db.exists(account) {
             return Some(reg_reply(reply, RegOutcome::Exists, account));
         }
@@ -1766,6 +1778,7 @@ enum RegOutcome {
     Ok,
     Exists,
     RateLimited,
+    Frozen,
     Internal,
 }
 
@@ -1778,6 +1791,7 @@ fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAct
                 RegOutcome::Ok => ("success", "*", "Account registered."),
                 RegOutcome::Exists => ("error", "ACCOUNT_EXISTS", "That account name is already registered."),
                 RegOutcome::RateLimited => ("error", "TEMPORARILY_UNAVAILABLE", "Too many registrations, please wait a moment."),
+                RegOutcome::Frozen => ("error", "TEMPORARILY_UNAVAILABLE", "Registrations are temporarily frozen by network staff."),
                 RegOutcome::Internal => ("error", "TEMPORARILY_UNAVAILABLE", "Registration is unavailable, try again later."),
             };
             vec![NetAction::AccountResponse {
@@ -1799,6 +1813,7 @@ fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAct
                 ],
                 RegOutcome::Exists => vec![notice(format!("\x02{nick}\x02 is already registered. If it's yours, use \x02IDENTIFY <password>\x02."))],
                 RegOutcome::RateLimited => vec![notice("Registrations are busy right now. Please try again in a moment.".to_string())],
+                RegOutcome::Frozen => vec![notice("Registrations are temporarily frozen by network staff. Please try again later.".to_string())],
                 RegOutcome::Internal => vec![notice("Sorry, that didn't work. Please try again in a moment.".to_string())],
             }
         }
@@ -4296,6 +4311,65 @@ mod tests {
         // DEL squits the fake server.
         assert!(os(&mut e, "000AAAAAS", "JUPE DEL rogue.example").iter().any(|a| matches!(a, NetAction::Squit { .. })), "squit on lift");
         assert!(!e.startup_actions().iter().any(|a| matches!(a, NetAction::JupeServer { .. })), "gone after DEL");
+    }
+
+    // OperServ DEFCON: each level tightens the network — announce on change, freeze
+    // channel then all registrations, cap sessions, and lock out new connections.
+    #[test]
+    fn operserv_defcon_levels() {
+        use fedserv_chanserv::ChanServ;
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-defcon.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+        let killed = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::KillUser { .. }));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "1.1.1.1".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Join { uid: "000AAAAAS".into(), channel: "#room".into(), op: true });
+
+        // Setting a level announces it network-wide.
+        let out = os(&mut e, "000AAAAAS", "DEFCON 4");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "$*" && text.contains("DEFCON 4"))), "announced: {out:?}");
+        // DEFCON 4 freezes channel registrations but not account ones.
+        assert!(has(&cs(&mut e, "000AAAAAS", "REGISTER #room"), "frozen"), "chan reg frozen at 4");
+        let reply = crate::proto::RegReply::NickServ { agent: "42SAAAAAA".into(), uid: "000AAAAAX".into(), nick: "newbie".into() };
+        assert!(e.pre_register_check("newbie", &reply).is_none(), "account reg still ok at 4");
+
+        // DEFCON 3 freezes account registrations too.
+        os(&mut e, "000AAAAAS", "DEFCON 3");
+        assert!(e.pre_register_check("newbie", &reply).is_some_and(|r| r.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("frozen")))), "account reg frozen at 3");
+
+        // DEFCON 2 caps everyone to one session per host.
+        os(&mut e, "000AAAAAS", "DEFCON 2");
+        assert!(!killed(&e.handle(NetEvent::UserConnect { uid: "000AAAAA1".into(), nick: "a".into(), host: "h".into(), ip: "2.2.2.2".into() })), "first from an IP ok");
+        assert!(killed(&e.handle(NetEvent::UserConnect { uid: "000AAAAA2".into(), nick: "b".into(), host: "h".into(), ip: "2.2.2.2".into() })), "second from the same IP capped");
+
+        // DEFCON 1 turns away every new connection.
+        os(&mut e, "000AAAAAS", "DEFCON 1");
+        assert!(killed(&e.handle(NetEvent::UserConnect { uid: "000AAAAA3".into(), nick: "c".into(), host: "h".into(), ip: "3.3.3.3".into() })), "lockdown rejects new connections");
+
+        // Back to 5: normal again.
+        os(&mut e, "000AAAAAS", "DEFCON 5");
+        assert!(!killed(&e.handle(NetEvent::UserConnect { uid: "000AAAAA4".into(), nick: "d".into(), host: "h".into(), ip: "4.4.4.4".into() })), "connections fine at 5");
+        assert!(has(&cs(&mut e, "000AAAAAS", "REGISTER #room"), "now registered"), "chan reg works at 5");
     }
 
     // OperServ session limiting: the connection that puts an IP over its limit is
