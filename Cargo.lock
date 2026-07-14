@@ -336,6 +336,7 @@ dependencies = [
  "fedserv-memoserv",
  "fedserv-nickserv",
  "fedserv-operserv",
+ "fedserv-reportserv",
  "fedserv-statserv",
  "hmac",
  "pbkdf2",
@@ -426,6 +427,13 @@ dependencies = [
 
 [[package]]
 name = "fedserv-operserv"
+version = "0.0.1"
+dependencies = [
+ "fedserv-api",
+]
+
+[[package]]
+name = "fedserv-reportserv"
 version = "0.0.1"
 dependencies = [
  "fedserv-api",

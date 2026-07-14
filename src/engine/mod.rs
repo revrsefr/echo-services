@@ -1694,8 +1694,11 @@ fn audit_summary(event: &db::Event) -> Option<String> {
             Some(_) => format!("set a staff note on \x02{channel}\x02"),
             None => format!("cleared the staff note on \x02{channel}\x02"),
         },
-        NewsAdded { kind, .. } => format!("added a \x02{kind}\x02 news item"),
-        NewsDeleted { .. } => "removed a news item".to_string(),
+        NewsAdded { kind, .. } => format!("added a \x02{kind}\x02 bulletin"),
+        NewsDeleted { .. } => "removed a bulletin".to_string(),
+        ReportFiled { reporter, target, reason, .. } => format!("\x02{reporter}\x02 reported \x02{target}\x02: {reason}"),
+        ReportClosed { id } => format!("closed report #{id}"),
+        ReportDeleted { id } => format!("deleted report #{id}"),
         OperGranted { account, privs, .. } => format!("granted \x02{account}\x02 operator ({})", privs.join(", ")),
         OperRevoked { account } => format!("revoked \x02{account}\x02's operator access"),
         SessionExceptionAdded { mask, limit, .. } => format!("set a session exception \x02{mask}\x02 (limit {limit})"),
@@ -4563,6 +4566,53 @@ mod tests {
         // ...but not after its window passes.
         e.now_override = Some(10_000_000_000);
         assert!(denied(&os(&mut e, "000AAAAAP", "STATS")), "expired grant confers nothing");
+    }
+
+    // ReportServ: any user files an abuse report; it lands in the queue AND flows
+    // through the audit trail so OperServ LOGSEARCH finds it. Reviewing is oper-only.
+    #[test]
+    fn reportserv_files_and_is_searchable() {
+        use fedserv_operserv::OperServ;
+        use fedserv_reportserv::ReportServ;
+        let path = std::env::temp_dir().join("fedserv-reportserv.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+                Box::new(ReportServ { uid: "42SAAAAAK".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin).with(fedserv_api::Priv::Auspex));
+        e.set_opers(opers);
+        let rs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAK".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAU".into(), nick: "victim".into(), host: "h".into(), ip: "0.0.0.0".into() });
+
+        // An ordinary (unidentified) user files a report.
+        assert!(has(&rs(&mut e, "000AAAAAU", "REPORT spammer flooding the lobby"), "has been sent"), "report accepted");
+        // The report is in the queue and — via the audit trail — searchable.
+        assert!(has(&rs(&mut e, "000AAAAAS", "LIST"), "spammer"), "oper sees the queue");
+        assert!(has(&os(&mut e, "000AAAAAS", "LOGSEARCH flooding"), "flooding"), "report searchable via LOGSEARCH");
+
+        // Detail, then close.
+        assert!(has(&rs(&mut e, "000AAAAAS", "VIEW 0"), "flooding the lobby"), "view detail");
+        assert!(has(&rs(&mut e, "000AAAAAS", "CLOSE 0"), "closed"), "close");
+        assert!(!has(&rs(&mut e, "000AAAAAS", "LIST"), "spammer"), "closed reports drop off the open list");
+
+        // Non-opers can't review; and filing is rate-limited.
+        assert!(has(&rs(&mut e, "000AAAAAU", "LIST"), "Access denied"), "review is oper-only");
+        assert!(has(&rs(&mut e, "000AAAAAU", "REPORT someone again"), "wait a moment"), "rate-limited");
     }
 
     // InfoServ bulletins over the shared news store: public bulletins greet

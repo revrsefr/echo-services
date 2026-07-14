@@ -173,6 +173,9 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::ChannelOperNoteSet { .. }
         | Event::NewsAdded { .. }
         | Event::NewsDeleted { .. }
+        | Event::ReportFiled { .. }
+        | Event::ReportClosed { .. }
+        | Event::ReportDeleted { .. }
         | Event::OperGranted { .. }
         | Event::OperRevoked { .. }
         | Event::SessionExceptionAdded { .. }

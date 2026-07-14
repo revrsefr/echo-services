@@ -23,6 +23,7 @@ use fedserv_hostserv::HostServ;
 use fedserv_operserv::OperServ;
 use fedserv_diceserv::DiceServ;
 use fedserv_infoserv::InfoServ;
+use fedserv_reportserv::ReportServ;
 use fedserv_example::ExampleServ;
 use fedserv_inspircd::InspIrcd;
 use fedserv_nickserv::NickServ;
@@ -99,6 +100,11 @@ async fn main() -> Result<()> {
     if enabled("infoserv") {
         services.push(Box::new(InfoServ {
             uid: format!("{}AAAAAJ", cfg.server.sid),
+        }));
+    }
+    if enabled("reportserv") {
+        services.push(Box::new(ReportServ {
+            uid: format!("{}AAAAAK", cfg.server.sid),
         }));
     }
     if enabled("example") {

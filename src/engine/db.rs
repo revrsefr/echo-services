@@ -30,7 +30,7 @@ use super::scram::{self, Hash};
 // fedserv-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use fedserv_api::{
-    AccountView, AjoinView, AkillView, BotView, IgnoreView, MemoView, NewsView, Privs, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
+    AccountView, AjoinView, AkillView, BotView, IgnoreView, MemoView, NewsView, Privs, ReportView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +188,10 @@ pub enum Event {
     // News items (OperServ NEWS). The stable `id` makes deletion order-independent.
     NewsAdded { id: u64, kind: String, text: String, setter: String, ts: u64 },
     NewsDeleted { id: u64 },
+    // Abuse reports (ReportServ). Global so any node's operators see the queue.
+    ReportFiled { id: u64, reporter: String, target: String, reason: String, ts: u64 },
+    ReportClosed { id: u64 },
+    ReportDeleted { id: u64 },
     // Runtime operator grants (OperServ OPER).
     OperGranted {
         account: String,
@@ -260,6 +264,9 @@ impl Event {
             | Event::AkillRemoved { .. }
             | Event::NewsAdded { .. }
             | Event::NewsDeleted { .. }
+            | Event::ReportFiled { .. }
+            | Event::ReportClosed { .. }
+            | Event::ReportDeleted { .. }
             | Event::OperGranted { .. }
             | Event::OperRevoked { .. }
             | Event::SessionExceptionAdded { .. }
@@ -362,10 +369,10 @@ pub struct Ignore {
     pub expires: Option<u64>,
 }
 
-// A news item (OperServ NEWS): a `kind` ("logon" shown to everyone on connect,
-// "oper" shown to operators on login), the text, who set it, and when. Carries a
-// stable id (assigned at add time, embedded in the log) so deletion is order-
-// independent under replay.
+// A news item (InfoServ bulletin): a `kind` ("logon" shown to everyone on
+// connect, "oper" shown to operators on login), the text, who set it, and when.
+// Carries a stable id (assigned at add time, embedded in the log) so deletion is
+// order-independent under replay.
 #[derive(Debug, Clone)]
 pub struct News {
     pub id: u64,
@@ -373,6 +380,18 @@ pub struct News {
     pub text: String,
     pub setter: String,
     pub ts: u64,
+}
+
+// An abuse report (ReportServ): who filed it, the nick/channel it's about, why,
+// when, and whether it's still open. Stable id like News.
+#[derive(Debug, Clone)]
+pub struct Report {
+    pub id: u64,
+    pub reporter: String,
+    pub target: String,
+    pub reason: String,
+    pub ts: u64,
+    pub open: bool,
 }
 
 // The network-wide lists that aren't accounts/channels/grouped/bots: the network
@@ -383,6 +402,9 @@ pub struct NetData {
     pub akills: Vec<Akill>,
     pub news: Vec<News>,
     pub news_seq: u64,
+    // Abuse reports (ReportServ), oldest first.
+    pub reports: Vec<Report>,
+    pub report_seq: u64,
     // Runtime services operators (OperServ OPER), casefolded account -> grant.
     // Merged with the declarative [[oper]] config at the engine.
     pub opers: HashMap<String, OperGrant>,
@@ -969,6 +991,8 @@ pub struct Db {
     auth_fails: HashMap<String, AuthThrottle>,
     // Last vhost REQUEST time per account (in-memory, anti-spam), unix secs.
     vhost_req_times: HashMap<String, u64>,
+    // Last ReportServ REPORT time per reporter (in-memory, anti-spam), unix secs.
+    report_times: HashMap<String, u64>,
     // Registered service bots (BotServ), keyed by casefolded nick.
     bots: HashMap<String, Bot>,
     // HostServ node config: the self-serve offer menu, the forbidden-pattern
@@ -1052,7 +1076,7 @@ impl Db {
             apply(&mut accounts, &mut channels, &mut grouped, &mut bots, &mut host_cfg, &mut net, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), bots, host_cfg, net, ignores: Vec::new(), jupes: Vec::new(), jupe_seq: 0, defcon: 5, external_accounts: false }
+        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), report_times: HashMap::new(), bots, host_cfg, net, ignores: Vec::new(), jupes: Vec::new(), jupe_seq: 0, defcon: 5, external_accounts: false }
     }
 
     /// Fold an entry authored by another node into the store — the services-side
@@ -1148,6 +1172,12 @@ impl Db {
         }
         for n in &self.net.news {
             snapshot.push(Event::NewsAdded { id: n.id, kind: n.kind.clone(), text: n.text.clone(), setter: n.setter.clone(), ts: n.ts });
+        }
+        for r in &self.net.reports {
+            snapshot.push(Event::ReportFiled { id: r.id, reporter: r.reporter.clone(), target: r.target.clone(), reason: r.reason.clone(), ts: r.ts });
+            if !r.open {
+                snapshot.push(Event::ReportClosed { id: r.id });
+            }
         }
         for (account, grant) in &self.net.opers {
             snapshot.push(Event::OperGranted { account: account.clone(), privs: grant.privs.clone(), expires: grant.expires });
@@ -2151,6 +2181,61 @@ impl Db {
         self.jupes.iter().map(|j| (j.name.clone(), j.sid.clone(), j.reason.clone())).collect()
     }
 
+    /// File an abuse report, rate-limited per reporter. Returns the new report's
+    /// id, or None if the reporter filed one too recently.
+    pub fn report_file(&mut self, reporter: &str, target: &str, reason: &str) -> Option<u64> {
+        const COOLDOWN: u64 = 30;
+        let now = now();
+        let key = reporter.to_ascii_lowercase();
+        if self.report_times.get(&key).is_some_and(|&t| now.saturating_sub(t) < COOLDOWN) {
+            return None;
+        }
+        self.report_times.insert(key, now);
+        let id = self.net.report_seq;
+        let _ = self.log.append(Event::ReportFiled { id, reporter: reporter.to_string(), target: target.to_string(), reason: reason.to_string(), ts: now });
+        self.net.report_seq = id + 1;
+        self.net.reports.push(Report { id, reporter: reporter.to_string(), target: target.to_string(), reason: reason.to_string(), ts: now, open: true });
+        Some(id)
+    }
+
+    /// Close (resolve) a report. Returns whether an open one was closed.
+    pub fn report_close(&mut self, id: u64) -> bool {
+        let closed = self.net.reports.iter().any(|r| r.id == id && r.open);
+        if closed {
+            let _ = self.log.append(Event::ReportClosed { id });
+            if let Some(r) = self.net.reports.iter_mut().find(|r| r.id == id) {
+                r.open = false;
+            }
+        }
+        closed
+    }
+
+    /// Delete a report entirely. Returns whether one existed.
+    pub fn report_del(&mut self, id: u64) -> bool {
+        let existed = self.net.reports.iter().any(|r| r.id == id);
+        if existed {
+            let _ = self.log.append(Event::ReportDeleted { id });
+            self.net.reports.retain(|r| r.id != id);
+        }
+        existed
+    }
+
+    /// The reports, newest first. `open_only` hides closed ones.
+    pub fn reports(&self, open_only: bool) -> Vec<ReportView> {
+        self.net
+            .reports
+            .iter()
+            .rev()
+            .filter(|r| !open_only || r.open)
+            .map(|r| ReportView { id: r.id, reporter: r.reporter.clone(), target: r.target.clone(), reason: r.reason.clone(), ts: r.ts, open: r.open })
+            .collect()
+    }
+
+    /// A single report by id, if present.
+    pub fn report(&self, id: u64) -> Option<ReportView> {
+        self.net.reports.iter().find(|r| r.id == id).map(|r| ReportView { id: r.id, reporter: r.reporter.clone(), target: r.target.clone(), reason: r.reason.clone(), ts: r.ts, open: r.open })
+    }
+
     /// Add a services ignore, replacing any existing entry for the same mask.
     pub fn ignore_add(&mut self, mask: &str, reason: &str, expires: Option<u64>) {
         self.ignores.retain(|i| !i.mask.eq_ignore_ascii_case(mask));
@@ -3129,6 +3214,20 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::NewsDeleted { id } => {
             net.news.retain(|n| n.id != id);
         }
+        Event::ReportFiled { id, reporter, target, reason, ts } => {
+            net.report_seq = net.report_seq.max(id + 1);
+            if !net.reports.iter().any(|r| r.id == id) {
+                net.reports.push(Report { id, reporter, target, reason, ts, open: true });
+            }
+        }
+        Event::ReportClosed { id } => {
+            if let Some(r) = net.reports.iter_mut().find(|r| r.id == id) {
+                r.open = false;
+            }
+        }
+        Event::ReportDeleted { id } => {
+            net.reports.retain(|r| r.id != id);
+        }
         Event::OperGranted { account, privs, expires } => {
             net.opers.insert(key(&account), OperGrant { privs, expires });
         }
@@ -3436,6 +3535,21 @@ impl Store for Db {
     }
     fn news(&self, kind: &str) -> Vec<NewsView> {
         Db::news(self, kind)
+    }
+    fn report_file(&mut self, reporter: &str, target: &str, reason: &str) -> Option<u64> {
+        Db::report_file(self, reporter, target, reason)
+    }
+    fn report_close(&mut self, id: u64) -> bool {
+        Db::report_close(self, id)
+    }
+    fn report_del(&mut self, id: u64) -> bool {
+        Db::report_del(self, id)
+    }
+    fn reports(&self, open_only: bool) -> Vec<ReportView> {
+        Db::reports(self, open_only)
+    }
+    fn report(&self, id: u64) -> Option<ReportView> {
+        Db::report(self, id)
     }
     fn oper_grant(&mut self, account: &str, privs: Vec<String>, expires: Option<u64>) {
         Db::oper_grant(self, account, privs, expires)

@@ -510,6 +510,17 @@ pub struct NewsView {
     pub ts: u64,
 }
 
+// An abuse report held by ReportServ.
+#[derive(Debug, Clone)]
+pub struct ReportView {
+    pub id: u64,
+    pub reporter: String,
+    pub target: String,
+    pub reason: String,
+    pub ts: u64,
+    pub open: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct BotView {
     pub nick: String,
@@ -788,6 +799,12 @@ pub trait Store {
     fn news_add(&mut self, kind: &str, text: &str, setter: &str) -> u64;
     fn news_del(&mut self, id: u64) -> bool;
     fn news(&self, kind: &str) -> Vec<NewsView>;
+    // Abuse reports (ReportServ). `report_file` is rate-limited (None = too soon).
+    fn report_file(&mut self, reporter: &str, target: &str, reason: &str) -> Option<u64>;
+    fn report_close(&mut self, id: u64) -> bool;
+    fn report_del(&mut self, id: u64) -> bool;
+    fn reports(&self, open_only: bool) -> Vec<ReportView>;
+    fn report(&self, id: u64) -> Option<ReportView>;
     // Runtime operator grants (OperServ OPER), merged with config opers. `expires`
     // is an absolute unix time (None = permanent); opers_list hides expired ones.
     fn oper_grant(&mut self, account: &str, privs: Vec<String>, expires: Option<u64>);
