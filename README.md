@@ -26,12 +26,21 @@ workspace, each depending only on the `fedserv-api` SDK crate.
     `Protocol` impl maps raw server-to-server lines to and from the normalized
     model, so the engine never touches a raw line and a new ircd is one new crate
     under `modules/protocol/`.
-  - **`modules/nickserv/`, `modules/chanserv/`, `modules/botserv/`,
-    `modules/memoserv/`, `modules/statserv/`, `modules/hostserv/`, `modules/operserv/`**
-    and diceserv, infoserv, reportserv, groupserv, chanfix, helpserv — the
-    pseudo-clients, each a crate implementing `Service`. OperServ holds the
-    network-operator tools (AKILL network bans to start); the rest follow the same
-    shape.
+  - the pseudo-clients, each a crate implementing `Service` and reaching the
+    network only through the `Store`/`NetView` traits:
+    - **`modules/nickserv/`** — account registration, identification, grouped nicks.
+    - **`modules/chanserv/`** — channel registration, access lists, mode-lock.
+    - **`modules/botserv/`** — per-channel service bots, fantasy commands, kickers.
+    - **`modules/hostserv/`** — virtual hosts, self-serve and operator-approved.
+    - **`modules/memoserv/`** — messages to accounts, delivered whether online or not.
+    - **`modules/operserv/`** — network-operator tools: akills, DEFCON, jupes, sessions, log search.
+    - **`modules/statserv/`** — network and channel statistics.
+    - **`modules/groupserv/`** — user groups (`!group`) whose members inherit channel access.
+    - **`modules/chanfix/`** — reops an opless channel from accumulated op-time.
+    - **`modules/helpserv/`** — a help-desk ticket queue worked by operators.
+    - **`modules/infoserv/`** — network bulletins shown on connect and on login.
+    - **`modules/reportserv/`** — user abuse reports feeding the operator audit trail.
+    - **`modules/diceserv/`** — dice rolls and math for tabletop games.
 
 Writing your own module — a service or a new ircd protocol — is documented in
 [MODULES.md](MODULES.md); `modules/example/` is a minimal service to copy from.
