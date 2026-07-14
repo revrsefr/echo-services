@@ -5,5 +5,5 @@ edition = "2021"
 description = "DiceServ: a dice-roll and math-expression service for tabletop games over IRC."
 
 [dependencies]
-fedserv-api = { path = "../api" }
+fedserv-api = { path = "../../api" }
 rand = "0.8"

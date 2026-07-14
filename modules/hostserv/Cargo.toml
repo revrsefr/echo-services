@@ -5,4 +5,4 @@ edition = "2021"
 description = "HostServ: assign and apply virtual hosts (vhosts)."
 
 [dependencies]
-fedserv-api = { path = "../api" }
+fedserv-api = { path = "../../api" }

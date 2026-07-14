@@ -20,16 +20,20 @@ workspace, each depending only on the `fedserv-api` SDK crate.
   through the `Store`/`NetView` traits, so the log, gossip and credential material
   stay out of a module's reach.
 - **`src/gossip.rs`** node-to-node replication over the logs.
-- **`inspircd/`** (`fedserv-inspircd`) the ircd link layer. A `Protocol` impl maps
-  raw server-to-server lines to and from the normalized model, so the engine never
-  touches a raw line and a new ircd is one new crate.
-- **`nickserv/`, `chanserv/`, `botserv/`, `memoserv/`, `statserv/`, `hostserv/`,
-  `operserv/`** the pseudo-clients, each a crate implementing `Service`. OperServ
-  holds the network-operator tools (AKILL network bans to start); the rest follow
-  the same shape.
+- **`modules/`** the loadable modules, each its own crate depending only on the
+  `fedserv-api` SDK:
+  - **`modules/inspircd/`** (`fedserv-inspircd`) the ircd link layer. A `Protocol`
+    impl maps raw server-to-server lines to and from the normalized model, so the
+    engine never touches a raw line and a new ircd is one new crate.
+  - **`modules/nickserv/`, `modules/chanserv/`, `modules/botserv/`,
+    `modules/memoserv/`, `modules/statserv/`, `modules/hostserv/`, `modules/operserv/`**
+    and diceserv, infoserv, reportserv, groupserv, chanfix, helpserv — the
+    pseudo-clients, each a crate implementing `Service`. OperServ holds the
+    network-operator tools (AKILL network bans to start); the rest follow the same
+    shape.
 
 Writing your own module — a service or a new ircd protocol — is documented in
-[MODULES.md](MODULES.md); `example/` is a minimal service to copy from.
+[MODULES.md](MODULES.md); `modules/example/` is a minimal service to copy from.
 
 ## Replication
 

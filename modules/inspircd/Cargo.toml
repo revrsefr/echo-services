@@ -5,4 +5,4 @@ edition = "2021"
 description = "InspIRCd server-to-server protocol module for fedserv."
 
 [dependencies]
-fedserv-api = { path = "../api" }
+fedserv-api = { path = "../../api" }

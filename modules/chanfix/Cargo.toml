@@ -5,4 +5,4 @@ edition = "2021"
 description = "ChanFix: reop opless unregistered channels from accumulated op-time scores."
 
 [dependencies]
-fedserv-api = { path = "../api" }
+fedserv-api = { path = "../../api" }

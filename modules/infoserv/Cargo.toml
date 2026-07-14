@@ -5,4 +5,4 @@ edition = "2021"
 description = "InfoServ: network information bulletins shown on connect (public) and on oper login."
 
 [dependencies]
-fedserv-api = { path = "../api" }
+fedserv-api = { path = "../../api" }

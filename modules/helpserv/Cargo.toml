@@ -5,4 +5,4 @@ edition = "2021"
 description = "HelpServ: a help-desk queue — users ask, operators take and answer."
 
 [dependencies]
-fedserv-api = { path = "../api" }
+fedserv-api = { path = "../../api" }

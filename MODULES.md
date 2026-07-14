@@ -11,22 +11,22 @@ There are two kinds of module.
 - A **service** (a pseudo-client like NickServ) implements `Service`.
 - A **protocol** (an ircd link like InspIRCd) implements `Protocol`.
 
-Both live in their own crate under the workspace. `example/` is a complete,
-minimal service to copy from; `inspircd/` is the reference protocol.
+Both live in their own crate under `modules/`. `modules/example/` is a complete,
+minimal service to copy from; `modules/inspircd/` is the reference protocol.
 
 ## A service, end to end
 
 **1. The crate.** One dependency:
 
 ```toml
-# mymod/Cargo.toml
+# modules/mymod/Cargo.toml
 [package]
 name = "fedserv-mymod"
 version = "0.0.1"
 edition = "2021"
 
 [dependencies]
-fedserv-api = { path = "../api" }
+fedserv-api = { path = "../../api" }
 ```
 
 **2. The service.** A plain struct implementing `Service`:
@@ -76,10 +76,10 @@ an IRC-originated one does — you do not write any replication code.
 ```toml
 # Cargo.toml
 [workspace]
-members = [..., "mymod"]
+members = [..., "modules/mymod"]
 
 [dependencies]
-fedserv-mymod = { path = "mymod" }
+fedserv-mymod = { path = "modules/mymod" }
 ```
 
 Construct it in `src/main.rs` alongside the others, behind its config name:
@@ -107,7 +107,7 @@ ignored.
 A protocol crate implements `Protocol`: it turns raw server-to-server lines into
 the normalized `NetEvent`s the engine understands, and turns the engine's
 `NetAction`s back into raw lines. The engine never sees a raw line, so supporting
-another ircd is one new crate — see `inspircd/`. Wire it in `src/main.rs` where
+another ircd is one new crate — see `modules/inspircd/`. Wire it in `src/main.rs` where
 `InspIrcd` is constructed.
 
 ## What the SDK deliberately does not give you

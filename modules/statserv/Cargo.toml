@@ -5,4 +5,4 @@ edition = "2021"
 description = "StatServ: surface the shared stats registry and per-channel activity."
 
 [dependencies]
-fedserv-api = { path = "../api" }
+fedserv-api = { path = "../../api" }

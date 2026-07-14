@@ -1,5 +1,24 @@
 [workspace]
-members = ["api", "inspircd", "chanserv", "nickserv", "example", "botserv", "memoserv", "statserv", "hostserv", "operserv", "diceserv", "infoserv", "reportserv", "groupserv", "chanfix", "helpserv"]
+# api is the SDK every module links against; the loadable modules — the service
+# pseudo-clients and the ircd protocol link — live under modules/.
+members = [
+    "api",
+    "modules/inspircd",
+    "modules/chanserv",
+    "modules/nickserv",
+    "modules/example",
+    "modules/botserv",
+    "modules/memoserv",
+    "modules/statserv",
+    "modules/hostserv",
+    "modules/operserv",
+    "modules/diceserv",
+    "modules/infoserv",
+    "modules/reportserv",
+    "modules/groupserv",
+    "modules/chanfix",
+    "modules/helpserv",
+]
 
 [package]
 name = "fedserv"
@@ -9,21 +28,21 @@ description = "Federated IRC services daemon (protocol-agnostic core, InspIRCd l
 
 [dependencies]
 fedserv-api = { path = "api" }
-fedserv-inspircd = { path = "inspircd" }
-fedserv-chanserv = { path = "chanserv" }
-fedserv-nickserv = { path = "nickserv" }
-fedserv-example = { path = "example" }
-fedserv-botserv = { path = "botserv" }
-fedserv-memoserv = { path = "memoserv" }
-fedserv-statserv = { path = "statserv" }
-fedserv-hostserv = { path = "hostserv" }
-fedserv-operserv = { path = "operserv" }
-fedserv-diceserv = { path = "diceserv" }
-fedserv-infoserv = { path = "infoserv" }
-fedserv-reportserv = { path = "reportserv" }
-fedserv-groupserv = { path = "groupserv" }
-fedserv-chanfix = { path = "chanfix" }
-fedserv-helpserv = { path = "helpserv" }
+fedserv-inspircd = { path = "modules/inspircd" }
+fedserv-chanserv = { path = "modules/chanserv" }
+fedserv-nickserv = { path = "modules/nickserv" }
+fedserv-example = { path = "modules/example" }
+fedserv-botserv = { path = "modules/botserv" }
+fedserv-memoserv = { path = "modules/memoserv" }
+fedserv-statserv = { path = "modules/statserv" }
+fedserv-hostserv = { path = "modules/hostserv" }
+fedserv-operserv = { path = "modules/operserv" }
+fedserv-diceserv = { path = "modules/diceserv" }
+fedserv-infoserv = { path = "modules/infoserv" }
+fedserv-reportserv = { path = "modules/reportserv" }
+fedserv-groupserv = { path = "modules/groupserv" }
+fedserv-chanfix = { path = "modules/chanfix" }
+fedserv-helpserv = { path = "modules/helpserv" }
 tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "time", "sync", "process"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -5,4 +5,4 @@ edition = "2021"
 description = "MemoServ: deliver messages to registered users, online or not."
 
 [dependencies]
-fedserv-api = { path = "../api" }
+fedserv-api = { path = "../../api" }

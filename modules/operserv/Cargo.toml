@@ -5,4 +5,4 @@ edition = "2021"
 description = "OperServ: network operator tools, starting with AKILL network bans."
 
 [dependencies]
-fedserv-api = { path = "../api" }
+fedserv-api = { path = "../../api" }

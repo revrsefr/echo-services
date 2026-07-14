@@ -5,4 +5,4 @@ edition = "2021"
 description = "ReportServ: users file abuse reports; operators review them."
 
 [dependencies]
-fedserv-api = { path = "../api" }
+fedserv-api = { path = "../../api" }
