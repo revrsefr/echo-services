@@ -3,7 +3,7 @@
 //! with SET/DEL and review with LIST. `lib.rs` holds the dispatcher; each
 //! command lives in its own file.
 
-use echo_api::{NetView, Priv, Sender, Service, ServiceCtx, Store};
+use echo_api::{HelpEntry, NetView, Priv, Sender, Service, ServiceCtx, Store};
 
 #[path = "on.rs"]
 mod on;
@@ -31,6 +31,26 @@ mod forbid;
 mod template;
 #[path = "default.rs"]
 mod default;
+
+const BLURB: &str = "HostServ gives you a virtual host (vhost). Activate an assigned one, pick one from the menu, or request one from an operator.";
+
+const TOPICS: &[HelpEntry] = &[
+    HelpEntry { cmd: "ON", summary: "activate your vhost", detail: "Syntax: \x02ON\x02\nActivates your assigned vhost on your host." },
+    HelpEntry { cmd: "OFF", summary: "restore your normal host", detail: "Syntax: \x02OFF\x02\nRestores your normal host." },
+    HelpEntry { cmd: "REQUEST", summary: "request a vhost", detail: "Syntax: \x02REQUEST <host>\x02\nAsks an operator to approve a vhost for you." },
+    HelpEntry { cmd: "OFFERLIST", summary: "show the vhost menu", detail: "Syntax: \x02OFFERLIST\x02\nShows the self-serve vhost menu." },
+    HelpEntry { cmd: "TAKE", summary: "take a vhost from the menu", detail: "Syntax: \x02TAKE <number>\x02\nTakes a vhost from the menu (see OFFERLIST)." },
+    HelpEntry { cmd: "SET", summary: "assign a vhost (operator)", detail: "Syntax: \x02SET <account> <host> [duration]\x02\nAssigns a vhost to an account. Operators only." },
+    HelpEntry { cmd: "DEL", summary: "remove a vhost (operator)", detail: "Syntax: \x02DEL <account>\x02\nRemoves an account's vhost. Operators only." },
+    HelpEntry { cmd: "LIST", summary: "list vhosts (operator)", detail: "Syntax: \x02LIST\x02\nLists assigned vhosts. Operators only." },
+    HelpEntry { cmd: "WAITING", summary: "pending requests (operator)", detail: "Syntax: \x02WAITING\x02\nLists pending vhost requests. Operators only." },
+    HelpEntry { cmd: "ACTIVATE", summary: "approve a request (operator)", detail: "Syntax: \x02ACTIVATE <account>\x02\nApproves a pending vhost request. Operators only." },
+    HelpEntry { cmd: "REJECT", summary: "reject a request (operator)", detail: "Syntax: \x02REJECT <account>\x02\nRejects a pending vhost request. Operators only." },
+    HelpEntry { cmd: "OFFER", summary: "add a menu vhost (operator)", detail: "Syntax: \x02OFFER <host>\x02\nAdds a vhost to the self-serve menu. Operators only." },
+    HelpEntry { cmd: "OFFERDEL", summary: "remove a menu vhost (operator)", detail: "Syntax: \x02OFFERDEL <number>\x02\nRemoves a menu entry (see OFFERLIST). Operators only." },
+    HelpEntry { cmd: "FORBID", summary: "forbid a vhost pattern (operator)", detail: "Syntax: \x02FORBID <regex>\x02\nForbids vhosts matching a pattern. Operators only." },
+    HelpEntry { cmd: "FORBIDDEL", summary: "remove a forbidden pattern (operator)", detail: "Syntax: \x02FORBIDDEL <number>\x02\nRemoves a forbidden pattern (see FORBIDLIST). Operators only." },
+];
 
 pub struct HostServ {
     pub uid: String,
@@ -71,7 +91,7 @@ impl Service for HostServ {
             Some("FORBIDDEL") => forbid::del(me, from, args, ctx, db),
             Some("TEMPLATE") => template::handle(me, from, args, ctx, db),
             Some("DEFAULT") => default::handle(me, from, ctx, db),
-            Some("HELP") | None => ctx.notice(me, from.uid, "HostServ gives you a vhost: \x02ON\x02 activates your assigned vhost, \x02OFF\x02 restores your normal host, \x02REQUEST\x02 <host> asks for one, \x02OFFERLIST\x02 + \x02TAKE\x02 <n> pick from the menu. Operators use \x02SET\x02/\x02DEL\x02 <account>, \x02LIST\x02, \x02WAITING\x02 + \x02ACTIVATE\x02/\x02REJECT\x02, and \x02OFFER\x02/\x02OFFERDEL\x02 for the menu."),
+            Some("HELP") | None => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
         }
     }

@@ -1150,7 +1150,7 @@ pub fn help(me: &str, from: &Sender, ctx: &mut ServiceCtx, blurb: &str, topics: 
             }
             ctx.notice(me, from.uid, "Type \x02HELP <command>\x02 for detail on one command.");
         }
-        Some(t) => match topics.iter().find(|e| e.cmd.eq_ignore_ascii_case(t)) {
+        Some(t) => match topics.iter().find(|e| e.cmd.split('/').any(|c| c.eq_ignore_ascii_case(t))) {
             Some(e) => {
                 for line in e.detail.lines() {
                     ctx.notice(me, from.uid, line);
@@ -1212,5 +1212,64 @@ mod tests {
         assert!(!p.has(Priv::Suspend), "only granted privileges are held");
         assert!(p.any());
         assert!(!Privs::default().any(), "empty set is not an oper");
+    }
+}
+
+#[cfg(test)]
+mod help_tests {
+    use super::*;
+
+    fn texts(ctx: &ServiceCtx) -> Vec<String> {
+        ctx.actions
+            .iter()
+            .filter_map(|a| match a {
+                NetAction::Notice { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    const T: &[HelpEntry] = &[
+        HelpEntry { cmd: "REGISTER", summary: "register your nick", detail: "Syntax: REGISTER <password>\nRegisters your nick." },
+        HelpEntry { cmd: "OP/DEOP", summary: "give or take op", detail: "Syntax: OP <#chan>\nGives or takes op." },
+    ];
+
+    fn sender<'a>() -> Sender<'a> {
+        Sender { uid: "u1", nick: "nick", account: None, privs: Privs::default() }
+    }
+
+    #[test]
+    fn overview_lists_every_command() {
+        let mut ctx = ServiceCtx::default();
+        help("Svc", &sender(), &mut ctx, "the blurb", T, None);
+        let t = texts(&ctx);
+        assert_eq!(t[0], "the blurb");
+        assert!(t.iter().any(|l| l.contains("REGISTER") && l.contains("register your nick")));
+        assert!(t.iter().any(|l| l.contains("OP/DEOP")));
+        assert!(t.last().unwrap().contains("HELP <command>"));
+    }
+
+    #[test]
+    fn topic_shows_detail_lines_only() {
+        let mut ctx = ServiceCtx::default();
+        help("Svc", &sender(), &mut ctx, "the blurb", T, Some("register"));
+        let t = texts(&ctx);
+        assert!(t[0].contains("Syntax: REGISTER"));
+        assert!(t.iter().any(|l| l == "Registers your nick."));
+        assert!(!t.iter().any(|l| l == "the blurb"));
+    }
+
+    #[test]
+    fn topic_matches_a_slash_alias() {
+        let mut ctx = ServiceCtx::default();
+        help("Svc", &sender(), &mut ctx, "b", T, Some("DEOP"));
+        assert!(texts(&ctx)[0].contains("Syntax: OP"));
+    }
+
+    #[test]
+    fn unknown_topic_reports_no_help() {
+        let mut ctx = ServiceCtx::default();
+        help("Svc", &sender(), &mut ctx, "b", T, Some("nope"));
+        assert!(texts(&ctx)[0].contains("No help"));
     }
 }

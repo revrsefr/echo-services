@@ -3,12 +3,19 @@
 //! (a #channel argument, for its founder). `lib.rs` holds the dispatcher; each
 //! view lives in its own file.
 
-use echo_api::{NetView, Priv, Sender, Service, ServiceCtx, Store};
+use echo_api::{HelpEntry, NetView, Priv, Sender, Service, ServiceCtx, Store};
 
 #[path = "global.rs"]
 mod global;
 #[path = "channel.rs"]
 mod channel;
+
+const BLURB: &str = "StatServ reports statistics: \x02SERVER\x02 for network-wide counters (operators), or a \x02#channel\x02 for its activity (founder).";
+
+const TOPICS: &[HelpEntry] = &[
+    HelpEntry { cmd: "SERVER", summary: "network-wide statistics", detail: "Syntax: \x02SERVER\x02\nShows network-wide counters. Operators only. Also \x02GLOBAL\x02." },
+    HelpEntry { cmd: "CHANNEL", summary: "a channel's statistics", detail: "Syntax: \x02<#channel>\x02\nShows a channel's activity statistics. Available to the channel's founder." },
+];
 
 pub struct StatServ {
     pub uid: String,
@@ -30,15 +37,11 @@ impl Service for StatServ {
         match args.first().copied() {
             Some(chan) if chan.starts_with('#') => channel::handle(me, from, chan, ctx, net, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("SERVER") || cmd.eq_ignore_ascii_case("GLOBAL") => global::handle(me, from, ctx, net, db),
-            Some(cmd) if cmd.eq_ignore_ascii_case("HELP") => help(me, from, ctx),
-            None => help(me, from, ctx),
+            Some(cmd) if cmd.eq_ignore_ascii_case("HELP") => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
+            None => echo_api::help(me, from, ctx, BLURB, TOPICS, None),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02SERVER\x02, a \x02#channel\x02, or \x02HELP\x02.")),
         }
     }
-}
-
-fn help(me: &str, from: &Sender, ctx: &mut ServiceCtx) {
-    ctx.notice(me, from.uid, "StatServ reports statistics: \x02SERVER\x02 for network-wide counters (operators), or \x02<#channel>\x02 for a channel's activity (its founder).");
 }
 
 // Shared gate: the sender may see a channel's stats only as its founder or a

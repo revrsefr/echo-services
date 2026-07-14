@@ -3,7 +3,7 @@
 //! announcement to every user, and KILL to disconnect one. `lib.rs` dispatches;
 //! each command family is its own file.
 
-use echo_api::{NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "xline.rs"]
 mod xline;
@@ -80,13 +80,35 @@ impl Service for OperServ {
             Some(cmd) if cmd.eq_ignore_ascii_case("CHANKILL") => chankill::handle(me, from, args, ctx, net, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("LOGSEARCH") => logsearch::handle(me, from, args, ctx, net),
             Some(cmd) if cmd.eq_ignore_ascii_case("DEFCON") => defcon::handle(me, from, args, ctx, db),
-            Some(cmd) if cmd.eq_ignore_ascii_case("HELP") => help(me, from, ctx),
-            None => help(me, from, ctx),
+            Some(cmd) if cmd.eq_ignore_ascii_case("HELP") => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
+            None => echo_api::help(me, from, ctx, BLURB, TOPICS, None),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02HELP\x02.")),
         }
     }
 }
 
-fn help(me: &str, from: &Sender, ctx: &mut ServiceCtx) {
-    ctx.notice(me, from.uid, "OperServ holds network operator tools (Priv::Admin): \x02AKILL\x02 ADD|DEL|LIST (user@host bans), \x02SQLINE\x02 ADD|DEL|LIST (nick bans), \x02SNLINE\x02 ADD|DEL|LIST (realname bans), \x02SHUN\x02 ADD|DEL|LIST (silence a host), \x02CBAN\x02 ADD|DEL|LIST (ban a channel name), \x02CHANKILL\x02 <#chan> (clear a channel), \x02GLOBAL\x02 <message> (announce to everyone), \x02KILL\x02 <nick> [reason] (disconnect a user), \x02KICK\x02 <#chan> <nick> [reason], \x02MODE\x02 <#chan> <modes> [params], \x02IGNORE\x02 ADD|DEL|LIST (silence a user from services), \x02STATS\x02 (enforcement overview), \x02SVSNICK\x02 <nick> <newnick>, \x02SVSJOIN\x02 <nick> <#chan> [key], \x02INFO\x02 ADD|DEL <target> (staff notes — bulletins are on \x02InfoServ\x02), \x02OPER\x02 ADD|DEL|LIST (runtime operators), \x02SESSION\x02 LIST|VIEW + \x02EXCEPTION\x02 ADD|DEL|LIST (per-IP session limits), \x02JUPE\x02 <server> | DEL | LIST, \x02LOGSEARCH\x02 [pattern] (search the action log), \x02DEFCON\x02 [1-5] (network defence level).");
-}
+const BLURB: &str = "OperServ holds the network operator tools. Every command is operator-only.";
+
+const TOPICS: &[HelpEntry] = &[
+    HelpEntry { cmd: "AKILL", summary: "network-ban a user@host", detail: "Syntax: \x02AKILL ADD [+expiry] <user@host> <reason> | AKILL DEL <mask|number> | AKILL LIST [pattern]\x02\nA network-wide user@host ban." },
+    HelpEntry { cmd: "SQLINE", summary: "ban a nick pattern", detail: "Syntax: \x02SQLINE ADD [+expiry] <nick> <reason> | SQLINE DEL <mask|number> | SQLINE LIST [pattern]\x02\nBans matching nicknames." },
+    HelpEntry { cmd: "SNLINE", summary: "ban a realname pattern", detail: "Syntax: \x02SNLINE ADD [+expiry] <realname> <reason> | SNLINE DEL <mask|number> | SNLINE LIST [pattern]\x02\nBans matching real names." },
+    HelpEntry { cmd: "SHUN", summary: "silence a host", detail: "Syntax: \x02SHUN ADD [+expiry] <mask> <reason> | SHUN DEL <mask|number> | SHUN LIST [pattern]\x02\nSilences a matching host: it stays connected but can't act." },
+    HelpEntry { cmd: "CBAN", summary: "ban a channel name", detail: "Syntax: \x02CBAN ADD [+expiry] <#channel> <reason> | CBAN DEL <mask|number> | CBAN LIST [pattern]\x02\nBlocks matching channel names from being joined." },
+    HelpEntry { cmd: "CHANKILL", summary: "clear a channel", detail: "Syntax: \x02CHANKILL <#channel> [reason]\x02\nRemoves everyone from a channel and holds it briefly." },
+    HelpEntry { cmd: "GLOBAL", summary: "announce to everyone", detail: "Syntax: \x02GLOBAL <message>\x02\nSends a notice to every user on the network." },
+    HelpEntry { cmd: "KILL", summary: "disconnect a user", detail: "Syntax: \x02KILL <nick> [reason]\x02\nDisconnects a user from the network." },
+    HelpEntry { cmd: "KICK", summary: "kick from a channel", detail: "Syntax: \x02KICK <#channel> <nick> [reason]\x02\nKicks a user from a channel." },
+    HelpEntry { cmd: "MODE", summary: "set channel modes", detail: "Syntax: \x02MODE <#channel> <modes> [params]\x02\nSets modes on a channel." },
+    HelpEntry { cmd: "IGNORE", summary: "silence a user from services", detail: "Syntax: \x02IGNORE ADD [+expiry] <mask> [reason] | IGNORE DEL <mask> | IGNORE LIST\x02\nMakes services ignore commands from a matching user." },
+    HelpEntry { cmd: "STATS", summary: "enforcement overview", detail: "Syntax: \x02STATS\x02\nShows an overview of the enforcement lists." },
+    HelpEntry { cmd: "SVSNICK", summary: "force a nick change", detail: "Syntax: \x02SVSNICK <nick> <newnick>\x02\nForces a user to change nick." },
+    HelpEntry { cmd: "SVSJOIN", summary: "force a channel join", detail: "Syntax: \x02SVSJOIN <nick> <#channel> [key]\x02\nForces a user to join a channel." },
+    HelpEntry { cmd: "INFO", summary: "staff notes on a target", detail: "Syntax: \x02INFO <target> | INFO ADD <target> <note> | INFO DEL <target>\x02\nReads or sets staff notes on an account or channel. (Bulletins are on InfoServ.)" },
+    HelpEntry { cmd: "OPER", summary: "runtime operators", detail: "Syntax: \x02OPER ADD <account> <priv[,priv]> [+duration] | OPER DEL <account> | OPER LIST\x02\nGrants or revokes runtime operator privileges: auspex, suspend, admin." },
+    HelpEntry { cmd: "SESSION", summary: "inspect per-IP sessions", detail: "Syntax: \x02SESSION LIST <min> | SESSION VIEW <ip>\x02\nInspects per-IP session counts." },
+    HelpEntry { cmd: "EXCEPTION", summary: "session-limit exceptions", detail: "Syntax: \x02EXCEPTION ADD <ip-mask> <limit> [reason] | EXCEPTION DEL <ip-mask> | EXCEPTION LIST\x02\nAdjusts the per-IP session limit for a mask (0 = unlimited)." },
+    HelpEntry { cmd: "JUPE", summary: "jupe a server name", detail: "Syntax: \x02JUPE <server.name> [reason] | JUPE DEL <server.name> | JUPE LIST\x02\nBlocks a server name from linking." },
+    HelpEntry { cmd: "LOGSEARCH", summary: "search the action log", detail: "Syntax: \x02LOGSEARCH [pattern]\x02\nSearches the incident and action log." },
+    HelpEntry { cmd: "DEFCON", summary: "network defence level", detail: "Syntax: \x02DEFCON [1-5]\x02\nShows or sets the network defence level (5 = normal, 1 = lockdown)." },
+];

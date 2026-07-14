@@ -2,7 +2,7 @@
 //! and (in later slices) run fantasy commands. `lib.rs` holds the dispatcher;
 //! each command lives in its own file, matching NickServ/ChanServ.
 
-use echo_api::{NetView, Priv, Sender, Service, ServiceCtx, Store};
+use echo_api::{HelpEntry, NetView, Priv, Sender, Service, ServiceCtx, Store};
 
 #[path = "bot.rs"]
 mod bot;
@@ -37,6 +37,22 @@ fn require_channel_admin(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceC
     true
 }
 
+const BLURB: &str = "BotServ keeps service bots for your channels: assign a bot, speak through it, and configure kickers, badwords, and triggers.";
+
+const TOPICS: &[HelpEntry] = &[
+    HelpEntry { cmd: "ASSIGN", summary: "put a bot in a channel", detail: "Syntax: \x02ASSIGN <#channel> <bot>\x02\nPuts a service bot in your channel." },
+    HelpEntry { cmd: "UNASSIGN", summary: "remove a channel's bot", detail: "Syntax: \x02UNASSIGN <#channel>\x02\nRemoves the assigned bot from your channel." },
+    HelpEntry { cmd: "INFO", summary: "show bot/channel settings", detail: "Syntax: \x02INFO <bot | #channel>\x02\nShows a bot's details or a channel's bot settings." },
+    HelpEntry { cmd: "SAY", summary: "speak through the bot", detail: "Syntax: \x02SAY <#channel> <text>\x02\nSays a line as the channel's bot." },
+    HelpEntry { cmd: "ACT", summary: "action through the bot", detail: "Syntax: \x02ACT <#channel> <text>\x02\nSends a /me action as the channel's bot." },
+    HelpEntry { cmd: "SET", summary: "configure bot behavior", detail: "Syntax: \x02SET <#channel> <GREET|BANEXPIRE|NOBOT|VOTEKICK> <value>\x02, or \x02SET <bot> PRIVATE <ON|OFF>\x02\nConfigures a channel's bot behavior, or marks a bot private." },
+    HelpEntry { cmd: "KICK", summary: "configure kickers", detail: "Syntax: \x02KICK <#channel> <CAPS|FLOOD|REPEAT|BADWORDS|...> <ON|OFF> [params]\x02, or \x02KICK <#channel> TTB <n> | TEST <message>\x02\nConfigures a channel's automatic kickers." },
+    HelpEntry { cmd: "BADWORDS", summary: "manage badword patterns", detail: "Syntax: \x02BADWORDS <#channel> ADD|DEL|LIST|CLEAR [pattern]\x02\nManages the channel's badword patterns." },
+    HelpEntry { cmd: "TRIGGER", summary: "manage auto-responses", detail: "Syntax: \x02TRIGGER <#channel> ADD <regex>|<response>[|<cooldown>] | DEL <num> | LIST | CLEAR\x02\nManages the channel's auto-response triggers." },
+    HelpEntry { cmd: "COPY", summary: "clone bot settings", detail: "Syntax: \x02COPY <#source> <#dest>\x02\nClones a channel's bot settings to another channel." },
+    HelpEntry { cmd: "BOT", summary: "manage the bots (operator)", detail: "Syntax: \x02BOT ADD|CHANGE|DEL|LIST\x02\nCreates and manages the service bots themselves. Operators only." },
+];
+
 pub struct BotServ {
     pub uid: String,
 }
@@ -66,7 +82,7 @@ impl Service for BotServ {
             Some("BADWORDS") => badwords::handle(me, from, args, ctx, db),
             Some("COPY") => copy::handle(me, from, args, ctx, db),
             Some("TRIGGER") => trigger::handle(me, from, args, ctx, db),
-            Some("HELP") | None => ctx.notice(me, from.uid, "BotServ keeps service bots for your channels: \x02ASSIGN\x02 <#channel> <bot> puts a bot in your channel, \x02UNASSIGN\x02 <#channel> removes it, \x02INFO\x02 <bot|#channel> shows details, \x02SAY\x02/\x02ACT\x02 <#channel> <text> speaks through the bot, \x02SET\x02 <#channel> GREET <on|off> toggles greets, \x02KICK\x02 <#channel> <type> <on|off> configures kickers (with \x02TEST\x02/\x02WARN\x02/\x02TTB\x02), \x02BADWORDS\x02 and \x02TRIGGER\x02 <#channel> ADD|DEL|LIST manage badword regexes and auto-responses, \x02COPY\x02 <#src> <#dst> clones settings. Operators also have \x02BOT\x02 ADD|CHANGE|DEL|LIST."),
+            Some("HELP") | None => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
         }
     }

@@ -1,5 +1,5 @@
 use echo_api::{ChanError, ChannelView, Priv, Store};
-use echo_api::{Sender, Service, ServiceCtx};
+use echo_api::{HelpEntry, Sender, Service, ServiceCtx};
 use echo_api::NetView;
 
 #[path = "mode.rs"]
@@ -42,6 +42,35 @@ mod xop;
 #[path = "suspend.rs"]
 mod suspend;
 mod noexpire;
+
+const BLURB: &str = "ChanServ registers and looks after channels. Register a channel you hold ops in, then manage its access, modes, and topic.";
+
+const TOPICS: &[HelpEntry] = &[
+    HelpEntry { cmd: "REGISTER", summary: "register a channel", detail: "Syntax: \x02REGISTER <#channel>\x02\nRegisters a channel to you. You must currently hold ops in it." },
+    HelpEntry { cmd: "INFO", summary: "show channel information", detail: "Syntax: \x02INFO <#channel>\x02\nShows a channel's registration and settings." },
+    HelpEntry { cmd: "LIST", summary: "list registered channels", detail: "Syntax: \x02LIST\x02\nLists registered channels." },
+    HelpEntry { cmd: "SET", summary: "change founder or settings", detail: "Syntax: \x02SET <#channel> FOUNDER <account> | DESC <text> | SIGNKICK|PRIVATE|PEACE|SECUREOPS|KEEPTOPIC|TOPICLOCK {ON|OFF}\x02\nTransfers the founder or changes a channel setting." },
+    HelpEntry { cmd: "ACCESS", summary: "manage the access list", detail: "Syntax: \x02ACCESS <#channel> LIST | ADD <account> <op|voice> | DEL <account>\x02\nManages the channel access list." },
+    HelpEntry { cmd: "FLAGS", summary: "granular per-account flags", detail: "Syntax: \x02FLAGS <#channel> [account [+/-flags]]\x02\nViews or changes granular per-account channel flags." },
+    HelpEntry { cmd: "AOP/SOP/VOP", summary: "tiered access shortcuts", detail: "Syntax: \x02AOP|SOP|VOP <#channel> ADD <account> | DEL <account> | LIST\x02\nTiered shortcuts over ACCESS: AOP and SOP grant op, VOP grants voice." },
+    HelpEntry { cmd: "STATUS", summary: "show a user's access", detail: "Syntax: \x02STATUS <#channel> [nick]\x02\nShows a user's access level on a channel." },
+    HelpEntry { cmd: "OP/DEOP/VOICE/DEVOICE", summary: "give or take op/voice", detail: "Syntax: \x02OP|DEOP|VOICE|DEVOICE <#channel> [nick]\x02\nGives or takes channel op or voice." },
+    HelpEntry { cmd: "KICK", summary: "kick from the channel", detail: "Syntax: \x02KICK <#channel> <nick> [reason]\x02\nKicks a user from the channel." },
+    HelpEntry { cmd: "BAN/UNBAN", summary: "ban or unban a user", detail: "Syntax: \x02BAN <#channel> <nick> [reason]\x02, \x02UNBAN <#channel> [nick]\x02\nBans or unbans a user by host." },
+    HelpEntry { cmd: "AKICK", summary: "manage the auto-kick list", detail: "Syntax: \x02AKICK <#channel> ADD <mask> [reason] | DEL <mask> | LIST\x02\nManages the auto-kick list; matches are banned and kicked on join." },
+    HelpEntry { cmd: "ENFORCE", summary: "re-apply lock and access", detail: "Syntax: \x02ENFORCE <#channel>\x02\nRe-applies the mode-lock, access, and akick list to everyone present." },
+    HelpEntry { cmd: "TOPIC", summary: "set the topic", detail: "Syntax: \x02TOPIC <#channel> <text>\x02\nSets the channel topic." },
+    HelpEntry { cmd: "ENTRYMSG", summary: "message on join", detail: "Syntax: \x02ENTRYMSG <#channel> [CLEAR | <text>]\x02\nSets a message noticed to users as they join." },
+    HelpEntry { cmd: "INVITE", summary: "invite into the channel", detail: "Syntax: \x02INVITE <#channel> [nick]\x02\nInvites you, or a nick, into the channel." },
+    HelpEntry { cmd: "GETKEY", summary: "show the channel key", detail: "Syntax: \x02GETKEY <#channel>\x02\nShows the channel key (+k), if one is set." },
+    HelpEntry { cmd: "SEEN", summary: "when a nick was last seen", detail: "Syntax: \x02SEEN <nick>\x02\nShows when a nick was last seen." },
+    HelpEntry { cmd: "CLONE", summary: "copy channel settings", detail: "Syntax: \x02CLONE <source> <target>\x02\nCopies one channel's settings to another you own." },
+    HelpEntry { cmd: "MODE", summary: "set channel modes", detail: "Syntax: \x02MODE <#channel> <modes>\x02\nSets modes on the channel, e.g. MODE #chan +nt." },
+    HelpEntry { cmd: "MLOCK", summary: "lock channel modes", detail: "Syntax: \x02MLOCK <#channel> [modes]\x02\nLocks modes set or unset, e.g. MLOCK #chan +nt-s." },
+    HelpEntry { cmd: "DROP", summary: "delete the registration", detail: "Syntax: \x02DROP <#channel>\x02\nDeletes the channel registration." },
+    HelpEntry { cmd: "SUSPEND/UNSUSPEND", summary: "suspend a channel (operator)", detail: "Syntax: \x02SUSPEND <#channel> [+expiry] [reason]\x02, \x02UNSUSPEND <#channel>\x02\nSuspends or unsuspends a channel. Operators only." },
+    HelpEntry { cmd: "NOEXPIRE", summary: "pin against expiry (operator)", detail: "Syntax: \x02NOEXPIRE <#channel> {ON|OFF}\x02\nPins a channel so inactivity expiry never drops it. Operators only." },
+];
 
 pub struct ChanServ {
     pub uid: String,
@@ -237,7 +266,7 @@ impl Service for ChanServ {
             Some("AOP") => xop::handle(me, from, "AOP", "op", args, ctx, db),
             Some("SOP") => xop::handle(me, from, "SOP", "op", args, ctx, db),
             Some("VOP") => xop::handle(me, from, "VOP", "voice", args, ctx, db),
-            Some("HELP") => ctx.notice(me, from.uid, "ChanServ registers and looks after channels. Commands: \x02REGISTER\x02, \x02INFO\x02, \x02LIST\x02, \x02SET\x02, \x02ACCESS\x02, \x02FLAGS\x02, \x02AOP\x02/\x02SOP\x02/\x02VOP\x02, \x02STATUS\x02, \x02OP\x02/\x02DEOP\x02, \x02VOICE\x02/\x02DEVOICE\x02, \x02KICK\x02, \x02BAN\x02/\x02UNBAN\x02, \x02AKICK\x02, \x02ENFORCE\x02, \x02TOPIC\x02, \x02ENTRYMSG\x02, \x02INVITE\x02, \x02GETKEY\x02, \x02SEEN\x02, \x02CLONE\x02, \x02MODE\x02, \x02MLOCK\x02, \x02DROP\x02. Operators also have \x02SUSPEND\x02/\x02UNSUSPEND\x02 and \x02NOEXPIRE\x02 <#channel> {ON|OFF}."),
+            Some("HELP") => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
         }
