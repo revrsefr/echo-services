@@ -80,19 +80,9 @@ pub struct Oper {
 impl Config {
     // The account -> privileges table (casefolded keys) built from [[oper]].
     pub fn opers(&self) -> std::collections::HashMap<String, fedserv_api::Privs> {
-        use fedserv_api::{Priv, Privs};
         let mut map = std::collections::HashMap::new();
         for o in &self.oper {
-            let mut privs = Privs::default();
-            for p in &o.privs {
-                match p.to_ascii_lowercase().as_str() {
-                    "auspex" => privs = privs.with(Priv::Auspex),
-                    "suspend" => privs = privs.with(Priv::Suspend),
-                    "admin" => privs = privs.with(Priv::Admin),
-                    other => tracing::warn!(privilege = other, account = %o.account, "unknown oper privilege, ignoring"),
-                }
-            }
-            map.insert(o.account.to_ascii_lowercase(), privs);
+            map.insert(o.account.to_ascii_lowercase(), fedserv_api::Privs::from_names(&o.privs));
         }
         map
     }

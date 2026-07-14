@@ -247,9 +247,15 @@ impl Engine {
         self.opers = opers;
     }
 
-    // The privileges an account holds, empty if it is not an oper.
+    // The privileges an account holds, empty if it is not an oper. The declarative
+    // config opers and the runtime OPER grants are unioned, so either source can
+    // make an account an operator.
     fn oper_privs(&self, account: &str) -> Privs {
-        self.opers.get(&account.to_ascii_lowercase()).copied().unwrap_or_default()
+        let config = self.opers.get(&account.to_ascii_lowercase()).copied().unwrap_or_default();
+        match self.db.oper_privs_of(account) {
+            Some(runtime) => config.union(runtime),
+            None => config,
+        }
     }
 
     // Our services SID, needed to mint valid bot uids.
@@ -1604,6 +1610,8 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         },
         NewsAdded { kind, .. } => format!("added a \x02{kind}\x02 news item"),
         NewsDeleted { .. } => "removed a news item".to_string(),
+        OperGranted { account, privs } => format!("granted \x02{account}\x02 operator ({})", privs.join(", ")),
+        OperRevoked { account } => format!("revoked \x02{account}\x02's operator access"),
         AccountNoExpire { account, on } => {
             let verb = if *on { "pinned" } else { "unpinned" };
             format!("{verb} account \x02{account}\x02 against expiry")
@@ -4044,6 +4052,52 @@ mod tests {
             assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-admin refused {cmd}");
             assert!(!out.iter().any(|a| matches!(a, NetAction::ChannelMode { .. } | NetAction::Kick { .. })), "no action from non-admin {cmd}");
         }
+    }
+
+    // OperServ OPER: a runtime grant actually confers privileges (merged with the
+    // config opers), and revoking removes them. Admin-only.
+    #[test]
+    fn operserv_oper_grants_runtime_privileges() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-osoper.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("alice", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let denied = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied")));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAL".into(), nick: "alice".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAL".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+
+        // Before the grant, alice is a plain user — OperServ shuts her out.
+        assert!(denied(&os(&mut e, "000AAAAAL", "STATS")), "alice not an oper yet");
+
+        // Grant alice admin at runtime; now the same command works.
+        os(&mut e, "000AAAAAS", "OPER ADD alice admin");
+        assert!(!denied(&os(&mut e, "000AAAAAL", "STATS")), "alice is an oper after the grant");
+        assert!(os(&mut e, "000AAAAAS", "OPER LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("alice"))), "listed");
+
+        // Revoke; alice loses access again.
+        os(&mut e, "000AAAAAS", "OPER DEL alice");
+        assert!(denied(&os(&mut e, "000AAAAAL", "STATS")), "alice lost access after revoke");
+
+        // A config oper is not a runtime oper, so it can't be DEL'd here.
+        assert!(os(&mut e, "000AAAAAS", "OPER DEL staff").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't a runtime operator"))), "config oper untouched");
     }
 
     // OperServ NEWS: logon news greets everyone on connect, oper news greets an

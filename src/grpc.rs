@@ -172,7 +172,9 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::AccountOperNoteSet { .. }
         | Event::ChannelOperNoteSet { .. }
         | Event::NewsAdded { .. }
-        | Event::NewsDeleted { .. } => return None,
+        | Event::NewsDeleted { .. }
+        | Event::OperGranted { .. }
+        | Event::OperRevoked { .. } => return None,
     };
     Some(ReplicationEvent { origin: entry.origin().to_string(), seq: entry.seq(), lamport: entry.lamport(), kind: Some(kind) })
 }

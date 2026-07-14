@@ -181,6 +181,35 @@ impl Privs {
     pub fn any(self) -> bool {
         self.0 != 0
     }
+
+    // The union of two privilege sets (holds a privilege in either).
+    pub fn union(self, other: Privs) -> Self {
+        Privs(self.0 | other.0)
+    }
+
+    // Build a set from privilege names ("auspex"/"suspend"/"admin"), ignoring any
+    // that aren't recognised. Shared by the config loader and runtime OPER grants.
+    pub fn from_names<S: AsRef<str>>(names: &[S]) -> Self {
+        let mut privs = Privs::default();
+        for n in names {
+            match n.as_ref().to_ascii_lowercase().as_str() {
+                "auspex" => privs = privs.with(Priv::Auspex),
+                "suspend" => privs = privs.with(Priv::Suspend),
+                "admin" => privs = privs.with(Priv::Admin),
+                _ => {}
+            }
+        }
+        privs
+    }
+
+    // The privilege names held, for display.
+    pub fn names(self) -> Vec<&'static str> {
+        [(Priv::Auspex, "auspex"), (Priv::Suspend, "suspend"), (Priv::Admin, "admin")]
+            .into_iter()
+            .filter(|(p, _)| self.has(*p))
+            .map(|(_, n)| n)
+            .collect()
+    }
 }
 
 // Who sent the command, resolved by the engine (UID + current nick + the
@@ -731,6 +760,10 @@ pub trait Store {
     fn news_add(&mut self, kind: &str, text: &str, setter: &str) -> u64;
     fn news_del(&mut self, id: u64) -> bool;
     fn news(&self, kind: &str) -> Vec<NewsView>;
+    // Runtime operator grants (OperServ OPER), merged with config opers.
+    fn oper_grant(&mut self, account: &str, privs: Vec<String>);
+    fn oper_revoke(&mut self, account: &str) -> bool;
+    fn opers_list(&self) -> Vec<(String, Vec<String>)>;
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError>;
     fn drop_channel(&mut self, name: &str) -> Result<(), ChanError>;
     fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError>;

@@ -30,7 +30,7 @@ use super::scram::{self, Hash};
 // fedserv-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use fedserv_api::{
-    AccountView, AjoinView, AkillView, BotView, IgnoreView, MemoView, NewsView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
+    AccountView, AjoinView, AkillView, BotView, IgnoreView, MemoView, NewsView, Privs, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +188,9 @@ pub enum Event {
     // News items (OperServ NEWS). The stable `id` makes deletion order-independent.
     NewsAdded { id: u64, kind: String, text: String, setter: String, ts: u64 },
     NewsDeleted { id: u64 },
+    // Runtime operator grants (OperServ OPER).
+    OperGranted { account: String, privs: Vec<String> },
+    OperRevoked { account: String },
     // Network bans (OperServ AKILL / SQLINE). Global: a ban covers the whole
     // network, so every node holds the list and re-applies it at burst. `kind`
     // is the ircd X-line type and defaults to "G" for records predating it.
@@ -248,7 +251,9 @@ impl Event {
             | Event::AkillAdded { .. }
             | Event::AkillRemoved { .. }
             | Event::NewsAdded { .. }
-            | Event::NewsDeleted { .. } => Scope::Global,
+            | Event::NewsDeleted { .. }
+            | Event::OperGranted { .. }
+            | Event::OperRevoked { .. } => Scope::Global,
             Event::ChannelRegistered { .. }
             | Event::ChannelDropped { .. }
             | Event::ChannelMlock { .. }
@@ -359,6 +364,9 @@ pub struct NetData {
     pub akills: Vec<Akill>,
     pub news: Vec<News>,
     pub news_seq: u64,
+    // Runtime services operators (OperServ OPER), casefolded account -> privilege
+    // names. Merged with the declarative [[oper]] config at the engine.
+    pub opers: HashMap<String, Vec<String>>,
 }
 
 // A memo left for an account (MemoServ).
@@ -1083,6 +1091,9 @@ impl Db {
         }
         for n in &self.net.news {
             snapshot.push(Event::NewsAdded { id: n.id, kind: n.kind.clone(), text: n.text.clone(), setter: n.setter.clone(), ts: n.ts });
+        }
+        for (account, privs) in &self.net.opers {
+            snapshot.push(Event::OperGranted { account: account.clone(), privs: privs.clone() });
         }
         self.log.compact(snapshot)?;
         tracing::info!(before, after = self.log.len(), "compacted event log");
@@ -1882,6 +1893,33 @@ impl Db {
             .filter(|a| a.expires.is_none_or(|e| e > now))
             .map(|a| AkillView { kind: a.kind.clone(), mask: a.mask.clone(), setter: a.setter.clone(), reason: a.reason.clone(), ts: a.ts, expires: a.expires })
             .collect()
+    }
+
+    /// Grant runtime operator privileges to an account (replaces any existing).
+    pub fn oper_grant(&mut self, account: &str, privs: Vec<String>) {
+        let _ = self.log.append(Event::OperGranted { account: account.to_string(), privs: privs.clone() });
+        self.net.opers.insert(key(account), privs);
+    }
+
+    /// Revoke a runtime operator grant. Returns whether one existed.
+    pub fn oper_revoke(&mut self, account: &str) -> bool {
+        if !self.net.opers.contains_key(&key(account)) {
+            return false;
+        }
+        let _ = self.log.append(Event::OperRevoked { account: account.to_string() });
+        self.net.opers.remove(&key(account));
+        true
+    }
+
+    /// The runtime operator grants, as (account, privilege-names).
+    pub fn opers_list(&self) -> Vec<(String, Vec<String>)> {
+        self.net.opers.iter().map(|(a, p)| (a.clone(), p.clone())).collect()
+    }
+
+    /// The runtime privileges granted to an account, if any (config opers are
+    /// merged in separately by the engine).
+    pub fn oper_privs_of(&self, account: &str) -> Option<Privs> {
+        self.net.opers.get(&key(account)).map(|names| Privs::from_names(names))
     }
 
     /// Add a news item of `kind` ("logon"/"oper"). Returns its stable id.
@@ -2892,6 +2930,12 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::NewsDeleted { id } => {
             net.news.retain(|n| n.id != id);
         }
+        Event::OperGranted { account, privs } => {
+            net.opers.insert(key(&account), privs);
+        }
+        Event::OperRevoked { account } => {
+            net.opers.remove(&key(&account));
+        }
     }
 }
 
@@ -3162,6 +3206,15 @@ impl Store for Db {
     }
     fn news(&self, kind: &str) -> Vec<NewsView> {
         Db::news(self, kind)
+    }
+    fn oper_grant(&mut self, account: &str, privs: Vec<String>) {
+        Db::oper_grant(self, account, privs)
+    }
+    fn oper_revoke(&mut self, account: &str) -> bool {
+        Db::oper_revoke(self, account)
+    }
+    fn opers_list(&self) -> Vec<(String, Vec<String>)> {
+        Db::opers_list(self)
     }
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
         Db::register_channel(self, name, founder)
