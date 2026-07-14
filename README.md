@@ -22,9 +22,10 @@ workspace, each depending only on the `fedserv-api` SDK crate.
 - **`src/gossip.rs`** node-to-node replication over the logs.
 - **`modules/`** the loadable modules, each its own crate depending only on the
   `fedserv-api` SDK:
-  - **`modules/inspircd/`** (`fedserv-inspircd`) the ircd link layer. A `Protocol`
-    impl maps raw server-to-server lines to and from the normalized model, so the
-    engine never touches a raw line and a new ircd is one new crate.
+  - **`modules/protocol/inspircd/`** (`fedserv-inspircd`) the ircd link layer. A
+    `Protocol` impl maps raw server-to-server lines to and from the normalized
+    model, so the engine never touches a raw line and a new ircd is one new crate
+    under `modules/protocol/`.
   - **`modules/nickserv/`, `modules/chanserv/`, `modules/botserv/`,
     `modules/memoserv/`, `modules/statserv/`, `modules/hostserv/`, `modules/operserv/`**
     and diceserv, infoserv, reportserv, groupserv, chanfix, helpserv — the

@@ -12,7 +12,7 @@ There are two kinds of module.
 - A **protocol** (an ircd link like InspIRCd) implements `Protocol`.
 
 Both live in their own crate under `modules/`. `modules/example/` is a complete,
-minimal service to copy from; `modules/inspircd/` is the reference protocol.
+minimal service to copy from; `modules/protocol/inspircd/` is the reference protocol.
 
 ## A service, end to end
 
@@ -107,8 +107,9 @@ ignored.
 A protocol crate implements `Protocol`: it turns raw server-to-server lines into
 the normalized `NetEvent`s the engine understands, and turns the engine's
 `NetAction`s back into raw lines. The engine never sees a raw line, so supporting
-another ircd is one new crate — see `modules/inspircd/`. Wire it in `src/main.rs` where
-`InspIrcd` is constructed.
+another ircd is one new crate under `modules/protocol/` — see
+`modules/protocol/inspircd/`. Wire it in `src/main.rs` where `InspIrcd` is
+constructed.
 
 ## What the SDK deliberately does not give you
 

@@ -3,7 +3,7 @@
 # pseudo-clients and the ircd protocol link — live under modules/.
 members = [
     "api",
-    "modules/inspircd",
+    "modules/protocol/inspircd",
     "modules/chanserv",
     "modules/nickserv",
     "modules/example",
@@ -28,7 +28,7 @@ description = "Federated IRC services daemon (protocol-agnostic core, InspIRCd l
 
 [dependencies]
 fedserv-api = { path = "api" }
-fedserv-inspircd = { path = "modules/inspircd" }
+fedserv-inspircd = { path = "modules/protocol/inspircd" }
 fedserv-chanserv = { path = "modules/chanserv" }
 fedserv-nickserv = { path = "modules/nickserv" }
 fedserv-example = { path = "modules/example" }
