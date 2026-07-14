@@ -189,7 +189,12 @@ pub enum Event {
     NewsAdded { id: u64, kind: String, text: String, setter: String, ts: u64 },
     NewsDeleted { id: u64 },
     // Runtime operator grants (OperServ OPER).
-    OperGranted { account: String, privs: Vec<String> },
+    OperGranted {
+        account: String,
+        privs: Vec<String>,
+        #[serde(default)]
+        expires: Option<u64>,
+    },
     OperRevoked { account: String },
     // Session-limit exceptions (OperServ SESSION).
     SessionExceptionAdded { mask: String, limit: u32, reason: String },
@@ -378,9 +383,9 @@ pub struct NetData {
     pub akills: Vec<Akill>,
     pub news: Vec<News>,
     pub news_seq: u64,
-    // Runtime services operators (OperServ OPER), casefolded account -> privilege
-    // names. Merged with the declarative [[oper]] config at the engine.
-    pub opers: HashMap<String, Vec<String>>,
+    // Runtime services operators (OperServ OPER), casefolded account -> grant.
+    // Merged with the declarative [[oper]] config at the engine.
+    pub opers: HashMap<String, OperGrant>,
     // Session-limit exceptions (OperServ SESSION): per-IP-mask allowances.
     pub sess_exceptions: Vec<SessionException>,
 }
@@ -392,6 +397,14 @@ pub struct SessionException {
     pub mask: String,
     pub limit: u32,
     pub reason: String,
+}
+
+// A runtime operator grant: the privilege names and an optional absolute-unix
+// expiry (None = permanent), evaluated lazily like suspensions/vhosts.
+#[derive(Debug, Clone)]
+pub struct OperGrant {
+    pub privs: Vec<String>,
+    pub expires: Option<u64>,
 }
 
 // A memo left for an account (MemoServ).
@@ -1129,8 +1142,8 @@ impl Db {
         for n in &self.net.news {
             snapshot.push(Event::NewsAdded { id: n.id, kind: n.kind.clone(), text: n.text.clone(), setter: n.setter.clone(), ts: n.ts });
         }
-        for (account, privs) in &self.net.opers {
-            snapshot.push(Event::OperGranted { account: account.clone(), privs: privs.clone() });
+        for (account, grant) in &self.net.opers {
+            snapshot.push(Event::OperGranted { account: account.clone(), privs: grant.privs.clone(), expires: grant.expires });
         }
         for e in &self.net.sess_exceptions {
             snapshot.push(Event::SessionExceptionAdded { mask: e.mask.clone(), limit: e.limit, reason: e.reason.clone() });
@@ -1968,10 +1981,11 @@ impl Db {
             .max_by_key(|&l| if l == 0 { u32::MAX } else { l })
     }
 
-    /// Grant runtime operator privileges to an account (replaces any existing).
-    pub fn oper_grant(&mut self, account: &str, privs: Vec<String>) {
-        let _ = self.log.append(Event::OperGranted { account: account.to_string(), privs: privs.clone() });
-        self.net.opers.insert(key(account), privs);
+    /// Grant runtime operator privileges to an account (replaces any existing),
+    /// optionally expiring at an absolute unix time.
+    pub fn oper_grant(&mut self, account: &str, privs: Vec<String>, expires: Option<u64>) {
+        let _ = self.log.append(Event::OperGranted { account: account.to_string(), privs: privs.clone(), expires });
+        self.net.opers.insert(key(account), OperGrant { privs, expires });
     }
 
     /// Revoke a runtime operator grant. Returns whether one existed.
@@ -1984,15 +1998,26 @@ impl Db {
         true
     }
 
-    /// The runtime operator grants, as (account, privilege-names).
-    pub fn opers_list(&self) -> Vec<(String, Vec<String>)> {
-        self.net.opers.iter().map(|(a, p)| (a.clone(), p.clone())).collect()
+    /// The live runtime operator grants, as (account, privilege-names, expiry);
+    /// expired ones are hidden.
+    pub fn opers_list(&self) -> Vec<(String, Vec<String>, Option<u64>)> {
+        let now = now();
+        self.net
+            .opers
+            .iter()
+            .filter(|(_, g)| g.expires.is_none_or(|e| e > now))
+            .map(|(a, g)| (a.clone(), g.privs.clone(), g.expires))
+            .collect()
     }
 
-    /// The runtime privileges granted to an account, if any (config opers are
-    /// merged in separately by the engine).
-    pub fn oper_privs_of(&self, account: &str) -> Option<Privs> {
-        self.net.opers.get(&key(account)).map(|names| Privs::from_names(names))
+    /// The runtime privileges granted to an account as of `now`, if the grant is
+    /// present and unexpired (config opers are merged in separately by the engine).
+    pub fn oper_privs_of(&self, account: &str, now: u64) -> Option<Privs> {
+        self.net
+            .opers
+            .get(&key(account))
+            .filter(|g| g.expires.is_none_or(|e| e > now))
+            .map(|g| Privs::from_names(&g.privs))
     }
 
     /// Add a news item of `kind` ("logon"/"oper"). Returns its stable id.
@@ -3027,8 +3052,8 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::NewsDeleted { id } => {
             net.news.retain(|n| n.id != id);
         }
-        Event::OperGranted { account, privs } => {
-            net.opers.insert(key(&account), privs);
+        Event::OperGranted { account, privs, expires } => {
+            net.opers.insert(key(&account), OperGrant { privs, expires });
         }
         Event::OperRevoked { account } => {
             net.opers.remove(&key(&account));
@@ -3320,13 +3345,13 @@ impl Store for Db {
     fn news(&self, kind: &str) -> Vec<NewsView> {
         Db::news(self, kind)
     }
-    fn oper_grant(&mut self, account: &str, privs: Vec<String>) {
-        Db::oper_grant(self, account, privs)
+    fn oper_grant(&mut self, account: &str, privs: Vec<String>, expires: Option<u64>) {
+        Db::oper_grant(self, account, privs, expires)
     }
     fn oper_revoke(&mut self, account: &str) -> bool {
         Db::oper_revoke(self, account)
     }
-    fn opers_list(&self) -> Vec<(String, Vec<String>)> {
+    fn opers_list(&self) -> Vec<(String, Vec<String>, Option<u64>)> {
         Db::opers_list(self)
     }
     fn session_except_add(&mut self, mask: &str, limit: u32, reason: &str) {

@@ -780,10 +780,11 @@ pub trait Store {
     fn news_add(&mut self, kind: &str, text: &str, setter: &str) -> u64;
     fn news_del(&mut self, id: u64) -> bool;
     fn news(&self, kind: &str) -> Vec<NewsView>;
-    // Runtime operator grants (OperServ OPER), merged with config opers.
-    fn oper_grant(&mut self, account: &str, privs: Vec<String>);
+    // Runtime operator grants (OperServ OPER), merged with config opers. `expires`
+    // is an absolute unix time (None = permanent); opers_list hides expired ones.
+    fn oper_grant(&mut self, account: &str, privs: Vec<String>, expires: Option<u64>);
     fn oper_revoke(&mut self, account: &str) -> bool;
-    fn opers_list(&self) -> Vec<(String, Vec<String>)>;
+    fn opers_list(&self) -> Vec<(String, Vec<String>, Option<u64>)>;
     // Session-limit exceptions (OperServ SESSION EXCEPTION).
     fn session_except_add(&mut self, mask: &str, limit: u32, reason: &str);
     fn session_except_del(&mut self, mask: &str) -> bool;

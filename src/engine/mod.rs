@@ -255,7 +255,7 @@ impl Engine {
     // make an account an operator.
     fn oper_privs(&self, account: &str) -> Privs {
         let config = self.opers.get(&account.to_ascii_lowercase()).copied().unwrap_or_default();
-        match self.db.oper_privs_of(account) {
+        match self.db.oper_privs_of(account, self.now_secs()) {
             Some(runtime) => config.union(runtime),
             None => config,
         }
@@ -1671,7 +1671,7 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         },
         NewsAdded { kind, .. } => format!("added a \x02{kind}\x02 news item"),
         NewsDeleted { .. } => "removed a news item".to_string(),
-        OperGranted { account, privs } => format!("granted \x02{account}\x02 operator ({})", privs.join(", ")),
+        OperGranted { account, privs, .. } => format!("granted \x02{account}\x02 operator ({})", privs.join(", ")),
         OperRevoked { account } => format!("revoked \x02{account}\x02's operator access"),
         SessionExceptionAdded { mask, limit, .. } => format!("set a session exception \x02{mask}\x02 (limit {limit})"),
         SessionExceptionRemoved { mask } => format!("removed the session exception \x02{mask}\x02"),
@@ -4391,6 +4391,45 @@ mod tests {
 
         // A config oper is not a runtime oper, so it can't be DEL'd here.
         assert!(os(&mut e, "000AAAAAS", "OPER DEL staff").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't a runtime operator"))), "config oper untouched");
+    }
+
+    // A temporary OPER grant confers privileges until it lazily expires.
+    #[test]
+    fn operserv_oper_grant_can_expire() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-opertmp.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("temp", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let denied = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied")));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAP".into(), nick: "temp".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAP".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+
+        // A one-hour admin grant is active now...
+        os(&mut e, "000AAAAAS", "OPER ADD temp admin +1h");
+        assert!(!denied(&os(&mut e, "000AAAAAP", "STATS")), "active while granted");
+        assert!(os(&mut e, "000AAAAAS", "OPER LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("temp") && text.contains("temporary"))), "listed as temporary");
+
+        // ...but not after its window passes.
+        e.now_override = Some(10_000_000_000);
+        assert!(denied(&os(&mut e, "000AAAAAP", "STATS")), "expired grant confers nothing");
     }
 
     // OperServ NEWS: logon news greets everyone on connect, oper news greets an
