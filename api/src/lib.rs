@@ -86,6 +86,12 @@ pub enum NetAction {
     Topic { from: String, channel: String, topic: String },
     // Invite a user to a channel, sourced from pseudoclient `from`.
     Invite { from: String, uid: String, channel: String },
+    // Add a network ban (X-line — `kind` is the ircd's line type, e.g. "G" for a
+    // G-line) covering `mask`, applied to matching users already online and to
+    // future connections. `duration` in seconds, 0 = permanent.
+    AddLine { kind: String, mask: String, setter: String, duration: u64, reason: String },
+    // Lift a network ban previously set with AddLine.
+    DelLine { kind: String, mask: String },
     Raw(String),
     // Internal only, never serialized to the wire: a registration whose password
     // still needs its (expensive) key derivation. The link layer runs the
@@ -324,6 +330,22 @@ impl ServiceCtx {
             channel: channel.to_string(),
         });
     }
+
+    // Set a network ban (X-line) at the ircd. `duration` seconds, 0 = permanent.
+    pub fn add_line(&mut self, kind: &str, mask: &str, setter: &str, duration: u64, reason: &str) {
+        self.actions.push(NetAction::AddLine {
+            kind: kind.to_string(),
+            mask: mask.to_string(),
+            setter: setter.to_string(),
+            duration,
+            reason: reason.to_string(),
+        });
+    }
+
+    // Lift a network ban previously set with `add_line`.
+    pub fn del_line(&mut self, kind: &str, mask: &str) {
+        self.actions.push(NetAction::DelLine { kind: kind.to_string(), mask: mask.to_string() });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +405,16 @@ pub struct VhostView {
     pub account: String,
     pub host: String,
     pub setter: String,
+    pub expires: Option<u64>,
+}
+
+// A network ban (AKILL / G-line) held by OperServ.
+#[derive(Debug, Clone)]
+pub struct AkillView {
+    pub mask: String,
+    pub setter: String,
+    pub reason: String,
+    pub ts: u64,
     pub expires: Option<u64>,
 }
 
@@ -632,6 +664,12 @@ pub trait Store {
     // Inactivity-expiry pins (oper-only, gated on Priv::Admin at the command layer).
     fn set_account_noexpire(&mut self, account: &str, on: bool) -> Result<bool, RegError>;
     fn set_channel_noexpire(&mut self, channel: &str, on: bool) -> Result<bool, ChanError>;
+    // Network bans (AKILL / G-lines, oper-only). `akill_add` returns whether the
+    // mask was newly added (false = an existing entry was refreshed); `akills`
+    // lists only entries that haven't lazily expired, oldest first.
+    fn akill_add(&mut self, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError>;
+    fn akill_del(&mut self, mask: &str) -> Result<bool, RegError>;
+    fn akills(&self) -> Vec<AkillView>;
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError>;
     fn drop_channel(&mut self, name: &str) -> Result<(), ChanError>;
     fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError>;

@@ -30,7 +30,7 @@ use super::scram::{self, Hash};
 // fedserv-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use fedserv_api::{
-    AccountView, AjoinView, BotView, MemoView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
+    AccountView, AjoinView, AkillView, BotView, MemoView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,6 +172,10 @@ pub enum Event {
     ChannelUsed { channel: String, ts: u64 },
     AccountNoExpire { account: String, on: bool },
     ChannelNoExpire { channel: String, on: bool },
+    // Network bans (OperServ AKILL). Global: a ban covers the whole network, so
+    // every node holds the list and re-applies it at burst.
+    AkillAdded { mask: String, setter: String, reason: String, ts: u64, expires: Option<u64> },
+    AkillRemoved { mask: String },
 }
 
 // Whether an event replicates across the federation. Account identity is Global
@@ -209,7 +213,9 @@ impl Event {
             | Event::NickGrouped { .. }
             | Event::NickUngrouped { .. }
             | Event::AccountSeen { .. }
-            | Event::AccountNoExpire { .. } => Scope::Global,
+            | Event::AccountNoExpire { .. }
+            | Event::AkillAdded { .. }
+            | Event::AkillRemoved { .. } => Scope::Global,
             Event::ChannelRegistered { .. }
             | Event::ChannelDropped { .. }
             | Event::ChannelMlock { .. }
@@ -261,6 +267,18 @@ pub struct ChanAkick {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Suspension {
     pub by: String,
+    pub reason: String,
+    pub ts: u64,
+    #[serde(default)]
+    pub expires: Option<u64>,
+}
+
+// A network ban (AKILL / G-line): a user@host mask, who set it, why, when, and
+// an optional absolute-unix-seconds expiry (None = permanent).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Akill {
+    pub mask: String,
+    pub setter: String,
     pub reason: String,
     pub ts: u64,
     #[serde(default)]
@@ -828,6 +846,8 @@ pub struct Db {
     // HostServ node config: the self-serve offer menu, the forbidden-pattern
     // blocklist, and the auto-vhost template.
     host_cfg: HostConfig,
+    // Network bans (OperServ AKILL), in insertion order.
+    akills: Vec<Akill>,
 }
 
 // Network-wide HostServ configuration, rebuilt from the event log.
@@ -878,11 +898,12 @@ impl Db {
         let mut grouped = HashMap::new();
         let mut bots = HashMap::new();
         let mut host_cfg = HostConfig::default();
+        let mut akills = Vec::new();
         for event in events {
-            apply(&mut accounts, &mut channels, &mut grouped, &mut bots, &mut host_cfg, event);
+            apply(&mut accounts, &mut channels, &mut grouped, &mut bots, &mut host_cfg, &mut akills, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), bots, host_cfg }
+        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), bots, host_cfg, akills }
     }
 
     /// Fold an entry authored by another node into the store — the services-side
@@ -898,7 +919,7 @@ impl Db {
             _ => None,
         };
         if let Some(event) = self.log.ingest(entry)? {
-            apply(&mut self.accounts, &mut self.channels, &mut self.grouped, &mut self.bots, &mut self.host_cfg, event);
+            apply(&mut self.accounts, &mut self.channels, &mut self.grouped, &mut self.bots, &mut self.host_cfg, &mut self.akills, event);
         }
         if let Some((name, prev_home)) = watched {
             match (prev_home, self.account(&name).map(|c| c.home.clone())) {
@@ -967,6 +988,11 @@ impl Db {
         }
         if self.host_cfg.template.is_some() {
             snapshot.push(Event::VhostTemplateSet { template: self.host_cfg.template.clone() });
+        }
+        // Compaction is a good moment to forget akills that have already expired.
+        let now = now();
+        for a in self.akills.iter().filter(|a| a.expires.is_none_or(|e| e > now)) {
+            snapshot.push(Event::AkillAdded { mask: a.mask.clone(), setter: a.setter.clone(), reason: a.reason.clone(), ts: a.ts, expires: a.expires });
         }
         self.log.compact(snapshot)?;
         tracing::info!(before, after = self.log.len(), "compacted event log");
@@ -1644,6 +1670,38 @@ impl Db {
             .collect()
     }
 
+    /// Add (or refresh) a network ban. Returns whether the mask was newly added.
+    pub fn akill_add(&mut self, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
+        let fresh = !self.akills.iter().any(|a| a.mask.eq_ignore_ascii_case(mask) && a.expires.is_none_or(|e| e > now()));
+        self.log
+            .append(Event::AkillAdded { mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now(), expires })
+            .map_err(|_| RegError::Internal)?;
+        self.akills.retain(|a| !a.mask.eq_ignore_ascii_case(mask));
+        self.akills.push(Akill { mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now(), expires });
+        Ok(fresh)
+    }
+
+    /// Lift a network ban. Returns whether a live (non-expired) one was removed.
+    pub fn akill_del(&mut self, mask: &str) -> Result<bool, RegError> {
+        let existed = self.akills.iter().any(|a| a.mask.eq_ignore_ascii_case(mask) && a.expires.is_none_or(|e| e > now()));
+        if !existed {
+            return Ok(false);
+        }
+        self.log.append(Event::AkillRemoved { mask: mask.to_string() }).map_err(|_| RegError::Internal)?;
+        self.akills.retain(|a| !a.mask.eq_ignore_ascii_case(mask));
+        Ok(true)
+    }
+
+    /// The live network bans (expired ones hidden lazily), oldest first.
+    pub fn akills(&self) -> Vec<AkillView> {
+        let now = now();
+        self.akills
+            .iter()
+            .filter(|a| a.expires.is_none_or(|e| e > now))
+            .map(|a| AkillView { mask: a.mask.clone(), setter: a.setter.clone(), reason: a.reason.clone(), ts: a.ts, expires: a.expires })
+            .collect()
+    }
+
     /// The account's suspension record, if any (shown in INFO even once expired).
     pub fn suspension(&self, account: &str) -> Option<SuspensionView> {
         self.accounts
@@ -2284,7 +2342,7 @@ fn owns_over(held: &Account, claim: &Account) -> bool {
 
 // Fold one event into the store. Shared by log replay (`open`) and gossip
 // ingest, so both routes reconstruct identical state.
-fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String, ChannelInfo>, grouped: &mut HashMap<String, String>, bots: &mut HashMap<String, Bot>, host_cfg: &mut HostConfig, event: Event) {
+fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String, ChannelInfo>, grouped: &mut HashMap<String, String>, bots: &mut HashMap<String, Bot>, host_cfg: &mut HostConfig, akills: &mut Vec<Akill>, event: Event) {
     match event {
         Event::AccountRegistered(a) => {
             // Resolve a concurrent registration of the same name deterministically:
@@ -2540,6 +2598,15 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
                 c.noexpire = on;
             }
         }
+        Event::AkillAdded { mask, setter, reason, ts, expires } => {
+            // Keyed by mask (case-insensitive): a re-add refreshes in place, so
+            // replaying over a snapshot stays idempotent.
+            akills.retain(|a| !a.mask.eq_ignore_ascii_case(&mask));
+            akills.push(Akill { mask, setter, reason, ts, expires });
+        }
+        Event::AkillRemoved { mask } => {
+            akills.retain(|a| !a.mask.eq_ignore_ascii_case(&mask));
+        }
     }
 }
 
@@ -2772,6 +2839,15 @@ impl Store for Db {
     fn set_channel_noexpire(&mut self, channel: &str, on: bool) -> Result<bool, ChanError> {
         Db::set_channel_noexpire(self, channel, on)
     }
+    fn akill_add(&mut self, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
+        Db::akill_add(self, mask, setter, reason, expires)
+    }
+    fn akill_del(&mut self, mask: &str) -> Result<bool, RegError> {
+        Db::akill_del(self, mask)
+    }
+    fn akills(&self) -> Vec<AkillView> {
+        Db::akills(self)
+    }
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
         Db::register_channel(self, name, founder)
     }
@@ -2975,9 +3051,9 @@ mod tests {
             ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: ts, noexpire: false,
         };
         let converge = |first: &Account, second: &Account| {
-            let (mut acc, mut ch, mut gr, mut bo, mut hc) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HostConfig::default());
-            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, Event::AccountRegistered(Box::new(first.clone())));
-            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, Event::AccountRegistered(Box::new(second.clone())));
+            let (mut acc, mut ch, mut gr, mut bo, mut hc, mut ak) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HostConfig::default(), Vec::new());
+            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, &mut ak, Event::AccountRegistered(Box::new(first.clone())));
+            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, &mut ak, Event::AccountRegistered(Box::new(second.clone())));
             acc["alice"].password_hash.clone()
         };
         // Earlier registration wins, regardless of which claim applies first.

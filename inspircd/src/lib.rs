@@ -318,6 +318,14 @@ impl Protocol for InspIrcd {
             NetAction::Invite { from, uid, channel } => {
                 vec![format!(":{} INVITE {} {} 1 0", from, uid, channel)]
             }
+            // ADDLINE <type> <mask> <setter> <set-time> <duration> :<reason>. A
+            // duration of 0 is permanent; the ircd applies it to matching users
+            // already online and propagates it across the network.
+            NetAction::AddLine { kind, mask, setter, duration, reason } => {
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(self.ts);
+                vec![self.sourced(format!("ADDLINE {} {} {} {} {} :{}", kind, mask, setter, now, duration, reason))]
+            }
+            NetAction::DelLine { kind, mask } => vec![self.sourced(format!("DELLINE {} {}", kind, mask))],
             NetAction::Raw(s) => vec![s.clone()],
             // Internal: the link layer handles these before serialization.
             NetAction::DeferRegister { .. } | NetAction::DeferPassword { .. } | NetAction::SendEmail { .. } => vec![],
@@ -483,6 +491,23 @@ mod tests {
         });
         assert_eq!(lines, vec![":42SAAAAAA NOTICE 0IRAAAAAB :hiKILL 0IRAAAAAB :pwned".to_string()]);
         assert!(!lines[0].contains('\n') && !lines[0].contains('\r'));
+    }
+
+    // A network ban serializes to ADDLINE / DELLINE, sourced from our server.
+    #[test]
+    fn serializes_network_bans() {
+        let add = proto().serialize(&NetAction::AddLine {
+            kind: "G".into(),
+            mask: "*@evil.host".into(),
+            setter: "staff".into(),
+            duration: 3600,
+            reason: "spamming".into(),
+        });
+        assert_eq!(add.len(), 1);
+        assert!(add[0].starts_with(":42S ADDLINE G *@evil.host staff "), "{add:?}");
+        assert!(add[0].ends_with(" 3600 :spamming"), "{add:?}");
+        let del = proto().serialize(&NetAction::DelLine { kind: "G".into(), mask: "*@evil.host".into() });
+        assert_eq!(del, vec![":42S DELLINE G *@evil.host".to_string()]);
     }
 
     #[test]

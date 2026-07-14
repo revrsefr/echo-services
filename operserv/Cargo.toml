@@ -1,0 +1,8 @@
+[package]
+name = "fedserv-operserv"
+version = "0.0.1"
+edition = "2021"
+description = "OperServ: network operator tools, starting with AKILL network bans."
+
+[dependencies]
+fedserv-api = { path = "../api" }

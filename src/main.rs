@@ -20,6 +20,7 @@ use fedserv_chanserv::ChanServ;
 use fedserv_memoserv::MemoServ;
 use fedserv_statserv::StatServ;
 use fedserv_hostserv::HostServ;
+use fedserv_operserv::OperServ;
 use fedserv_example::ExampleServ;
 use fedserv_inspircd::InspIrcd;
 use fedserv_nickserv::NickServ;
@@ -81,6 +82,11 @@ async fn main() -> Result<()> {
     if enabled("hostserv") {
         services.push(Box::new(HostServ {
             uid: format!("{}AAAAAG", cfg.server.sid),
+        }));
+    }
+    if enabled("operserv") {
+        services.push(Box::new(OperServ {
+            uid: format!("{}AAAAAH", cfg.server.sid),
         }));
     }
     if enabled("example") {

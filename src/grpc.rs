@@ -164,7 +164,9 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::AccountSeen { .. }
         | Event::ChannelUsed { .. }
         | Event::AccountNoExpire { .. }
-        | Event::ChannelNoExpire { .. } => return None,
+        | Event::ChannelNoExpire { .. }
+        | Event::AkillAdded { .. }
+        | Event::AkillRemoved { .. } => return None,
     };
     Some(ReplicationEvent { origin: entry.origin().to_string(), seq: entry.seq(), lamport: entry.lamport(), kind: Some(kind) })
 }

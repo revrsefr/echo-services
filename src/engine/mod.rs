@@ -653,6 +653,13 @@ impl Engine {
         // clients in CAP LS (IRCv3 SASL 3.2).
         // Introduce the registered bots too.
         out.extend(self.reconcile_bots());
+        // Re-assert the network bans over the fresh link, each with its remaining
+        // duration so the ircd expires it at the right time (permanent = 0).
+        let now = self.now_secs();
+        for a in self.db.akills() {
+            let duration = a.expires.map(|e| e.saturating_sub(now)).unwrap_or(0);
+            out.push(NetAction::AddLine { kind: "G".to_string(), mask: a.mask, setter: a.setter, duration, reason: a.reason });
+        }
         out.push(NetAction::Metadata {
             target: "*".to_string(),
             key: "saslmechlist".to_string(),
@@ -1511,6 +1518,11 @@ fn audit_summary(event: &db::Event) -> Option<String> {
             Some(t) => format!("set the vhost template to \x02{t}\x02"),
             None => "cleared the vhost template".to_string(),
         },
+        AkillAdded { mask, reason, expires, .. } => {
+            let kind = if expires.is_some() { " (temporary)" } else { "" };
+            format!("set a network ban on \x02{mask}\x02{kind} ({reason})")
+        }
+        AkillRemoved { mask } => format!("lifted the network ban on \x02{mask}\x02"),
         AccountNoExpire { account, on } => {
             let verb = if *on { "pinned" } else { "unpinned" };
             format!("{verb} account \x02{account}\x02 against expiry")
@@ -3743,6 +3755,63 @@ mod tests {
         assert!(acct_note, "account expiry announced to audit channel");
         assert!(chan_note, "channel expiry announced to audit channel");
         assert!(unreg, "expired channel had +r cleared");
+    }
+
+    // OperServ AKILL: an admin adds/lists/removes network bans, they drive the
+    // ircd's G-lines, persist for re-assertion at burst, and non-admins are shut
+    // out entirely.
+    #[test]
+    fn operserv_akill_add_list_del_and_burst() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-akill.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("nobody", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        e.set_log_channel(Some("#services".into()));
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAN".into(), nick: "nobody".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAN".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+
+        // A non-admin can't even see OperServ exists beyond the refusal.
+        let denied = os(&mut e, "000AAAAAN", "AKILL ADD *@evil.host being evil");
+        assert!(denied.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-admin refused: {denied:?}");
+        assert!(!denied.iter().any(|a| matches!(a, NetAction::AddLine { .. })), "no ban from a non-admin");
+
+        // Admin adds a temporary ban: it drives a G-line and is audited.
+        let out = os(&mut e, "000AAAAAS", "AKILL ADD +1h *@evil.host spamming");
+        assert!(out.iter().any(|a| matches!(a, NetAction::AddLine { kind, mask, duration, .. } if kind == "G" && mask == "*@evil.host" && *duration == 3600)), "G-line added: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "#services" && text.contains("*@evil.host"))), "ban audited: {out:?}");
+
+        // A too-wide mask is refused outright.
+        assert!(os(&mut e, "000AAAAAS", "AKILL ADD *@* everything").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("too wide"))), "wildcard mask refused");
+
+        // LIST shows it, numbered.
+        assert!(os(&mut e, "000AAAAAS", "AKILL LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("1.") && text.contains("*@evil.host"))), "listed");
+
+        // It survives to burst: startup re-asserts the G-line with a remaining
+        // duration, not the original 3600.
+        assert!(e.startup_actions().iter().any(|a| matches!(a, NetAction::AddLine { mask, duration, .. } if mask == "*@evil.host" && *duration > 0 && *duration <= 3600)), "re-asserted at burst");
+
+        // DEL by number removes it and lifts the G-line.
+        let out = os(&mut e, "000AAAAAS", "AKILL DEL 1");
+        assert!(out.iter().any(|a| matches!(a, NetAction::DelLine { kind, mask } if kind == "G" && mask == "*@evil.host")), "G-line lifted: {out:?}");
+        assert!(os(&mut e, "000AAAAAS", "AKILL LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("No matching"))), "list now empty");
     }
 
     // NOEXPIRE is oper-only.
