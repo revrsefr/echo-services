@@ -99,8 +99,8 @@ if enabled("mymod") {
 services = ["nickserv", "chanserv", "mymod"]
 ```
 
-Omitting `[modules]` starts NickServ and ChanServ. A name that isn't built in is
-ignored.
+Omitting `[modules]` starts the full standard suite (every pseudo-client). A
+name that isn't built in is ignored.
 
 ## A protocol module
 

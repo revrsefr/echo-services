@@ -20,7 +20,8 @@ pub struct Config {
     // Absent = it does not start. Bind to localhost; a token is required.
     #[serde(default)]
     pub jsonrpc: Option<JsonRpc>,
-    // Which service modules to start. Absent = the built-in NickServ + ChanServ.
+    // Which service modules to start. Absent = the full standard suite (all the
+    // pseudo-clients); listing it trims that set. Every service is first-class.
     #[serde(default)]
     pub modules: Modules,
     // Services operators: accounts granted privileges. Absent = no opers.
@@ -132,8 +133,16 @@ impl Default for Modules {
     }
 }
 
+// The full standard suite: every pseudo-client is a first-class service and
+// comes up by default. An admin trims the list; there is no second tier.
 fn default_services() -> Vec<String> {
-    vec!["nickserv".to_string(), "chanserv".to_string(), "botserv".to_string(), "memoserv".to_string(), "statserv".to_string(), "hostserv".to_string(), "operserv".to_string(), "infoserv".to_string()]
+    [
+        "nickserv", "chanserv", "botserv", "hostserv", "memoserv", "operserv", "statserv",
+        "groupserv", "infoserv", "reportserv", "helpserv", "chanfix", "diceserv",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
 #[derive(Debug, Deserialize, Clone)]

@@ -53,9 +53,9 @@ async fn main() -> Result<()> {
         ts,
     ));
 
-    // Bring up the service modules named in [modules] (default NickServ +
-    // ChanServ). Each keeps a fixed uid suffix so its identity is stable no
-    // matter which others are enabled.
+    // Bring up the service modules named in [modules] (default: the full
+    // standard suite — every pseudo-client). Each keeps a fixed uid suffix so
+    // its identity is stable no matter which others are enabled.
     let enabled = |name: &str| cfg.modules.services.iter().any(|s| s == name);
     let mut services: Vec<Box<dyn engine::service::Service>> = Vec::new();
     if enabled("nickserv") {
