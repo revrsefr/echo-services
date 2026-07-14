@@ -121,9 +121,9 @@ pub enum RegReply {
     NickServ { agent: String, uid: String, nick: String },
 }
 
-// The ircd link layer. The engine only ever sees NetEvent / NetAction; raw
-// server-to-server lines live entirely behind a Protocol impl, so a new ircd is
-// one new module and the engine is untouched.
+/// The ircd link layer. The engine only ever sees [`NetEvent`] / [`NetAction`];
+/// raw server-to-server lines live entirely behind a `Protocol` impl, so a new
+/// ircd is one new module and the engine is untouched.
 pub trait Protocol: Send {
     /// Lines to send immediately on connect (auth / capability negotiation).
     fn handshake(&mut self) -> Vec<String>;
@@ -226,8 +226,9 @@ pub struct Sender<'a> {
     pub privs: Privs,
 }
 
-// The intent sink a service writes to. A service never mutates the network or
-// the store itself; it pushes normalized actions the engine drains and applies.
+/// The intent sink a service writes to. A service never mutates the network or
+/// the store itself; it pushes normalized actions (via [`ServiceCtx::notice`]
+/// and friends) that the engine drains and applies.
 #[derive(Default)]
 pub struct ServiceCtx {
     pub actions: Vec<NetAction>,
@@ -1075,6 +1076,10 @@ pub struct IncidentView {
 
 // A pseudo-client (NickServ, ChanServ, ...). Introduced at burst, receives the
 // commands users message it, reads/writes the store, and pushes actions.
+/// A pseudo-client such as NickServ or ChanServ. Implement this, register the
+/// crate in the daemon, and the engine routes a PRIVMSG addressed to the
+/// service into [`Service::on_command`]. A service touches the network and the
+/// store only through [`NetView`] and [`Store`].
 pub trait Service: Send {
     fn nick(&self) -> &str;
     fn uid(&self) -> &str;

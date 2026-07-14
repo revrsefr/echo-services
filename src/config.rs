@@ -278,6 +278,24 @@ fn default_scram_iterations() -> u32 {
 impl Config {
     pub fn load(path: &str) -> anyhow::Result<Self> {
         let raw = std::fs::read_to_string(path)?;
-        Ok(toml::from_str(&raw)?)
+        let cfg: Config = toml::from_str(&raw)?;
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    // Catch the common misconfigurations up front with a clear message, rather
+    // than failing cryptically at link time.
+    fn validate(&self) -> anyhow::Result<()> {
+        let sid = &self.server.sid;
+        if sid.len() != 3 || !sid.chars().all(|c| c.is_ascii_alphanumeric()) {
+            anyhow::bail!("server.sid must be exactly 3 alphanumeric characters (got {sid:?})");
+        }
+        if self.server.name.trim().is_empty() {
+            anyhow::bail!("server.name must not be empty");
+        }
+        if self.uplink.host.trim().is_empty() {
+            anyhow::bail!("uplink.host must not be empty");
+        }
+        Ok(())
     }
 }
