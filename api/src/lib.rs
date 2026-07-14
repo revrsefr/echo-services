@@ -130,6 +130,23 @@ pub trait Protocol: Send {
     fn sid(&self) -> &str;
 }
 
+// Whether a channel mode consumes a parameter, given the direction (`adding`).
+// The canonical arity for the standard chanmodes, shared by the protocol module
+// (parsing bursts) and services (building a MODE change): list and prefix modes
+// and the key take a parameter both ways; the rest that take one do so only when
+// set. A single source of truth so the two never drift.
+pub fn chanmode_takes_param(m: char, adding: bool) -> bool {
+    match m {
+        'b' | 'e' | 'I' | 'q' | 'a' | 'o' | 'h' | 'v' | 'k' => true,
+        'l' | 'L' | 'f' | 'j' | 'J' | 'F' | 'H' => adding,
+        _ => false,
+    }
+}
+
+// The channel prefix (status) modes, whose parameter is a nick/uid rather than a
+// mask or value.
+pub const STATUS_MODES: &str = "qaohv";
+
 // ---------------------------------------------------------------------------
 // Service vocabulary
 // ---------------------------------------------------------------------------

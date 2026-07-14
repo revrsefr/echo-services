@@ -11,6 +11,10 @@ mod xline;
 mod global;
 #[path = "kill.rs"]
 mod kill;
+#[path = "kick.rs"]
+mod kick;
+#[path = "mode.rs"]
+mod mode;
 
 pub struct OperServ {
     pub uid: String,
@@ -39,6 +43,8 @@ impl Service for OperServ {
             Some(cmd) if cmd.eq_ignore_ascii_case("SQLINE") => xline::SQLINE.handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("GLOBAL") => global::handle(me, from, args, ctx),
             Some(cmd) if cmd.eq_ignore_ascii_case("KILL") => kill::handle(me, from, args, ctx, net),
+            Some(cmd) if cmd.eq_ignore_ascii_case("KICK") => kick::handle(me, from, args, ctx, net),
+            Some(cmd) if cmd.eq_ignore_ascii_case("MODE") => mode::handle(me, from, args, ctx, net),
             Some(cmd) if cmd.eq_ignore_ascii_case("HELP") => help(me, from, ctx),
             None => help(me, from, ctx),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02HELP\x02.")),
@@ -47,5 +53,5 @@ impl Service for OperServ {
 }
 
 fn help(me: &str, from: &Sender, ctx: &mut ServiceCtx) {
-    ctx.notice(me, from.uid, "OperServ holds network operator tools (Priv::Admin): \x02AKILL\x02 ADD|DEL|LIST (user@host bans), \x02SQLINE\x02 ADD|DEL|LIST (nick bans), \x02GLOBAL\x02 <message> (announce to everyone), \x02KILL\x02 <nick> [reason] (disconnect a user).");
+    ctx.notice(me, from.uid, "OperServ holds network operator tools (Priv::Admin): \x02AKILL\x02 ADD|DEL|LIST (user@host bans), \x02SQLINE\x02 ADD|DEL|LIST (nick bans), \x02GLOBAL\x02 <message> (announce to everyone), \x02KILL\x02 <nick> [reason] (disconnect a user), \x02KICK\x02 <#chan> <nick> [reason], \x02MODE\x02 <#chan> <modes> [params].");
 }

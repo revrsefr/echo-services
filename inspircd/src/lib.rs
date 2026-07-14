@@ -343,16 +343,9 @@ impl Protocol for InspIrcd {
     }
 }
 
-// Whether a channel mode consumes a parameter, for standard InspIRCd chanmodes.
-// List and prefix modes take one on both set and unset; the key takes one on
-// both; the rest that take one do so only on set.
-fn takes_param(m: char, adding: bool) -> bool {
-    match m {
-        'b' | 'e' | 'I' | 'q' | 'a' | 'o' | 'h' | 'v' | 'k' => true,
-        'l' | 'L' | 'f' | 'j' | 'J' | 'F' | 'H' => adding,
-        _ => false,
-    }
-}
+// Whether a channel mode consumes a parameter — the shared canonical arity, so
+// parsing here and MODE-building in services never drift.
+use fedserv_api::chanmode_takes_param as takes_param;
 
 // Walk a mode change and its params for a key (+k/-k). Returns Some(Some(key))
 // when a key is set, Some(None) when cleared, None when `k` isn't in the change.

@@ -3957,6 +3957,55 @@ mod tests {
         }
     }
 
+    // OperServ MODE (forced channel mode override, resolving a status-mode nick
+    // to its uid) and KICK (remove a user from a channel), both admin-gated.
+    #[test]
+    fn operserv_mode_and_kick() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-osmodekick.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("plain", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAP".into(), nick: "plain".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAP".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAT".into(), nick: "target".into(), host: "h".into() });
+
+        // A status mode's nick target is resolved to its uid in the FMODE.
+        let out = os(&mut e, "000AAAAAS", "MODE #room +o target");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { from, channel, modes } if from == "42SAAAAAH" && channel == "#room" && modes == "+o 000AAAAAT")), "status mode resolved: {out:?}");
+        // A paramless mode passes straight through.
+        let out = os(&mut e, "000AAAAAS", "MODE #room +mn");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+mn")), "paramless mode: {out:?}");
+
+        // KICK removes the user, attributed to the operator.
+        let out = os(&mut e, "000AAAAAS", "KICK #room target trolling");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { from, channel, uid, reason } if from == "42SAAAAAH" && channel == "#room" && uid == "000AAAAAT" && reason.contains("trolling") && reason.contains("staff"))), "kick issued: {out:?}");
+
+        // A non-admin gets nothing but a refusal.
+        for cmd in ["MODE #room +o target", "KICK #room target go"] {
+            let out = os(&mut e, "000AAAAAP", cmd);
+            assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-admin refused {cmd}");
+            assert!(!out.iter().any(|a| matches!(a, NetAction::ChannelMode { .. } | NetAction::Kick { .. })), "no action from non-admin {cmd}");
+        }
+    }
+
     // NOEXPIRE is oper-only.
     #[test]
     fn noexpire_command_is_oper_gated() {
