@@ -338,6 +338,15 @@ fn gline_kind() -> String {
     "G".to_string()
 }
 
+// A valid 3-char server id for a juped server from a counter: a leading digit
+// (kept high to avoid colliding with typical real SIDs) then two base-36 chars.
+fn jupe_sid(seq: u32) -> String {
+    const C: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let b = C[(seq / 36 % 36) as usize];
+    let c = C[(seq % 36) as usize];
+    String::from_utf8(vec![b'9', b, c]).unwrap()
+}
+
 // A services ignore: services silently drop commands from a matching user. Node-
 // local and in-memory (like the auth throttle) — a fast, transient moderation
 // tool, not persisted or federated.
@@ -956,6 +965,18 @@ pub struct Db {
     net: NetData,
     // Services ignores (OperServ IGNORE), node-local and in-memory.
     ignores: Vec<Ignore>,
+    // Juped servers (OperServ JUPE), node-local: the introducing node owns them,
+    // so they aren't federated (that would collide SIDs across nodes).
+    jupes: Vec<Jupe>,
+    jupe_seq: u32,
+}
+
+// A juped server: the held name, the fake server id we allocated for it, and why.
+#[derive(Debug, Clone)]
+pub struct Jupe {
+    pub name: String,
+    pub sid: String,
+    pub reason: String,
 }
 
 // Network-wide HostServ configuration, rebuilt from the event log.
@@ -1011,7 +1032,7 @@ impl Db {
             apply(&mut accounts, &mut channels, &mut grouped, &mut bots, &mut host_cfg, &mut net, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), bots, host_cfg, net, ignores: Vec::new() }
+        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), bots, host_cfg, net, ignores: Vec::new(), jupes: Vec::new(), jupe_seq: 0 }
     }
 
     /// Fold an entry authored by another node into the store — the services-side
@@ -2002,6 +2023,30 @@ impl Db {
             .filter(|n| n.kind == kind)
             .map(|n| NewsView { id: n.id, text: n.text.clone(), setter: n.setter.clone(), ts: n.ts })
             .collect()
+    }
+
+    /// Jupe a server name: allocate a fake sid, store it, return the sid to
+    /// introduce (or the existing sid if the name is already juped).
+    pub fn jupe_add(&mut self, name: &str, reason: &str) -> String {
+        if let Some(j) = self.jupes.iter().find(|j| j.name.eq_ignore_ascii_case(name)) {
+            return j.sid.clone();
+        }
+        let sid = jupe_sid(self.jupe_seq);
+        self.jupe_seq += 1;
+        self.jupes.push(Jupe { name: name.to_string(), sid: sid.clone(), reason: reason.to_string() });
+        sid
+    }
+
+    /// Lift a jupe. Returns the sid to squit if it existed.
+    pub fn jupe_del(&mut self, name: &str) -> Option<String> {
+        let sid = self.jupes.iter().find(|j| j.name.eq_ignore_ascii_case(name)).map(|j| j.sid.clone())?;
+        self.jupes.retain(|j| !j.name.eq_ignore_ascii_case(name));
+        Some(sid)
+    }
+
+    /// The juped servers, as (name, sid, reason).
+    pub fn jupes(&self) -> Vec<(String, String, String)> {
+        self.jupes.iter().map(|j| (j.name.clone(), j.sid.clone(), j.reason.clone())).collect()
     }
 
     /// Add a services ignore, replacing any existing entry for the same mask.
@@ -3244,6 +3289,15 @@ impl Store for Db {
     }
     fn ignores(&self) -> Vec<IgnoreView> {
         Db::ignores(self)
+    }
+    fn jupe_add(&mut self, name: &str, reason: &str) -> String {
+        Db::jupe_add(self, name, reason)
+    }
+    fn jupe_del(&mut self, name: &str) -> Option<String> {
+        Db::jupe_del(self, name)
+    }
+    fn jupes(&self) -> Vec<(String, String, String)> {
+        Db::jupes(self)
     }
     fn set_account_note(&mut self, account: &str, note: Option<String>) -> bool {
         Db::set_account_note(self, account, note)

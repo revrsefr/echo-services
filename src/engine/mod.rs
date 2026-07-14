@@ -719,6 +719,10 @@ impl Engine {
             let duration = a.expires.map(|e| e.saturating_sub(now)).unwrap_or(0);
             out.push(NetAction::AddLine { kind: a.kind, mask: a.mask, setter: a.setter, duration, reason: a.reason });
         }
+        // Re-introduce our juped servers over the fresh link.
+        for (name, sid, reason) in self.db.jupes() {
+            out.push(NetAction::JupeServer { name, sid, reason });
+        }
         out.push(NetAction::Metadata {
             target: "*".to_string(),
             key: "saslmechlist".to_string(),
@@ -4084,6 +4088,48 @@ mod tests {
             assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-admin refused {cmd}");
             assert!(!out.iter().any(|a| matches!(a, NetAction::ChannelMode { .. } | NetAction::Kick { .. })), "no action from non-admin {cmd}");
         }
+    }
+
+    // OperServ JUPE: hold a server name with a fake server, re-assert it at burst,
+    // and lift it with a squit. Admin-only.
+    #[test]
+    fn operserv_jupe_holds_and_lifts() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-osjupe.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "9.9.9.9".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+
+        // Juping introduces a fake server holding the name.
+        let out = os(&mut e, "000AAAAAS", "JUPE rogue.example evil twin");
+        assert!(out.iter().any(|a| matches!(a, NetAction::JupeServer { name, .. } if name == "rogue.example")), "jupe introduced: {out:?}");
+        // A bare name (no dot) isn't a server — syntax refused.
+        assert!(os(&mut e, "000AAAAAS", "JUPE notaserver").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Syntax"))), "needs a server name");
+
+        // It's re-introduced at burst.
+        assert!(e.startup_actions().iter().any(|a| matches!(a, NetAction::JupeServer { name, .. } if name == "rogue.example")), "re-asserted at burst");
+        // LIST shows it.
+        assert!(os(&mut e, "000AAAAAS", "JUPE LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("rogue.example"))), "listed");
+
+        // DEL squits the fake server.
+        assert!(os(&mut e, "000AAAAAS", "JUPE DEL rogue.example").iter().any(|a| matches!(a, NetAction::Squit { .. })), "squit on lift");
+        assert!(!e.startup_actions().iter().any(|a| matches!(a, NetAction::JupeServer { .. })), "gone after DEL");
     }
 
     // OperServ session limiting: the connection that puts an IP over its limit is

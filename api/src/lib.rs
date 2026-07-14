@@ -94,6 +94,11 @@ pub enum NetAction {
     DelLine { kind: String, mask: String },
     // Disconnect a user from the network, sourced from pseudoclient `from`.
     KillUser { from: String, uid: String, reason: String },
+    // Introduce a juped server (a fake server holding a name so the real one
+    // can't link), sourced from our server. `sid` is its allocated server id.
+    JupeServer { name: String, sid: String, reason: String },
+    // Delink a server (used to lift a jupe), by name or sid.
+    Squit { target: String, reason: String },
     Raw(String),
     // Internal only, never serialized to the wire: a registration whose password
     // still needs its (expensive) key derivation. The link layer runs the
@@ -404,6 +409,16 @@ impl ServiceCtx {
     // `from` (a "$*" server-glob target the ircd fans out to all users).
     pub fn global(&mut self, from: &str, text: impl Into<String>) {
         self.actions.push(NetAction::Notice { from: from.to_string(), to: "$*".to_string(), text: text.into() });
+    }
+
+    // Introduce a juped server holding `name` (with allocated `sid`).
+    pub fn jupe(&mut self, name: &str, sid: &str, reason: &str) {
+        self.actions.push(NetAction::JupeServer { name: name.to_string(), sid: sid.to_string(), reason: reason.to_string() });
+    }
+
+    // Delink a server by name or sid (lifts a jupe).
+    pub fn squit(&mut self, target: &str, reason: &str) {
+        self.actions.push(NetAction::Squit { target: target.to_string(), reason: reason.to_string() });
     }
 }
 
@@ -751,6 +766,11 @@ pub trait Store {
     fn ignore_add(&mut self, mask: &str, reason: &str, expires: Option<u64>);
     fn ignore_del(&mut self, mask: &str) -> bool;
     fn ignores(&self) -> Vec<IgnoreView>;
+    // Juped servers (node-local, oper-only). jupe_add returns the allocated sid;
+    // jupe_del returns the sid to squit if it existed.
+    fn jupe_add(&mut self, name: &str, reason: &str) -> String;
+    fn jupe_del(&mut self, name: &str) -> Option<String>;
+    fn jupes(&self) -> Vec<(String, String, String)>;
     // Staff notes on accounts/channels (oper-only), shown in INFO to operators.
     fn set_account_note(&mut self, account: &str, note: Option<String>) -> bool;
     fn account_note(&self, account: &str) -> Option<String>;
