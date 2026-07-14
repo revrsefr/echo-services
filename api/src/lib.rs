@@ -92,6 +92,8 @@ pub enum NetAction {
     AddLine { kind: String, mask: String, setter: String, duration: u64, reason: String },
     // Lift a network ban previously set with AddLine.
     DelLine { kind: String, mask: String },
+    // Disconnect a user from the network, sourced from pseudoclient `from`.
+    KillUser { from: String, uid: String, reason: String },
     Raw(String),
     // Internal only, never serialized to the wire: a registration whose password
     // still needs its (expensive) key derivation. The link layer runs the
@@ -346,6 +348,17 @@ impl ServiceCtx {
     pub fn del_line(&mut self, kind: &str, mask: &str) {
         self.actions.push(NetAction::DelLine { kind: kind.to_string(), mask: mask.to_string() });
     }
+
+    // Disconnect a user, sourced from pseudoclient `from`.
+    pub fn kill(&mut self, from: &str, uid: &str, reason: &str) {
+        self.actions.push(NetAction::KillUser { from: from.to_string(), uid: uid.to_string(), reason: reason.to_string() });
+    }
+
+    // Send a notice to every user on the network, sourced from pseudoclient
+    // `from` (a "$*" server-glob target the ircd fans out to all users).
+    pub fn global(&mut self, from: &str, text: impl Into<String>) {
+        self.actions.push(NetAction::Notice { from: from.to_string(), to: "$*".to_string(), text: text.into() });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -408,9 +421,10 @@ pub struct VhostView {
     pub expires: Option<u64>,
 }
 
-// A network ban (AKILL / G-line) held by OperServ.
+// A network ban held by OperServ. `kind` is the ircd X-line type ("G", "Q", …).
 #[derive(Debug, Clone)]
 pub struct AkillView {
+    pub kind: String,
     pub mask: String,
     pub setter: String,
     pub reason: String,
@@ -667,8 +681,8 @@ pub trait Store {
     // Network bans (AKILL / G-lines, oper-only). `akill_add` returns whether the
     // mask was newly added (false = an existing entry was refreshed); `akills`
     // lists only entries that haven't lazily expired, oldest first.
-    fn akill_add(&mut self, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError>;
-    fn akill_del(&mut self, mask: &str) -> Result<bool, RegError>;
+    fn akill_add(&mut self, kind: &str, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError>;
+    fn akill_del(&mut self, kind: &str, mask: &str) -> Result<bool, RegError>;
     fn akills(&self) -> Vec<AkillView>;
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError>;
     fn drop_channel(&mut self, name: &str) -> Result<(), ChanError>;

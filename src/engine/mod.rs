@@ -682,7 +682,7 @@ impl Engine {
         let now = self.now_secs();
         for a in self.db.akills() {
             let duration = a.expires.map(|e| e.saturating_sub(now)).unwrap_or(0);
-            out.push(NetAction::AddLine { kind: "G".to_string(), mask: a.mask, setter: a.setter, duration, reason: a.reason });
+            out.push(NetAction::AddLine { kind: a.kind, mask: a.mask, setter: a.setter, duration, reason: a.reason });
         }
         out.push(NetAction::Metadata {
             target: "*".to_string(),
@@ -1495,6 +1495,14 @@ impl Engine {
     }
 }
 
+// A human label for a network-ban X-line kind, for the audit feed.
+fn ban_kind_label(kind: &str) -> &'static str {
+    match kind {
+        "Q" => "nick ban",
+        _ => "network ban",
+    }
+}
+
 // A rough human span for an expiry deadline in an email ("7 days", "12 hours").
 fn human_duration(secs: u64) -> String {
     let plural = |n: u64, unit: &str| format!("{n} {unit}{}", if n == 1 { "" } else { "s" });
@@ -1553,11 +1561,11 @@ fn audit_summary(event: &db::Event) -> Option<String> {
             Some(t) => format!("set the vhost template to \x02{t}\x02"),
             None => "cleared the vhost template".to_string(),
         },
-        AkillAdded { mask, reason, expires, .. } => {
-            let kind = if expires.is_some() { " (temporary)" } else { "" };
-            format!("set a network ban on \x02{mask}\x02{kind} ({reason})")
+        AkillAdded { kind, mask, reason, expires, .. } => {
+            let temp = if expires.is_some() { " (temporary)" } else { "" };
+            format!("set a {} on \x02{mask}\x02{temp} ({reason})", ban_kind_label(kind))
         }
-        AkillRemoved { mask } => format!("lifted the network ban on \x02{mask}\x02"),
+        AkillRemoved { kind, mask } => format!("lifted the {} on \x02{mask}\x02", ban_kind_label(kind)),
         AccountNoExpire { account, on } => {
             let verb = if *on { "pinned" } else { "unpinned" };
             format!("{verb} account \x02{account}\x02 against expiry")
@@ -3893,6 +3901,60 @@ mod tests {
             }
         }
         assert_eq!(again, 0, "warning isn't repeated while still idle");
+    }
+
+    // OperServ SQLINE (nick bans), GLOBAL (announce to all), and KILL (disconnect
+    // a user): the Q-line, the $* broadcast, and the KILL all reach the ircd, and
+    // each is admin-gated.
+    #[test]
+    fn operserv_sqline_global_and_kill() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-osmore.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("plain", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAP".into(), nick: "plain".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAP".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "spammer".into(), host: "h".into() });
+
+        // SQLINE drives a Q-line on the nick mask, tracked separately from AKILLs.
+        let out = os(&mut e, "000AAAAAS", "SQLINE ADD *bot* botnet");
+        assert!(out.iter().any(|a| matches!(a, NetAction::AddLine { kind, mask, .. } if kind == "Q" && mask == "*bot*")), "Q-line added: {out:?}");
+        // A rejected @-shaped mask (that belongs to AKILL, not SQLINE).
+        assert!(os(&mut e, "000AAAAAS", "SQLINE ADD a@b spam").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("valid"))), "nick mask rejects user@host");
+
+        // GLOBAL fans out to every user via the $* server glob.
+        let out = os(&mut e, "000AAAAAS", "GLOBAL rebooting in 5");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "$*" && text.contains("rebooting in 5"))), "global broadcast: {out:?}");
+
+        // KILL disconnects the named user, attributed to the oper.
+        let out = os(&mut e, "000AAAAAS", "KILL spammer flooding");
+        assert!(out.iter().any(|a| matches!(a, NetAction::KillUser { uid, reason, .. } if uid == "000AAAAAV" && reason.contains("flooding") && reason.contains("staff"))), "kill issued: {out:?}");
+
+        // None of it works for a non-admin: refused, and no network action leaks.
+        for cmd in ["SQLINE ADD *x* y", "GLOBAL hi", "KILL staff go"] {
+            let out = os(&mut e, "000AAAAAP", cmd);
+            assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-admin refused {cmd}");
+            assert!(!out.iter().any(|a| matches!(a, NetAction::AddLine { .. } | NetAction::KillUser { .. })), "no ban/kill from non-admin {cmd}");
+            assert!(!out.iter().any(|a| matches!(a, NetAction::Notice { to, .. } if to == "$*")), "no broadcast from non-admin {cmd}");
+        }
     }
 
     // NOEXPIRE is oper-only.

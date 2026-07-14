@@ -326,6 +326,7 @@ impl Protocol for InspIrcd {
                 vec![self.sourced(format!("ADDLINE {} {} {} {} {} :{}", kind, mask, setter, now, duration, reason))]
             }
             NetAction::DelLine { kind, mask } => vec![self.sourced(format!("DELLINE {} {}", kind, mask))],
+            NetAction::KillUser { from, uid, reason } => vec![format!(":{} KILL {} :{}", from, uid, reason)],
             NetAction::Raw(s) => vec![s.clone()],
             // Internal: the link layer handles these before serialization.
             NetAction::DeferRegister { .. } | NetAction::DeferPassword { .. } | NetAction::SendEmail { .. } => vec![],

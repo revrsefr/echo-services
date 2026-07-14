@@ -179,10 +179,23 @@ pub enum Event {
     // An impending-expiry warning email was sent; cleared by the next Seen/Used.
     AccountExpiryWarned { account: String },
     ChannelExpiryWarned { channel: String },
-    // Network bans (OperServ AKILL). Global: a ban covers the whole network, so
-    // every node holds the list and re-applies it at burst.
-    AkillAdded { mask: String, setter: String, reason: String, ts: u64, expires: Option<u64> },
-    AkillRemoved { mask: String },
+    // Network bans (OperServ AKILL / SQLINE). Global: a ban covers the whole
+    // network, so every node holds the list and re-applies it at burst. `kind`
+    // is the ircd X-line type and defaults to "G" for records predating it.
+    AkillAdded {
+        #[serde(default = "gline_kind")]
+        kind: String,
+        mask: String,
+        setter: String,
+        reason: String,
+        ts: u64,
+        expires: Option<u64>,
+    },
+    AkillRemoved {
+        #[serde(default = "gline_kind")]
+        kind: String,
+        mask: String,
+    },
 }
 
 // Whether an event replicates across the federation. Account identity is Global
@@ -282,16 +295,24 @@ pub struct Suspension {
     pub expires: Option<u64>,
 }
 
-// A network ban (AKILL / G-line): a user@host mask, who set it, why, when, and
-// an optional absolute-unix-seconds expiry (None = permanent).
+// A network ban: the ircd X-line `kind` (e.g. "G" for a user@host G-line, "Q"
+// for a nick Q-line), a mask, who set it, why, when, and an optional
+// absolute-unix-seconds expiry (None = permanent).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Akill {
+    #[serde(default = "gline_kind")]
+    pub kind: String,
     pub mask: String,
     pub setter: String,
     pub reason: String,
     pub ts: u64,
     #[serde(default)]
     pub expires: Option<u64>,
+}
+
+// The default ban kind for records written before bans carried one: a G-line.
+fn gline_kind() -> String {
+    "G".to_string()
 }
 
 // A memo left for an account (MemoServ).
@@ -1004,7 +1025,7 @@ impl Db {
         // Compaction is a good moment to forget akills that have already expired.
         let now = now();
         for a in self.akills.iter().filter(|a| a.expires.is_none_or(|e| e > now)) {
-            snapshot.push(Event::AkillAdded { mask: a.mask.clone(), setter: a.setter.clone(), reason: a.reason.clone(), ts: a.ts, expires: a.expires });
+            snapshot.push(Event::AkillAdded { kind: a.kind.clone(), mask: a.mask.clone(), setter: a.setter.clone(), reason: a.reason.clone(), ts: a.ts, expires: a.expires });
         }
         self.log.compact(snapshot)?;
         tracing::info!(before, after = self.log.len(), "compacted event log");
@@ -1739,25 +1760,27 @@ impl Db {
         }
     }
 
-    /// Add (or refresh) a network ban. Returns whether the mask was newly added.
-    pub fn akill_add(&mut self, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
-        let fresh = !self.akills.iter().any(|a| a.mask.eq_ignore_ascii_case(mask) && a.expires.is_none_or(|e| e > now()));
+    /// Add (or refresh) a `kind` network ban. Returns whether it was newly added.
+    pub fn akill_add(&mut self, kind: &str, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
+        let same = |a: &Akill| a.kind == kind && a.mask.eq_ignore_ascii_case(mask);
+        let fresh = !self.akills.iter().any(|a| same(a) && a.expires.is_none_or(|e| e > now()));
         self.log
-            .append(Event::AkillAdded { mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now(), expires })
+            .append(Event::AkillAdded { kind: kind.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now(), expires })
             .map_err(|_| RegError::Internal)?;
-        self.akills.retain(|a| !a.mask.eq_ignore_ascii_case(mask));
-        self.akills.push(Akill { mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now(), expires });
+        self.akills.retain(|a| !same(a));
+        self.akills.push(Akill { kind: kind.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now(), expires });
         Ok(fresh)
     }
 
-    /// Lift a network ban. Returns whether a live (non-expired) one was removed.
-    pub fn akill_del(&mut self, mask: &str) -> Result<bool, RegError> {
-        let existed = self.akills.iter().any(|a| a.mask.eq_ignore_ascii_case(mask) && a.expires.is_none_or(|e| e > now()));
+    /// Lift a `kind` network ban. Returns whether a live one was removed.
+    pub fn akill_del(&mut self, kind: &str, mask: &str) -> Result<bool, RegError> {
+        let same = |a: &Akill| a.kind == kind && a.mask.eq_ignore_ascii_case(mask);
+        let existed = self.akills.iter().any(|a| same(a) && a.expires.is_none_or(|e| e > now()));
         if !existed {
             return Ok(false);
         }
-        self.log.append(Event::AkillRemoved { mask: mask.to_string() }).map_err(|_| RegError::Internal)?;
-        self.akills.retain(|a| !a.mask.eq_ignore_ascii_case(mask));
+        self.log.append(Event::AkillRemoved { kind: kind.to_string(), mask: mask.to_string() }).map_err(|_| RegError::Internal)?;
+        self.akills.retain(|a| !same(a));
         Ok(true)
     }
 
@@ -1767,7 +1790,7 @@ impl Db {
         self.akills
             .iter()
             .filter(|a| a.expires.is_none_or(|e| e > now))
-            .map(|a| AkillView { mask: a.mask.clone(), setter: a.setter.clone(), reason: a.reason.clone(), ts: a.ts, expires: a.expires })
+            .map(|a| AkillView { kind: a.kind.clone(), mask: a.mask.clone(), setter: a.setter.clone(), reason: a.reason.clone(), ts: a.ts, expires: a.expires })
             .collect()
     }
 
@@ -2669,14 +2692,14 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
                 c.noexpire = on;
             }
         }
-        Event::AkillAdded { mask, setter, reason, ts, expires } => {
-            // Keyed by mask (case-insensitive): a re-add refreshes in place, so
-            // replaying over a snapshot stays idempotent.
-            akills.retain(|a| !a.mask.eq_ignore_ascii_case(&mask));
-            akills.push(Akill { mask, setter, reason, ts, expires });
+        Event::AkillAdded { kind, mask, setter, reason, ts, expires } => {
+            // Keyed by (kind, mask), case-insensitive: a re-add refreshes in
+            // place, so replaying over a snapshot stays idempotent.
+            akills.retain(|a| !(a.kind == kind && a.mask.eq_ignore_ascii_case(&mask)));
+            akills.push(Akill { kind, mask, setter, reason, ts, expires });
         }
-        Event::AkillRemoved { mask } => {
-            akills.retain(|a| !a.mask.eq_ignore_ascii_case(&mask));
+        Event::AkillRemoved { kind, mask } => {
+            akills.retain(|a| !(a.kind == kind && a.mask.eq_ignore_ascii_case(&mask)));
         }
         Event::AccountExpiryWarned { account } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {
@@ -2920,11 +2943,11 @@ impl Store for Db {
     fn set_channel_noexpire(&mut self, channel: &str, on: bool) -> Result<bool, ChanError> {
         Db::set_channel_noexpire(self, channel, on)
     }
-    fn akill_add(&mut self, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
-        Db::akill_add(self, mask, setter, reason, expires)
+    fn akill_add(&mut self, kind: &str, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
+        Db::akill_add(self, kind, mask, setter, reason, expires)
     }
-    fn akill_del(&mut self, mask: &str) -> Result<bool, RegError> {
-        Db::akill_del(self, mask)
+    fn akill_del(&mut self, kind: &str, mask: &str) -> Result<bool, RegError> {
+        Db::akill_del(self, kind, mask)
     }
     fn akills(&self) -> Vec<AkillView> {
         Db::akills(self)

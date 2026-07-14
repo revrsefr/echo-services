@@ -1,13 +1,16 @@
-//! OperServ gives services operators network-wide tools. The first is AKILL:
-//! network bans (G-lines) that keep matching users off the whole network,
-//! event-sourced so they survive a restart and re-apply at burst, with lazy
-//! expiry like the rest of the store. `lib.rs` dispatches; each command is its
-//! own file.
+//! OperServ gives services operators network-wide tools: AKILL/SQLINE network
+//! bans (event-sourced, lazily expiring, re-asserted at burst), a GLOBAL
+//! announcement to every user, and KILL to disconnect one. `lib.rs` dispatches;
+//! each command family is its own file.
 
 use fedserv_api::{NetView, Sender, Service, ServiceCtx, Store};
 
-#[path = "akill.rs"]
-mod akill;
+#[path = "xline.rs"]
+mod xline;
+#[path = "global.rs"]
+mod global;
+#[path = "kill.rs"]
+mod kill;
 
 pub struct OperServ {
     pub uid: String,
@@ -24,7 +27,7 @@ impl Service for OperServ {
         "Operator Service"
     }
 
-    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, _net: &dyn NetView, db: &mut dyn Store) {
+    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
         let me = self.uid.as_str();
         // Every OperServ command is operator-only: reveal nothing to others.
         if !from.privs.any() {
@@ -32,14 +35,17 @@ impl Service for OperServ {
             return;
         }
         match args.first().copied() {
-            Some(cmd) if cmd.eq_ignore_ascii_case("AKILL") => akill::handle(me, from, args, ctx, db),
+            Some(cmd) if cmd.eq_ignore_ascii_case("AKILL") => xline::AKILL.handle(me, from, args, ctx, db),
+            Some(cmd) if cmd.eq_ignore_ascii_case("SQLINE") => xline::SQLINE.handle(me, from, args, ctx, db),
+            Some(cmd) if cmd.eq_ignore_ascii_case("GLOBAL") => global::handle(me, from, args, ctx),
+            Some(cmd) if cmd.eq_ignore_ascii_case("KILL") => kill::handle(me, from, args, ctx, net),
             Some(cmd) if cmd.eq_ignore_ascii_case("HELP") => help(me, from, ctx),
             None => help(me, from, ctx),
-            Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02AKILL\x02 or \x02HELP\x02.")),
+            Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02HELP\x02.")),
         }
     }
 }
 
 fn help(me: &str, from: &Sender, ctx: &mut ServiceCtx) {
-    ctx.notice(me, from.uid, "OperServ holds network operator tools. \x02AKILL ADD\x02 [+expiry] <user@host> <reason>, \x02AKILL DEL\x02 <user@host|number>, \x02AKILL LIST\x02 [pattern] — network bans (Priv::Admin).");
+    ctx.notice(me, from.uid, "OperServ holds network operator tools (Priv::Admin): \x02AKILL\x02 ADD|DEL|LIST (user@host bans), \x02SQLINE\x02 ADD|DEL|LIST (nick bans), \x02GLOBAL\x02 <message> (announce to everyone), \x02KILL\x02 <nick> [reason] (disconnect a user).");
 }
