@@ -631,13 +631,13 @@ impl Engine {
             .collect()
     }
 
-    // Announce a line to the staff audit channel, if one is configured, sourced
-    // from the services server. Used for actions that aren't tied to a command.
-    fn audit(&self, text: String) {
-        if let Some(channel) = &self.log_channel {
-            if !self.sid.is_empty() {
-                self.emit_irc(NetAction::Notice { from: self.sid.clone(), to: channel.clone(), text });
-            }
+    // Record a line to the searchable incident log and, if an audit channel is
+    // configured, announce it there. For actions not tied to a command (expiry).
+    fn audit(&mut self, text: String) {
+        let now = self.now_secs();
+        self.network.record_incident(text.clone(), now);
+        if let (Some(channel), false) = (&self.log_channel, self.sid.is_empty()) {
+            self.emit_irc(NetAction::Notice { from: self.sid.clone(), to: channel.clone(), text });
         }
     }
 
@@ -1251,13 +1251,13 @@ impl Engine {
         out
     }
 
-    // Announce the state changes a just-run command made (the events appended
-    // since `mark`) to the staff audit channel, sourced from the services server
-    // so it reaches the channel without a pseudo-client having to be present.
-    // Private and purely cosmetic events are deliberately not surfaced.
-    fn audit_feed(&self, mark: usize, nick: &str, account: Option<&str>) -> Vec<NetAction> {
-        let Some(channel) = self.log_channel.clone() else { return Vec::new() };
-        if self.sid.is_empty() {
+    // Record the state changes a just-run command made (the events appended since
+    // `mark`) to the searchable incident log, and — when an audit channel is
+    // configured — announce each to it, sourced from the services server. Private
+    // and purely cosmetic events are deliberately not surfaced.
+    fn audit_feed(&mut self, mark: usize, nick: &str, account: Option<&str>) -> Vec<NetAction> {
+        let summaries: Vec<String> = self.db.events_since(mark).iter().filter_map(audit_summary).collect();
+        if summaries.is_empty() {
             return Vec::new();
         }
         // Name the actor by nick, plus the account they are identified to when it
@@ -1266,16 +1266,16 @@ impl Engine {
             Some(a) if !a.eq_ignore_ascii_case(nick) => format!("\x02{nick}\x02 ({a})"),
             _ => format!("\x02{nick}\x02"),
         };
-        self.db
-            .events_since(mark)
-            .iter()
-            .filter_map(audit_summary)
-            .map(|summary| NetAction::Notice {
-                from: self.sid.clone(),
-                to: channel.clone(),
-                text: format!("{actor} {summary}"),
-            })
-            .collect()
+        let now = self.now_secs();
+        let mut out = Vec::new();
+        for summary in summaries {
+            let line = format!("{actor} {summary}");
+            self.network.record_incident(line.clone(), now);
+            if let (Some(channel), false) = (&self.log_channel, self.sid.is_empty()) {
+                out.push(NetAction::Notice { from: self.sid.clone(), to: channel.clone(), text: line });
+            }
+        }
+        out
     }
 
     // The greet a channel's bot shows when a member logged into `account` joins:
@@ -4118,6 +4118,53 @@ mod tests {
             assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-admin refused {cmd}");
             assert!(!out.iter().any(|a| matches!(a, NetAction::ChannelMode { .. } | NetAction::Kick { .. })), "no action from non-admin {cmd}");
         }
+    }
+
+    // LOGSEARCH finds recorded actions — both a kick (stamped) and an akill (from
+    // the command audit trail); gated on auspex.
+    #[test]
+    fn operserv_logsearch_finds_actions() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-logsearch.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("mod", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin).with(fedserv_api::Priv::Auspex));
+        opers.insert("mod".to_string(), Privs::default().with(fedserv_api::Priv::Suspend));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let has = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAM".into(), nick: "mod".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAM".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAT".into(), nick: "troll".into(), host: "h".into(), ip: "0.0.0.0".into() });
+
+        os(&mut e, "000AAAAAS", "AKILL ADD *@evil.host spamming");
+        os(&mut e, "000AAAAAS", "KICK #room troll flooding");
+
+        // The akill (from the command audit trail) is searchable.
+        assert!(has(&os(&mut e, "000AAAAAS", "LOGSEARCH evil.host"), "evil.host"), "akill searchable");
+        // The kick (stamped at the choke-point) is searchable.
+        assert!(has(&os(&mut e, "000AAAAAS", "LOGSEARCH troll"), "troll"), "kick searchable");
+        // A bare LOGSEARCH lists recent entries.
+        assert!(has(&os(&mut e, "000AAAAAS", "LOGSEARCH"), "End of results"), "lists recent");
+        // A nonsense pattern finds nothing.
+        assert!(has(&os(&mut e, "000AAAAAS", "LOGSEARCH zzzznope"), "No matching"), "empty result");
+        // An oper without auspex is refused.
+        assert!(has(&os(&mut e, "000AAAAAM", "LOGSEARCH troll"), "auspex"), "auspex-gated");
     }
 
     // Every user-removal gets a traceable incident id stamped into its reason and
