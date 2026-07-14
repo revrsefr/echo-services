@@ -123,6 +123,10 @@ pub const SQLINE: Xline = Xline { kind: "Q", name: "SQLINE", target: "nick", nor
 // connecting user's realname (use `.` for spaces, e.g. `.*free.money.*`).
 pub const SNLINE: Xline = Xline { kind: "R", name: "SNLINE", target: "realname-regex", normalize: norm_realname };
 
+// SHUN: a user@host shun. A matching user stays connected but the ircd silently
+// drops their commands — a quieter alternative to an AKILL.
+pub const SHUN: Xline = Xline { kind: "SHUN", name: "SHUN", target: "user@host", normalize: norm_userhost };
+
 fn norm_userhost(input: &str) -> Option<String> {
     let body = input.rsplit('!').next().unwrap_or(input);
     let (user, host) = body.split_once('@')?;

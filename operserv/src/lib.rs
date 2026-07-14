@@ -31,6 +31,8 @@ mod oper;
 mod session;
 #[path = "jupe.rs"]
 mod jupe;
+#[path = "chankill.rs"]
+mod chankill;
 
 pub struct OperServ {
     pub uid: String,
@@ -58,6 +60,7 @@ impl Service for OperServ {
             Some(cmd) if cmd.eq_ignore_ascii_case("AKILL") => xline::AKILL.handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("SQLINE") => xline::SQLINE.handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("SNLINE") => xline::SNLINE.handle(me, from, args, ctx, db),
+            Some(cmd) if cmd.eq_ignore_ascii_case("SHUN") => xline::SHUN.handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("GLOBAL") => global::handle(me, from, args, ctx),
             Some(cmd) if cmd.eq_ignore_ascii_case("KILL") => kill::handle(me, from, args, ctx, net),
             Some(cmd) if cmd.eq_ignore_ascii_case("KICK") => kick::handle(me, from, args, ctx, net),
@@ -72,6 +75,7 @@ impl Service for OperServ {
             Some(cmd) if cmd.eq_ignore_ascii_case("SESSION") => session::handle_session(me, from, args, ctx, net),
             Some(cmd) if cmd.eq_ignore_ascii_case("EXCEPTION") => session::handle_exception(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("JUPE") => jupe::handle(me, from, args, ctx, db),
+            Some(cmd) if cmd.eq_ignore_ascii_case("CHANKILL") => chankill::handle(me, from, args, ctx, net, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("HELP") => help(me, from, ctx),
             None => help(me, from, ctx),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02HELP\x02.")),
@@ -80,5 +84,5 @@ impl Service for OperServ {
 }
 
 fn help(me: &str, from: &Sender, ctx: &mut ServiceCtx) {
-    ctx.notice(me, from.uid, "OperServ holds network operator tools (Priv::Admin): \x02AKILL\x02 ADD|DEL|LIST (user@host bans), \x02SQLINE\x02 ADD|DEL|LIST (nick bans), \x02SNLINE\x02 ADD|DEL|LIST (realname bans), \x02GLOBAL\x02 <message> (announce to everyone), \x02KILL\x02 <nick> [reason] (disconnect a user), \x02KICK\x02 <#chan> <nick> [reason], \x02MODE\x02 <#chan> <modes> [params], \x02IGNORE\x02 ADD|DEL|LIST (silence a user from services), \x02STATS\x02 (enforcement overview), \x02SVSNICK\x02 <nick> <newnick>, \x02SVSJOIN\x02 <nick> <#chan> [key], \x02INFO\x02 ADD|DEL <target> (staff notes), \x02NEWS\x02 ADD|DEL|LIST <LOGON|OPER> (announcements), \x02OPER\x02 ADD|DEL|LIST (runtime operators), \x02SESSION\x02 LIST|VIEW + \x02EXCEPTION\x02 ADD|DEL|LIST (per-IP session limits), \x02JUPE\x02 <server> | DEL | LIST.");
+    ctx.notice(me, from.uid, "OperServ holds network operator tools (Priv::Admin): \x02AKILL\x02 ADD|DEL|LIST (user@host bans), \x02SQLINE\x02 ADD|DEL|LIST (nick bans), \x02SNLINE\x02 ADD|DEL|LIST (realname bans), \x02SHUN\x02 ADD|DEL|LIST (silence a host), \x02CHANKILL\x02 <#chan> (clear a channel), \x02GLOBAL\x02 <message> (announce to everyone), \x02KILL\x02 <nick> [reason] (disconnect a user), \x02KICK\x02 <#chan> <nick> [reason], \x02MODE\x02 <#chan> <modes> [params], \x02IGNORE\x02 ADD|DEL|LIST (silence a user from services), \x02STATS\x02 (enforcement overview), \x02SVSNICK\x02 <nick> <newnick>, \x02SVSJOIN\x02 <nick> <#chan> [key], \x02INFO\x02 ADD|DEL <target> (staff notes), \x02NEWS\x02 ADD|DEL|LIST <LOGON|OPER> (announcements), \x02OPER\x02 ADD|DEL|LIST (runtime operators), \x02SESSION\x02 LIST|VIEW + \x02EXCEPTION\x02 ADD|DEL|LIST (per-IP session limits), \x02JUPE\x02 <server> | DEL | LIST.");
 }

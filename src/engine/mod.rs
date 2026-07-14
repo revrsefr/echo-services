@@ -1565,6 +1565,7 @@ fn ban_kind_label(kind: &str) -> &'static str {
     match kind {
         "Q" => "nick ban",
         "R" => "realname ban",
+        "SHUN" => "shun",
         _ => "network ban",
     }
 }
@@ -4023,6 +4024,8 @@ mod tests {
         assert!(os(&mut e, "000AAAAAS", "STATS").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("1") && text.contains("SQLINE"))), "stats shows the sqline count");
         // SNLINE drives a realname R-line.
         assert!(os(&mut e, "000AAAAAS", "SNLINE ADD .*free.money.* spambot").iter().any(|a| matches!(a, NetAction::AddLine { kind, mask, .. } if kind == "R" && mask == ".*free.money.*")), "R-line added");
+        // SHUN drives a SHUN X-line on a user@host mask.
+        assert!(os(&mut e, "000AAAAAS", "SHUN ADD *@noisy.host quiet down").iter().any(|a| matches!(a, NetAction::AddLine { kind, mask, .. } if kind == "SHUN" && mask == "*@noisy.host")), "shun added");
 
         // GLOBAL fans out to every user via the $* server glob.
         let out = os(&mut e, "000AAAAAS", "GLOBAL rebooting in 5");
@@ -4088,6 +4091,49 @@ mod tests {
             assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-admin refused {cmd}");
             assert!(!out.iter().any(|a| matches!(a, NetAction::ChannelMode { .. } | NetAction::Kick { .. })), "no action from non-admin {cmd}");
         }
+    }
+
+    // OperServ CHANKILL: AKILL every host in a channel at once, deduped, never
+    // banning the operator who ran it.
+    #[test]
+    fn operserv_chankill_clears_a_channel() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-oschankill.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let conn = |e: &mut Engine, uid: &str, host: &str| e.handle(NetEvent::UserConnect { uid: uid.into(), nick: uid.into(), host: host.into(), ip: "0.0.0.0".into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "staffhost".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        conn(&mut e, "000AAAAA1", "bad1");
+        conn(&mut e, "000AAAAA2", "bad2");
+        conn(&mut e, "000AAAAA3", "bad1"); // same host as A1 → deduped
+        for u in ["000AAAAAS", "000AAAAA1", "000AAAAA2", "000AAAAA3"] {
+            e.handle(NetEvent::Join { uid: u.into(), channel: "#spam".into(), op: false });
+        }
+
+        let out = os(&mut e, "000AAAAAS", "CHANKILL #spam flooding");
+        // Both distinct spammer hosts are G-lined, once each.
+        assert!(out.iter().any(|a| matches!(a, NetAction::AddLine { mask, .. } if mask == "*@bad1")), "bad1 banned: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::AddLine { mask, .. } if mask == "*@bad2")), "bad2 banned");
+        assert_eq!(out.iter().filter(|a| matches!(a, NetAction::AddLine { mask, .. } if mask == "*@bad1")).count(), 1, "deduped");
+        // The operator's own host is spared.
+        assert!(!out.iter().any(|a| matches!(a, NetAction::AddLine { mask, .. } if mask == "*@staffhost")), "operator not self-banned");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("2") && text.contains("AKILL"))), "reports 2 hosts");
     }
 
     // OperServ JUPE: hold a server name with a fake server, re-assert it at burst,
