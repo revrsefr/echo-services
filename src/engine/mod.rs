@@ -4565,12 +4565,12 @@ mod tests {
         assert!(denied(&os(&mut e, "000AAAAAP", "STATS")), "expired grant confers nothing");
     }
 
-    // OperServ NEWS: logon news greets everyone on connect, oper news greets an
-    // operator on login; ADD/DEL/LIST are admin-only.
+    // InfoServ bulletins over the shared news store: public bulletins greet
+    // everyone on connect, oper bulletins greet an operator on login.
     #[test]
-    fn operserv_news_logon_and_oper() {
-        use fedserv_operserv::OperServ;
-        let path = std::env::temp_dir().join("fedserv-osnews.jsonl");
+    fn infoserv_bulletins_public_and_oper() {
+        use fedserv_infoserv::InfoServ;
+        let path = std::env::temp_dir().join("fedserv-infoserv.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -4580,7 +4580,7 @@ mod tests {
         let mut e = Engine::new(
             vec![
                 Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
-                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+                Box::new(InfoServ { uid: "42SAAAAAJ".into() }),
             ],
             db,
         );
@@ -4591,42 +4591,42 @@ mod tests {
         e.set_opers(opers);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         e.set_irc_out(tx);
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let is = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAJ".into(), text: t.into() });
         let has = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
 
-        os(&mut e, "000AAAAAS", "NEWS ADD LOGON Welcome to the network");
-        os(&mut e, "000AAAAAS", "NEWS ADD OPER Staff meeting at 5");
+        is(&mut e, "000AAAAAS", "POST Welcome to the network");
+        is(&mut e, "000AAAAAS", "OPOST Staff meeting at 5");
 
-        // A new user is greeted with the logon news on connect, not the oper news.
+        // A new user is greeted with the public bulletin on connect, not the oper one.
         let out = e.handle(NetEvent::UserConnect { uid: "000AAAAAP".into(), nick: "plain".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "000AAAAAP" && text.contains("Welcome to the network"))), "logon news on connect: {out:?}");
-        assert!(!has(&out, "Staff meeting"), "a plain user doesn't get oper news");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "000AAAAAP" && text.contains("Welcome to the network"))), "public bulletin on connect: {out:?}");
+        assert!(!has(&out, "Staff meeting"), "a plain user doesn't get oper bulletins");
 
-        // An operator logging in is shown the oper news (over the outbound path).
+        // An operator logging in is shown the oper bulletin (over the outbound path).
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        while rx.try_recv().is_ok() {} // drain the connect's logon news
+        while rx.try_recv().is_ok() {} // drain the connect's public bulletin
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
-        let mut oper_news = false;
+        let mut oper_bulletin = false;
         while let Ok(a) = rx.try_recv() {
             if let NetAction::Notice { to, text, .. } = a {
                 if to == "000AAAAAB" && text.contains("Staff meeting at 5") {
-                    oper_news = true;
+                    oper_bulletin = true;
                 }
             }
         }
-        assert!(oper_news, "oper news shown to an operator on login");
+        assert!(oper_bulletin, "oper bulletin shown to an operator on login");
 
-        // LIST shows both; DEL removes the logon item so a later connect is quiet.
-        assert!(has(&os(&mut e, "000AAAAAS", "NEWS LIST"), "Welcome to the network"), "list shows logon");
-        os(&mut e, "000AAAAAS", "NEWS DEL LOGON 1");
+        // LIST shows the public one (to anyone); DEL removes it so a later connect is quiet.
+        assert!(has(&is(&mut e, "000AAAAAP", "LIST"), "Welcome to the network"), "anyone can list public bulletins");
+        is(&mut e, "000AAAAAS", "DEL 1");
         let out = e.handle(NetEvent::UserConnect { uid: "000AAAAAQ".into(), nick: "late".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        assert!(!has(&out, "Welcome to the network"), "logon news gone after DEL");
+        assert!(!has(&out, "Welcome to the network"), "bulletin gone after DEL");
 
-        // A non-admin (the unidentified plain user) can't manage news.
-        assert!(has(&os(&mut e, "000AAAAAP", "NEWS ADD LOGON sneaky"), "Access denied"), "non-admin refused");
+        // A non-admin can't post.
+        assert!(has(&is(&mut e, "000AAAAAP", "POST sneaky"), "Access denied"), "non-admin refused");
     }
 
     // OperServ INFO staff notes: an admin annotates an account/channel; the note

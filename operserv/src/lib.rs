@@ -23,8 +23,6 @@ mod stats;
 mod svs;
 #[path = "info.rs"]
 mod info;
-#[path = "news.rs"]
-mod news;
 #[path = "oper.rs"]
 mod oper;
 #[path = "session.rs"]
@@ -75,7 +73,6 @@ impl Service for OperServ {
             Some(cmd) if cmd.eq_ignore_ascii_case("SVSNICK") => svs::nick(me, from, args, ctx, net),
             Some(cmd) if cmd.eq_ignore_ascii_case("SVSJOIN") => svs::join(me, from, args, ctx, net),
             Some(cmd) if cmd.eq_ignore_ascii_case("INFO") => info::handle(me, from, args, ctx, db),
-            Some(cmd) if cmd.eq_ignore_ascii_case("NEWS") => news::handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("OPER") => oper::handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("SESSION") => session::handle_session(me, from, args, ctx, net),
             Some(cmd) if cmd.eq_ignore_ascii_case("EXCEPTION") => session::handle_exception(me, from, args, ctx, db),
@@ -91,5 +88,5 @@ impl Service for OperServ {
 }
 
 fn help(me: &str, from: &Sender, ctx: &mut ServiceCtx) {
-    ctx.notice(me, from.uid, "OperServ holds network operator tools (Priv::Admin): \x02AKILL\x02 ADD|DEL|LIST (user@host bans), \x02SQLINE\x02 ADD|DEL|LIST (nick bans), \x02SNLINE\x02 ADD|DEL|LIST (realname bans), \x02SHUN\x02 ADD|DEL|LIST (silence a host), \x02CBAN\x02 ADD|DEL|LIST (ban a channel name), \x02CHANKILL\x02 <#chan> (clear a channel), \x02GLOBAL\x02 <message> (announce to everyone), \x02KILL\x02 <nick> [reason] (disconnect a user), \x02KICK\x02 <#chan> <nick> [reason], \x02MODE\x02 <#chan> <modes> [params], \x02IGNORE\x02 ADD|DEL|LIST (silence a user from services), \x02STATS\x02 (enforcement overview), \x02SVSNICK\x02 <nick> <newnick>, \x02SVSJOIN\x02 <nick> <#chan> [key], \x02INFO\x02 ADD|DEL <target> (staff notes), \x02NEWS\x02 ADD|DEL|LIST <LOGON|OPER> (announcements), \x02OPER\x02 ADD|DEL|LIST (runtime operators), \x02SESSION\x02 LIST|VIEW + \x02EXCEPTION\x02 ADD|DEL|LIST (per-IP session limits), \x02JUPE\x02 <server> | DEL | LIST, \x02LOGSEARCH\x02 [pattern] (search the action log), \x02DEFCON\x02 [1-5] (network defence level).");
+    ctx.notice(me, from.uid, "OperServ holds network operator tools (Priv::Admin): \x02AKILL\x02 ADD|DEL|LIST (user@host bans), \x02SQLINE\x02 ADD|DEL|LIST (nick bans), \x02SNLINE\x02 ADD|DEL|LIST (realname bans), \x02SHUN\x02 ADD|DEL|LIST (silence a host), \x02CBAN\x02 ADD|DEL|LIST (ban a channel name), \x02CHANKILL\x02 <#chan> (clear a channel), \x02GLOBAL\x02 <message> (announce to everyone), \x02KILL\x02 <nick> [reason] (disconnect a user), \x02KICK\x02 <#chan> <nick> [reason], \x02MODE\x02 <#chan> <modes> [params], \x02IGNORE\x02 ADD|DEL|LIST (silence a user from services), \x02STATS\x02 (enforcement overview), \x02SVSNICK\x02 <nick> <newnick>, \x02SVSJOIN\x02 <nick> <#chan> [key], \x02INFO\x02 ADD|DEL <target> (staff notes — bulletins are on \x02InfoServ\x02), \x02OPER\x02 ADD|DEL|LIST (runtime operators), \x02SESSION\x02 LIST|VIEW + \x02EXCEPTION\x02 ADD|DEL|LIST (per-IP session limits), \x02JUPE\x02 <server> | DEL | LIST, \x02LOGSEARCH\x02 [pattern] (search the action log), \x02DEFCON\x02 [1-5] (network defence level).");
 }

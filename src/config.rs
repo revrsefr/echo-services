@@ -133,7 +133,7 @@ impl Default for Modules {
 }
 
 fn default_services() -> Vec<String> {
-    vec!["nickserv".to_string(), "chanserv".to_string(), "botserv".to_string(), "memoserv".to_string(), "statserv".to_string(), "hostserv".to_string(), "operserv".to_string()]
+    vec!["nickserv".to_string(), "chanserv".to_string(), "botserv".to_string(), "memoserv".to_string(), "statserv".to_string(), "hostserv".to_string(), "operserv".to_string(), "infoserv".to_string()]
 }
 
 #[derive(Debug, Deserialize, Clone)]
