@@ -1,124 +1,74 @@
 # Echo
 
-A federated IRC services daemon in Rust. Protocol-agnostic core, InspIRCd link first.
+A federated IRC services daemon, written in Rust.
 
-Clean-room, inspired by the ideas behind modern event-log/gossip services, not
-derived from any project's source.
+Echo runs the services side of an IRC network, the accounts, channels, and operator tooling, as a set of pseudo-clients (NickServ, ChanServ, and the rest) linked to an ircd over its server-to-server protocol. State is an append-only event log folded into memory, and that log gossips between nodes, so several Echo instances on different servers share one account and channel database with no central store.
 
-## Design
+Clean-room work, informed by the ideas behind modern event-log and gossip services, not derived from any project's source.
 
-The core lives in `src/`. The pluggable parts are separate crates in a Cargo
-workspace, each depending only on the `echo-api` SDK crate.
+## Highlights
 
-- **`api/`** (`echo-api`) the module SDK: the `Service`, `Protocol`, `Store`
-  and `NetView` traits a module implements or is handed, plus the normalized
-  `NetEvent`/`NetAction` vocabulary and the read views. It has no storage or
-  runtime dependencies, so a third-party module builds against it alone.
-- **`src/engine/`** the services engine: live network `state`, the account store,
-  and the log. The store is event-sourced: every change is an `Event` appended to
-  a per-node log, and state is a fold over that log. A service touches it only
-  through the `Store`/`NetView` traits, so the log, gossip and credential material
-  stay out of a module's reach.
-- **`src/gossip.rs`** node-to-node replication over the logs.
-- **`modules/`** the loadable modules, each its own crate depending only on the
-  `echo-api` SDK:
-  - **`modules/protocol/inspircd/`** (`echo-inspircd`) the ircd link layer. A
-    `Protocol` impl maps raw server-to-server lines to and from the normalized
-    model, so the engine never touches a raw line and a new ircd is one new crate
-    under `modules/protocol/`.
-  - the pseudo-clients, each a crate implementing `Service` and reaching the
-    network only through the `Store`/`NetView` traits:
-    - **`modules/nickserv/`** — account registration, identification, grouped nicks.
-    - **`modules/chanserv/`** — channel registration, access lists, mode-lock.
-    - **`modules/botserv/`** — per-channel service bots, fantasy commands, kickers.
-    - **`modules/hostserv/`** — virtual hosts, self-serve and operator-approved.
-    - **`modules/memoserv/`** — messages to accounts, delivered whether online or not.
-    - **`modules/operserv/`** — network-operator tools: akills, DEFCON, jupes, sessions, log search.
-    - **`modules/statserv/`** — network and channel statistics.
-    - **`modules/groupserv/`** — user groups (`!group`) whose members inherit channel access.
-    - **`modules/chanfix/`** — reops an opless channel from accumulated op-time.
-    - **`modules/helpserv/`** — a help-desk ticket queue worked by operators.
-    - **`modules/infoserv/`** — network bulletins shown on connect and on login.
-    - **`modules/reportserv/`** — user abuse reports feeding the operator audit trail.
-    - **`modules/diceserv/`** — dice rolls and math for tabletop games.
+- **Federated.** Every change is an event; nodes exchange logs and converge. Account identity is global across the network, while channel state stays with the node that owns it.
+- **Event-sourced.** State is a fold over an append-only log. Restart replays it, compaction folds it, replication ships it, all through one code path.
+- **Modular.** The core is one crate. Each service and each ircd protocol is a separate crate depending only on the `echo-api` SDK, so a new service or a new ircd is one new crate.
+- **Memory-safe.** No manual memory management and no data races, in a domain that has historically shipped both.
 
-Writing your own module — a service or a new ircd protocol — is documented in
-[MODULES.md](MODULES.md); `modules/example/` is a minimal service to copy from.
-
-## Replication
-
-Each log entry carries an `origin`, a per-origin `seq`, and a Lamport clock. Peers
-connect, exchange version vectors, and send each other the entries the other
-lacks; a freshly committed entry is also pushed immediately, so a registration
-propagates in milliseconds. Ingest is idempotent, so re-delivery and reconnect
-after a split both converge. The log is compacted to one entry per account as it
-grows. An account registered on any node works on all of them.
-
-## Directory API (gRPC)
-
-**`src/grpc.rs`** exposes the account/channel directory over gRPC (see
-`proto/echo.proto`) so a website can mirror it without touching IRC: a
-one-shot `Snapshot` for the initial load, then `Subscribe` for a live stream of
-every change from that point on. It subscribes to the same committed-entry
-channel gossip does, so a change reaches a subscriber in the same push, no
-polling. Deliberately excludes anything credential-shaped (password hashes,
-SCRAM verifiers, cert fingerprints) and the finer channel-ops-list events
-(access/akick/mlock/entrymsg) — identity and metadata only. Bearer-token
-authenticated, optional server TLS. Omit `[grpc]` in config.toml to run
-without it.
-
-The same port also serves **`Accounts`**, the write side: `Register`,
-`Authenticate`, `SetPassword`, `SetEmail`, `Confirm`, `Drop`, `ForceLogout`,
-`GroupNick`, `UngroupNick` — a trusted caller (e.g. a website's own backend,
-already having done its own login/session check) managing accounts the same
-way an IRC user does through NickServ, minus the command syntax. The bearer
-token *is* the authorization: unlike the NickServ commands these mirror, most
-calls do not re-check the account's own password (an admin-level override, the
-same trust model a JSON-RPC integration to another services package would
-use) — `Register` and `Authenticate` are the two exceptions, since the
-password is the actual input there. A write committed this way replicates to
-every other Echo node exactly like an IRC-originated one does — gossip
-doesn't know or care where it came from.
-
-## Config
-
-```toml
-[uplink]
-host = "127.0.0.1"
-port = 7000
-password = "linkpw"
-
-[server]
-name = "services.example"
-sid = "42S"
-
-[gossip]                 # omit to run a single, non-replicating node
-bind = "0.0.0.0:16700"
-secret = "shared-secret"
-
-[gossip.tls]             # omit for a plaintext link
-cert = "certs/nodeA.crt"
-key  = "certs/nodeA.key"
-ca   = "certs/ca.crt"    # a peer must present a certificate signed by this CA
-
-[[peer]]
-addr = "nodeB.example:16700"
-name = "nodeB"           # TLS name to expect; must match the peer certificate
-```
-
-Generate certificates with `scripts/gen-certs.sh`.
-
-## Run
+## Quick start
 
 ```sh
-cp config.example.toml config.toml   # edit uplink + link password
-cargo run -- config.toml
+git clone https://git.devtronic.pro/fedserv/echo.git
+cd echo
+cp config.example.toml config.toml   # set the uplink host and link password
+cargo run --release -- config.toml
 ```
+
+Echo links to an InspIRCd uplink out of the box. Point `config.toml` at your ircd's server port and add a matching `<link>` block on the ircd side. The full reference is on the [Configuration](https://git.devtronic.pro/fedserv/echo/wiki/Configuration) page.
+
+## Services
+
+Every service is a first-class pseudo-client, all started by default.
+
+| Service | Role |
+| --- | --- |
+| NickServ | account registration, identification, grouped nicks, SASL |
+| ChanServ | channel registration, access lists, mode-lock, auto-op |
+| BotServ | per-channel bots, fantasy commands, kickers |
+| HostServ | virtual hosts, self-serve and operator-approved |
+| MemoServ | messages to accounts, delivered online or not |
+| OperServ | akills, DEFCON, jupes, session limits, log search |
+| StatServ | network and channel statistics |
+| GroupServ | account groups whose members inherit channel access |
+| ChanFix | reop an opless channel from accumulated op-time |
+| HelpServ | a help-desk ticket queue for operators |
+| InfoServ | network bulletins shown on connect and login |
+| ReportServ | user abuse reports feeding the operator audit trail |
+| DiceServ | dice and math for tabletop games |
+
+## Architecture
+
+Three layers, each a clean boundary:
+
+- **Protocol** turns raw server-to-server lines into a normalized event and action vocabulary. The engine never sees a raw line, so supporting another ircd is one new crate.
+- **Engine** holds the live network view and the event-sourced store, and routes messages to services. Services reach it only through the `Store` and `NetView` traits, keeping the log, gossip, and credential material out of a module's reach.
+- **Services** are pseudo-clients, one crate each, implementing a single `Service` trait.
+
+The full write-up is in the wiki: [Architecture](https://git.devtronic.pro/fedserv/echo/wiki/Architecture) and [Federation](https://git.devtronic.pro/fedserv/echo/wiki/Federation).
+
+## Documentation
+
+The [wiki](https://git.devtronic.pro/fedserv/echo/wiki) has the detail:
+
+- [Architecture](https://git.devtronic.pro/fedserv/echo/wiki/Architecture) — the engine, the store, the module boundary
+- [Federation](https://git.devtronic.pro/fedserv/echo/wiki/Federation) — gossip, the global/local scope model, conflict resolution
+- [Services](https://git.devtronic.pro/fedserv/echo/wiki/Services) — every service and its commands
+- [Configuration](https://git.devtronic.pro/fedserv/echo/wiki/Configuration) — the `config.toml` reference
+- [Directory API](https://git.devtronic.pro/fedserv/echo/wiki/Directory-API) — the gRPC account and channel directory for websites
+- [Writing a Module](https://git.devtronic.pro/fedserv/echo/wiki/Writing-a-Module) — build your own service or ircd link
 
 ## Status
 
-Links to an InspIRCd uplink and runs NickServ (REGISTER, IDENTIFY, LOGOUT, CERT,
-and SASL PLAIN / SCRAM-SHA-256/512 / EXTERNAL) and ChanServ over an event-sourced
-account store replicated between nodes by gossip, with an optional mutually
-authenticated TLS peer link, plus a gRPC directory API for websites to mirror
-the account/channel directory (bearer-token authenticated, optional TLS).
+Echo links to a live InspIRCd uplink and runs the full service suite over an event-sourced, gossip-replicated store. It supports SASL (PLAIN, SCRAM-SHA-256/512, EXTERNAL), an optional mutually-authenticated TLS peer link, an email subsystem for registration confirmation and password recovery, and a gRPC directory API for websites to mirror accounts and channels. It is verified against a real ircd with the irctest compliance suite.
+
+## License
+
+Not yet declared. This is original, clean-room work; a license will be set before any public release.
