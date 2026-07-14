@@ -443,11 +443,99 @@ pub struct AccountView {
     pub greet: String,
 }
 
-// One channel access-list entry (account -> level, e.g. "op" / "voice").
+// One channel access-list entry (account -> level). `level` is either a legacy
+// preset ("op"/"voice"/"founder") or a granular flag string (e.g. "otiv"); both
+// resolve through `level_caps`.
 #[derive(Debug, Clone)]
 pub struct ChanAccessView {
     pub account: String,
     pub level: String,
+}
+
+// The granular channel-access flags, shared by ChanServ (channel access) and,
+// via the same primitive, by GroupServ. Each letter grants a capability:
+//   f full/co-founder   o auto-op        O op commands    h auto-halfop
+//   v auto-voice        t topic          i invite         a modify access list
+//   s channel settings  g greet shown
+pub const ACCESS_FLAGS: &str = "foOhvtiasg";
+
+// The capabilities an access `level` confers (founder is layered on by callers).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Caps {
+    pub auto: Option<&'static str>, // auto status mode on join: +o / +h / +v
+    pub op: bool,                   // moderation: kick / ban / op / mode / akick
+    pub topic: bool,
+    pub invite: bool,
+    pub access: bool, // may modify the access / flags / akick lists
+    pub set: bool,    // may change channel settings
+    pub greet: bool,
+    pub rank: u8, // 3 co-founder, 2 op, 1 voice/halfop — for PEACE comparisons
+}
+
+// Resolve an access `level` string to its capabilities. Recognises the legacy
+// presets, then falls back to treating it as flag letters, so old op/voice
+// entries and new flag entries coexist.
+pub fn level_caps(level: &str) -> Caps {
+    match level {
+        "founder" => Caps { auto: Some("+o"), op: true, topic: true, invite: true, access: true, set: true, greet: true, rank: 3 },
+        "op" => Caps { auto: Some("+o"), op: true, topic: true, invite: true, rank: 2, ..Caps::default() },
+        "voice" => Caps { auto: Some("+v"), rank: 1, ..Caps::default() },
+        flags => {
+            let has = |c: char| flags.contains(c);
+            let auto = if has('o') {
+                Some("+o")
+            } else if has('h') {
+                Some("+h")
+            } else if has('v') {
+                Some("+v")
+            } else {
+                None
+            };
+            let founderish = has('f');
+            let rank = if founderish {
+                3
+            } else if has('o') || has('O') {
+                2
+            } else if !flags.is_empty() {
+                1
+            } else {
+                0
+            };
+            Caps {
+                auto,
+                op: founderish || has('o') || has('O'),
+                topic: founderish || has('t'),
+                invite: founderish || has('i'),
+                access: founderish || has('a'),
+                set: founderish || has('s'),
+                greet: founderish || has('g'),
+                rank,
+            }
+        }
+    }
+}
+
+// Apply a `+ov-h`-style delta to a flag string, returning the new sorted, unique
+// flag string. A bare "ov" (no sign) grants. Returns Err with the first invalid
+// flag letter.
+pub fn apply_flags(current: &str, delta: &str) -> Result<String, char> {
+    let mut set: Vec<char> = current.chars().filter(|c| ACCESS_FLAGS.contains(*c)).collect();
+    let mut adding = true;
+    for c in delta.chars() {
+        match c {
+            '+' => adding = true,
+            '-' => adding = false,
+            f if ACCESS_FLAGS.contains(f) => {
+                set.retain(|&x| x != f);
+                if adding {
+                    set.push(f);
+                }
+            }
+            other => return Err(other),
+        }
+    }
+    // A stable, deduplicated order following ACCESS_FLAGS.
+    Ok(ACCESS_FLAGS.chars().filter(|c| set.contains(c)).collect())
 }
 
 // One auto-kick entry (a hostmask and the reason shown on kick).
@@ -619,33 +707,32 @@ pub enum Kicker {
 }
 
 impl ChannelView {
-    // The channel mode this account is entitled to on join (+o founder/op, +v
-    // voice), or None if it holds no access.
-    pub fn join_mode(&self, account: &str) -> Option<&'static str> {
-        if self.founder.eq_ignore_ascii_case(account) {
-            return Some("+o");
-        }
-        self.access
-            .iter()
-            .find(|a| a.account.eq_ignore_ascii_case(account))
-            .map(|a| if a.level == "voice" { "+v" } else { "+o" })
-    }
-
-    // A comparable access rank for PEACE: founder 3, op 2, voice 1, none 0.
-    pub fn access_rank(&self, account: Option<&str>) -> u8 {
-        let Some(acc) = account else { return 0 };
+    // The account's resolved capabilities, or the empty set if it holds no access.
+    // The founder holds everything.
+    pub fn caps_of(&self, account: Option<&str>) -> Caps {
+        let Some(acc) = account else { return Caps::default() };
         if self.founder.eq_ignore_ascii_case(acc) {
-            return 3;
+            return level_caps("founder");
         }
         self.access
             .iter()
             .find(|a| a.account.eq_ignore_ascii_case(acc))
-            .map_or(0, |a| if a.level == "voice" { 1 } else { 2 })
+            .map_or(Caps::default(), |a| level_caps(&a.level))
     }
 
-    // Whether this account holds channel-operator access (founder or op level).
+    // The status mode this account gets on join (+o / +h / +v), or None.
+    pub fn join_mode(&self, account: &str) -> Option<&'static str> {
+        self.caps_of(Some(account)).auto
+    }
+
+    // A comparable access rank for PEACE: founder 3, op 2, voice/halfop 1, none 0.
+    pub fn access_rank(&self, account: Option<&str>) -> u8 {
+        self.caps_of(account).rank
+    }
+
+    // Whether this account holds channel-operator (moderation) access.
     pub fn is_op(&self, account: &str) -> bool {
-        self.join_mode(account) == Some("+o")
+        self.caps_of(Some(account)).op
     }
 
     // The mode-lock rendered as an applyable mode string, e.g. "+rnt-s".
@@ -990,6 +1077,27 @@ pub fn human_time(ts: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn access_flags_apply_and_resolve() {
+        // +/- deltas, dedup, stable order, invalid flag rejected.
+        assert_eq!(apply_flags("", "+ov").unwrap(), "ov");
+        assert_eq!(apply_flags("ov", "-o").unwrap(), "v");
+        assert_eq!(apply_flags("v", "+tv").unwrap(), "vt"); // ACCESS_FLAGS order, no dup
+        assert_eq!(apply_flags("", "ai").unwrap(), "ia"); // bare letters grant
+        assert_eq!(apply_flags("", "+ox"), Err('x'));
+
+        // Legacy presets and flag strings both resolve to capabilities.
+        assert_eq!(level_caps("op").auto, Some("+o"));
+        assert!(level_caps("op").op && level_caps("op").topic);
+        assert_eq!(level_caps("voice").auto, Some("+v"));
+        assert_eq!(level_caps("o").auto, Some("+o"));
+        assert_eq!(level_caps("v").auto, Some("+v"));
+        assert_eq!(level_caps("h").auto, Some("+h"));
+        let t = level_caps("t"); // topic-only: can topic, not op
+        assert!(t.topic && !t.op && t.auto.is_none());
+        assert!(level_caps("a").access && level_caps("f").set);
+    }
 
     #[test]
     fn privs_bitset_grants_and_checks() {

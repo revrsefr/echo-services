@@ -6,6 +6,7 @@ use fedserv_api::NetView;
 mod mode;
 #[path = "access.rs"]
 mod access;
+mod flags;
 #[path = "op.rs"]
 mod op;
 #[path = "kick.rs"]
@@ -205,6 +206,13 @@ impl Service for ChanServ {
             }
             Some("MODE") => mode::handle(me, from, args, ctx, db),
             Some("ACCESS") => access::handle(me, from, args, ctx, db),
+            Some("FLAGS") => {
+                let Some(&chan) = args.get(1) else {
+                    ctx.notice(me, from.uid, "Syntax: FLAGS <#channel> [account [+/-flags]]");
+                    return;
+                };
+                flags::handle(me, from, chan, args, ctx, db);
+            }
             Some("OP") => op::handle(me, from, "+o", args, ctx, net, db),
             Some("DEOP") => op::handle(me, from, "-o", args, ctx, net, db),
             Some("VOICE") => op::handle(me, from, "+v", args, ctx, net, db),
@@ -229,7 +237,7 @@ impl Service for ChanServ {
             Some("AOP") => xop::handle(me, from, "AOP", "op", args, ctx, db),
             Some("SOP") => xop::handle(me, from, "SOP", "op", args, ctx, db),
             Some("VOP") => xop::handle(me, from, "VOP", "voice", args, ctx, db),
-            Some("HELP") => ctx.notice(me, from.uid, "ChanServ registers and looks after channels. Commands: \x02REGISTER\x02, \x02INFO\x02, \x02LIST\x02, \x02SET\x02, \x02ACCESS\x02, \x02AOP\x02/\x02SOP\x02/\x02VOP\x02, \x02STATUS\x02, \x02OP\x02/\x02DEOP\x02, \x02VOICE\x02/\x02DEVOICE\x02, \x02KICK\x02, \x02BAN\x02/\x02UNBAN\x02, \x02AKICK\x02, \x02ENFORCE\x02, \x02TOPIC\x02, \x02ENTRYMSG\x02, \x02INVITE\x02, \x02GETKEY\x02, \x02SEEN\x02, \x02CLONE\x02, \x02MODE\x02, \x02MLOCK\x02, \x02DROP\x02. Operators also have \x02SUSPEND\x02/\x02UNSUSPEND\x02 and \x02NOEXPIRE\x02 <#channel> {ON|OFF}."),
+            Some("HELP") => ctx.notice(me, from.uid, "ChanServ registers and looks after channels. Commands: \x02REGISTER\x02, \x02INFO\x02, \x02LIST\x02, \x02SET\x02, \x02ACCESS\x02, \x02FLAGS\x02, \x02AOP\x02/\x02SOP\x02/\x02VOP\x02, \x02STATUS\x02, \x02OP\x02/\x02DEOP\x02, \x02VOICE\x02/\x02DEVOICE\x02, \x02KICK\x02, \x02BAN\x02/\x02UNBAN\x02, \x02AKICK\x02, \x02ENFORCE\x02, \x02TOPIC\x02, \x02ENTRYMSG\x02, \x02INVITE\x02, \x02GETKEY\x02, \x02SEEN\x02, \x02CLONE\x02, \x02MODE\x02, \x02MLOCK\x02, \x02DROP\x02. Operators also have \x02SUSPEND\x02/\x02UNSUSPEND\x02 and \x02NOEXPIRE\x02 <#channel> {ON|OFF}."),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
         }

@@ -4831,6 +4831,57 @@ mod tests {
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-oper refused: {out:?}");
     }
 
+    // ChanServ FLAGS: granular access grants flow through the shared resolver, so
+    // a flag-granted +o gets auto-op like a legacy op entry; changing needs the
+    // founder or the 'a' flag.
+    #[test]
+    fn chanserv_flags_grant_access() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-csflags.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        for a in ["alice", "bob", "carol"] {
+            db.register(a, "password1", None).unwrap();
+        }
+        db.register_channel("#room", "alice").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        for (uid, nick) in [("000AAAAAA", "alice"), ("000AAAAAB", "bob"), ("000AAAAAC", "carol")] {
+            e.handle(NetEvent::UserConnect { uid: uid.into(), nick: nick.into(), host: "h".into(), ip: "0.0.0.0".into() });
+            e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        }
+
+        // Founder grants bob auto-op + topic via flags.
+        assert!(has(&cs(&mut e, "000AAAAAA", "FLAGS #room bob +ot"), "now holds"), "flags set");
+        // The grant confers real access: bob is auto-opped on join.
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: false });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#room" && modes.starts_with("+o"))), "flag-op is auto-opped: {out:?}");
+
+        // Change to voice-only; now the join mode is +v.
+        cs(&mut e, "000AAAAAA", "FLAGS #room bob -ot+v");
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room2".into(), op: false });
+        assert!(!out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes.starts_with("+o"))), "no longer auto-opped elsewhere");
+        assert_eq!(e.db.channel("#room").unwrap().join_mode("bob"), Some("+v"), "bob resolves to +v");
+
+        // A non-founder without the 'a' flag can't change access.
+        assert!(has(&cs(&mut e, "000AAAAAC", "FLAGS #room bob +o"), "founder or the \x02a\x02 flag"), "carol refused");
+        // Grant carol the 'a' flag; now she can.
+        cs(&mut e, "000AAAAAA", "FLAGS #room carol +a");
+        assert!(has(&cs(&mut e, "000AAAAAC", "FLAGS #room bob +i"), "now holds"), "carol with 'a' can change flags");
+
+        // An invalid flag letter is rejected.
+        assert!(has(&cs(&mut e, "000AAAAAA", "FLAGS #room bob +z"), "isn't a valid flag"), "bad flag rejected");
+    }
+
     // ChanServ moderation: an op can op/kick/ban users; a non-op is refused.
     #[test]
     fn chanserv_moderation() {

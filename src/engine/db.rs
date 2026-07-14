@@ -681,7 +681,7 @@ impl ChannelInfo {
         self.access
             .iter()
             .find(|a| a.account.eq_ignore_ascii_case(account))
-            .map(|a| if a.level == "voice" { "+v" } else { "+o" })
+            .and_then(|a| fedserv_api::level_caps(&a.level).auto)
     }
 
     /// The matching auto-kick entry for `hostmask` (nick!user@host), if any.
