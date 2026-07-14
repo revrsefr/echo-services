@@ -1,0 +1,8 @@
+[package]
+name = "fedserv-helpserv"
+version = "0.0.1"
+edition = "2021"
+description = "HelpServ: a help-desk queue — users ask, operators take and answer."
+
+[dependencies]
+fedserv-api = { path = "../api" }

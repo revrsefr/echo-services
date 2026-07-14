@@ -1,5 +1,5 @@
 [workspace]
-members = ["api", "inspircd", "chanserv", "nickserv", "example", "botserv", "memoserv", "statserv", "hostserv", "operserv", "diceserv", "infoserv", "reportserv", "groupserv", "chanfix"]
+members = ["api", "inspircd", "chanserv", "nickserv", "example", "botserv", "memoserv", "statserv", "hostserv", "operserv", "diceserv", "infoserv", "reportserv", "groupserv", "chanfix", "helpserv"]
 
 [package]
 name = "fedserv"
@@ -23,6 +23,7 @@ fedserv-infoserv = { path = "infoserv" }
 fedserv-reportserv = { path = "reportserv" }
 fedserv-groupserv = { path = "groupserv" }
 fedserv-chanfix = { path = "chanfix" }
+fedserv-helpserv = { path = "helpserv" }
 tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "time", "sync", "process"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

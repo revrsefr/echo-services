@@ -640,6 +640,17 @@ pub struct NewsView {
     pub ts: u64,
 }
 
+// A help-desk ticket held by HelpServ.
+#[derive(Debug, Clone)]
+pub struct HelpView {
+    pub id: u64,
+    pub requester: String,
+    pub message: String,
+    pub ts: u64,
+    pub handler: Option<String>,
+    pub open: bool,
+}
+
 // An abuse report held by ReportServ.
 #[derive(Debug, Clone)]
 pub struct ReportView {
@@ -934,6 +945,13 @@ pub trait Store {
     fn report_del(&mut self, id: u64) -> bool;
     fn reports(&self, open_only: bool) -> Vec<ReportView>;
     fn report(&self, id: u64) -> Option<ReportView>;
+    // Help-desk tickets (HelpServ). `help_request` is rate-limited (None = too soon).
+    fn help_request(&mut self, requester: &str, message: &str) -> Option<u64>;
+    fn help_take(&mut self, id: u64, handler: &str) -> bool;
+    fn help_close(&mut self, id: u64) -> bool;
+    fn help_tickets(&self, open_only: bool) -> Vec<HelpView>;
+    fn help_ticket(&self, id: u64) -> Option<HelpView>;
+    fn help_next_open(&self) -> Option<u64>;
     // User groups (GroupServ).
     fn group_register(&mut self, name: &str, founder: &str) -> Result<(), ChanError>;
     fn group_drop(&mut self, name: &str) -> Result<(), ChanError>;

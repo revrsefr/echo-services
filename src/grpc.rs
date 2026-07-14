@@ -181,6 +181,9 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::GroupFounderSet { .. }
         | Event::GroupFlagsSet { .. }
         | Event::GroupMemberDel { .. }
+        | Event::HelpRequested { .. }
+        | Event::HelpTaken { .. }
+        | Event::HelpClosed { .. }
         | Event::OperGranted { .. }
         | Event::OperRevoked { .. }
         | Event::SessionExceptionAdded { .. }

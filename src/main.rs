@@ -26,6 +26,7 @@ use fedserv_infoserv::InfoServ;
 use fedserv_reportserv::ReportServ;
 use fedserv_groupserv::GroupServ;
 use fedserv_chanfix::ChanFix;
+use fedserv_helpserv::HelpServ;
 use fedserv_example::ExampleServ;
 use fedserv_inspircd::InspIrcd;
 use fedserv_nickserv::NickServ;
@@ -117,6 +118,11 @@ async fn main() -> Result<()> {
     if enabled("chanfix") {
         services.push(Box::new(ChanFix {
             uid: format!("{}AAAAAM", cfg.server.sid),
+        }));
+    }
+    if enabled("helpserv") {
+        services.push(Box::new(HelpServ {
+            uid: format!("{}AAAAAN", cfg.server.sid),
         }));
     }
     if enabled("example") {

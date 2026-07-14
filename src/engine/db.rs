@@ -30,7 +30,7 @@ use super::scram::{self, Hash};
 // fedserv-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use fedserv_api::{
-    AccountView, AjoinView, AkillView, BotView, Caps, GroupView, IgnoreView, MemoView, NewsView, Privs, ReportView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
+    AccountView, AjoinView, AkillView, BotView, Caps, GroupView, HelpView, IgnoreView, MemoView, NewsView, Privs, ReportView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -200,6 +200,10 @@ pub enum Event {
     GroupFlagsSet { name: String, account: String, flags: String },
     // Remove a member from a group entirely.
     GroupMemberDel { name: String, account: String },
+    // Help-desk tickets (HelpServ). Global so any node's helpers see the queue.
+    HelpRequested { id: u64, requester: String, message: String, ts: u64 },
+    HelpTaken { id: u64, handler: String },
+    HelpClosed { id: u64 },
     // Runtime operator grants (OperServ OPER).
     OperGranted {
         account: String,
@@ -280,6 +284,9 @@ impl Event {
             | Event::GroupFounderSet { .. }
             | Event::GroupFlagsSet { .. }
             | Event::GroupMemberDel { .. }
+            | Event::HelpRequested { .. }
+            | Event::HelpTaken { .. }
+            | Event::HelpClosed { .. }
             | Event::OperGranted { .. }
             | Event::OperRevoked { .. }
             | Event::SessionExceptionAdded { .. }
@@ -395,6 +402,18 @@ pub struct News {
     pub ts: u64,
 }
 
+// A help-desk ticket (HelpServ): who asked, their message, when, the staff member
+// handling it (if taken), and whether it's still open.
+#[derive(Debug, Clone)]
+pub struct HelpTicket {
+    pub id: u64,
+    pub requester: String,
+    pub message: String,
+    pub ts: u64,
+    pub handler: Option<String>,
+    pub open: bool,
+}
+
 // A user group (GroupServ): a `!name`, its founder account, and member accounts
 // each with group-access flags. Groups can be granted channel access.
 #[derive(Debug, Clone)]
@@ -436,6 +455,9 @@ pub struct NetData {
     pub report_seq: u64,
     // User groups (GroupServ).
     pub groups: Vec<Group>,
+    // Help-desk tickets (HelpServ), oldest first.
+    pub help: Vec<HelpTicket>,
+    pub help_seq: u64,
     // Runtime services operators (OperServ OPER), casefolded account -> grant.
     // Merged with the declarative [[oper]] config at the engine.
     pub opers: HashMap<String, OperGrant>,
@@ -1214,6 +1236,15 @@ impl Db {
             snapshot.push(Event::GroupRegistered { name: g.name.clone(), founder: g.founder.clone(), ts: g.ts });
             for m in &g.members {
                 snapshot.push(Event::GroupFlagsSet { name: g.name.clone(), account: m.account.clone(), flags: m.flags.clone() });
+            }
+        }
+        for t in &self.net.help {
+            snapshot.push(Event::HelpRequested { id: t.id, requester: t.requester.clone(), message: t.message.clone(), ts: t.ts });
+            if let Some(h) = &t.handler {
+                snapshot.push(Event::HelpTaken { id: t.id, handler: h.clone() });
+            }
+            if !t.open {
+                snapshot.push(Event::HelpClosed { id: t.id });
             }
         }
         for (account, grant) in &self.net.opers {
@@ -2271,6 +2302,68 @@ impl Db {
     /// A single report by id, if present.
     pub fn report(&self, id: u64) -> Option<ReportView> {
         self.net.reports.iter().find(|r| r.id == id).map(|r| ReportView { id: r.id, reporter: r.reporter.clone(), target: r.target.clone(), reason: r.reason.clone(), ts: r.ts, open: r.open })
+    }
+
+    /// Open a help-desk ticket, rate-limited per requester (shares the report
+    /// throttle namespace). Returns the new ticket's id, or None if too soon.
+    pub fn help_request(&mut self, requester: &str, message: &str) -> Option<u64> {
+        const COOLDOWN: u64 = 30;
+        let now = now();
+        let tkey = format!("help:{}", requester.to_ascii_lowercase());
+        if self.report_times.get(&tkey).is_some_and(|&t| now.saturating_sub(t) < COOLDOWN) {
+            return None;
+        }
+        self.report_times.insert(tkey, now);
+        let id = self.net.help_seq;
+        let _ = self.log.append(Event::HelpRequested { id, requester: requester.to_string(), message: message.to_string(), ts: now });
+        self.net.help_seq = id + 1;
+        self.net.help.push(HelpTicket { id, requester: requester.to_string(), message: message.to_string(), ts: now, handler: None, open: true });
+        Some(id)
+    }
+
+    /// Assign an open ticket to a handler. Returns whether an open one was taken.
+    pub fn help_take(&mut self, id: u64, handler: &str) -> bool {
+        let ok = self.net.help.iter().any(|t| t.id == id && t.open);
+        if ok {
+            let _ = self.log.append(Event::HelpTaken { id, handler: handler.to_string() });
+            if let Some(t) = self.net.help.iter_mut().find(|t| t.id == id) {
+                t.handler = Some(handler.to_string());
+            }
+        }
+        ok
+    }
+
+    /// Close a ticket. Returns whether an open one was closed.
+    pub fn help_close(&mut self, id: u64) -> bool {
+        let ok = self.net.help.iter().any(|t| t.id == id && t.open);
+        if ok {
+            let _ = self.log.append(Event::HelpClosed { id });
+            if let Some(t) = self.net.help.iter_mut().find(|t| t.id == id) {
+                t.open = false;
+            }
+        }
+        ok
+    }
+
+    /// The tickets, newest first. `open_only` hides closed ones.
+    pub fn help_tickets(&self, open_only: bool) -> Vec<HelpView> {
+        self.net
+            .help
+            .iter()
+            .rev()
+            .filter(|t| !open_only || t.open)
+            .map(|t| HelpView { id: t.id, requester: t.requester.clone(), message: t.message.clone(), ts: t.ts, handler: t.handler.clone(), open: t.open })
+            .collect()
+    }
+
+    /// A single ticket by id.
+    pub fn help_ticket(&self, id: u64) -> Option<HelpView> {
+        self.net.help.iter().find(|t| t.id == id).map(|t| HelpView { id: t.id, requester: t.requester.clone(), message: t.message.clone(), ts: t.ts, handler: t.handler.clone(), open: t.open })
+    }
+
+    /// The id of the oldest open, unassigned ticket (for HelpServ NEXT).
+    pub fn help_next_open(&self) -> Option<u64> {
+        self.net.help.iter().find(|t| t.open && t.handler.is_none()).map(|t| t.id)
     }
 
     /// Register a new group (name must start with `!`). Founder is an account.
@@ -3415,6 +3508,22 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
                 g.members.retain(|m| !m.account.eq_ignore_ascii_case(&account));
             }
         }
+        Event::HelpRequested { id, requester, message, ts } => {
+            net.help_seq = net.help_seq.max(id + 1);
+            if !net.help.iter().any(|t| t.id == id) {
+                net.help.push(HelpTicket { id, requester, message, ts, handler: None, open: true });
+            }
+        }
+        Event::HelpTaken { id, handler } => {
+            if let Some(t) = net.help.iter_mut().find(|t| t.id == id) {
+                t.handler = Some(handler);
+            }
+        }
+        Event::HelpClosed { id } => {
+            if let Some(t) = net.help.iter_mut().find(|t| t.id == id) {
+                t.open = false;
+            }
+        }
         Event::OperGranted { account, privs, expires } => {
             net.opers.insert(key(&account), OperGrant { privs, expires });
         }
@@ -3737,6 +3846,24 @@ impl Store for Db {
     }
     fn report(&self, id: u64) -> Option<ReportView> {
         Db::report(self, id)
+    }
+    fn help_request(&mut self, requester: &str, message: &str) -> Option<u64> {
+        Db::help_request(self, requester, message)
+    }
+    fn help_take(&mut self, id: u64, handler: &str) -> bool {
+        Db::help_take(self, id, handler)
+    }
+    fn help_close(&mut self, id: u64) -> bool {
+        Db::help_close(self, id)
+    }
+    fn help_tickets(&self, open_only: bool) -> Vec<HelpView> {
+        Db::help_tickets(self, open_only)
+    }
+    fn help_ticket(&self, id: u64) -> Option<HelpView> {
+        Db::help_ticket(self, id)
+    }
+    fn help_next_open(&self) -> Option<u64> {
+        Db::help_next_open(self)
     }
     fn group_register(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
         Db::group_register(self, name, founder)

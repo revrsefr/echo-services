@@ -332,6 +332,7 @@ dependencies = [
  "fedserv-diceserv",
  "fedserv-example",
  "fedserv-groupserv",
+ "fedserv-helpserv",
  "fedserv-hostserv",
  "fedserv-infoserv",
  "fedserv-inspircd",
@@ -401,6 +402,13 @@ dependencies = [
 
 [[package]]
 name = "fedserv-groupserv"
+version = "0.0.1"
+dependencies = [
+ "fedserv-api",
+]
+
+[[package]]
+name = "fedserv-helpserv"
 version = "0.0.1"
 dependencies = [
  "fedserv-api",

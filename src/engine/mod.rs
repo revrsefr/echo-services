@@ -1706,6 +1706,9 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         ReportFiled { reporter, target, reason, .. } => format!("\x02{reporter}\x02 reported \x02{target}\x02: {reason}"),
         ReportClosed { id } => format!("closed report #{id}"),
         ReportDeleted { id } => format!("deleted report #{id}"),
+        HelpRequested { requester, message, .. } => format!("\x02{requester}\x02 asked for help: {message}"),
+        HelpTaken { id, handler } => format!("\x02{handler}\x02 took help ticket #{id}"),
+        HelpClosed { id } => format!("closed help ticket #{id}"),
         GroupRegistered { name, founder, .. } => format!("registered group \x02{name}\x02 (founder \x02{founder}\x02)"),
         GroupDropped { name } => format!("dropped group \x02{name}\x02"),
         GroupFounderSet { name, founder } => format!("set founder of \x02{name}\x02 to \x02{founder}\x02"),
@@ -4584,6 +4587,53 @@ mod tests {
         // ...but not after its window passes.
         e.now_override = Some(10_000_000_000);
         assert!(denied(&os(&mut e, "000AAAAAP", "STATS")), "expired grant confers nothing");
+    }
+
+    // HelpServ: a user opens a ticket; it queues, flows into the audit trail
+    // (LOGSEARCH), and operators TAKE / CLOSE it. Reviewing is oper-only.
+    #[test]
+    fn helpserv_ticket_flow() {
+        use fedserv_helpserv::HelpServ;
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-helpserv.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+                Box::new(HelpServ { uid: "42SAAAAAN".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin).with(fedserv_api::Priv::Auspex));
+        e.set_opers(opers);
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAN".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAU".into(), nick: "newbie".into(), host: "h".into(), ip: "0.0.0.0".into() });
+
+        // A user asks for help; it queues and is searchable via the audit trail.
+        assert!(has(&hs(&mut e, "000AAAAAU", "REQUEST how do I register a channel"), "in the queue"), "request accepted");
+        assert!(has(&os(&mut e, "000AAAAAS", "LOGSEARCH register a channel"), "register a channel"), "searchable via LOGSEARCH");
+
+        // Operator works the queue: NEXT claims the oldest, then CLOSE.
+        assert!(has(&hs(&mut e, "000AAAAAS", "LIST"), "newbie"), "oper sees the queue");
+        assert!(has(&hs(&mut e, "000AAAAAS", "NEXT"), "You took ticket \x02#0\x02"), "next claims oldest");
+        assert!(has(&hs(&mut e, "000AAAAAS", "VIEW 0"), "register a channel"), "view detail");
+        assert!(has(&hs(&mut e, "000AAAAAS", "CLOSE 0"), "closed"), "close");
+        assert!(!has(&hs(&mut e, "000AAAAAS", "LIST"), "newbie"), "closed drops off the open list");
+
+        // Non-opers can't work the queue; and filing is rate-limited.
+        assert!(has(&hs(&mut e, "000AAAAAU", "LIST"), "Access denied"), "queue is oper-only");
+        assert!(has(&hs(&mut e, "000AAAAAU", "REQUEST again please"), "wait a moment"), "rate-limited");
     }
 
     // ReportServ: any user files an abuse report; it lands in the queue AND flows
