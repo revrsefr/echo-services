@@ -457,6 +457,15 @@ pub struct IgnoreView {
     pub expires: Option<u64>,
 }
 
+// A news item held by OperServ (its kind is implied by which list it came from).
+#[derive(Debug, Clone)]
+pub struct NewsView {
+    pub id: u64,
+    pub text: String,
+    pub setter: String,
+    pub ts: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct BotView {
     pub nick: String,
@@ -718,6 +727,10 @@ pub trait Store {
     fn account_note(&self, account: &str) -> Option<String>;
     fn set_channel_note(&mut self, channel: &str, note: Option<String>) -> bool;
     fn channel_note(&self, channel: &str) -> Option<String>;
+    // News items shown on connect (logon) / login (oper), oper-only to manage.
+    fn news_add(&mut self, kind: &str, text: &str, setter: &str) -> u64;
+    fn news_del(&mut self, id: u64) -> bool;
+    fn news(&self, kind: &str) -> Vec<NewsView>;
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError>;
     fn drop_channel(&mut self, name: &str) -> Result<(), ChanError>;
     fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError>;

@@ -30,7 +30,7 @@ use super::scram::{self, Hash};
 // fedserv-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use fedserv_api::{
-    AccountView, AjoinView, AkillView, BotView, IgnoreView, MemoView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
+    AccountView, AjoinView, AkillView, BotView, IgnoreView, MemoView, NewsView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -185,6 +185,9 @@ pub enum Event {
     // A staff note set or cleared (OperServ INFO).
     AccountOperNoteSet { account: String, note: Option<String> },
     ChannelOperNoteSet { channel: String, note: Option<String> },
+    // News items (OperServ NEWS). The stable `id` makes deletion order-independent.
+    NewsAdded { id: u64, kind: String, text: String, setter: String, ts: u64 },
+    NewsDeleted { id: u64 },
     // Network bans (OperServ AKILL / SQLINE). Global: a ban covers the whole
     // network, so every node holds the list and re-applies it at burst. `kind`
     // is the ircd X-line type and defaults to "G" for records predating it.
@@ -243,7 +246,9 @@ impl Event {
             | Event::AccountExpiryWarned { .. }
             | Event::AccountOperNoteSet { .. }
             | Event::AkillAdded { .. }
-            | Event::AkillRemoved { .. } => Scope::Global,
+            | Event::AkillRemoved { .. }
+            | Event::NewsAdded { .. }
+            | Event::NewsDeleted { .. } => Scope::Global,
             Event::ChannelRegistered { .. }
             | Event::ChannelDropped { .. }
             | Event::ChannelMlock { .. }
@@ -331,6 +336,29 @@ pub struct Ignore {
     pub mask: String,
     pub reason: String,
     pub expires: Option<u64>,
+}
+
+// A news item (OperServ NEWS): a `kind` ("logon" shown to everyone on connect,
+// "oper" shown to operators on login), the text, who set it, and when. Carries a
+// stable id (assigned at add time, embedded in the log) so deletion is order-
+// independent under replay.
+#[derive(Debug, Clone)]
+pub struct News {
+    pub id: u64,
+    pub kind: String,
+    pub text: String,
+    pub setter: String,
+    pub ts: u64,
+}
+
+// The network-wide lists that aren't accounts/channels/grouped/bots: the network
+// bans and the news items. Bundled so `apply` threads one parameter for them
+// (and stays within its argument budget as more are added).
+#[derive(Debug, Clone, Default)]
+pub struct NetData {
+    pub akills: Vec<Akill>,
+    pub news: Vec<News>,
+    pub news_seq: u64,
 }
 
 // A memo left for an account (MemoServ).
@@ -900,8 +928,8 @@ pub struct Db {
     // HostServ node config: the self-serve offer menu, the forbidden-pattern
     // blocklist, and the auto-vhost template.
     host_cfg: HostConfig,
-    // Network bans (OperServ AKILL), in insertion order.
-    akills: Vec<Akill>,
+    // Network-wide replicated lists: bans (AKILL/SQLINE) and news.
+    net: NetData,
     // Services ignores (OperServ IGNORE), node-local and in-memory.
     ignores: Vec<Ignore>,
 }
@@ -954,12 +982,12 @@ impl Db {
         let mut grouped = HashMap::new();
         let mut bots = HashMap::new();
         let mut host_cfg = HostConfig::default();
-        let mut akills = Vec::new();
+        let mut net = NetData::default();
         for event in events {
-            apply(&mut accounts, &mut channels, &mut grouped, &mut bots, &mut host_cfg, &mut akills, event);
+            apply(&mut accounts, &mut channels, &mut grouped, &mut bots, &mut host_cfg, &mut net, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), bots, host_cfg, akills, ignores: Vec::new() }
+        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), bots, host_cfg, net, ignores: Vec::new() }
     }
 
     /// Fold an entry authored by another node into the store — the services-side
@@ -975,7 +1003,7 @@ impl Db {
             _ => None,
         };
         if let Some(event) = self.log.ingest(entry)? {
-            apply(&mut self.accounts, &mut self.channels, &mut self.grouped, &mut self.bots, &mut self.host_cfg, &mut self.akills, event);
+            apply(&mut self.accounts, &mut self.channels, &mut self.grouped, &mut self.bots, &mut self.host_cfg, &mut self.net, event);
         }
         if let Some((name, prev_home)) = watched {
             match (prev_home, self.account(&name).map(|c| c.home.clone())) {
@@ -1050,8 +1078,11 @@ impl Db {
         }
         // Compaction is a good moment to forget akills that have already expired.
         let now = now();
-        for a in self.akills.iter().filter(|a| a.expires.is_none_or(|e| e > now)) {
+        for a in self.net.akills.iter().filter(|a| a.expires.is_none_or(|e| e > now)) {
             snapshot.push(Event::AkillAdded { kind: a.kind.clone(), mask: a.mask.clone(), setter: a.setter.clone(), reason: a.reason.clone(), ts: a.ts, expires: a.expires });
+        }
+        for n in &self.net.news {
+            snapshot.push(Event::NewsAdded { id: n.id, kind: n.kind.clone(), text: n.text.clone(), setter: n.setter.clone(), ts: n.ts });
         }
         self.log.compact(snapshot)?;
         tracing::info!(before, after = self.log.len(), "compacted event log");
@@ -1822,34 +1853,64 @@ impl Db {
     /// Add (or refresh) a `kind` network ban. Returns whether it was newly added.
     pub fn akill_add(&mut self, kind: &str, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
         let same = |a: &Akill| a.kind == kind && a.mask.eq_ignore_ascii_case(mask);
-        let fresh = !self.akills.iter().any(|a| same(a) && a.expires.is_none_or(|e| e > now()));
+        let fresh = !self.net.akills.iter().any(|a| same(a) && a.expires.is_none_or(|e| e > now()));
         self.log
             .append(Event::AkillAdded { kind: kind.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now(), expires })
             .map_err(|_| RegError::Internal)?;
-        self.akills.retain(|a| !same(a));
-        self.akills.push(Akill { kind: kind.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now(), expires });
+        self.net.akills.retain(|a| !same(a));
+        self.net.akills.push(Akill { kind: kind.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now(), expires });
         Ok(fresh)
     }
 
     /// Lift a `kind` network ban. Returns whether a live one was removed.
     pub fn akill_del(&mut self, kind: &str, mask: &str) -> Result<bool, RegError> {
         let same = |a: &Akill| a.kind == kind && a.mask.eq_ignore_ascii_case(mask);
-        let existed = self.akills.iter().any(|a| same(a) && a.expires.is_none_or(|e| e > now()));
+        let existed = self.net.akills.iter().any(|a| same(a) && a.expires.is_none_or(|e| e > now()));
         if !existed {
             return Ok(false);
         }
         self.log.append(Event::AkillRemoved { kind: kind.to_string(), mask: mask.to_string() }).map_err(|_| RegError::Internal)?;
-        self.akills.retain(|a| !same(a));
+        self.net.akills.retain(|a| !same(a));
         Ok(true)
     }
 
     /// The live network bans (expired ones hidden lazily), oldest first.
     pub fn akills(&self) -> Vec<AkillView> {
         let now = now();
-        self.akills
+        self.net.akills
             .iter()
             .filter(|a| a.expires.is_none_or(|e| e > now))
             .map(|a| AkillView { kind: a.kind.clone(), mask: a.mask.clone(), setter: a.setter.clone(), reason: a.reason.clone(), ts: a.ts, expires: a.expires })
+            .collect()
+    }
+
+    /// Add a news item of `kind` ("logon"/"oper"). Returns its stable id.
+    pub fn news_add(&mut self, kind: &str, text: &str, setter: &str) -> u64 {
+        let id = self.net.news_seq;
+        let ts = now();
+        let _ = self.log.append(Event::NewsAdded { id, kind: kind.to_string(), text: text.to_string(), setter: setter.to_string(), ts });
+        self.net.news_seq = id + 1;
+        self.net.news.push(News { id, kind: kind.to_string(), text: text.to_string(), setter: setter.to_string(), ts });
+        id
+    }
+
+    /// Delete a news item by id. Returns whether one existed.
+    pub fn news_del(&mut self, id: u64) -> bool {
+        let existed = self.net.news.iter().any(|n| n.id == id);
+        if existed {
+            let _ = self.log.append(Event::NewsDeleted { id });
+            self.net.news.retain(|n| n.id != id);
+        }
+        existed
+    }
+
+    /// The news items of `kind`, oldest first.
+    pub fn news(&self, kind: &str) -> Vec<NewsView> {
+        self.net
+            .news
+            .iter()
+            .filter(|n| n.kind == kind)
+            .map(|n| NewsView { id: n.id, text: n.text.clone(), setter: n.setter.clone(), ts: n.ts })
             .collect()
     }
 
@@ -2535,7 +2596,7 @@ fn owns_over(held: &Account, claim: &Account) -> bool {
 
 // Fold one event into the store. Shared by log replay (`open`) and gossip
 // ingest, so both routes reconstruct identical state.
-fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String, ChannelInfo>, grouped: &mut HashMap<String, String>, bots: &mut HashMap<String, Bot>, host_cfg: &mut HostConfig, akills: &mut Vec<Akill>, event: Event) {
+fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String, ChannelInfo>, grouped: &mut HashMap<String, String>, bots: &mut HashMap<String, Bot>, host_cfg: &mut HostConfig, net: &mut NetData, event: Event) {
     match event {
         Event::AccountRegistered(a) => {
             // Resolve a concurrent registration of the same name deterministically:
@@ -2796,11 +2857,11 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::AkillAdded { kind, mask, setter, reason, ts, expires } => {
             // Keyed by (kind, mask), case-insensitive: a re-add refreshes in
             // place, so replaying over a snapshot stays idempotent.
-            akills.retain(|a| !(a.kind == kind && a.mask.eq_ignore_ascii_case(&mask)));
-            akills.push(Akill { kind, mask, setter, reason, ts, expires });
+            net.akills.retain(|a| !(a.kind == kind && a.mask.eq_ignore_ascii_case(&mask)));
+            net.akills.push(Akill { kind, mask, setter, reason, ts, expires });
         }
         Event::AkillRemoved { kind, mask } => {
-            akills.retain(|a| !(a.kind == kind && a.mask.eq_ignore_ascii_case(&mask)));
+            net.akills.retain(|a| !(a.kind == kind && a.mask.eq_ignore_ascii_case(&mask)));
         }
         Event::AccountExpiryWarned { account } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {
@@ -2821,6 +2882,15 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.oper_note = note;
             }
+        }
+        Event::NewsAdded { id, kind, text, setter, ts } => {
+            net.news_seq = net.news_seq.max(id + 1);
+            if !net.news.iter().any(|n| n.id == id) {
+                net.news.push(News { id, kind, text, setter, ts });
+            }
+        }
+        Event::NewsDeleted { id } => {
+            net.news.retain(|n| n.id != id);
         }
     }
 }
@@ -3084,6 +3154,15 @@ impl Store for Db {
     fn channel_note(&self, channel: &str) -> Option<String> {
         Db::channel_note(self, channel)
     }
+    fn news_add(&mut self, kind: &str, text: &str, setter: &str) -> u64 {
+        Db::news_add(self, kind, text, setter)
+    }
+    fn news_del(&mut self, id: u64) -> bool {
+        Db::news_del(self, id)
+    }
+    fn news(&self, kind: &str) -> Vec<NewsView> {
+        Db::news(self, kind)
+    }
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
         Db::register_channel(self, name, founder)
     }
@@ -3287,9 +3366,9 @@ mod tests {
             ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: ts, noexpire: false, expiry_warned: false, oper_note: None,
         };
         let converge = |first: &Account, second: &Account| {
-            let (mut acc, mut ch, mut gr, mut bo, mut hc, mut ak) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HostConfig::default(), Vec::new());
-            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, &mut ak, Event::AccountRegistered(Box::new(first.clone())));
-            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, &mut ak, Event::AccountRegistered(Box::new(second.clone())));
+            let (mut acc, mut ch, mut gr, mut bo, mut hc, mut nd) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HostConfig::default(), NetData::default());
+            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, &mut nd, Event::AccountRegistered(Box::new(first.clone())));
+            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, &mut nd, Event::AccountRegistered(Box::new(second.clone())));
             acc["alice"].password_hash.clone()
         };
         // Earlier registration wins, regardless of which claim applies first.

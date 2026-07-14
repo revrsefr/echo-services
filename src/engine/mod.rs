@@ -596,6 +596,19 @@ impl Engine {
         }
     }
 
+    // The news items of `kind` as server-sourced notices to `uid`, each tagged
+    // with `label` so it reads as an announcement. Empty if we have no SID yet.
+    fn news_notices(&self, kind: &str, label: &str, uid: &str) -> Vec<NetAction> {
+        if self.sid.is_empty() {
+            return Vec::new();
+        }
+        self.db
+            .news(kind)
+            .into_iter()
+            .map(|n| NetAction::Notice { from: self.sid.clone(), to: uid.to_string(), text: format!("[\x02{label}\x02] {}", n.text) })
+            .collect()
+    }
+
     // Announce a line to the staff audit channel, if one is configured, sourced
     // from the services server. Used for actions that aren't tied to a command.
     fn audit(&self, text: String) {
@@ -700,8 +713,9 @@ impl Engine {
         let evout = match event {
             NetEvent::Ping { token, from } => vec![NetAction::Pong { token, from }],
             NetEvent::UserConnect { uid, nick, host } => {
-                self.network.user_connect(uid, nick, host);
-                Vec::new()
+                self.network.user_connect(uid.clone(), nick, host);
+                // Greet the arriving user with the logon news.
+                self.news_notices("logon", "News", &uid)
             }
             NetEvent::NickChange { uid, nick } => {
                 self.network.user_nick_change(&uid, nick);
@@ -888,6 +902,12 @@ impl Engine {
                         self.network.set_account(target, value);
                         // A login is activity: keep the account from expiring.
                         self.db.mark_account_seen(value, self.now_secs());
+                        // An operator logging in is shown the staff (oper) news.
+                        if self.oper_privs(value).any() {
+                            for note in self.news_notices("oper", "Staff News", target) {
+                                self.emit_irc(note);
+                            }
+                        }
                     }
                 }
             }
@@ -1582,6 +1602,8 @@ fn audit_summary(event: &db::Event) -> Option<String> {
             Some(_) => format!("set a staff note on \x02{channel}\x02"),
             None => format!("cleared the staff note on \x02{channel}\x02"),
         },
+        NewsAdded { kind, .. } => format!("added a \x02{kind}\x02 news item"),
+        NewsDeleted { .. } => "removed a news item".to_string(),
         AccountNoExpire { account, on } => {
             let verb = if *on { "pinned" } else { "unpinned" };
             format!("{verb} account \x02{account}\x02 against expiry")
@@ -4022,6 +4044,70 @@ mod tests {
             assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-admin refused {cmd}");
             assert!(!out.iter().any(|a| matches!(a, NetAction::ChannelMode { .. } | NetAction::Kick { .. })), "no action from non-admin {cmd}");
         }
+    }
+
+    // OperServ NEWS: logon news greets everyone on connect, oper news greets an
+    // operator on login; ADD/DEL/LIST are admin-only.
+    #[test]
+    fn operserv_news_logon_and_oper() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-osnews.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("boss", "password1", None).unwrap();
+        db.register("plain", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        e.set_irc_out(tx);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let has = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+
+        os(&mut e, "000AAAAAS", "NEWS ADD LOGON Welcome to the network");
+        os(&mut e, "000AAAAAS", "NEWS ADD OPER Staff meeting at 5");
+
+        // A new user is greeted with the logon news on connect, not the oper news.
+        let out = e.handle(NetEvent::UserConnect { uid: "000AAAAAP".into(), nick: "plain".into(), host: "h".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "000AAAAAP" && text.contains("Welcome to the network"))), "logon news on connect: {out:?}");
+        assert!(!has(&out, "Staff meeting"), "a plain user doesn't get oper news");
+
+        // An operator logging in is shown the oper news (over the outbound path).
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() });
+        while rx.try_recv().is_ok() {} // drain the connect's logon news
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        let mut oper_news = false;
+        while let Ok(a) = rx.try_recv() {
+            if let NetAction::Notice { to, text, .. } = a {
+                if to == "000AAAAAB" && text.contains("Staff meeting at 5") {
+                    oper_news = true;
+                }
+            }
+        }
+        assert!(oper_news, "oper news shown to an operator on login");
+
+        // LIST shows both; DEL removes the logon item so a later connect is quiet.
+        assert!(has(&os(&mut e, "000AAAAAS", "NEWS LIST"), "Welcome to the network"), "list shows logon");
+        os(&mut e, "000AAAAAS", "NEWS DEL LOGON 1");
+        let out = e.handle(NetEvent::UserConnect { uid: "000AAAAAQ".into(), nick: "late".into(), host: "h".into() });
+        assert!(!has(&out, "Welcome to the network"), "logon news gone after DEL");
+
+        // A non-admin (the unidentified plain user) can't manage news.
+        assert!(has(&os(&mut e, "000AAAAAP", "NEWS ADD LOGON sneaky"), "Access denied"), "non-admin refused");
     }
 
     // OperServ INFO staff notes: an admin annotates an account/channel; the note

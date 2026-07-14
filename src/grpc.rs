@@ -170,7 +170,9 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::AccountExpiryWarned { .. }
         | Event::ChannelExpiryWarned { .. }
         | Event::AccountOperNoteSet { .. }
-        | Event::ChannelOperNoteSet { .. } => return None,
+        | Event::ChannelOperNoteSet { .. }
+        | Event::NewsAdded { .. }
+        | Event::NewsDeleted { .. } => return None,
     };
     Some(ReplicationEvent { origin: entry.origin().to_string(), seq: entry.seq(), lamport: entry.lamport(), kind: Some(kind) })
 }
