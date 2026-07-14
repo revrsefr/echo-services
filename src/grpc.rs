@@ -176,6 +176,11 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::ReportFiled { .. }
         | Event::ReportClosed { .. }
         | Event::ReportDeleted { .. }
+        | Event::GroupRegistered { .. }
+        | Event::GroupDropped { .. }
+        | Event::GroupFounderSet { .. }
+        | Event::GroupFlagsSet { .. }
+        | Event::GroupMemberDel { .. }
         | Event::OperGranted { .. }
         | Event::OperRevoked { .. }
         | Event::SessionExceptionAdded { .. }

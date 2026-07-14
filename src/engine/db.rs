@@ -30,7 +30,7 @@ use super::scram::{self, Hash};
 // fedserv-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use fedserv_api::{
-    AccountView, AjoinView, AkillView, BotView, IgnoreView, MemoView, NewsView, Privs, ReportView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
+    AccountView, AjoinView, AkillView, BotView, Caps, GroupView, IgnoreView, MemoView, NewsView, Privs, ReportView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,6 +192,14 @@ pub enum Event {
     ReportFiled { id: u64, reporter: String, target: String, reason: String, ts: u64 },
     ReportClosed { id: u64 },
     ReportDeleted { id: u64 },
+    // User groups (GroupServ). Global — groups are account identity.
+    GroupRegistered { name: String, founder: String, ts: u64 },
+    GroupDropped { name: String },
+    GroupFounderSet { name: String, founder: String },
+    // Upsert a member (empty flags = a plain member, still present).
+    GroupFlagsSet { name: String, account: String, flags: String },
+    // Remove a member from a group entirely.
+    GroupMemberDel { name: String, account: String },
     // Runtime operator grants (OperServ OPER).
     OperGranted {
         account: String,
@@ -267,6 +275,11 @@ impl Event {
             | Event::ReportFiled { .. }
             | Event::ReportClosed { .. }
             | Event::ReportDeleted { .. }
+            | Event::GroupRegistered { .. }
+            | Event::GroupDropped { .. }
+            | Event::GroupFounderSet { .. }
+            | Event::GroupFlagsSet { .. }
+            | Event::GroupMemberDel { .. }
             | Event::OperGranted { .. }
             | Event::OperRevoked { .. }
             | Event::SessionExceptionAdded { .. }
@@ -382,6 +395,22 @@ pub struct News {
     pub ts: u64,
 }
 
+// A user group (GroupServ): a `!name`, its founder account, and member accounts
+// each with group-access flags. Groups can be granted channel access.
+#[derive(Debug, Clone)]
+pub struct Group {
+    pub name: String, // "!name", casefolded
+    pub founder: String,
+    pub ts: u64,
+    pub members: Vec<GroupMember>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GroupMember {
+    pub account: String,
+    pub flags: String,
+}
+
 // An abuse report (ReportServ): who filed it, the nick/channel it's about, why,
 // when, and whether it's still open. Stable id like News.
 #[derive(Debug, Clone)]
@@ -405,6 +434,8 @@ pub struct NetData {
     // Abuse reports (ReportServ), oldest first.
     pub reports: Vec<Report>,
     pub report_seq: u64,
+    // User groups (GroupServ).
+    pub groups: Vec<Group>,
     // Runtime services operators (OperServ OPER), casefolded account -> grant.
     // Merged with the declarative [[oper]] config at the engine.
     pub opers: HashMap<String, OperGrant>,
@@ -1177,6 +1208,12 @@ impl Db {
             snapshot.push(Event::ReportFiled { id: r.id, reporter: r.reporter.clone(), target: r.target.clone(), reason: r.reason.clone(), ts: r.ts });
             if !r.open {
                 snapshot.push(Event::ReportClosed { id: r.id });
+            }
+        }
+        for g in &self.net.groups {
+            snapshot.push(Event::GroupRegistered { name: g.name.clone(), founder: g.founder.clone(), ts: g.ts });
+            for m in &g.members {
+                snapshot.push(Event::GroupFlagsSet { name: g.name.clone(), account: m.account.clone(), flags: m.flags.clone() });
             }
         }
         for (account, grant) in &self.net.opers {
@@ -2236,6 +2273,127 @@ impl Db {
         self.net.reports.iter().find(|r| r.id == id).map(|r| ReportView { id: r.id, reporter: r.reporter.clone(), target: r.target.clone(), reason: r.reason.clone(), ts: r.ts, open: r.open })
     }
 
+    /// Register a new group (name must start with `!`). Founder is an account.
+    pub fn group_register(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
+        if !name.starts_with('!') || name.len() < 2 {
+            return Err(ChanError::InvalidPattern);
+        }
+        if self.group(name).is_some() {
+            return Err(ChanError::Exists);
+        }
+        let ts = now();
+        self.log.append(Event::GroupRegistered { name: name.to_string(), founder: founder.to_string(), ts }).map_err(|_| ChanError::Internal)?;
+        self.net.groups.push(Group { name: name.to_string(), founder: founder.to_string(), ts, members: Vec::new() });
+        Ok(())
+    }
+
+    /// Drop a group.
+    pub fn group_drop(&mut self, name: &str) -> Result<(), ChanError> {
+        if self.group(name).is_none() {
+            return Err(ChanError::NoChannel);
+        }
+        self.log.append(Event::GroupDropped { name: name.to_string() }).map_err(|_| ChanError::Internal)?;
+        let k = key(name);
+        self.net.groups.retain(|g| key(&g.name) != k);
+        Ok(())
+    }
+
+    /// Upsert a group member with `flags` (empty = a plain member).
+    pub fn group_set_flags(&mut self, name: &str, account: &str, flags: &str) -> Result<(), ChanError> {
+        let k = key(name);
+        let Some(g) = self.net.groups.iter_mut().find(|g| key(&g.name) == k) else {
+            return Err(ChanError::NoChannel);
+        };
+        self.log.append(Event::GroupFlagsSet { name: name.to_string(), account: account.to_string(), flags: flags.to_string() }).map_err(|_| ChanError::Internal)?;
+        g.members.retain(|m| !m.account.eq_ignore_ascii_case(account));
+        g.members.push(GroupMember { account: account.to_string(), flags: flags.to_string() });
+        Ok(())
+    }
+
+    /// Remove a member from a group. Returns whether one was present.
+    pub fn group_del_member(&mut self, name: &str, account: &str) -> Result<bool, ChanError> {
+        let k = key(name);
+        let Some(g) = self.net.groups.iter_mut().find(|g| key(&g.name) == k) else {
+            return Err(ChanError::NoChannel);
+        };
+        if !g.members.iter().any(|m| m.account.eq_ignore_ascii_case(account)) {
+            return Ok(false);
+        }
+        self.log.append(Event::GroupMemberDel { name: name.to_string(), account: account.to_string() }).map_err(|_| ChanError::Internal)?;
+        g.members.retain(|m| !m.account.eq_ignore_ascii_case(account));
+        Ok(true)
+    }
+
+    /// Transfer a group's founder to another account.
+    pub fn group_set_founder(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
+        let k = key(name);
+        let Some(g) = self.net.groups.iter_mut().find(|g| key(&g.name) == k) else {
+            return Err(ChanError::NoChannel);
+        };
+        self.log.append(Event::GroupFounderSet { name: name.to_string(), founder: founder.to_string() }).map_err(|_| ChanError::Internal)?;
+        g.founder = founder.to_string();
+        Ok(())
+    }
+
+    /// A group view (founder + members), if it exists.
+    pub fn group(&self, name: &str) -> Option<GroupView> {
+        let k = key(name);
+        self.net.groups.iter().find(|g| key(&g.name) == k).map(|g| GroupView {
+            name: g.name.clone(),
+            founder: g.founder.clone(),
+            members: g.members.iter().map(|m| fedserv_api::GroupMemberView { account: m.account.clone(), flags: m.flags.clone() }).collect(),
+        })
+    }
+
+    /// Every group's name, sorted.
+    pub fn groups(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.net.groups.iter().map(|g| g.name.clone()).collect();
+        names.sort();
+        names
+    }
+
+    /// The groups an account belongs to (founder or member).
+    pub fn groups_of(&self, account: &str) -> Vec<String> {
+        self.net
+            .groups
+            .iter()
+            .filter(|g| g.founder.eq_ignore_ascii_case(account) || g.members.iter().any(|m| m.account.eq_ignore_ascii_case(account)))
+            .map(|g| g.name.clone())
+            .collect()
+    }
+
+    /// Whether an account is in a group (its founder or a member).
+    pub fn is_group_member(&self, name: &str, account: &str) -> bool {
+        let k = key(name);
+        self.net.groups.iter().find(|g| key(&g.name) == k).is_some_and(|g| g.founder.eq_ignore_ascii_case(account) || g.members.iter().any(|m| m.account.eq_ignore_ascii_case(account)))
+    }
+
+    /// An account's effective channel capabilities, combining its direct access
+    /// entry with any `!group` access entry it belongs to (the interconnection
+    /// that lets a channel grant access to a whole group).
+    pub fn channel_caps(&self, channel: &str, account: &str) -> Caps {
+        let Some(c) = self.channels.get(&key(channel)) else { return Caps::default() };
+        if c.founder.eq_ignore_ascii_case(account) {
+            return fedserv_api::level_caps("founder");
+        }
+        let mut caps = Caps::default();
+        for a in &c.access {
+            let applies = match a.account.strip_prefix('!') {
+                Some(g) => self.is_group_member(&format!("!{g}"), account),
+                None => a.account.eq_ignore_ascii_case(account),
+            };
+            if applies {
+                caps = caps.union(fedserv_api::level_caps(&a.level));
+            }
+        }
+        caps
+    }
+
+    /// A user's join status mode for a channel, group-aware.
+    pub fn channel_join_mode(&self, channel: &str, account: &str) -> Option<&'static str> {
+        self.channel_caps(channel, account).auto
+    }
+
     /// Add a services ignore, replacing any existing entry for the same mask.
     pub fn ignore_add(&mut self, mask: &str, reason: &str, expires: Option<u64>) {
         self.ignores.retain(|i| !i.mask.eq_ignore_ascii_case(mask));
@@ -3228,6 +3386,35 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::ReportDeleted { id } => {
             net.reports.retain(|r| r.id != id);
         }
+        Event::GroupRegistered { name, founder, ts } => {
+            let k = key(&name);
+            if !net.groups.iter().any(|g| key(&g.name) == k) {
+                net.groups.push(Group { name, founder, ts, members: Vec::new() });
+            }
+        }
+        Event::GroupDropped { name } => {
+            let k = key(&name);
+            net.groups.retain(|g| key(&g.name) != k);
+        }
+        Event::GroupFounderSet { name, founder } => {
+            let k = key(&name);
+            if let Some(g) = net.groups.iter_mut().find(|g| key(&g.name) == k) {
+                g.founder = founder;
+            }
+        }
+        Event::GroupFlagsSet { name, account, flags } => {
+            let k = key(&name);
+            if let Some(g) = net.groups.iter_mut().find(|g| key(&g.name) == k) {
+                g.members.retain(|m| !m.account.eq_ignore_ascii_case(&account));
+                g.members.push(GroupMember { account, flags });
+            }
+        }
+        Event::GroupMemberDel { name, account } => {
+            let k = key(&name);
+            if let Some(g) = net.groups.iter_mut().find(|g| key(&g.name) == k) {
+                g.members.retain(|m| !m.account.eq_ignore_ascii_case(&account));
+            }
+        }
         Event::OperGranted { account, privs, expires } => {
             net.opers.insert(key(&account), OperGrant { privs, expires });
         }
@@ -3550,6 +3737,33 @@ impl Store for Db {
     }
     fn report(&self, id: u64) -> Option<ReportView> {
         Db::report(self, id)
+    }
+    fn group_register(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
+        Db::group_register(self, name, founder)
+    }
+    fn group_drop(&mut self, name: &str) -> Result<(), ChanError> {
+        Db::group_drop(self, name)
+    }
+    fn group_set_flags(&mut self, name: &str, account: &str, flags: &str) -> Result<(), ChanError> {
+        Db::group_set_flags(self, name, account, flags)
+    }
+    fn group_del_member(&mut self, name: &str, account: &str) -> Result<bool, ChanError> {
+        Db::group_del_member(self, name, account)
+    }
+    fn group_set_founder(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
+        Db::group_set_founder(self, name, founder)
+    }
+    fn group(&self, name: &str) -> Option<GroupView> {
+        Db::group(self, name)
+    }
+    fn groups(&self) -> Vec<String> {
+        Db::groups(self)
+    }
+    fn groups_of(&self, account: &str) -> Vec<String> {
+        Db::groups_of(self, account)
+    }
+    fn channel_caps(&self, channel: &str, account: &str) -> Caps {
+        Db::channel_caps(self, channel, account)
     }
     fn oper_grant(&mut self, account: &str, privs: Vec<String>, expires: Option<u64>) {
         Db::oper_grant(self, account, privs, expires)

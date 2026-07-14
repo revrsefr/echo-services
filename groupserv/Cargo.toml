@@ -1,0 +1,8 @@
+[package]
+name = "fedserv-groupserv"
+version = "0.0.1"
+edition = "2021"
+description = "GroupServ: user groups (!name) whose members can be granted channel access together."
+
+[dependencies]
+fedserv-api = { path = "../api" }

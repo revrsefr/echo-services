@@ -816,7 +816,9 @@ impl Engine {
                 }
                 let account = self.network.account_of(&uid).map(str::to_string);
                 let from = self.chan_service.clone().unwrap_or_default();
-                let mode = account.as_deref().and_then(|a| self.db.channel(&channel).and_then(|c| c.join_mode(a)));
+                // Group-aware: a member of a group that holds channel access gets
+                // the group's status mode too.
+                let mode = account.as_deref().and_then(|a| self.db.channel_join_mode(&channel, a));
                 let entrymsg = self.db.channel(&channel).map(|c| c.entrymsg.clone()).filter(|m| !m.is_empty());
                 // Computed before the match below moves `channel` into its actions.
                 let greet = self.greet_on_join(&channel, account.as_deref());
@@ -1699,6 +1701,17 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         ReportFiled { reporter, target, reason, .. } => format!("\x02{reporter}\x02 reported \x02{target}\x02: {reason}"),
         ReportClosed { id } => format!("closed report #{id}"),
         ReportDeleted { id } => format!("deleted report #{id}"),
+        GroupRegistered { name, founder, .. } => format!("registered group \x02{name}\x02 (founder \x02{founder}\x02)"),
+        GroupDropped { name } => format!("dropped group \x02{name}\x02"),
+        GroupFounderSet { name, founder } => format!("set founder of \x02{name}\x02 to \x02{founder}\x02"),
+        GroupFlagsSet { name, account, flags } => {
+            if flags.is_empty() {
+                format!("added \x02{account}\x02 to group \x02{name}\x02")
+            } else {
+                format!("set \x02{account}\x02 in group \x02{name}\x02 to \x02{flags}\x02")
+            }
+        }
+        GroupMemberDel { name, account } => format!("removed \x02{account}\x02 from group \x02{name}\x02"),
         OperGranted { account, privs, .. } => format!("granted \x02{account}\x02 operator ({})", privs.join(", ")),
         OperRevoked { account } => format!("revoked \x02{account}\x02's operator access"),
         SessionExceptionAdded { mask, limit, .. } => format!("set a session exception \x02{mask}\x02 (limit {limit})"),
@@ -4829,6 +4842,57 @@ mod tests {
         // alice is not an oper: refused, and the flag is untouched.
         let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "NOEXPIRE mallory ON".into() });
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-oper refused: {out:?}");
+    }
+
+    // GroupServ interconnection: a channel grants access to a !group, and every
+    // group member inherits that channel access (auto-op on join).
+    #[test]
+    fn groupserv_grants_channel_access() {
+        use fedserv_chanserv::ChanServ;
+        use fedserv_groupserv::GroupServ;
+        let path = std::env::temp_dir().join("fedserv-groupserv.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        for a in ["alice", "bob", "carol"] {
+            db.register(a, "password1", None).unwrap();
+        }
+        db.register_channel("#room", "alice").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+                Box::new(GroupServ { uid: "42SAAAAAL".into() }),
+            ],
+            db,
+        );
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let gs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAL".into(), text: t.into() });
+        let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+        let opped = |out: &[NetAction], who: &str| out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == &format!("+o {who}")));
+
+        for (uid, nick) in [("000AAAAAA", "alice"), ("000AAAAAB", "bob"), ("000AAAAAC", "carol")] {
+            e.handle(NetEvent::UserConnect { uid: uid.into(), nick: nick.into(), host: "h".into(), ip: "0.0.0.0".into() });
+            e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        }
+
+        // alice makes a group, adds bob, and grants the group op access on #room.
+        assert!(has(&gs(&mut e, "000AAAAAA", "REGISTER !team"), "registered"), "group registered");
+        assert!(has(&gs(&mut e, "000AAAAAA", "ADD !team bob"), "Added"), "bob added");
+        assert!(has(&cs(&mut e, "000AAAAAA", "FLAGS #room !team +o"), "now holds"), "group granted channel op");
+
+        // bob, a group member, is auto-opped on join; carol (not in the group) isn't.
+        assert!(opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: false }), "000AAAAAB"), "group member auto-opped");
+        assert!(!opped(&e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#room".into(), op: false }), "000AAAAAC"), "non-member not opped");
+
+        // Removing bob from the group revokes his inherited channel access.
+        gs(&mut e, "000AAAAAA", "DEL !team bob");
+        assert_eq!(e.db.channel_join_mode("#room", "bob"), None, "access gone once out of the group");
+
+        // Managing the group needs the founder or the f flag.
+        assert!(has(&gs(&mut e, "000AAAAAC", "ADD !team carol"), "founder or the \x02f\x02 flag"), "outsider can't manage");
+        gs(&mut e, "000AAAAAA", "FLAGS !team carol +f");
+        assert!(has(&gs(&mut e, "000AAAAAC", "ADD !team bob"), "Added"), "carol with f can now manage");
     }
 
     // ChanServ FLAGS: granular access grants flow through the shared resolver, so

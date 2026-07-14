@@ -49,7 +49,7 @@ pub fn handle(me: &str, from: &Sender, chan: &str, args: &[&str], ctx: &mut Serv
         return;
     }
     let base = current.unwrap_or_default();
-    let updated = match apply_flags(&base, delta) {
+    let updated = match apply_flags(&base, delta, ACCESS_FLAGS) {
         Ok(f) => f,
         Err(bad) => {
             ctx.notice(me, from.uid, format!("\x02{bad}\x02 isn't a valid flag. Valid flags: \x02{ACCESS_FLAGS}\x02."));

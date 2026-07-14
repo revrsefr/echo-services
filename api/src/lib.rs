@@ -515,17 +515,60 @@ pub fn level_caps(level: &str) -> Caps {
     }
 }
 
-// Apply a `+ov-h`-style delta to a flag string, returning the new sorted, unique
-// flag string. A bare "ov" (no sign) grants. Returns Err with the first invalid
-// flag letter.
-pub fn apply_flags(current: &str, delta: &str) -> Result<String, char> {
-    let mut set: Vec<char> = current.chars().filter(|c| ACCESS_FLAGS.contains(*c)).collect();
+// The granular group-membership flags (GroupServ), same primitive, different
+// letters: F founder, f modify the member/flags list, i invite members, s set
+// group options, c the group may be granted channel access, m group memos.
+pub const GROUP_FLAGS: &str = "Fficsm";
+
+impl Caps {
+    // Combine two capability sets (a direct access entry and a group's), taking
+    // the union of privileges, the higher rank, and the strongest auto-mode.
+    pub fn union(self, other: Caps) -> Caps {
+        let rank_of = |m: Option<&'static str>| match m {
+            Some("+o") => 3,
+            Some("+h") => 2,
+            Some("+v") => 1,
+            _ => 0,
+        };
+        let auto = if rank_of(self.auto) >= rank_of(other.auto) { self.auto } else { other.auto };
+        Caps {
+            auto,
+            op: self.op || other.op,
+            topic: self.topic || other.topic,
+            invite: self.invite || other.invite,
+            access: self.access || other.access,
+            set: self.set || other.set,
+            greet: self.greet || other.greet,
+            rank: self.rank.max(other.rank),
+        }
+    }
+}
+
+// A user group (GroupServ) and its members, as a read view.
+#[derive(Debug, Clone)]
+pub struct GroupMemberView {
+    pub account: String,
+    pub flags: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct GroupView {
+    pub name: String,
+    pub founder: String,
+    pub members: Vec<GroupMemberView>,
+}
+
+// Apply a `+ov-h`-style delta to a flag string against a `valid` letter set,
+// returning the new deduplicated flag string ordered by `valid`. A bare "ov"
+// (no sign) grants. Returns Err with the first letter not in `valid`.
+pub fn apply_flags(current: &str, delta: &str, valid: &str) -> Result<String, char> {
+    let mut set: Vec<char> = current.chars().filter(|c| valid.contains(*c)).collect();
     let mut adding = true;
     for c in delta.chars() {
         match c {
             '+' => adding = true,
             '-' => adding = false,
-            f if ACCESS_FLAGS.contains(f) => {
+            f if valid.contains(f) => {
                 set.retain(|&x| x != f);
                 if adding {
                     set.push(f);
@@ -534,8 +577,7 @@ pub fn apply_flags(current: &str, delta: &str) -> Result<String, char> {
             other => return Err(other),
         }
     }
-    // A stable, deduplicated order following ACCESS_FLAGS.
-    Ok(ACCESS_FLAGS.chars().filter(|c| set.contains(c)).collect())
+    Ok(valid.chars().filter(|c| set.contains(c)).collect())
 }
 
 // One auto-kick entry (a hostmask and the reason shown on kick).
@@ -892,6 +934,17 @@ pub trait Store {
     fn report_del(&mut self, id: u64) -> bool;
     fn reports(&self, open_only: bool) -> Vec<ReportView>;
     fn report(&self, id: u64) -> Option<ReportView>;
+    // User groups (GroupServ).
+    fn group_register(&mut self, name: &str, founder: &str) -> Result<(), ChanError>;
+    fn group_drop(&mut self, name: &str) -> Result<(), ChanError>;
+    fn group_set_flags(&mut self, name: &str, account: &str, flags: &str) -> Result<(), ChanError>;
+    fn group_del_member(&mut self, name: &str, account: &str) -> Result<bool, ChanError>;
+    fn group_set_founder(&mut self, name: &str, founder: &str) -> Result<(), ChanError>;
+    fn group(&self, name: &str) -> Option<GroupView>;
+    fn groups(&self) -> Vec<String>;
+    fn groups_of(&self, account: &str) -> Vec<String>;
+    // A user's effective channel capabilities (direct access unioned with groups).
+    fn channel_caps(&self, channel: &str, account: &str) -> Caps;
     // Runtime operator grants (OperServ OPER), merged with config opers. `expires`
     // is an absolute unix time (None = permanent); opers_list hides expired ones.
     fn oper_grant(&mut self, account: &str, privs: Vec<String>, expires: Option<u64>);
@@ -1081,11 +1134,11 @@ mod tests {
     #[test]
     fn access_flags_apply_and_resolve() {
         // +/- deltas, dedup, stable order, invalid flag rejected.
-        assert_eq!(apply_flags("", "+ov").unwrap(), "ov");
-        assert_eq!(apply_flags("ov", "-o").unwrap(), "v");
-        assert_eq!(apply_flags("v", "+tv").unwrap(), "vt"); // ACCESS_FLAGS order, no dup
-        assert_eq!(apply_flags("", "ai").unwrap(), "ia"); // bare letters grant
-        assert_eq!(apply_flags("", "+ox"), Err('x'));
+        assert_eq!(apply_flags("", "+ov", ACCESS_FLAGS).unwrap(), "ov");
+        assert_eq!(apply_flags("ov", "-o", ACCESS_FLAGS).unwrap(), "v");
+        assert_eq!(apply_flags("v", "+tv", ACCESS_FLAGS).unwrap(), "vt"); // ACCESS_FLAGS order, no dup
+        assert_eq!(apply_flags("", "ai", ACCESS_FLAGS).unwrap(), "ia"); // bare letters grant
+        assert_eq!(apply_flags("", "+ox", ACCESS_FLAGS), Err('x'));
 
         // Legacy presets and flag strings both resolve to capabilities.
         assert_eq!(level_caps("op").auto, Some("+o"));

@@ -24,6 +24,7 @@ use fedserv_operserv::OperServ;
 use fedserv_diceserv::DiceServ;
 use fedserv_infoserv::InfoServ;
 use fedserv_reportserv::ReportServ;
+use fedserv_groupserv::GroupServ;
 use fedserv_example::ExampleServ;
 use fedserv_inspircd::InspIrcd;
 use fedserv_nickserv::NickServ;
@@ -105,6 +106,11 @@ async fn main() -> Result<()> {
     if enabled("reportserv") {
         services.push(Box::new(ReportServ {
             uid: format!("{}AAAAAK", cfg.server.sid),
+        }));
+    }
+    if enabled("groupserv") {
+        services.push(Box::new(GroupServ {
+            uid: format!("{}AAAAAL", cfg.server.sid),
         }));
     }
     if enabled("example") {
