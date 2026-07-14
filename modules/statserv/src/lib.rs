@@ -32,6 +32,10 @@ impl Service for StatServ {
         "Statistics Service"
     }
 
+    fn help_topics(&self) -> (&'static str, &'static [HelpEntry]) {
+        (BLURB, TOPICS)
+    }
+
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
         let me = self.uid.as_str();
         match args.first().copied() {

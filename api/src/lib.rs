@@ -1053,6 +1053,15 @@ pub trait NetView {
     // `limit`). An empty pattern returns the most recent; otherwise matches the
     // id or a case-insensitive substring of the summary.
     fn search_incidents(&self, pattern: &str, limit: usize) -> Vec<IncidentView>;
+    // The network-wide help index the engine builds from every service, so
+    // HelpServ can front help for the whole network. `help_services` lists the
+    // service names; `service_help` returns one service's blurb and topics.
+    fn help_services(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn service_help(&self, _service: &str) -> Option<(&'static str, &'static [HelpEntry])> {
+        None
+    }
 }
 
 // One recorded action from the incident log: a short id (also stamped into the
@@ -1082,6 +1091,11 @@ pub trait Service: Send {
     // account-related notices from it.
     fn manages_accounts(&self) -> bool {
         false
+    }
+    // This service's HELP catalog: its blurb and per-command topics. The engine
+    // collects these into a network-wide index HelpServ can front. Empty default.
+    fn help_topics(&self) -> (&'static str, &'static [HelpEntry]) {
+        ("", &[])
     }
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, store: &mut dyn Store);
 }

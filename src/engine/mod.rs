@@ -186,9 +186,19 @@ impl Engine {
     pub fn new(services: Vec<Box<dyn Service>>, db: Db) -> Self {
         let chan_service = services.iter().find(|s| s.manages_channels()).map(|s| s.uid().to_string());
         let nick_service = services.iter().find(|s| s.manages_accounts()).map(|s| s.uid().to_string());
+        // Network-wide help index: every service that publishes topics, so HelpServ
+        // can front help for the whole network through NetView.
+        let mut network = Network::default();
+        network.help_catalog = services
+            .iter()
+            .filter_map(|s| {
+                let (blurb, topics) = s.help_topics();
+                (!topics.is_empty()).then(|| (s.nick().to_string(), blurb, topics))
+            })
+            .collect();
         Self {
             services,
-            network: Network::default(),
+            network,
             db,
             sasl_sessions: HashMap::new(),
             reg_limiter: RegLimiter::new(),

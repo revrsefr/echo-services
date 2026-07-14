@@ -43,6 +43,10 @@ impl Service for ChanFix {
         "Channel Fixer"
     }
 
+    fn help_topics(&self) -> (&'static str, &'static [HelpEntry]) {
+        (BLURB, TOPICS)
+    }
+
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
         let me = self.uid.as_str();
         // The whole service is operator-only.

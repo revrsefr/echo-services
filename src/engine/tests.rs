@@ -3460,3 +3460,46 @@
         let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#y".into(), op: false });
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#y" && modes == "+v 000AAAAAB")), "{out:?}");
     }
+
+// HelpServ fronts the whole network's help: it serves any service's per-command
+// help, lists the services, and still answers for its own commands.
+#[test]
+fn helpserv_fronts_the_network_help_index() {
+    let path = std::env::temp_dir().join("echo-helpserv-index.jsonl");
+    let _ = std::fs::remove_file(&path);
+    let db = Db::open(&path, "test");
+    let mut e = Engine::new(
+        vec![
+            Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+            Box::new(echo_helpserv::HelpServ { uid: "42SAAAAAN".into() }),
+        ],
+        db,
+    );
+    e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "h".into(), ip: "0.0.0.0".into() });
+
+    let ask = |e: &mut Engine, text: &str| {
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAN".into(), text: text.into() })
+            .into_iter()
+            .filter_map(|a| match a {
+                NetAction::Notice { text, .. } => Some(text),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+
+    // HELP <service> <command> fronts that service's per-command help.
+    let reg = ask(&mut e, "HELP NickServ REGISTER");
+    assert!(reg.iter().any(|l| l.contains("Syntax:") && l.contains("REGISTER")), "{reg:?}");
+
+    // Bare HELP lists the services on the network.
+    let idx = ask(&mut e, "HELP");
+    assert!(idx.iter().any(|l| l.contains("Services:") && l.contains("NickServ")), "{idx:?}");
+
+    // A bare service name works too.
+    let ns = ask(&mut e, "NickServ");
+    assert!(ns.iter().any(|l| l.contains("IDENTIFY")), "{ns:?}");
+
+    // HelpServ's own commands still resolve.
+    let own = ask(&mut e, "HELP REQUEST");
+    assert!(own.iter().any(|l| l.contains("Syntax:") && l.contains("REQUEST")), "{own:?}");
+}

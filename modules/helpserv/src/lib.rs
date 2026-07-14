@@ -24,7 +24,7 @@ mod next;
 #[path = "close.rs"]
 mod close;
 
-const BLURB: &str = "HelpServ is the help desk. Open a ticket with \x02REQUEST\x02; operators work the queue.";
+const BLURB: &str = "HelpServ is the help desk and the network's help index. Open a ticket with \x02REQUEST\x02; operators work the queue.";
 
 const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "REQUEST", summary: "open a help-desk ticket", detail: "Syntax: \x02REQUEST <message>\x02\nOpens a ticket for the staff. Also \x02HELPME\x02." },
@@ -51,7 +51,11 @@ impl Service for HelpServ {
         "Help Service"
     }
 
-    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, _net: &dyn NetView, db: &mut dyn Store) {
+    fn help_topics(&self) -> (&'static str, &'static [HelpEntry]) {
+        (BLURB, TOPICS)
+    }
+
+    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
         let me = self.uid.as_str();
         match args.first().map(|s| s.to_ascii_uppercase()).as_deref() {
             Some("REQUEST") | Some("HELPME") => request::handle(me, from, &args[1..], ctx, db),
@@ -61,8 +65,22 @@ impl Service for HelpServ {
             Some("TAKE") | Some("ASSIGN") => take::handle(me, from, args.get(1).copied(), ctx, db),
             Some("NEXT") => next::handle(me, from, ctx, db),
             Some("CLOSE") | Some("RESOLVE") => close::handle(me, from, args.get(1).copied(), ctx, db),
-            Some("HELP") | None => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
-            Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02REQUEST\x02 <message> or \x02HELP\x02.")),
+            // HELP [service [command]]: bare HELP is HelpServ's own; HELP <service>
+            // [command] fronts any other service's help through the shared renderer.
+            Some("HELP") | None => match args.get(1).and_then(|&s| net.service_help(s)) {
+                Some((blurb, topics)) => echo_api::help(me, from, ctx, blurb, topics, args.get(2).copied()),
+                None => {
+                    echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied());
+                    if args.get(1).is_none() {
+                        ctx.notice(me, from.uid, format!("For a service's own commands, type \x02HELP <service>\x02. Services: {}.", net.help_services().join(", ")));
+                    }
+                }
+            },
+            // Not a HelpServ command — maybe the name of a service to get help for.
+            Some(_) => match net.service_help(args[0]) {
+                Some((blurb, topics)) => echo_api::help(me, from, ctx, blurb, topics, args.get(1).copied()),
+                None => ctx.notice(me, from.uid, format!("I don't know \x02{}\x02. Try \x02REQUEST\x02 <message>, \x02HELP\x02, or a service name (e.g. \x02NickServ\x02).", args[0])),
+            },
         }
     }
 }

@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 // The read-only network view a module sees; re-exported so the engine keeps
 // naming it locally.
-pub use echo_api::{IncidentView, NetView, SeenView};
+pub use echo_api::{HelpEntry, IncidentView, NetView, SeenView};
 
 // The most recent moderation/action incidents kept for LOGSEARCH.
 const INCIDENT_CAP: usize = 10_000;
@@ -31,6 +31,9 @@ pub struct Network {
     // ChanFix op-time scores: channel (lowercase) -> identity (account or host) ->
     // score. Sampled from live op state; ephemeral (node-local, rebuilt over time).
     chanfix: HashMap<String, HashMap<String, u32>>,
+    // Network-wide help index (service nick, blurb, per-command topics), built by
+    // the engine at startup from every service so HelpServ can front it.
+    pub help_catalog: Vec<(String, &'static str, &'static [HelpEntry])>,
 }
 
 // ChanFix scoring caps and rates.
@@ -416,5 +419,14 @@ impl NetView for Network {
     }
     fn op_count(&self, channel: &str) -> usize {
         Network::op_count(self, channel)
+    }
+    fn help_services(&self) -> Vec<String> {
+        self.help_catalog.iter().map(|(n, _, _)| n.clone()).collect()
+    }
+    fn service_help(&self, service: &str) -> Option<(&'static str, &'static [HelpEntry])> {
+        self.help_catalog
+            .iter()
+            .find(|(n, _, _)| n.eq_ignore_ascii_case(service))
+            .map(|(_, b, t)| (*b, *t))
     }
 }
