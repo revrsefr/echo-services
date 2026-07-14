@@ -1175,6 +1175,20 @@ pub fn help(me: &str, from: &Sender, ctx: &mut ServiceCtx, blurb: &str, topics: 
     }
 }
 
+// Gate a command on operator privilege. `need` is the privilege required, or
+// None for "any operator". Notices the user and returns false when denied,
+// otherwise returns true. `what` names the action, e.g. "reviewing reports".
+pub fn require_oper(me: &str, from: &Sender, ctx: &mut ServiceCtx, need: Option<Priv>, what: &str) -> bool {
+    let ok = match need {
+        Some(p) => from.privs.has(p),
+        None => from.privs.any(),
+    };
+    if !ok {
+        ctx.notice(me, from.uid, format!("Access denied — {what} is for services operators."));
+    }
+    ok
+}
+
 // Format a Unix timestamp (seconds) as "YYYY-MM-DD HH:MM:SS UTC", using Howard
 // Hinnant's civil-from-days algorithm so no date crate is needed.
 pub fn human_time(ts: u64) -> String {

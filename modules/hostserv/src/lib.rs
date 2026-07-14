@@ -103,11 +103,7 @@ impl Service for HostServ {
 
 // Operator gate for vhost administration.
 fn require_oper(me: &str, from: &Sender, ctx: &mut ServiceCtx) -> bool {
-    if from.privs.has(Priv::Admin) {
-        return true;
-    }
-    ctx.notice(me, from.uid, "Access denied — assigning vhosts is for services operators.");
-    false
+    echo_api::require_oper(me, from, ctx, Some(Priv::Admin), "assigning vhosts")
 }
 
 // Canonicalise a vhost the way the ircd will actually display it: the host part

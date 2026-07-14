@@ -690,7 +690,12 @@ impl EventLog {
         } else {
             LogEntry { origin: self.origin.clone(), seq: 0, lamport: 0, event }
         };
-        self.persist(&entry)?;
+        if let Err(e) = self.persist(&entry) {
+            // Surface the real cause (disk full, permissions, ...) here at the
+            // source; callers only see a generic Internal error further up.
+            tracing::error!(%e, path = %self.path.display(), "failed to write event to the log");
+            return Err(e);
+        }
         if global {
             self.versions.insert(entry.origin.clone(), entry.seq);
             self.notify(&entry);

@@ -87,11 +87,7 @@ impl Service for HelpServ {
 
 // Working the help queue is operator-only.
 fn require_oper(me: &str, from: &Sender, ctx: &mut ServiceCtx) -> bool {
-    if from.privs.any() {
-        return true;
-    }
-    ctx.notice(me, from.uid, "Access denied — working the help queue is for services operators.");
-    false
+    echo_api::require_oper(me, from, ctx, None, "working the help queue")
 }
 
 // Claim ticket `id` for the calling operator (shared by TAKE and NEXT).
