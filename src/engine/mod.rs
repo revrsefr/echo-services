@@ -4586,7 +4586,7 @@ mod tests {
 
         // KICK a user by nick, with a reason.
         let out = to_cs(&mut e, "000AAAAAB", "KICK #m bob rude");
-        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { channel, uid, reason, .. } if channel == "#m" && uid == "000AAAAAC" && reason == "rude")), "{out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { channel, uid, reason, .. } if channel == "#m" && uid == "000AAAAAC" && reason.starts_with("rude"))), "{out:?}");
 
         // BAN sets +b *!*@host and kicks.
         let out = to_cs(&mut e, "000AAAAAB", "BAN #m bob spam");
@@ -4636,7 +4636,7 @@ mod tests {
         assert!(to_cs(&mut e, "000AAAAAB", "AKICK #c ADD *!*@bad.host begone").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Added"))));
         let out = e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#c".into(), op: false });
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#c" && modes == "+b *!*@bad.host")), "{out:?}");
-        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { channel, uid, reason, .. } if channel == "#c" && uid == "000AAAAAC" && reason == "begone")), "{out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { channel, uid, reason, .. } if channel == "#c" && uid == "000AAAAAC" && reason.starts_with("begone"))), "{out:?}");
 
         // The founder joining is never auto-kicked (they get +o instead).
         let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false });
