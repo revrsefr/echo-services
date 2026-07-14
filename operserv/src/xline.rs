@@ -119,6 +119,10 @@ pub const AKILL: Xline = Xline { kind: "G", name: "AKILL", target: "user@host", 
 // SQLINE: a nick Q-line. The mask is a nick glob (no '@'); wildcards allowed.
 pub const SQLINE: Xline = Xline { kind: "Q", name: "SQLINE", target: "nick", normalize: norm_nick };
 
+// SNLINE: a realname R-line. The mask is a regex the ircd matches against a
+// connecting user's realname (use `.` for spaces, e.g. `.*free.money.*`).
+pub const SNLINE: Xline = Xline { kind: "R", name: "SNLINE", target: "realname-regex", normalize: norm_realname };
+
 fn norm_userhost(input: &str) -> Option<String> {
     let body = input.rsplit('!').next().unwrap_or(input);
     let (user, host) = body.split_once('@')?;
@@ -135,6 +139,12 @@ fn norm_nick(input: &str) -> Option<String> {
         return None;
     }
     Some(input.to_ascii_lowercase())
+}
+
+fn norm_realname(input: &str) -> Option<String> {
+    // A realname regex the ircd evaluates: keep it verbatim (case matters), just
+    // require it non-empty. A single token — use `.`/`\s` for spaces.
+    (!input.is_empty()).then(|| input.to_string())
 }
 
 // A mask whose every meaningful character is a wildcard would match nearly all.

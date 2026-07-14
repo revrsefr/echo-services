@@ -1533,6 +1533,7 @@ impl Engine {
 fn ban_kind_label(kind: &str) -> &'static str {
     match kind {
         "Q" => "nick ban",
+        "R" => "realname ban",
         _ => "network ban",
     }
 }
@@ -3987,6 +3988,8 @@ mod tests {
         assert!(os(&mut e, "000AAAAAS", "SQLINE ADD a@b spam").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("valid"))), "nick mask rejects user@host");
         // STATS reflects the live ban counts.
         assert!(os(&mut e, "000AAAAAS", "STATS").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("1") && text.contains("SQLINE"))), "stats shows the sqline count");
+        // SNLINE drives a realname R-line.
+        assert!(os(&mut e, "000AAAAAS", "SNLINE ADD .*free.money.* spambot").iter().any(|a| matches!(a, NetAction::AddLine { kind, mask, .. } if kind == "R" && mask == ".*free.money.*")), "R-line added");
 
         // GLOBAL fans out to every user via the $* server glob.
         let out = os(&mut e, "000AAAAAS", "GLOBAL rebooting in 5");
