@@ -1,0 +1,3462 @@
+    use super::*;
+    use fedserv_nickserv::NickServ;
+
+    fn plain(authzid: &[u8], authcid: &[u8], passwd: &[u8]) -> String {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(authzid);
+        payload.push(0);
+        payload.extend_from_slice(authcid);
+        payload.push(0);
+        payload.extend_from_slice(passwd);
+        STANDARD.encode(payload)
+    }
+
+    fn engine_with(name: &str, account: &str, password: &str) -> Engine {
+        let path = std::env::temp_dir().join(format!("fedserv-sasl-{name}.jsonl"));
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "test");
+        db.scram_iterations = 4096; // keep the debug-build verifier cheap in tests
+        assert!(db.register(account, password, None).is_ok());
+        Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".to_string(), guest_nick: "Guest".to_string(), guest_seq: 12345 })], db)
+    }
+
+    fn sasl(engine: &mut Engine, mode: &str, chunk: &str) -> Vec<NetAction> {
+        engine.handle(NetEvent::Sasl {
+            client: "000AAAAAB".to_string(),
+            agent: "*".to_string(),
+            mode: mode.to_string(),
+            data: vec![chunk.to_string()],
+        })
+    }
+
+    fn is_success(out: &[NetAction]) -> bool {
+        out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "foo"))
+            && out.iter().any(|a| matches!(a, NetAction::Sasl { mode, data, .. } if mode == "D" && data.as_slice() == ["S"]))
+    }
+
+    // Single-chunk PLAIN (short response) logs in.
+    #[test]
+    fn plain_single_chunk() {
+        let mut e = engine_with("single", "foo", "sesame");
+        sasl(&mut e, "S", "PLAIN");
+        let out = sasl(&mut e, "C", &plain(b"", b"foo", b"sesame"));
+        assert!(is_success(&out), "{out:?}");
+    }
+
+    // A response that is not a multiple of 400 splits into 400 + remainder.
+    #[test]
+    fn plain_chunked_412() {
+        let pw = "bar".repeat(100);
+        let mut e = engine_with("c412", "foo", &pw);
+        let auth = plain(b"foo", b"foo", pw.as_bytes());
+        assert_eq!(auth.len(), 412);
+        sasl(&mut e, "S", "PLAIN");
+        assert!(sasl(&mut e, "C", &auth[0..400]).is_empty());
+        let out = sasl(&mut e, "C", &auth[400..]);
+        assert!(is_success(&out), "{out:?}");
+    }
+
+    // A response that is an exact multiple of 400 ends with a trailing "+".
+    #[test]
+    fn plain_chunked_800() {
+        let pw = "x".repeat(592);
+        let mut e = engine_with("c800", "foo", &pw);
+        let auth = plain(b"foo", b"foo", pw.as_bytes());
+        assert_eq!(auth.len(), 800);
+        sasl(&mut e, "S", "PLAIN");
+        assert!(sasl(&mut e, "C", &auth[0..400]).is_empty());
+        assert!(sasl(&mut e, "C", &auth[400..800]).is_empty());
+        let out = sasl(&mut e, "C", "+");
+        assert!(is_success(&out), "{out:?}");
+    }
+
+    // Wrong password fails.
+    #[test]
+    fn plain_bad_password() {
+        let mut e = engine_with("bad", "foo", "sesame");
+        sasl(&mut e, "S", "PLAIN");
+        let out = sasl(&mut e, "C", &plain(b"", b"foo", b"wrong"));
+        assert!(out.iter().any(|a| matches!(a, NetAction::Sasl { mode, data, .. } if mode == "D" && data.as_slice() == ["F"])), "{out:?}");
+    }
+
+    // The single reply datum of a C/D action (SCRAM messages are single-chunk).
+    fn datum(out: &[NetAction]) -> (&str, &str) {
+        match out.first() {
+            Some(NetAction::Sasl { mode, data, .. }) => (mode.as_str(), data[0].as_str()),
+            other => panic!("expected a SASL action, got {other:?}"),
+        }
+    }
+
+    // Drive a full SCRAM exchange through the engine, playing the client, and
+    // return the final actions. `login_pw` may differ from the registered one.
+    fn scram_exchange(mech: &str, login_pw: &str) -> Vec<NetAction> {
+        use scram::Hash;
+        let hash = Hash::from_mech(mech).unwrap();
+        let mut e = engine_with("scram", "foo", "sesame");
+
+        assert_eq!(datum(&sasl(&mut e, "S", mech)), ("C", "+"));
+
+        let client_first_bare = "n=foo,r=cnonce";
+        let client_first = format!("n,,{client_first_bare}");
+        let first_out = sasl(&mut e, "C", &STANDARD.encode(&client_first));
+        let (mode, b64) = datum(&first_out);
+        assert_eq!(mode, "C");
+        let server_first = String::from_utf8(STANDARD.decode(b64).unwrap()).unwrap();
+
+        // Reconstruct salt/iterations from server-first and forge the proof.
+        let salt = STANDARD.decode(server_first.split(",s=").nth(1).unwrap().split(',').next().unwrap()).unwrap();
+        let iters: u32 = server_first.rsplit(",i=").next().unwrap().parse().unwrap();
+        let full_nonce = server_first.split("r=").nth(1).unwrap().split(',').next().unwrap();
+
+        let salted = scram::hi(hash, login_pw.as_bytes(), &salt, iters);
+        let client_key = scram::hmac(hash, &salted, b"Client Key");
+        let stored_key = scram::h(hash, &client_key);
+        let without_proof = format!("c=biws,r={full_nonce}");
+        let auth = format!("{client_first_bare},{server_first},{without_proof}");
+        let proof = scram::xor(&client_key, &scram::hmac(hash, &stored_key, auth.as_bytes()));
+        let client_final = format!("{without_proof},p={}", STANDARD.encode(&proof));
+
+        let final_out = sasl(&mut e, "C", &STANDARD.encode(&client_final));
+        // On success the engine sends server-final (C v=...); the client then acks.
+        match datum(&final_out) {
+            ("C", _) => sasl(&mut e, "C", "+"),
+            _ => final_out,
+        }
+    }
+
+    #[test]
+    fn scram_sha256_success() {
+        assert!(is_success(&scram_exchange("SCRAM-SHA-256", "sesame")));
+    }
+
+    #[test]
+    fn scram_sha512_success() {
+        assert!(is_success(&scram_exchange("SCRAM-SHA-512", "sesame")));
+    }
+
+    #[test]
+    fn scram_bad_password() {
+        let out = scram_exchange("SCRAM-SHA-256", "millet");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Sasl { mode, data, .. } if mode == "D" && data.as_slice() == ["F"])), "{out:?}");
+    }
+
+    #[test]
+    fn scram_unknown_user_fails() {
+        let mut e = engine_with("scramnouser", "foo", "sesame");
+        sasl(&mut e, "S", "SCRAM-SHA-256");
+        let out = sasl(&mut e, "C", &STANDARD.encode("n,,n=ghost,r=cnonce"));
+        assert_eq!(datum(&out), ("D", "F"));
+    }
+
+    // Start a SASL exchange for an arbitrary client uid.
+    fn start(e: &mut Engine, client: &str) -> Vec<NetAction> {
+        e.handle(NetEvent::Sasl { client: client.into(), agent: "*".into(), mode: "S".into(), data: vec!["PLAIN".into()] })
+    }
+
+    // A client that starts SASL then vanishes must not linger forever.
+    #[test]
+    fn abandoned_session_swept_after_ttl() {
+        let mut e = engine_with("swept", "foo", "sesame");
+        start(&mut e, "AAA");
+        assert!(e.sasl_sessions.contains_key("AAA"));
+        // Backdate it past the TTL; guarded so a just-booted monotonic clock can't panic.
+        if let Some(stale) = Instant::now().checked_sub(SASL_SESSION_TTL + Duration::from_secs(1)) {
+            e.sasl_sessions.get_mut("AAA").unwrap().touched = stale;
+            start(&mut e, "BBB"); // any new start sweeps first
+            assert!(!e.sasl_sessions.contains_key("AAA"), "stale exchange should be swept");
+            assert!(e.sasl_sessions.contains_key("BBB"));
+        }
+    }
+
+    // The map is hard-capped so a flood of half-open exchanges can't exhaust memory.
+    #[test]
+    fn concurrent_sessions_capped() {
+        let mut e = engine_with("capped", "foo", "sesame");
+        for i in 0..MAX_SASL_SESSIONS {
+            assert_eq!(datum(&start(&mut e, &format!("u{i}"))), ("C", "+"));
+        }
+        assert_eq!(datum(&start(&mut e, "over")), ("D", "F"), "over-cap start must be refused");
+    }
+
+    // A QUIT drops any half-finished exchange for that uid.
+    #[test]
+    fn session_cleared_on_quit() {
+        let mut e = engine_with("quit", "foo", "sesame");
+        start(&mut e, "ZZZ");
+        assert!(e.sasl_sessions.contains_key("ZZZ"));
+        e.handle(NetEvent::Quit { uid: "ZZZ".into() });
+        assert!(!e.sasl_sessions.contains_key("ZZZ"), "quit should drop the exchange");
+    }
+
+    // Drive a SASL step with a multi-field data vector (EXTERNAL carries the
+    // mechanism plus the ircd-supplied fingerprints in one message).
+    fn sasl_multi(e: &mut Engine, mode: &str, data: &[&str]) -> Vec<NetAction> {
+        e.handle(NetEvent::Sasl {
+            client: "000AAAAAB".into(),
+            agent: "*".into(),
+            mode: mode.into(),
+            data: data.iter().map(|s| s.to_string()).collect(),
+        })
+    }
+
+    // EXTERNAL with a registered fingerprint logs in; matching is case-insensitive.
+    #[test]
+    fn external_success_with_registered_cert() {
+        let mut e = engine_with("extok", "foo", "sesame");
+        e.db.certfp_add("foo", "aabbccddeeff00112233445566778899").unwrap();
+        assert_eq!(datum(&sasl_multi(&mut e, "S", &["EXTERNAL", "AABBCCDDEEFF00112233445566778899"])), ("C", "+"));
+        assert!(is_success(&sasl(&mut e, "C", "+")), "empty authzid should log in");
+    }
+
+    // An authzid, if sent, must name the cert's own account.
+    #[test]
+    fn external_authzid_must_match() {
+        let mut e = engine_with("extaz", "foo", "sesame");
+        e.db.certfp_add("foo", "aabbccddeeff00112233445566778899").unwrap();
+        sasl_multi(&mut e, "S", &["EXTERNAL", "aabbccddeeff00112233445566778899"]);
+        assert!(is_success(&sasl(&mut e, "C", &STANDARD.encode("foo"))), "matching authzid ok");
+
+        let mut e = engine_with("extaz2", "foo", "sesame");
+        e.db.certfp_add("foo", "aabbccddeeff00112233445566778899").unwrap();
+        sasl_multi(&mut e, "S", &["EXTERNAL", "aabbccddeeff00112233445566778899"]);
+        assert_eq!(datum(&sasl(&mut e, "C", &STANDARD.encode("bar"))), ("D", "F"), "foreign authzid rejected");
+    }
+
+    // An unknown fingerprint, or no fingerprint at all (plaintext client), fails.
+    #[test]
+    fn external_without_registered_cert_fails() {
+        let mut e = engine_with("extno", "foo", "sesame");
+        sasl_multi(&mut e, "S", &["EXTERNAL", "0011223344556677889900aabbccddee"]);
+        assert_eq!(datum(&sasl(&mut e, "C", "+")), ("D", "F"), "unknown fp rejected");
+
+        sasl_multi(&mut e, "S", &["EXTERNAL"]); // no fingerprint supplied
+        assert_eq!(datum(&sasl(&mut e, "C", "+")), ("D", "F"), "no cert rejected");
+    }
+
+    // End to end: enrol a cert with NickServ CERT ADD, then log in with EXTERNAL.
+    #[test]
+    fn nickserv_cert_add_enables_external() {
+        let mut e = engine_with("nscert", "foo", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
+        let fp = "aabbccddeeff00112233445566778899";
+
+        let out = e.handle(NetEvent::Privmsg {
+            from: "000AAAAAB".into(),
+            to: "42SAAAAAA".into(),
+            text: format!("CERT ADD sesame {fp}"),
+        });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Added"))), "{out:?}");
+
+        sasl_multi(&mut e, "S", &["EXTERNAL", fp]);
+        assert!(is_success(&sasl(&mut e, "C", "+")), "external should work after CERT ADD");
+    }
+
+    // A wrong password can't enrol a cert, and a fingerprint is one account only.
+    #[test]
+    fn cert_add_is_guarded_and_unique() {
+        let mut e = engine_with("certguard", "foo", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
+        let fp = "aabbccddeeff00112233445566778899";
+
+        let bad = e.handle(NetEvent::Privmsg {
+            from: "000AAAAAB".into(),
+            to: "42SAAAAAA".into(),
+            text: format!("CERT ADD wrongpw {fp}"),
+        });
+        assert!(bad.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Invalid password"))), "{bad:?}");
+        assert!(e.db.certfp_owner(fp).is_none(), "bad password must not enrol");
+
+        e.db.certfp_add("foo", fp).unwrap();
+        e.db.register("bar", "sesame", None).unwrap();
+        assert!(matches!(e.db.certfp_add("bar", fp), Err(db::CertError::InUse)), "a fingerprint maps to one account");
+    }
+
+    // IDENTIFY logs in, LOGOUT clears the accountname (ircd emits RPL_LOGGEDOUT).
+    #[test]
+    fn nickserv_logout_clears_account() {
+        let mut e = engine_with("nslogout", "foo", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
+
+        let login = e.handle(NetEvent::Privmsg {
+            from: "000AAAAAB".into(),
+            to: "42SAAAAAA".into(),
+            text: "IDENTIFY sesame".into(),
+        });
+        assert!(login.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "foo")), "{login:?}");
+
+        let out = e.handle(NetEvent::Privmsg {
+            from: "000AAAAAB".into(),
+            to: "42SAAAAAA".into(),
+            text: "LOGOUT".into(),
+        });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value.is_empty())), "logout clears accountname: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAB" && nick == "Guest12345")), "logout renames to guest nick: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("logged out"))), "{out:?}");
+    }
+
+    fn logout(e: &mut Engine, uid: &str) -> Vec<NetAction> {
+        e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "LOGOUT".into() })
+    }
+
+    // LOGOUT while not identified must not rename you or clear anything.
+    #[test]
+    fn logout_without_login_is_noop() {
+        let mut e = engine_with("nologin", "foo", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "someone".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
+        let out = logout(&mut e, "000AAAAAB");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("not logged in"))), "{out:?}");
+        assert!(!out.iter().any(|a| matches!(a, NetAction::ForceNick { .. })), "must not rename when not logged in: {out:?}");
+    }
+
+    // Regression: a second LOGOUT is a no-op, not another guest rename (the churn
+    // where Guest33294 -> LOGOUT -> Guest33295).
+    #[test]
+    fn logout_twice_renames_only_once() {
+        let mut e = engine_with("twice", "foo", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+
+        let first = logout(&mut e, "000AAAAAB");
+        assert!(first.iter().any(|a| matches!(a, NetAction::ForceNick { .. })), "first logout renames: {first:?}");
+
+        let second = logout(&mut e, "000AAAAAB");
+        assert!(second.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("not logged in"))), "{second:?}");
+        assert!(!second.iter().any(|a| matches!(a, NetAction::ForceNick { .. })), "second logout must not rename again: {second:?}");
+    }
+
+    // A SASL login (before the user is even bursted) is remembered, so a later
+    // LOGOUT from that uid is recognised as logged in.
+    #[test]
+    fn sasl_login_is_tracked_for_logout() {
+        let mut e = engine_with("sasllogout", "foo", "sesame");
+        sasl(&mut e, "S", "PLAIN");
+        let ok = sasl(&mut e, "C", &plain(b"", b"foo", b"sesame"));
+        assert!(is_success(&ok), "{ok:?}");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
+
+        let out = logout(&mut e, "000AAAAAB");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { .. })), "sasl-authed user can log out: {out:?}");
+    }
+
+    // Regression: repeated IDENTIFY while already identified must not re-fire the
+    // login (the 900 loop when the command is spammed).
+    #[test]
+    fn identify_twice_does_not_relogin() {
+        let mut e = engine_with("reident", "foo", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
+        let ident = |e: &mut Engine| e.handle(NetEvent::Privmsg {
+            from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into(),
+        });
+
+        let first = ident(&mut e);
+        assert!(first.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "foo")), "first identify logs in: {first:?}");
+
+        let second = ident(&mut e);
+        assert!(!second.iter().any(|a| matches!(a, NetAction::Metadata { key, .. } if key == "accountname")), "second identify must not re-login: {second:?}");
+        assert!(second.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("already identified"))), "{second:?}");
+    }
+
+    // The event log is the source of truth: state survives a reopen, rebuilt by
+    // folding the log (with its origin/seq metadata) rather than a snapshot.
+    #[test]
+    fn account_store_survives_reopen() {
+        let path = std::env::temp_dir().join("fedserv-reopen.jsonl");
+        let _ = std::fs::remove_file(&path);
+        {
+            let mut db = Db::open(&path, "n1");
+            db.scram_iterations = 4096;
+            db.register("foo", "sesame", None).unwrap();
+            db.certfp_add("foo", "aabbccddeeff00112233445566778899").unwrap();
+        }
+        let db = Db::open(&path, "n1");
+        assert_eq!(db.certfps("foo").len(), 1, "cert replayed from log");
+        assert!(db.authenticate("foo", "sesame").is_some(), "account replayed from log");
+    }
+
+    // Regression: after a nick change (e.g. a guest rename, then back to your
+    // real nick), IDENTIFY must authenticate the CURRENT nick, not the one held
+    // at burst time — otherwise you log into the wrong account.
+    #[test]
+    fn identify_uses_current_nick_after_rename() {
+        let mut e = engine_with("renameident", "realnick", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "Guest99999".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::NickChange { uid: "000AAAAAB".into(), nick: "realnick".into() });
+        let out = e.handle(NetEvent::Privmsg {
+            from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into(),
+        });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "realnick")), "must log into the current nick's account: {out:?}");
+    }
+
+    // Losing a registration conflict logs out the local session on that name and
+    // notifies them over the services-initiated outbound path.
+    #[test]
+    fn lost_conflict_logs_out_local_session() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-lostconf.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "test");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 12345 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        e.set_irc_out(tx);
+        // A local user logs into alice and registers a channel as founder.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        assert_eq!(e.network.account_of("000AAAAAB"), Some("alice"), "logged in before the conflict");
+        e.db.register_channel("#hers", "alice").unwrap();
+
+        // An earlier claim from another node wins and takes the name over.
+        let winner = db::Account {
+            name: "alice".into(), password_hash: "OTHER".into(), email: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
+        };
+        let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)));
+        e.gossip_ingest(entry).unwrap();
+
+        // The local session is logged out and its orphaned channel is dropped.
+        assert!(e.network.account_of("000AAAAAB").is_none(), "session cleared after losing the name");
+        assert!(e.db.channel("#hers").is_none(), "orphaned channel dropped");
+        // The outbound path got a logout, a notice, a -r on the channel, and a release notice.
+        let (mut logout, mut notice, mut unreg, mut released) = (false, false, false, false);
+        while let Ok(a) = rx.try_recv() {
+            match a {
+                NetAction::Metadata { target, key, value } if target == "000AAAAAB" && key == "accountname" && value.is_empty() => logout = true,
+                NetAction::Notice { to, text, .. } if to == "000AAAAAB" && text.contains("collided") => notice = true,
+                NetAction::Notice { to, text, .. } if to == "000AAAAAB" && text.contains("released") => released = true,
+                NetAction::ChannelMode { channel, modes, .. } if channel == "#hers" && modes == "-r" => unreg = true,
+                _ => {}
+            }
+        }
+        assert!(logout, "a logout must be pushed to the uplink");
+        assert!(notice, "the user must be told why");
+        assert!(unreg, "the orphaned channel must be de-registered (-r)");
+        assert!(released, "the user must be told which channels were released");
+    }
+
+    // NickServ INFO shows registration details (email only to the owner); ALIST
+    // lists the channels the account founds or has access on.
+    #[test]
+    fn nickserv_info_and_alist() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-nsinfo.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "test");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#a", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+        let to_ns = |e: &mut Engine, text: &str| {
+            e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() })
+        };
+        let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+
+        let info = to_ns(&mut e, "INFO");
+        assert!(notice(&info, "Information for \x02alice\x02"));
+        assert!(notice(&info, "Registered"));
+        assert!(notice(&info, "Email"), "owner sees their email line: {info:?}");
+        assert!(notice(&to_ns(&mut e, "INFO ghost"), "isn't registered"));
+        assert!(notice(&to_ns(&mut e, "ALIST"), "#a"));
+    }
+
+    // SET EMAIL stores an email; SET PASSWORD defers derivation, and once
+    // completed the new password authenticates and the old one no longer does.
+    #[test]
+    fn nickserv_set_password_and_email() {
+        let mut e = engine_with("nsset", "alice", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let to_ns = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() });
+        let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
+
+        assert!(notice(&to_ns(&mut e, "SET EMAIL alice@example.org"), "updated"));
+        assert!(notice(&to_ns(&mut e, "INFO"), "alice@example.org"), "owner INFO shows the email");
+
+        let out = to_ns(&mut e, "SET PASSWORD newsecret");
+        let deferred = out.iter().find_map(|a| match a {
+            NetAction::DeferPassword { account, password, agent, uid } => Some((account.clone(), password.clone(), agent.clone(), uid.clone())),
+            _ => None,
+        });
+        let (account, password, agent, uid) = deferred.expect("SET PASSWORD defers derivation");
+        assert_eq!(password, "newsecret");
+        let creds = Db::derive_credentials(&password, 4096);
+        e.complete_password_change(&account, creds, &agent, &uid);
+        assert!(e.db.authenticate("alice", "newsecret").is_some(), "new password works");
+        assert!(e.db.authenticate("alice", "sesame").is_none(), "old password rejected");
+    }
+
+    // DROP deletes the account, releases and drops the channels it founded, and
+    // logs the session out; a wrong password is refused.
+    #[test]
+    fn nickserv_drop_account() {
+        let mut e = engine_with("nsdrop", "alice", "sesame");
+        e.db.register_channel("#a", "alice").unwrap();
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let to_ns = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() });
+        let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
+
+        assert!(notice(&to_ns(&mut e, "DROP wrongpass"), "Invalid password"));
+        assert!(e.db.account("alice").is_some(), "wrong password keeps the account");
+
+        let out = to_ns(&mut e, "DROP sesame");
+        assert!(notice(&out, "has been dropped"));
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#a" && modes == "-r")), "channel released: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { target, key, value } if target == "000AAAAAB" && key == "accountname" && value.is_empty())), "session logged out: {out:?}");
+        assert!(e.db.account("alice").is_none(), "account gone");
+        assert!(e.db.channel("#a").is_none(), "founded channel gone");
+    }
+
+    // GROUP links a nick to an account so it identifies there too; GLIST lists the
+    // aliases; UNGROUP removes one, after which the nick no longer resolves.
+    #[test]
+    fn nickserv_grouped_nicks() {
+        let mut e = engine_with("nsgroup", "alice", "sesame");
+        let to_ns = |e: &mut Engine, uid: &str, text: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: text.into() });
+        let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
+        // A user on a different nick groups it to alice by password.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "ali".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        assert!(notice(&to_ns(&mut e, "000AAAAAB", "GROUP alice sesame"), "grouped to \x02alice\x02"));
+        // Identifying as the grouped nick logs into alice.
+        let out = to_ns(&mut e, "000AAAAAB", "IDENTIFY sesame");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "alice")), "grouped nick identifies to alice: {out:?}");
+        assert!(notice(&to_ns(&mut e, "000AAAAAB", "GLIST"), "ali"));
+        // Ungroup it; a fresh session on that nick no longer resolves.
+        assert!(notice(&to_ns(&mut e, "000AAAAAB", "UNGROUP ali"), "no longer grouped"));
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "ali".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        assert!(notice(&to_ns(&mut e, "000AAAAAC", "IDENTIFY sesame"), "isn't registered"));
+    }
+
+    // RESETPASS emails a code, and that code + a new password completes the reset;
+    // the new password then authenticates and the old one no longer does.
+    #[test]
+    fn nickserv_resetpass() {
+        let mut e = engine_with("nsreset", "alice", "sesame");
+        e.db.set_email_enabled(true);
+        e.db.set_email("alice", Some("alice@example.org".into())).unwrap();
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "someone".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        let to_ns = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() });
+
+        // Request: a code is emailed to the address on file.
+        let out = to_ns(&mut e, "RESETPASS alice");
+        let (to, body) = out.iter().find_map(|a| match a {
+            NetAction::SendEmail { to, text, .. } => Some((to.clone(), text.clone())),
+            _ => None,
+        }).expect("a reset code is emailed");
+        assert_eq!(to, "alice@example.org");
+        let code = body.split("is: ").nth(1).unwrap().split_whitespace().next().unwrap().to_string();
+
+        // Complete: the code + a new password defers the change.
+        let out = to_ns(&mut e, &format!("RESETPASS alice {code} brandnew"));
+        let (account, password, agent, uid) = out.iter().find_map(|a| match a {
+            NetAction::DeferPassword { account, password, agent, uid } => Some((account.clone(), password.clone(), agent.clone(), uid.clone())),
+            _ => None,
+        }).expect("a valid code defers the new password");
+        assert_eq!(password, "brandnew");
+        e.complete_password_change(&account, Db::derive_credentials(&password, 4096), &agent, &uid);
+        assert!(e.db.authenticate("alice", "brandnew").is_some(), "new password works");
+        assert!(e.db.authenticate("alice", "sesame").is_none(), "old password rejected");
+
+        // A used/wrong code is refused.
+        assert!(to_ns(&mut e, "RESETPASS alice 000000 x").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Invalid or expired"))));
+    }
+
+    // With email configured, registering with an address creates an unverified
+    // account and emails a confirmation code; CONFIRM <code> verifies it.
+    #[test]
+    fn nickserv_confirm() {
+        let path = std::env::temp_dir().join("fedserv-nsconfirm.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "test");
+        db.scram_iterations = 4096;
+        db.set_email_enabled(true);
+        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "newbie".into(), host: "h".into() , ip: "0.0.0.0".into() });
+
+        // REGISTER with an email defers; complete it as the link layer would.
+        let reg = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "REGISTER correcthorse newbie@example.org".into() });
+        let (account, password, email, reply) = reg.iter().find_map(|a| match a {
+            NetAction::DeferRegister { account, password, email, reply } => Some((account.clone(), password.clone(), email.clone(), reply.clone())),
+            _ => None,
+        }).expect("register defers");
+        let out = e.complete_register(&account, Db::derive_credentials(&password, 4096), email, reply);
+        assert!(!e.db.is_verified("newbie"), "registering with email starts unverified");
+        let body = out.iter().find_map(|a| match a {
+            NetAction::SendEmail { text, .. } => Some(text.clone()),
+            _ => None,
+        }).expect("a confirm code is emailed");
+        let code = body.split("CONFIRM ").nth(1).unwrap().split_whitespace().next().unwrap().to_string();
+
+        // CONFIRM verifies (the user was auto-logged-in by register).
+        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: format!("CONFIRM {code}") });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("now confirmed"))), "{out:?}");
+        assert!(e.db.is_verified("newbie"), "confirmed after CONFIRM");
+    }
+
+    // GHOST renames off a session using a nick the caller owns.
+    #[test]
+    fn nickserv_ghost() {
+        let mut e = engine_with("nsghost", "alice", "sesame");
+        let to_ns = |e: &mut Engine, uid: &str, text: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: text.into() });
+        // A ghost sits on nick alice; the owner identifies from another nick.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "owner".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY alice sesame".into() });
+        let out = to_ns(&mut e, "000AAAAAC", "GHOST alice");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, .. } if uid == "000AAAAAB")), "ghost renamed off: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("freed"))), "{out:?}");
+    }
+
+    // IDENTIFY accepts the two-arg account+password form: log into a named
+    // account even when the current nick differs; a wrong password is refused.
+    #[test]
+    fn identify_two_arg_account_form() {
+        let mut e = engine_with("twoarg", "realacct", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "someguest".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
+        let out = e.handle(NetEvent::Privmsg {
+            from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY realacct sesame".into(),
+        });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "realacct")), "two-arg identify logs into the named account: {out:?}");
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "other".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
+        let bad = e.handle(NetEvent::Privmsg {
+            from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY realacct wrongpw".into(),
+        });
+        assert!(bad.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Invalid password"))), "{bad:?}");
+        assert!(!bad.iter().any(|a| matches!(a, NetAction::Metadata { .. })), "wrong password must not log in: {bad:?}");
+
+        // An unregistered account says so, rather than "Invalid password".
+        let missing = e.handle(NetEvent::Privmsg {
+            from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY ghost whatever".into(),
+        });
+        assert!(missing.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't registered"))), "{missing:?}");
+    }
+
+    // SECUREOPS strips channel-operator status from a user without op-level access.
+    #[test]
+    fn secureops_strips_op_from_a_user_without_access() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-secureops.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.register_channel("#c", "boss").unwrap();
+        db.set_channel_setting("#c", db::ChanSetting::SecureOps, true).unwrap();
+        let mut e = Engine::new(vec![Box::new(ChanServ { uid: "42SAAAAAB".into() })], db);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "rando".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        // rando holds no access; being opped triggers a -o from ChanServ.
+        let out = e.handle(NetEvent::ChannelOp { channel: "#c".into(), uid: "000AAAAAB".into(), op: true });
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "-o 000AAAAAB")),
+            "SECUREOPS strips the op: {out:?}"
+        );
+        // With SECUREOPS off, the same op is left alone.
+        e.db.set_channel_setting("#c", db::ChanSetting::SecureOps, false).unwrap();
+        let out = e.handle(NetEvent::ChannelOp { channel: "#c".into(), uid: "000AAAAAB".into(), op: true });
+        assert!(out.is_empty(), "no enforcement when SECUREOPS is off: {out:?}");
+    }
+
+    // BotServ BOT ADD/LIST is oper-gated (Priv::Admin) and the bot is remembered.
+    #[test]
+    fn botserv_bot_add_list_is_oper_gated() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-botserv.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "rando".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
+
+        // A non-oper cannot add a bot.
+        assert!(notice(&bs(&mut e, "000AAAAAB", "BOT ADD Bendy bot serv.host Helper"), "Access denied"));
+        // The admin oper identifies, adds a bot, and sees it listed.
+        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        assert!(notice(&bs(&mut e, "000AAAAAC", "BOT ADD Bendy bot serv.host A Helper"), "added"));
+        assert!(notice(&bs(&mut e, "000AAAAAC", "BOT LIST"), "Bendy"));
+    }
+
+    // A bot is introduced on the network when added, and quit when deleted.
+    #[test]
+    fn botserv_introduces_and_quits_bots() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-botintro.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+
+        // Adding a bot introduces it on the network with a SID-prefixed uid.
+        let out = bs(&mut e, "000AAAAAC", "BOT ADD Bendy bot serv.host A Helper");
+        assert!(out.iter().any(|a| matches!(a, NetAction::IntroduceUser { nick, uid, .. } if nick == "Bendy" && uid.starts_with("42SB"))), "introduced: {out:?}");
+        // A later command doesn't re-introduce an already-live bot.
+        assert!(!bs(&mut e, "000AAAAAC", "BOT LIST").iter().any(|a| matches!(a, NetAction::IntroduceUser { .. })), "no duplicate introduce");
+        // Deleting it quits the pseudo-client.
+        assert!(bs(&mut e, "000AAAAAC", "BOT DEL Bendy").iter().any(|a| matches!(a, NetAction::QuitUser { .. })), "quit on delete");
+        // A registered bot is introduced at burst.
+        bs(&mut e, "000AAAAAC", "BOT ADD Roger svc host Bot");
+        assert!(e.startup_actions().iter().any(|a| matches!(a, NetAction::IntroduceUser { nick, .. } if nick == "Roger")), "introduced at burst");
+    }
+
+    // ASSIGN puts the bot in the channel; UNASSIGN takes it out.
+    #[test]
+    fn botserv_assign_joins_and_unassign_parts() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bsassign.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("staff", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAC", "IDENTIFY password1");
+        bs(&mut e, "000AAAAAC", "BOT ADD Bendy bot serv.host Helper"); // goes live
+
+        // The founder assigns the bot: it joins the channel.
+        let out = bs(&mut e, "000AAAAAB", "ASSIGN #c Bendy");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, .. } if channel == "#c")), "joins on assign: {out:?}");
+        // Unassigning parts it.
+        let out = bs(&mut e, "000AAAAAB", "UNASSIGN #c");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ServicePart { channel, .. } if channel == "#c")), "parts on unassign: {out:?}");
+    }
+
+    // BOT DEL * removes every bot at once, quitting each.
+    #[test]
+    fn botserv_mass_bot_removal() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bsmass.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        bs(&mut e, "BOT ADD One a serv.host Bot");
+        bs(&mut e, "BOT ADD Two b serv.host Bot");
+
+        let out = bs(&mut e, "BOT DEL *");
+        let quits = out.iter().filter(|a| matches!(a, NetAction::QuitUser { .. })).count();
+        assert_eq!(quits, 2, "both bots quit: {out:?}");
+        // The registry is empty afterwards.
+        assert!(!bs(&mut e, "BOT LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("One") || text.contains("Two"))), "registry cleared");
+    }
+
+    // BOT CHANGE renames a bot (moving its channel assignments) and reintroduces
+    // it when only the identity changes; the network client is refreshed both ways.
+    #[test]
+    fn botserv_bot_change_renames_and_reidentifies() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bschange.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        ns(&mut e, "IDENTIFY password1");
+        bs(&mut e, "BOT ADD Bendy bot serv.host Helper");
+        bs(&mut e, "ASSIGN #c Bendy");
+
+        // Rename: the old client quits, a Roger client is introduced and rejoins #c.
+        let out = bs(&mut e, "BOT CHANGE Bendy Roger");
+        assert!(out.iter().any(|a| matches!(a, NetAction::QuitUser { .. })), "old client quit: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::IntroduceUser { nick, .. } if nick == "Roger")), "Roger introduced");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, .. } if channel == "#c")), "Roger rejoins #c");
+
+        // Same nick, new identity: the client is refreshed with the new host.
+        let out = bs(&mut e, "BOT CHANGE Roger Roger newbot new.host A New Bot");
+        assert!(out.iter().any(|a| matches!(a, NetAction::QuitUser { .. })), "stale client quit");
+        assert!(out.iter().any(|a| matches!(a, NetAction::IntroduceUser { nick, host, .. } if nick == "Roger" && host == "new.host")), "reintroduced with new host: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, .. } if channel == "#c")), "rejoins #c after re-identify");
+    }
+
+    // NOBOT (channel) and PRIVATE (bot) both reserve assignment for operators:
+    // the founder is refused, a services admin is allowed.
+    #[test]
+    fn botserv_nobot_and_private_gate_assign() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bsprot.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap(); // admin
+        db.register("owner", "password1", None).unwrap(); // plain founder
+        db.register_channel("#c", "owner").unwrap();
+        db.register_channel("#d", "owner").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let boss = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let owner = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAO".into(), to: "42SAAAAAD".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAO".into(), nick: "owner".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAO", "IDENTIFY password1");
+        boss(&mut e, "BOT ADD Bendy bot serv.host Helper");
+        let joined = |out: &[NetAction], ch: &str| out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, .. } if channel == ch));
+        let denied = |out: &[NetAction], word: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(word)));
+
+        // NOBOT on #c: the founder is refused, the admin isn't.
+        boss(&mut e, "SET #c NOBOT ON");
+        assert!(denied(&owner(&mut e, "ASSIGN #c Bendy"), "NOBOT"), "founder blocked by NOBOT");
+        assert!(joined(&boss(&mut e, "ASSIGN #c Bendy"), "#c"), "admin overrides NOBOT");
+
+        // Private bot on #d: the founder is refused, the admin isn't.
+        boss(&mut e, "SET Bendy PRIVATE ON");
+        assert!(denied(&owner(&mut e, "ASSIGN #d Bendy"), "private"), "founder blocked from private bot");
+        assert!(joined(&boss(&mut e, "ASSIGN #d Bendy"), "#d"), "admin assigns private bot");
+    }
+
+    // SAY/ACT speak through the channel's assigned bot, sourced from the bot's uid.
+    #[test]
+    fn botserv_say_speaks_through_bot() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bssay.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("rando", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAR".into(), nick: "rando".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAR", "IDENTIFY password1");
+        bs(&mut e, "000AAAAAB", "BOT ADD Bendy bot serv.host Helper");
+        bs(&mut e, "000AAAAAB", "ASSIGN #c Bendy");
+
+        // Founder SAY: a PRIVMSG to the channel sourced from the bot's uid.
+        let out = bs(&mut e, "000AAAAAB", "SAY #c hello there");
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text } if from.starts_with("42SB") && to == "#c" && text == "hello there")),
+            "bot says: {out:?}"
+        );
+        // ACT wraps the text in a CTCP ACTION.
+        let out = bs(&mut e, "000AAAAAB", "ACT #c waves");
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::Privmsg { text, .. } if text == "\x01ACTION waves\x01")),
+            "bot acts: {out:?}"
+        );
+        // A non-op can't drive the bot.
+        let out = bs(&mut e, "000AAAAAR", "SAY #c nope");
+        assert!(!out.iter().any(|a| matches!(a, NetAction::Privmsg { .. })), "non-op blocked: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "denied notice: {out:?}");
+    }
+
+    // The caps kicker makes the assigned bot kick a shouting message, exempts
+    // operators when DONTKICKOPS is on, and leaves ordinary lines alone.
+    #[test]
+    fn botserv_caps_kicker_kicks() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bskick.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "#c".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAR".into(), nick: "rando".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        bs(&mut e, "000AAAAAB", "BOT ADD Bendy bot serv.host Helper");
+        bs(&mut e, "000AAAAAB", "ASSIGN #c Bendy");
+        bs(&mut e, "000AAAAAB", "KICK #c CAPS ON");
+        e.handle(NetEvent::Join { uid: "000AAAAAR".into(), channel: "#c".into(), op: false });
+
+        // Shouting is kicked, sourced from the bot.
+        let out = say(&mut e, "000AAAAAR", "HELLO EVERYONE LISTEN UP");
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::Kick { from, channel, uid, .. } if from.starts_with("42SB") && channel == "#c" && uid == "000AAAAAR")),
+            "caps kicked: {out:?}"
+        );
+        // A normal line is fine.
+        assert!(!say(&mut e, "000AAAAAR", "hello everyone").iter().any(|a| matches!(a, NetAction::Kick { .. })), "quiet line ok");
+        // With DONTKICKOPS, an operator can shout.
+        bs(&mut e, "000AAAAAB", "KICK #c DONTKICKOPS ON");
+        e.network.set_op("#c", "000AAAAAR", true);
+        assert!(!say(&mut e, "000AAAAAR", "SHOUTING BUT I AM OP").iter().any(|a| matches!(a, NetAction::Kick { .. })), "op exempt");
+    }
+
+    // The repeat kicker counts consecutive identical lines (case-insensitively)
+    // and kicks once the threshold is reached; a different line resets it.
+    #[test]
+    fn botserv_repeat_kicker_kicks() {
+        let (mut e, _p) = kicker_fixture("bsrepeat");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        bs(&mut e, "KICK #c REPEAT ON 2"); // kick on the third identical line
+
+        let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { from, uid, .. } if from.starts_with("42SB") && uid == "000AAAAAS"));
+        assert!(!kicked(&say(&mut e, "spam")), "1st ok");
+        assert!(!kicked(&say(&mut e, "SPAM")), "2nd (case-fold) ok");
+        assert!(kicked(&say(&mut e, "Spam")), "3rd identical kicks");
+        // A different line clears the streak.
+        assert!(!kicked(&say(&mut e, "something else entirely")), "reset on new line");
+    }
+
+    // The flood kicker counts lines within a window; the window resets after it
+    // elapses. Uses the injectable clock so it is deterministic.
+    #[test]
+    fn botserv_flood_kicker_kicks() {
+        let (mut e, _p) = kicker_fixture("bsflood");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        bs(&mut e, "KICK #c FLOOD ON 3 10"); // 3 lines in 10 seconds
+        let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAS"));
+
+        e.now_override = Some(1000);
+        assert!(!kicked(&say(&mut e, "a")), "line 1");
+        assert!(!kicked(&say(&mut e, "b")), "line 2");
+        // The window elapses before the 3rd line, so it resets instead of kicking.
+        e.now_override = Some(1011);
+        assert!(!kicked(&say(&mut e, "c")), "window reset");
+        // Three lines inside the window now trip it.
+        assert!(!kicked(&say(&mut e, "d")), "line 2 of new window");
+        assert!(kicked(&say(&mut e, "e")), "3rd in-window line kicks");
+    }
+
+    // The badwords kicker matches user-supplied regexes (case-insensitively),
+    // rebuilds its compiled set when the list changes, and rejects bad patterns.
+    #[test]
+    fn botserv_badwords_kicker_kicks() {
+        let (mut e, _p) = kicker_fixture("bsbadwords");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { from, uid, .. } if from.starts_with("42SB") && uid == "000AAAAAS"));
+
+        bs(&mut e, "BADWORDS #c ADD fr[ao]g");
+        bs(&mut e, "KICK #c BADWORDS ON");
+        // Matching line (case-insensitive) is kicked; clean line is not.
+        assert!(kicked(&say(&mut e, "i love FROGS")), "matched badword kicked");
+        assert!(!kicked(&say(&mut e, "hello world")), "clean line ok");
+
+        // Adding a pattern bumps the revision, so the cached set rebuilds.
+        bs(&mut e, "BADWORDS #c ADD wibble");
+        assert!(kicked(&say(&mut e, "wibble wobble")), "new pattern matches after rebuild");
+
+        // An invalid regex is rejected and not stored.
+        let out = bs(&mut e, "BADWORDS #c ADD [unclosed");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("valid regular expression"))), "invalid rejected: {out:?}");
+        assert!(!say(&mut e, "[unclosed bracket text").iter().any(|a| matches!(a, NetAction::Kick { .. })), "bad pattern not stored");
+    }
+
+    // COPY clones one channel's kicker/badword config onto another.
+    #[test]
+    fn botserv_copy_bot_config() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bscopy.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        db.register_channel("#d", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        bs(&mut e, "KICK #c CAPS ON");
+        bs(&mut e, "BADWORDS #c ADD fr[ao]g");
+        bs(&mut e, "KICK #c BADWORDS ON");
+        let says = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        // #d starts blank, so nothing trips.
+        assert!(says(&bs(&mut e, "KICK #d TEST SHOUTING LOUD ALLCAPS"), "trips no content kicker"), "blank #d");
+        bs(&mut e, "COPY #c #d");
+        // Now #d has #c's caps and badword config.
+        assert!(says(&bs(&mut e, "KICK #d TEST SHOUTING LOUD ALLCAPS"), "would be kicked"), "caps copied");
+        assert!(says(&bs(&mut e, "KICK #d TEST i love frogs"), "would be kicked"), "badwords copied");
+    }
+
+    // TRIGGER makes the assigned bot auto-respond to a matching line, with $nick
+    // substituted for the speaker.
+    #[test]
+    fn botserv_trigger_auto_responds() {
+        let (mut e, _p) = kicker_fixture("bstrigger");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        bs(&mut e, "TRIGGER #c ADD (?i)hello|Hi $nick, welcome!");
+
+        // A matching line gets a bot response addressed with the speaker's nick.
+        let out = say(&mut e, "hello everyone");
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text } if from.starts_with("42SB") && to == "#c" && text == "Hi spammer, welcome!")),
+            "auto-response: {out:?}"
+        );
+        // A non-matching line is ignored.
+        assert!(!say(&mut e, "goodbye all").iter().any(|a| matches!(a, NetAction::Privmsg { .. })), "no response on miss");
+    }
+
+    // Community !votekick tallies distinct voters and kicks at the threshold.
+    #[test]
+    fn botserv_votekick_reaches_threshold() {
+        let (mut e, _p) = kicker_fixture("bsvote");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let vote = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "#c".into(), text: t.into() });
+        bs(&mut e, "SET #c VOTEKICK 2");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "victim".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "carol".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { from, uid, .. } if from.starts_with("42SB") && uid == "000AAAAAV"));
+
+        // First voter, then the same voter again (deduped) — no kick yet.
+        assert!(!kicked(&vote(&mut e, "000AAAAAB", "!votekick victim")), "1 vote: no kick");
+        assert!(!kicked(&vote(&mut e, "000AAAAAB", "!votekick victim")), "same voter doesn't double-count");
+        // A second distinct voter reaches the threshold.
+        assert!(kicked(&vote(&mut e, "000AAAAAC", "!votekick victim")), "2 distinct votes: kicked");
+    }
+
+    // HostServ: a vhost is applied on identify and by SET, listed and removed by
+    // operators, and its administration is oper-gated with host validation.
+    #[test]
+    fn hostserv_assigns_and_applies_vhosts() {
+        use fedserv_hostserv::HostServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-hostserv.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("alice", "password1", None).unwrap();
+        db.set_vhost("alice", "alice.vhost.example", "system", None).unwrap(); // pre-assigned
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(HostServ { uid: "42SAAAAAG".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
+        let sethost = |out: &[NetAction], uid: &str, host: &str| out.iter().any(|a| matches!(a, NetAction::SetHost { uid: u, host: h } if u == uid && h == host));
+
+        // Identifying applies the pre-assigned vhost.
+        assert!(sethost(&ns(&mut e, "000AAAAAV", "IDENTIFY password1"), "000AAAAAV", "alice.vhost.example"), "vhost applied on identify");
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+
+        // An operator SET applies at once to the online session.
+        assert!(sethost(&hs(&mut e, "000AAAAAB", "SET alice new.host.example"), "000AAAAAV", "new.host.example"), "SET applies online");
+        // ON re-activates the account's vhost.
+        assert!(sethost(&hs(&mut e, "000AAAAAV", "ON"), "000AAAAAV", "new.host.example"), "ON re-applies");
+        // LIST shows it.
+        assert!(hs(&mut e, "000AAAAAB", "LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("alice") && text.contains("new.host.example"))), "listed");
+        // DEL restores the real host on the online session.
+        assert!(sethost(&hs(&mut e, "000AAAAAB", "DEL alice"), "000AAAAAV", "realhost"), "DEL restores real host");
+
+        // Non-operators can't SET; invalid hosts are rejected.
+        assert!(hs(&mut e, "000AAAAAV", "SET boss x.y").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "oper-gated");
+        assert!(hs(&mut e, "000AAAAAB", "SET alice not a host").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't a valid host"))), "host validated");
+    }
+
+    // A vhost is normalised the way the ircd displays it (_ -> -) and can't be
+    // assigned to two accounts (uniqueness on the normalised form).
+    #[test]
+    fn hostserv_normalises_and_dedupes() {
+        use fedserv_hostserv::HostServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-hsnorm.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("alice", "password1", None).unwrap();
+        db.register("bob", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(HostServ { uid: "42SAAAAAG".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAW".into(), nick: "bob".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAV", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAW", "IDENTIFY password1");
+        let says = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        // The underscore is normalised to a hyphen, so what's applied matches the
+        // ircd's display.
+        let out = hs(&mut e, "000AAAAAB", "SET alice cool_user.example");
+        assert!(out.iter().any(|a| matches!(a, NetAction::SetHost { host, .. } if host == "cool-user.example")), "normalised: {out:?}");
+        // bob can't take the same host (even spelled with the underscore).
+        assert!(says(&hs(&mut e, "000AAAAAB", "SET bob cool_user.example"), "already in use"), "uniqueness enforced");
+        // A distinct host is fine.
+        assert!(hs(&mut e, "000AAAAAB", "SET bob other.example").iter().any(|a| matches!(a, NetAction::SetHost { host, .. } if host == "other.example")), "distinct host ok");
+    }
+
+    // A temporary vhost applies while valid; an already-expired one is ignored.
+    #[test]
+    fn hostserv_vhost_expiry() {
+        use fedserv_hostserv::HostServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-hsexpiry.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("alice", "password1", None).unwrap();
+        db.register("bob", "password1", None).unwrap();
+        db.set_vhost("bob", "old.host.example", "system", Some(0)).unwrap(); // already expired
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(HostServ { uid: "42SAAAAAG".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAW".into(), nick: "bob".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAV", "IDENTIFY password1");
+
+        // bob's expired vhost is not applied on identify.
+        assert!(!ns(&mut e, "000AAAAAW", "IDENTIFY password1").iter().any(|a| matches!(a, NetAction::SetHost { .. })), "expired vhost not applied");
+        // A temporary vhost with a duration applies now and lists as temporary.
+        let out = hs(&mut e, "000AAAAAB", "SET alice temp.host.example 1h");
+        assert!(out.iter().any(|a| matches!(a, NetAction::SetHost { uid, host } if uid == "000AAAAAV" && host == "temp.host.example")), "temporary vhost applied: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("expires in 1h"))), "expiry announced");
+        assert!(hs(&mut e, "000AAAAAB", "LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("alice") && text.contains("temporary"))), "listed as temporary");
+    }
+
+    // Forbidden patterns block impersonating requests; the template + DEFAULT
+    // gives a user a $account-based vhost.
+    #[test]
+    fn hostserv_forbid_and_template() {
+        use fedserv_hostserv::HostServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-hsforbid.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("alice", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(HostServ { uid: "42SAAAAAG".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAV", "IDENTIFY password1");
+        let says = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        // Forbid impersonating hosts; a matching request is refused, others pass.
+        hs(&mut e, "000AAAAAB", "FORBID (?i)(admin|staff)");
+        assert!(says(&hs(&mut e, "000AAAAAV", "REQUEST admin.example"), "isn't allowed"), "impersonating request blocked");
+        assert!(says(&hs(&mut e, "000AAAAAV", "REQUEST cool.example"), "will review"), "clean request allowed");
+        // A second request right away is throttled.
+        assert!(says(&hs(&mut e, "000AAAAAV", "REQUEST another.example"), "Please wait"), "request throttled");
+        assert!(says(&hs(&mut e, "000AAAAAV", "FORBID x"), "Access denied"), "FORBID oper-gated");
+
+        // A template lets a user self-serve a $account vhost.
+        hs(&mut e, "000AAAAAB", "TEMPLATE $account.users.example");
+        let out = hs(&mut e, "000AAAAAV", "DEFAULT");
+        assert!(out.iter().any(|a| matches!(a, NetAction::SetHost { uid, host } if uid == "000AAAAAV" && host == "alice.users.example")), "template applied: {out:?}");
+    }
+
+    // The vhost OFFER menu: operators OFFER specs, users TAKE them self-serve.
+    #[test]
+    fn hostserv_offer_menu() {
+        use fedserv_hostserv::HostServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-hsoffer.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("alice", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(HostServ { uid: "42SAAAAAG".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAV", "IDENTIFY password1");
+        let says = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        // An operator offers a vhost; anyone can list it.
+        hs(&mut e, "000AAAAAB", "OFFER free.cloak.example");
+        assert!(says(&hs(&mut e, "000AAAAAV", "OFFERLIST"), "free.cloak.example"), "listed");
+        // A user takes it and it applies to them.
+        let out = hs(&mut e, "000AAAAAV", "TAKE 1");
+        assert!(out.iter().any(|a| matches!(a, NetAction::SetHost { uid, host } if uid == "000AAAAAV" && host == "free.cloak.example")), "TAKE applies: {out:?}");
+        // The operator removes it; a non-operator can't offer.
+        assert!(says(&hs(&mut e, "000AAAAAB", "OFFERDEL 1"), "Removed"), "removed");
+        assert!(says(&hs(&mut e, "000AAAAAV", "OFFER x.example"), "Access denied"), "oper-gated");
+    }
+
+    // An ident@host vhost applies both the ident (CHGIDENT) and the host.
+    #[test]
+    fn hostserv_ident_at_host() {
+        use fedserv_hostserv::HostServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-hsident.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("alice", "password1", None).unwrap();
+        db.set_vhost("alice", "web@cloak.example", "system", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(HostServ { uid: "42SAAAAAG".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
+
+        let out = ns(&mut e, "000AAAAAV", "IDENTIFY password1");
+        assert!(out.iter().any(|a| matches!(a, NetAction::SetIdent { uid, ident } if uid == "000AAAAAV" && ident == "web")), "ident set: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::SetHost { uid, host } if uid == "000AAAAAV" && host == "cloak.example")), "host set");
+    }
+
+    // HostServ REQUEST -> WAITING -> ACTIVATE assigns and applies the vhost; a
+    // REJECT clears the request without assigning anything.
+    #[test]
+    fn hostserv_request_workflow() {
+        use fedserv_hostserv::HostServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-hsreq.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("alice", "password1", None).unwrap();
+        db.register("bob", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(HostServ { uid: "42SAAAAAG".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAW".into(), nick: "bob".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAV", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAW", "IDENTIFY password1");
+        let says = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        // alice requests; the request shows up in WAITING.
+        hs(&mut e, "000AAAAAV", "REQUEST alice.cool.example");
+        assert!(says(&hs(&mut e, "000AAAAAB", "WAITING"), "alice.cool.example"), "request waiting");
+        // ACTIVATE assigns + applies it to alice's online session.
+        let out = hs(&mut e, "000AAAAAB", "ACTIVATE alice");
+        assert!(out.iter().any(|a| matches!(a, NetAction::SetHost { uid, host } if uid == "000AAAAAV" && host == "alice.cool.example")), "activated + applied: {out:?}");
+        // The request is consumed; WAITING is empty again.
+        assert!(says(&hs(&mut e, "000AAAAAB", "WAITING"), "No vhost requests"), "request consumed");
+
+        // A different user's request, rejected, assigns nothing.
+        hs(&mut e, "000AAAAAW", "REQUEST other.example");
+        assert!(says(&hs(&mut e, "000AAAAAB", "REJECT bob"), "Rejected"), "rejected");
+        assert!(says(&hs(&mut e, "000AAAAAB", "WAITING"), "No vhost requests"), "no request left after reject");
+        // A non-operator can't approve.
+        assert!(says(&hs(&mut e, "000AAAAAV", "WAITING"), "Access denied"), "oper-gated");
+    }
+
+    // StatServ reports per-channel activity (#channel) and the global registry
+    // (SERVER, operators only).
+    #[test]
+    fn statserv_reports_channel_and_global() {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        use fedserv_statserv::StatServ;
+        let path = std::env::temp_dir().join("fedserv-statserv.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+                Box::new(StatServ { uid: "42SAAAAAF".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin).with(fedserv_api::Priv::Auspex));
+        e.set_opers(opers);
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let ss = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAF".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "spammer".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        bs(&mut e, "BOT ADD Bendy bot serv.host Helper");
+        bs(&mut e, "ASSIGN #c Bendy");
+        say(&mut e, "one");
+        say(&mut e, "two");
+        say(&mut e, "three");
+
+        // Per-channel view.
+        let out = ss(&mut e, "#c");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("line(s) seen this session"))), "channel lines: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("spammer") && text.contains("3"))), "top talker: {out:?}");
+        // Global view (oper) shows the shared counters.
+        let out = ss(&mut e, "SERVER");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("botserv.messages"))), "global counters: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("channels.total"))), "gauge shown");
+    }
+
+    // The shared stats registry gathers per-service command counts, BotServ
+    // events, and live gauges — the same pipe every module reports through.
+    #[test]
+    fn stats_registry_collects_across_services() {
+        let (mut e, _p) = kicker_fixture("bsstats");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        // The fixture already ran a NickServ IDENTIFY and BotServ BOT ADD/ASSIGN.
+        bs(&mut e, "KICK #c CAPS ON");
+        say(&mut e, "SHOUTING LOUDLY NOW"); // one kick
+
+        let s = e.stats_snapshot();
+        assert!(s.get("nickserv.command").copied().unwrap_or(0) >= 1, "nickserv counted: {s:?}");
+        assert!(s.get("botserv.command").copied().unwrap_or(0) >= 2, "botserv commands counted");
+        assert_eq!(s.get("botserv.kick").copied(), Some(1), "one kick counted");
+        // Live gauges derived from the store.
+        assert_eq!(s.get("channels.total").copied(), Some(1));
+        assert_eq!(s.get("bots.total").copied(), Some(1));
+        assert!(s.contains_key("accounts.total"));
+    }
+
+    // DONTKICKVOICES exempts voiced users; removing the voice makes them kickable.
+    #[test]
+    fn botserv_dontkickvoices_exempts() {
+        let (mut e, _p) = kicker_fixture("bsdkv");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAS"));
+        bs(&mut e, "KICK #c CAPS ON");
+        bs(&mut e, "KICK #c DONTKICKVOICES ON");
+
+        // Voiced: exempt.
+        e.handle(NetEvent::ChannelVoice { channel: "#c".into(), uid: "000AAAAAS".into(), voice: true });
+        assert!(!kicked(&say(&mut e, "SHOUTING WHILE VOICED")), "voiced user exempt");
+        // Devoiced: kickable again.
+        e.handle(NetEvent::ChannelVoice { channel: "#c".into(), uid: "000AAAAAS".into(), voice: false });
+        assert!(kicked(&say(&mut e, "SHOUTING WITHOUT VOICE")), "devoiced user kicked");
+    }
+
+    // Triggers substitute regex capture groups ($1) and honour a cooldown.
+    #[test]
+    fn botserv_trigger_captures_and_cooldown() {
+        let (mut e, _p) = kicker_fixture("bstrigcap");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        bs(&mut e, "TRIGGER #c ADD (?i)hi (\\w+)|Hi $1!|30"); // capture group + 30s cooldown
+        let response = |out: &[NetAction]| out.iter().find_map(|a| match a {
+            NetAction::Privmsg { text, .. } => Some(text.clone()),
+            _ => None,
+        });
+
+        e.now_override = Some(1000);
+        assert_eq!(response(&say(&mut e, "hi alice")).as_deref(), Some("Hi alice!"), "capture substituted");
+        // Within the cooldown window: suppressed.
+        e.now_override = Some(1010);
+        assert_eq!(response(&say(&mut e, "hi bob")), None, "suppressed by cooldown");
+        // After the cooldown: fires again.
+        e.now_override = Some(1031);
+        assert_eq!(response(&say(&mut e, "hi carol")).as_deref(), Some("Hi carol!"), "fires after cooldown");
+    }
+
+    // WARN gives a one-time warning before the first real kick.
+    #[test]
+    fn botserv_warn_before_kick() {
+        let (mut e, _p) = kicker_fixture("bswarn");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        bs(&mut e, "KICK #c CAPS ON");
+        bs(&mut e, "KICK #c WARN ON");
+        let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAS"));
+
+        // First offence: a warning notice from the bot, no kick.
+        let out = say(&mut e, "SHOUTING THE FIRST TIME");
+        assert!(!kicked(&out), "no kick on first offence");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { from, to, text } if from.starts_with("42SB") && to == "000AAAAAS" && text.contains("Next time"))), "warned: {out:?}");
+        // Second offence: kicked for real.
+        assert!(kicked(&say(&mut e, "SHOUTING THE SECOND TIME")), "kicked on second offence");
+    }
+
+    // KICK TEST dry-runs the content kickers against a line without kicking.
+    #[test]
+    fn botserv_kick_test_dry_run() {
+        let (mut e, _p) = kicker_fixture("bskicktest");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        bs(&mut e, "KICK #c CAPS ON");
+        bs(&mut e, "BADWORDS #c ADD fr[ao]g");
+        bs(&mut e, "KICK #c BADWORDS ON");
+        let says = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        assert!(says(&bs(&mut e, "KICK #c TEST HELLO EVERYONE LOUD"), "would be kicked"), "caps flagged");
+        assert!(says(&bs(&mut e, "KICK #c TEST i love frogs"), "would be kicked"), "badword flagged");
+        assert!(says(&bs(&mut e, "KICK #c TEST hello there"), "trips no content kicker"), "clean line ok");
+    }
+
+    // Times-to-ban: after TTB kicks the bot bans the user, and BANEXPIRE lifts
+    // the ban once it elapses (swept on the next event).
+    #[test]
+    fn botserv_ttb_bans_and_expires() {
+        let (mut e, _p) = kicker_fixture("bsttb");
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        bs(&mut e, "KICK #c CAPS ON");
+        bs(&mut e, "KICK #c TTB 2");
+        bs(&mut e, "SET #c BANEXPIRE 1m");
+        let banned = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::ChannelMode { from, channel, modes } if from.starts_with("42SB") && channel == "#c" && modes == "+b *!*@h"));
+        let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAS"));
+
+        e.now_override = Some(1000);
+        // First offence: kick only.
+        let out = say(&mut e, "SHOUTING LOUDLY ONE");
+        assert!(kicked(&out) && !banned(&out), "1st: kick only: {out:?}");
+        // Second offence reaches TTB: ban then kick.
+        let out = say(&mut e, "SHOUTING LOUDLY TWO");
+        assert!(banned(&out) && kicked(&out), "2nd: ban + kick: {out:?}");
+
+        // Before the ban expires, an event lifts nothing.
+        e.now_override = Some(1059);
+        let out = e.handle(NetEvent::Ping { token: "t".into(), from: None });
+        assert!(!out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes.starts_with("-b"))), "not yet expired: {out:?}");
+        // After it expires, the next event lifts it.
+        e.now_override = Some(1061);
+        let out = e.handle(NetEvent::Ping { token: "t".into(), from: None });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#c" && modes == "-b *!*@h")), "ban lifted: {out:?}");
+    }
+
+    // Registers #c with founder boss (admin), a live assigned bot Bendy, and
+    // returns the engine ready for KICK configuration + a spammer uid 000AAAAAS.
+    fn kicker_fixture(tag: &str) -> (Engine, std::path::PathBuf) {
+        use fedserv_botserv::BotServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join(format!("fedserv-{tag}.jsonl"));
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "spammer".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "BOT ADD Bendy bot serv.host Helper".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "ASSIGN #c Bendy".into() });
+        (e, path)
+    }
+
+    // A member's personal greet is shown by the assigned bot on join, once the
+    // channel enables greets and the member has access.
+    #[test]
+    fn botserv_greet_shown_on_join() {
+        use fedserv_botserv::BotServ;
+        use fedserv_chanserv::ChanServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bsgreet.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        e.chan_service = Some("42SAAAAAB".into());
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAB", "SET GREET hello all");
+        bs(&mut e, "000AAAAAB", "BOT ADD Bendy bot serv.host Helper");
+        bs(&mut e, "000AAAAAB", "ASSIGN #c Bendy");
+
+        // Greets off by default: joining is silent.
+        assert!(
+            !e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: true }).iter().any(|a| matches!(a, NetAction::Privmsg { .. })),
+            "no greet before it is enabled"
+        );
+        e.handle(NetEvent::Part { uid: "000AAAAAB".into(), channel: "#c".into() });
+        bs(&mut e, "000AAAAAB", "SET #c GREET ON");
+        // Now the founder's greet is shown by the bot.
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: true });
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text } if from.starts_with("42SB") && to == "#c" && text == "[boss] hello all")),
+            "greet shown: {out:?}"
+        );
+    }
+
+    // Fantasy commands typed in-channel route through ChanServ and are sourced
+    // from the assigned bot.
+    #[test]
+    fn fantasy_roll_speaks_dice_through_the_bot() {
+        use fedserv_botserv::BotServ;
+        use fedserv_chanserv::ChanServ;
+        use fedserv_diceserv::DiceServ;
+        let path = std::env::temp_dir().join("fedserv-fantasyroll.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        db.register_channel("#d", "boss").unwrap(); // no bot
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+                Box::new(DiceServ { uid: "42SAAAAAI".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let chan = |e: &mut Engine, uid: &str, c: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: c.into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        bs(&mut e, "000AAAAAB", "BOT ADD Bendy bot serv.host Helper");
+        bs(&mut e, "000AAAAAB", "ASSIGN #c Bendy");
+
+        // `!roll` is answered by DiceServ but spoken into the channel by the bot.
+        let out = chan(&mut e, "000AAAAAB", "#c", "!roll 2d6+1");
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text } if from.starts_with("42SB") && to == "#c" && text.contains("2d6+1") && text.contains('='))),
+            "fantasy roll spoken by the bot: {out:?}"
+        );
+        // No DiceServ (or no bot) → no dice fantasy.
+        assert!(chan(&mut e, "000AAAAAB", "#d", "!roll 2d6").is_empty(), "no bot, no roll");
+    }
+
+    #[test]
+    fn botserv_fantasy_routes_through_bot() {
+        use fedserv_botserv::BotServ;
+        use fedserv_chanserv::ChanServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-bsfantasy.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        db.register_channel("#d", "boss").unwrap(); // registered, no bot
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let chan = |e: &mut Engine, uid: &str, c: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: c.into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        bs(&mut e, "000AAAAAB", "BOT ADD Bendy bot serv.host Helper");
+        bs(&mut e, "000AAAAAB", "ASSIGN #c Bendy");
+
+        // `!op` (founder, no target) ops the invoker, sourced from the bot uid.
+        let out = chan(&mut e, "000AAAAAB", "#c", "!op");
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::ChannelMode { from, channel, modes } if from.starts_with("42SB") && channel == "#c" && modes.contains("+o") && modes.contains("000AAAAAB"))),
+            "fantasy op via bot: {out:?}"
+        );
+        // Ordinary chatter is ignored.
+        assert!(chan(&mut e, "000AAAAAB", "#c", "hello everyone").is_empty(), "chatter ignored");
+        // Fantasy in a channel with no bot does nothing.
+        assert!(chan(&mut e, "000AAAAAB", "#d", "!op").is_empty(), "no bot, no fantasy");
+    }
+
+    // MemoServ delivers a memo to an offline account and notifies them on login.
+    #[test]
+    fn memoserv_delivers_and_notifies_on_login() {
+        use fedserv_memoserv::MemoServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-memoserv.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "password1", None).unwrap();
+        db.register("bob", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(MemoServ { uid: "42SAAAAAE".into() }),
+            ],
+            db,
+        );
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let ms = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAE".into(), text: t.into() });
+        let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        // alice identifies and sends bob (offline) a memo.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        assert!(notice(&ms(&mut e, "000AAAAAB", "SEND bob Hello from alice"), "Memo sent"));
+
+        // bob logs in later and is told he has a new memo, then reads it.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        assert!(notice(&ns(&mut e, "000AAAAAC", "IDENTIFY password1"), "new memo"));
+        assert!(notice(&ms(&mut e, "000AAAAAC", "READ NEW"), "Hello from alice"));
+    }
+
+    // Channel SUSPEND is oper-gated and freezes founder management until lifted.
+    #[test]
+    fn channel_suspend_is_oper_gated_and_freezes_management() {
+        use fedserv_chanserv::ChanServ;
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-chansuspendcmd.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register("staff", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Suspend));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        ns(&mut e, "000AAAAAC", "IDENTIFY password1");
+
+        // A non-oper cannot suspend a channel.
+        assert!(notice(&cs(&mut e, "000AAAAAB", "SUSPEND #c"), "Access denied"));
+        // The oper suspends it.
+        assert!(notice(&cs(&mut e, "000AAAAAC", "SUSPEND #c raided"), "now suspended"));
+        // The founder can no longer manage it.
+        assert!(notice(&cs(&mut e, "000AAAAAB", "SET #c SIGNKICK ON"), "suspended"));
+        // UNSUSPEND restores management.
+        assert!(notice(&cs(&mut e, "000AAAAAC", "UNSUSPEND #c"), "no longer suspended"));
+        assert!(notice(&cs(&mut e, "000AAAAAB", "SET #c SIGNKICK ON"), "is now"));
+    }
+
+    // SUSPEND is oper-gated, blocks the victim's login, and UNSUSPEND restores it.
+    #[test]
+    fn suspend_blocks_login_and_needs_oper() {
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-suspendcmd.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("victim", "password1", None).unwrap();
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Suspend));
+        e.set_opers(opers);
+        let to_ns = |e: &mut Engine, uid: &str, text: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: text.into() });
+        let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "victim".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
+
+        // A non-oper cannot suspend.
+        assert!(notice(&to_ns(&mut e, "000AAAAAB", "SUSPEND victim"), "Access denied"));
+        // The oper identifies and suspends the victim.
+        to_ns(&mut e, "000AAAAAC", "IDENTIFY password1");
+        assert!(notice(&to_ns(&mut e, "000AAAAAC", "SUSPEND victim being a nuisance"), "now suspended"));
+        // The victim can no longer identify.
+        assert!(notice(&to_ns(&mut e, "000AAAAAB", "IDENTIFY password1"), "suspended"));
+        // UNSUSPEND lets them back in.
+        assert!(notice(&to_ns(&mut e, "000AAAAAC", "UNSUSPEND victim"), "no longer suspended"));
+        assert!(notice(&to_ns(&mut e, "000AAAAAB", "IDENTIFY password1"), "now identified"));
+    }
+
+    // An auspex oper sees another account's hidden INFO (email); a non-oper does not.
+    #[test]
+    fn auspex_oper_sees_hidden_info() {
+        use fedserv_nickserv::NickServ;
+        let path = std::env::temp_dir().join("fedserv-auspex.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "password1", Some("alice@example.org".into())).unwrap();
+        db.register("operator", "password1", None).unwrap();
+        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("operator".to_string(), Privs::default().with(fedserv_api::Priv::Auspex));
+        e.set_opers(opers);
+        let info_alice = |e: &mut Engine, uid: &str| {
+            e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "INFO alice".into() })
+        };
+        let shows_email = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("alice@example.org")));
+
+        // The auspex oper identifies and sees alice's email.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "operator".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        assert!(shows_email(&info_alice(&mut e, "000AAAAAB")), "auspex oper sees the email");
+
+        // An unidentified (non-oper) viewer does not.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "guest".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        assert!(!shows_email(&info_alice(&mut e, "000AAAAAC")), "non-oper sees no email");
+    }
+
+    // TOPICLOCK reverts an unauthorised topic change; KEEPTOPIC restores the
+    // remembered topic when the channel is recreated.
+    #[test]
+    fn topiclock_reverts_and_keeptopic_restores() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-topic.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.register_channel("#c", "boss").unwrap();
+        db.set_channel_setting("#c", db::ChanSetting::KeepTopic, true).unwrap();
+        db.set_channel_setting("#c", db::ChanSetting::TopicLock, true).unwrap();
+        db.set_channel_topic("#c", "Official topic").unwrap();
+        let mut e = Engine::new(vec![Box::new(ChanServ { uid: "42SAAAAAB".into() })], db);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "rando".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        // A user without access changes the topic -> reverted to the stored one.
+        let out = e.handle(NetEvent::TopicChange { channel: "#c".into(), setter: "000AAAAAB".into(), topic: "hacked".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Topic { topic, .. } if topic == "Official topic")), "topiclock reverts: {out:?}");
+        // KEEPTOPIC restores the remembered topic on channel (re)creation.
+        let out = e.handle(NetEvent::ChannelCreate { channel: "#c".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Topic { topic, .. } if topic == "Official topic")), "keeptopic restores: {out:?}");
+    }
+
+    // ChanServ: registration needs identification, INFO shows the founder, and
+    // only the founder can drop.
+    #[test]
+    fn chanserv_register_info_drop() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-chanserv.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+
+        let to_cs = |e: &mut Engine, from: &str, text: &str| {
+            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+        };
+        let notice = |out: &[NetAction], needle: &str| {
+            out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)))
+        };
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
+
+        // Not identified yet: refused.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "REGISTER #room"), "logged in"));
+
+        // Identify, then register. Registration needs operator status in the channel.
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "REGISTER #room"), "channel operator"), "op required to register");
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: true });
+        let out = to_cs(&mut e, "000AAAAAB", "REGISTER #room");
+        assert!(notice(&out, "now registered"));
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#room" && modes == "+r")), "register sets +r: {out:?}");
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "INFO #room"), "alice"));
+
+        // Founder sets a mode lock: it applies immediately and shows on view.
+        let out = to_cs(&mut e, "000AAAAAB", "MLOCK #room +nt-s");
+        assert!(notice(&out, "updated"));
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#room" && modes == "+rnt-s")), "mlock applied: {out:?}");
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "MLOCK #room"), "+nt-s"));
+
+        // Founder sets modes directly via ChanServ MODE.
+        let out = to_cs(&mut e, "000AAAAAB", "MODE #room +S");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#room" && modes == "+S")), "MODE applies: {out:?}");
+
+        // Founder manages the access list.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "ACCESS #room ADD helper op"), "Added"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "ACCESS #room"), "helper"));
+
+        // A different, unidentified user cannot change modes, access, the lock, or drop it.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
+        assert!(notice(&to_cs(&mut e, "000AAAAAC", "MODE #room +i"), "founder"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAC", "ACCESS #room ADD x op"), "founder"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAC", "MLOCK #room +i"), "founder"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAC", "DROP #room"), "founder"));
+
+        // The founder can, which also clears +r.
+        let out = to_cs(&mut e, "000AAAAAB", "DROP #room");
+        assert!(notice(&out, "dropped"));
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#room" && modes == "-r")), "drop clears +r: {out:?}");
+    }
+
+    // Notable service actions are announced to the staff audit channel, sourced
+    // from the services server; private/cosmetic events are not, and no channel
+    // means no feed.
+    #[test]
+    fn audit_feed_announces_notable_actions() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-audit.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        e.set_log_channel(Some("#services".into()));
+        let to_cs = |e: &mut Engine, from: &str, text: &str| {
+            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+        };
+        // The audit line is a Notice to the log channel, from the services SID.
+        let audit = |out: &[NetAction], needle: &str| {
+            out.iter().any(|a| matches!(a, NetAction::Notice { from, to, text }
+                if from == "42S" && to == "#services" && text.contains(needle)))
+        };
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: true });
+
+        // Registering a channel is announced with the actor and the founder.
+        let out = to_cs(&mut e, "000AAAAAB", "REGISTER #room");
+        assert!(audit(&out, "registered channel \x02#room\x02"), "reg announced: {out:?}");
+        assert!(audit(&out, "alice"), "names the actor");
+
+        // A cosmetic mode lock is not surfaced (only its user-facing reply is).
+        let out = to_cs(&mut e, "000AAAAAB", "MLOCK #room +nt");
+        assert!(!out.iter().any(|a| matches!(a, NetAction::Notice { to, .. } if to == "#services")), "mlock not audited: {out:?}");
+
+        // Dropping the channel is announced.
+        assert!(audit(&to_cs(&mut e, "000AAAAAB", "DROP #room"), "dropped channel \x02#room\x02"), "drop announced");
+
+        // With no log channel configured, nothing is emitted to it.
+        e.set_log_channel(None);
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#other".into(), op: true });
+        let out = to_cs(&mut e, "000AAAAAB", "REGISTER #other");
+        assert!(!out.iter().any(|a| matches!(a, NetAction::Notice { to, .. } if to == "#services")), "no feed when unset: {out:?}");
+    }
+
+    // Inactivity-expiry drops stale accounts and channels, but spares opers, live
+    // sessions, occupied channels, and anything pinned with NOEXPIRE. Each expiry
+    // is announced to the audit channel.
+    #[test]
+    fn expiry_sweep_respects_pins_sessions_and_opers() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-expiry.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        for a in ["victim", "staff", "active", "pinned"] {
+            db.register(a, "password1", None).unwrap();
+        }
+        db.register_channel("#dead", "staff").unwrap(); // founder is an oper, so only the channel expires
+        db.register_channel("#pinned", "staff").unwrap();
+        db.register_channel("#live", "staff").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        e.set_log_channel(Some("#services".into()));
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        e.set_irc_out(tx);
+
+        // staff (an oper) pins one account and one channel against expiry.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "NOEXPIRE pinned ON".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAB".into(), text: "NOEXPIRE #pinned ON".into() });
+        // active keeps a live session; #live keeps a member sitting in it.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "active".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#live".into(), op: false });
+
+        // Jump far past the threshold and sweep.
+        e.now_override = Some(10_000_000_000);
+        e.set_expiry(Some(100), Some(100), None);
+        e.expire_sweep();
+
+        // Only the plain, unused, unpinned, session-less records are gone.
+        assert!(!e.db.exists("victim"), "inactive account expired");
+        assert!(e.db.channel("#dead").is_none(), "unused channel expired");
+        assert!(e.db.exists("staff"), "oper account spared");
+        assert!(e.db.exists("active"), "logged-in account spared");
+        assert!(e.db.exists("pinned"), "NOEXPIRE account spared");
+        assert!(e.db.channel("#pinned").is_some(), "NOEXPIRE channel spared");
+        assert!(e.db.channel("#live").is_some(), "occupied channel spared");
+
+        // The expiries were announced and the dropped channel had +r cleared.
+        let (mut acct_note, mut chan_note, mut unreg) = (false, false, false);
+        while let Ok(a) = rx.try_recv() {
+            match a {
+                NetAction::Notice { to, text, .. } if to == "#services" && text.contains("victim") && text.contains("expired") => acct_note = true,
+                NetAction::Notice { to, text, .. } if to == "#services" && text.contains("#dead") && text.contains("expired") => chan_note = true,
+                NetAction::ChannelMode { channel, modes, .. } if channel == "#dead" && modes == "-r" => unreg = true,
+                _ => {}
+            }
+        }
+        assert!(acct_note, "account expiry announced to audit channel");
+        assert!(chan_note, "channel expiry announced to audit channel");
+        assert!(unreg, "expired channel had +r cleared");
+    }
+
+    // OperServ AKILL: an admin adds/lists/removes network bans, they drive the
+    // ircd's G-lines, persist for re-assertion at burst, and non-admins are shut
+    // out entirely.
+    #[test]
+    fn operserv_akill_add_list_del_and_burst() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-akill.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("nobody", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        e.set_log_channel(Some("#services".into()));
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAN".into(), nick: "nobody".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAN".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+
+        // A non-admin can't even see OperServ exists beyond the refusal.
+        let denied = os(&mut e, "000AAAAAN", "AKILL ADD *@evil.host being evil");
+        assert!(denied.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-admin refused: {denied:?}");
+        assert!(!denied.iter().any(|a| matches!(a, NetAction::AddLine { .. })), "no ban from a non-admin");
+
+        // Admin adds a temporary ban: it drives a G-line and is audited.
+        let out = os(&mut e, "000AAAAAS", "AKILL ADD +1h *@evil.host spamming");
+        assert!(out.iter().any(|a| matches!(a, NetAction::AddLine { kind, mask, duration, .. } if kind == "G" && mask == "*@evil.host" && *duration == 3600)), "G-line added: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "#services" && text.contains("*@evil.host"))), "ban audited: {out:?}");
+
+        // A too-wide mask is refused outright.
+        assert!(os(&mut e, "000AAAAAS", "AKILL ADD *@* everything").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("too wide"))), "wildcard mask refused");
+
+        // LIST shows it, numbered.
+        assert!(os(&mut e, "000AAAAAS", "AKILL LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("1.") && text.contains("*@evil.host"))), "listed");
+
+        // It survives to burst: startup re-asserts the G-line with a remaining
+        // duration, not the original 3600.
+        assert!(e.startup_actions().iter().any(|a| matches!(a, NetAction::AddLine { mask, duration, .. } if mask == "*@evil.host" && *duration > 0 && *duration <= 3600)), "re-asserted at burst");
+
+        // DEL by number removes it and lifts the G-line.
+        let out = os(&mut e, "000AAAAAS", "AKILL DEL 1");
+        assert!(out.iter().any(|a| matches!(a, NetAction::DelLine { kind, mask } if kind == "G" && mask == "*@evil.host")), "G-line lifted: {out:?}");
+        assert!(os(&mut e, "000AAAAAS", "AKILL LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("No matching"))), "list now empty");
+    }
+
+    // An account approaching expiry with an email on file is warned once by
+    // email, isn't dropped while still in the window, and isn't warned twice.
+    #[test]
+    fn expiry_warns_by_email_before_dropping() {
+        let path = std::env::temp_dir().join("fedserv-expwarn.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.set_email_enabled(true);
+        db.register("dozer", "password1", Some("dozer@example.test".to_string())).unwrap();
+        db.register("nomail", "password1", None).unwrap();
+        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+        e.set_sid("42S".into());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        e.set_irc_out(tx);
+
+        // A very wide warning window that brackets any freshly-registered account.
+        e.now_override = Some(10_000_000_000);
+        e.set_expiry(Some(9_900_000_000), None, Some(9_000_000_000));
+        e.expire_sweep();
+
+        // The account with an email got exactly one warning; neither was dropped.
+        let mut warns = 0;
+        while let Ok(a) = rx.try_recv() {
+            if let NetAction::SendEmail { to, subject, .. } = a {
+                assert_eq!(to, "dozer@example.test");
+                assert!(subject.contains("dozer") && subject.contains("expire"), "subject: {subject}");
+                warns += 1;
+            }
+        }
+        assert_eq!(warns, 1, "one warning email for the account with an address");
+        assert!(e.db.exists("dozer"), "still in the window, not dropped");
+        assert!(e.db.exists("nomail"), "no email, no warning, not dropped");
+
+        // A second sweep in the same window doesn't re-warn.
+        e.expire_sweep();
+        let mut again = 0;
+        while let Ok(a) = rx.try_recv() {
+            if matches!(a, NetAction::SendEmail { .. }) {
+                again += 1;
+            }
+        }
+        assert_eq!(again, 0, "warning isn't repeated while still idle");
+    }
+
+    // OperServ SQLINE (nick bans), GLOBAL (announce to all), and KILL (disconnect
+    // a user): the Q-line, the $* broadcast, and the KILL all reach the ircd, and
+    // each is admin-gated.
+    #[test]
+    fn operserv_sqline_global_and_kill() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-osmore.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("plain", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAP".into(), nick: "plain".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAP".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "spammer".into(), host: "h".into() , ip: "0.0.0.0".into() });
+
+        // SQLINE drives a Q-line on the nick mask, tracked separately from AKILLs.
+        let out = os(&mut e, "000AAAAAS", "SQLINE ADD *bot* botnet");
+        assert!(out.iter().any(|a| matches!(a, NetAction::AddLine { kind, mask, .. } if kind == "Q" && mask == "*bot*")), "Q-line added: {out:?}");
+        // A rejected @-shaped mask (that belongs to AKILL, not SQLINE).
+        assert!(os(&mut e, "000AAAAAS", "SQLINE ADD a@b spam").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("valid"))), "nick mask rejects user@host");
+        // STATS reflects the live ban counts.
+        assert!(os(&mut e, "000AAAAAS", "STATS").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("1") && text.contains("SQLINE"))), "stats shows the sqline count");
+        // SNLINE drives a realname R-line.
+        assert!(os(&mut e, "000AAAAAS", "SNLINE ADD .*free.money.* spambot").iter().any(|a| matches!(a, NetAction::AddLine { kind, mask, .. } if kind == "R" && mask == ".*free.money.*")), "R-line added");
+        // SHUN drives a SHUN X-line on a user@host mask.
+        assert!(os(&mut e, "000AAAAAS", "SHUN ADD *@noisy.host quiet down").iter().any(|a| matches!(a, NetAction::AddLine { kind, mask, .. } if kind == "SHUN" && mask == "*@noisy.host")), "shun added");
+        // CBAN drives a channel-name ban; an all-wildcard channel mask is refused.
+        assert!(os(&mut e, "000AAAAAS", "CBAN ADD #warez* piracy").iter().any(|a| matches!(a, NetAction::AddLine { kind, mask, .. } if kind == "CBAN" && mask == "#warez*")), "cban added");
+        assert!(os(&mut e, "000AAAAAS", "CBAN ADD #* everything").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("too wide"))), "wildcard channel refused");
+
+        // GLOBAL fans out to every user via the $* server glob.
+        let out = os(&mut e, "000AAAAAS", "GLOBAL rebooting in 5");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "$*" && text.contains("rebooting in 5"))), "global broadcast: {out:?}");
+
+        // KILL disconnects the named user, attributed to the oper.
+        let out = os(&mut e, "000AAAAAS", "KILL spammer flooding");
+        assert!(out.iter().any(|a| matches!(a, NetAction::KillUser { uid, reason, .. } if uid == "000AAAAAV" && reason.contains("flooding") && reason.contains("staff"))), "kill issued: {out:?}");
+
+        // None of it works for a non-admin: refused, and no network action leaks.
+        for cmd in ["SQLINE ADD *x* y", "GLOBAL hi", "KILL staff go"] {
+            let out = os(&mut e, "000AAAAAP", cmd);
+            assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-admin refused {cmd}");
+            assert!(!out.iter().any(|a| matches!(a, NetAction::AddLine { .. } | NetAction::KillUser { .. })), "no ban/kill from non-admin {cmd}");
+            assert!(!out.iter().any(|a| matches!(a, NetAction::Notice { to, .. } if to == "$*")), "no broadcast from non-admin {cmd}");
+        }
+    }
+
+    // OperServ MODE (forced channel mode override, resolving a status-mode nick
+    // to its uid) and KICK (remove a user from a channel), both admin-gated.
+    #[test]
+    fn operserv_mode_and_kick() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-osmodekick.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("plain", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAP".into(), nick: "plain".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAP".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAT".into(), nick: "target".into(), host: "h".into() , ip: "0.0.0.0".into() });
+
+        // A status mode's nick target is resolved to its uid in the FMODE.
+        let out = os(&mut e, "000AAAAAS", "MODE #room +o target");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { from, channel, modes } if from == "42SAAAAAH" && channel == "#room" && modes == "+o 000AAAAAT")), "status mode resolved: {out:?}");
+        // A paramless mode passes straight through.
+        let out = os(&mut e, "000AAAAAS", "MODE #room +mn");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+mn")), "paramless mode: {out:?}");
+
+        // KICK removes the user, attributed to the operator.
+        let out = os(&mut e, "000AAAAAS", "KICK #room target trolling");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { from, channel, uid, reason } if from == "42SAAAAAH" && channel == "#room" && uid == "000AAAAAT" && reason.contains("trolling") && reason.contains("staff"))), "kick issued: {out:?}");
+
+        // A non-admin gets nothing but a refusal.
+        for cmd in ["MODE #room +o target", "KICK #room target go"] {
+            let out = os(&mut e, "000AAAAAP", cmd);
+            assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-admin refused {cmd}");
+            assert!(!out.iter().any(|a| matches!(a, NetAction::ChannelMode { .. } | NetAction::Kick { .. })), "no action from non-admin {cmd}");
+        }
+    }
+
+    // LOGSEARCH finds recorded actions — both a kick (stamped) and an akill (from
+    // the command audit trail); gated on auspex.
+    #[test]
+    fn operserv_logsearch_finds_actions() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-logsearch.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("mod", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin).with(fedserv_api::Priv::Auspex));
+        opers.insert("mod".to_string(), Privs::default().with(fedserv_api::Priv::Suspend));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let has = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAM".into(), nick: "mod".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAM".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAT".into(), nick: "troll".into(), host: "h".into(), ip: "0.0.0.0".into() });
+
+        os(&mut e, "000AAAAAS", "AKILL ADD *@evil.host spamming");
+        os(&mut e, "000AAAAAS", "KICK #room troll flooding");
+
+        // The akill (from the command audit trail) is searchable.
+        assert!(has(&os(&mut e, "000AAAAAS", "LOGSEARCH evil.host"), "evil.host"), "akill searchable");
+        // The kick (stamped at the choke-point) is searchable.
+        assert!(has(&os(&mut e, "000AAAAAS", "LOGSEARCH troll"), "troll"), "kick searchable");
+        // A bare LOGSEARCH lists recent entries.
+        assert!(has(&os(&mut e, "000AAAAAS", "LOGSEARCH"), "End of results"), "lists recent");
+        // A nonsense pattern finds nothing.
+        assert!(has(&os(&mut e, "000AAAAAS", "LOGSEARCH zzzznope"), "No matching"), "empty result");
+        // An oper without auspex is refused.
+        assert!(has(&os(&mut e, "000AAAAAM", "LOGSEARCH troll"), "auspex"), "auspex-gated");
+    }
+
+    // Every user-removal gets a traceable incident id stamped into its reason and
+    // recorded in the searchable log.
+    #[test]
+    fn removals_get_incident_ids() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-incident.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAT".into(), nick: "troll".into(), host: "h".into(), ip: "0.0.0.0".into() });
+
+        // The kick reason carries a bracketed id, and the incident is searchable.
+        let out = os(&mut e, "000AAAAAS", "KICK #room troll flooding");
+        let reason = out.iter().find_map(|a| match a {
+            NetAction::Kick { reason, .. } => Some(reason.clone()),
+            _ => None,
+        }).expect("a kick was issued");
+        assert!(reason.contains("flooding") && reason.contains("[#"), "id stamped into reason: {reason}");
+        // The id in the reason and the incident log agree, and search finds it.
+        let id = reason.split("[#").nth(1).and_then(|s| s.split(']').next()).unwrap().to_string();
+        let hits = e.network.search_incidents(&id, 10);
+        assert_eq!(hits.len(), 1, "searchable by id");
+        assert!(hits[0].summary.contains("troll"), "summary names the target: {}", hits[0].summary);
+        assert!(e.network.search_incidents("kicked", 10).iter().any(|i| i.summary.contains("troll")), "searchable by keyword");
+    }
+
+    // OperServ CHANKILL: AKILL every host in a channel at once, deduped, never
+    // banning the operator who ran it.
+    #[test]
+    fn operserv_chankill_clears_a_channel() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-oschankill.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let conn = |e: &mut Engine, uid: &str, host: &str| e.handle(NetEvent::UserConnect { uid: uid.into(), nick: uid.into(), host: host.into(), ip: "0.0.0.0".into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "staffhost".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        conn(&mut e, "000AAAAA1", "bad1");
+        conn(&mut e, "000AAAAA2", "bad2");
+        conn(&mut e, "000AAAAA3", "bad1"); // same host as A1 → deduped
+        for u in ["000AAAAAS", "000AAAAA1", "000AAAAA2", "000AAAAA3"] {
+            e.handle(NetEvent::Join { uid: u.into(), channel: "#spam".into(), op: false });
+        }
+
+        let out = os(&mut e, "000AAAAAS", "CHANKILL #spam flooding");
+        // Both distinct spammer hosts are G-lined, once each.
+        assert!(out.iter().any(|a| matches!(a, NetAction::AddLine { mask, .. } if mask == "*@bad1")), "bad1 banned: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::AddLine { mask, .. } if mask == "*@bad2")), "bad2 banned");
+        assert_eq!(out.iter().filter(|a| matches!(a, NetAction::AddLine { mask, .. } if mask == "*@bad1")).count(), 1, "deduped");
+        // The operator's own host is spared.
+        assert!(!out.iter().any(|a| matches!(a, NetAction::AddLine { mask, .. } if mask == "*@staffhost")), "operator not self-banned");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("2") && text.contains("AKILL"))), "reports 2 hosts");
+    }
+
+    // OperServ JUPE: hold a server name with a fake server, re-assert it at burst,
+    // and lift it with a squit. Admin-only.
+    #[test]
+    fn operserv_jupe_holds_and_lifts() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-osjupe.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "9.9.9.9".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+
+        // Juping introduces a fake server holding the name.
+        let out = os(&mut e, "000AAAAAS", "JUPE rogue.example evil twin");
+        assert!(out.iter().any(|a| matches!(a, NetAction::JupeServer { name, .. } if name == "rogue.example")), "jupe introduced: {out:?}");
+        // A bare name (no dot) isn't a server — syntax refused.
+        assert!(os(&mut e, "000AAAAAS", "JUPE notaserver").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Syntax"))), "needs a server name");
+
+        // It's re-introduced at burst.
+        assert!(e.startup_actions().iter().any(|a| matches!(a, NetAction::JupeServer { name, .. } if name == "rogue.example")), "re-asserted at burst");
+        // LIST shows it.
+        assert!(os(&mut e, "000AAAAAS", "JUPE LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("rogue.example"))), "listed");
+
+        // DEL squits the fake server.
+        assert!(os(&mut e, "000AAAAAS", "JUPE DEL rogue.example").iter().any(|a| matches!(a, NetAction::Squit { .. })), "squit on lift");
+        assert!(!e.startup_actions().iter().any(|a| matches!(a, NetAction::JupeServer { .. })), "gone after DEL");
+    }
+
+    // External-account mode: IRC can log in against pushed-in accounts but can't
+    // register or change identity; channels (fedserv's own domain) still work.
+    #[test]
+    fn external_accounts_delegate_identity() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-external.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        // Simulates an account pushed in by the external authority (the website).
+        db.register("alice", "password1", None).unwrap();
+        db.set_external_accounts(true);
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+
+        // Login against the pushed-in account still works.
+        let out = ns(&mut e, "000AAAAAB", "IDENTIFY password1");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "alice")), "identify works: {out:?}");
+
+        // But creating or changing identity from IRC is refused.
+        assert!(has(&ns(&mut e, "000AAAAAB", "REGISTER newpass a@b.c"), "website"), "register refused");
+        assert!(has(&ns(&mut e, "000AAAAAB", "SET PASSWORD hunter2"), "website"), "set password refused");
+        assert!(has(&ns(&mut e, "000AAAAAB", "DROP password1"), "website"), "drop refused");
+        // The IRCv3 registration relay is refused too.
+        let reply = crate::proto::RegReply::NickServ { agent: "42SAAAAAA".into(), uid: "000AAAAAB".into(), nick: "bob".into() };
+        assert!(e.pre_register_check("bob", &reply).is_some_and(|r| r.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("website")))), "relay refused");
+
+        // Channels are fedserv's own domain — still registerable.
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: true });
+        assert!(has(&cs(&mut e, "000AAAAAB", "REGISTER #room"), "now registered"), "channels still work");
+    }
+
+    // OperServ DEFCON: each level tightens the network — announce on change, freeze
+    // channel then all registrations, cap sessions, and lock out new connections.
+    #[test]
+    fn operserv_defcon_levels() {
+        use fedserv_chanserv::ChanServ;
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-defcon.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+        let killed = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::KillUser { .. }));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "1.1.1.1".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Join { uid: "000AAAAAS".into(), channel: "#room".into(), op: true });
+
+        // Setting a level announces it network-wide.
+        let out = os(&mut e, "000AAAAAS", "DEFCON 4");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "$*" && text.contains("DEFCON 4"))), "announced: {out:?}");
+        // DEFCON 4 freezes channel registrations but not account ones.
+        assert!(has(&cs(&mut e, "000AAAAAS", "REGISTER #room"), "frozen"), "chan reg frozen at 4");
+        let reply = crate::proto::RegReply::NickServ { agent: "42SAAAAAA".into(), uid: "000AAAAAX".into(), nick: "newbie".into() };
+        assert!(e.pre_register_check("newbie", &reply).is_none(), "account reg still ok at 4");
+
+        // DEFCON 3 freezes account registrations too.
+        os(&mut e, "000AAAAAS", "DEFCON 3");
+        assert!(e.pre_register_check("newbie", &reply).is_some_and(|r| r.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("frozen")))), "account reg frozen at 3");
+
+        // DEFCON 2 caps everyone to one session per host.
+        os(&mut e, "000AAAAAS", "DEFCON 2");
+        assert!(!killed(&e.handle(NetEvent::UserConnect { uid: "000AAAAA1".into(), nick: "a".into(), host: "h".into(), ip: "2.2.2.2".into() })), "first from an IP ok");
+        assert!(killed(&e.handle(NetEvent::UserConnect { uid: "000AAAAA2".into(), nick: "b".into(), host: "h".into(), ip: "2.2.2.2".into() })), "second from the same IP capped");
+
+        // DEFCON 1 turns away every new connection.
+        os(&mut e, "000AAAAAS", "DEFCON 1");
+        assert!(killed(&e.handle(NetEvent::UserConnect { uid: "000AAAAA3".into(), nick: "c".into(), host: "h".into(), ip: "3.3.3.3".into() })), "lockdown rejects new connections");
+
+        // Back to 5: normal again.
+        os(&mut e, "000AAAAAS", "DEFCON 5");
+        assert!(!killed(&e.handle(NetEvent::UserConnect { uid: "000AAAAA4".into(), nick: "d".into(), host: "h".into(), ip: "4.4.4.4".into() })), "connections fine at 5");
+        assert!(has(&cs(&mut e, "000AAAAAS", "REGISTER #room"), "now registered"), "chan reg works at 5");
+    }
+
+    // OperServ session limiting: the connection that puts an IP over its limit is
+    // killed; SESSION inspects counts; EXCEPTION raises the allowance per IP-mask.
+    #[test]
+    fn operserv_session_limit_and_exceptions() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-ossession.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        e.set_session_limit(Some(2));
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let conn = |e: &mut Engine, uid: &str, ip: &str| e.handle(NetEvent::UserConnect { uid: uid.into(), nick: uid.into(), host: "h".into(), ip: ip.into() });
+        let killed = |out: &[NetAction], who: &str| out.iter().any(|a| matches!(a, NetAction::KillUser { uid, .. } if uid == who));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "9.9.9.9".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+
+        // Two sessions from one IP are fine; the third is killed.
+        assert!(!killed(&conn(&mut e, "000AAAAA1", "5.5.5.5"), "000AAAAA1"), "1st ok");
+        assert!(!killed(&conn(&mut e, "000AAAAA2", "5.5.5.5"), "000AAAAA2"), "2nd ok");
+        assert!(killed(&conn(&mut e, "000AAAAA3", "5.5.5.5"), "000AAAAA3"), "3rd over the limit is killed");
+        // A different IP is unaffected.
+        assert!(!killed(&conn(&mut e, "000AAAAA4", "6.6.6.6"), "000AAAAA4"), "other IP fine");
+
+        // SESSION VIEW reports the live count.
+        assert!(os(&mut e, "000AAAAAS", "SESSION VIEW 5.5.5.5").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("3"))), "view count");
+
+        // An unlimited exception lets more sessions through from that IP.
+        os(&mut e, "000AAAAAS", "EXCEPTION ADD 5.5.5.5 0 nat gateway");
+        assert!(!killed(&conn(&mut e, "000AAAAA5", "5.5.5.5"), "000AAAAA5"), "exception lifts the limit");
+        assert!(os(&mut e, "000AAAAAS", "EXCEPTION LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("5.5.5.5") && text.contains("unlimited"))), "listed");
+
+        // A quit frees a slot.
+        e.handle(NetEvent::Quit { uid: "000AAAAA4".into() });
+        assert!(os(&mut e, "000AAAAAS", "SESSION VIEW 6.6.6.6").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("0"))), "slot freed on quit");
+    }
+
+    // OperServ OPER: a runtime grant actually confers privileges (merged with the
+    // config opers), and revoking removes them. Admin-only.
+    #[test]
+    fn operserv_oper_grants_runtime_privileges() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-osoper.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("alice", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let denied = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied")));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAL".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAL".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+
+        // Before the grant, alice is a plain user — OperServ shuts her out.
+        assert!(denied(&os(&mut e, "000AAAAAL", "STATS")), "alice not an oper yet");
+
+        // Grant alice admin at runtime; now the same command works.
+        os(&mut e, "000AAAAAS", "OPER ADD alice admin");
+        assert!(!denied(&os(&mut e, "000AAAAAL", "STATS")), "alice is an oper after the grant");
+        assert!(os(&mut e, "000AAAAAS", "OPER LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("alice"))), "listed");
+
+        // Revoke; alice loses access again.
+        os(&mut e, "000AAAAAS", "OPER DEL alice");
+        assert!(denied(&os(&mut e, "000AAAAAL", "STATS")), "alice lost access after revoke");
+
+        // A config oper is not a runtime oper, so it can't be DEL'd here.
+        assert!(os(&mut e, "000AAAAAS", "OPER DEL staff").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't a runtime operator"))), "config oper untouched");
+    }
+
+    // A temporary OPER grant confers privileges until it lazily expires.
+    #[test]
+    fn operserv_oper_grant_can_expire() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-opertmp.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("temp", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let denied = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied")));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAP".into(), nick: "temp".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAP".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+
+        // A one-hour admin grant is active now...
+        os(&mut e, "000AAAAAS", "OPER ADD temp admin +1h");
+        assert!(!denied(&os(&mut e, "000AAAAAP", "STATS")), "active while granted");
+        assert!(os(&mut e, "000AAAAAS", "OPER LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("temp") && text.contains("temporary"))), "listed as temporary");
+
+        // ...but not after its window passes.
+        e.now_override = Some(10_000_000_000);
+        assert!(denied(&os(&mut e, "000AAAAAP", "STATS")), "expired grant confers nothing");
+    }
+
+    // HelpServ: a user opens a ticket; it queues, flows into the audit trail
+    // (LOGSEARCH), and operators TAKE / CLOSE it. Reviewing is oper-only.
+    #[test]
+    fn helpserv_ticket_flow() {
+        use fedserv_helpserv::HelpServ;
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-helpserv.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+                Box::new(HelpServ { uid: "42SAAAAAN".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin).with(fedserv_api::Priv::Auspex));
+        e.set_opers(opers);
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAN".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAU".into(), nick: "newbie".into(), host: "h".into(), ip: "0.0.0.0".into() });
+
+        // A user asks for help; it queues and is searchable via the audit trail.
+        assert!(has(&hs(&mut e, "000AAAAAU", "REQUEST how do I register a channel"), "in the queue"), "request accepted");
+        assert!(has(&os(&mut e, "000AAAAAS", "LOGSEARCH register a channel"), "register a channel"), "searchable via LOGSEARCH");
+
+        // Operator works the queue: NEXT claims the oldest, then CLOSE.
+        assert!(has(&hs(&mut e, "000AAAAAS", "LIST"), "newbie"), "oper sees the queue");
+        assert!(has(&hs(&mut e, "000AAAAAS", "NEXT"), "You took ticket \x02#0\x02"), "next claims oldest");
+        assert!(has(&hs(&mut e, "000AAAAAS", "VIEW 0"), "register a channel"), "view detail");
+        assert!(has(&hs(&mut e, "000AAAAAS", "CLOSE 0"), "closed"), "close");
+        assert!(!has(&hs(&mut e, "000AAAAAS", "LIST"), "newbie"), "closed drops off the open list");
+
+        // Non-opers can't work the queue; and filing is rate-limited.
+        assert!(has(&hs(&mut e, "000AAAAAU", "LIST"), "Access denied"), "queue is oper-only");
+        assert!(has(&hs(&mut e, "000AAAAAU", "REQUEST again please"), "wait a moment"), "rate-limited");
+    }
+
+    // ReportServ: any user files an abuse report; it lands in the queue AND flows
+    // through the audit trail so OperServ LOGSEARCH finds it. Reviewing is oper-only.
+    #[test]
+    fn reportserv_files_and_is_searchable() {
+        use fedserv_operserv::OperServ;
+        use fedserv_reportserv::ReportServ;
+        let path = std::env::temp_dir().join("fedserv-reportserv.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+                Box::new(ReportServ { uid: "42SAAAAAK".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin).with(fedserv_api::Priv::Auspex));
+        e.set_opers(opers);
+        let rs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAK".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAU".into(), nick: "victim".into(), host: "h".into(), ip: "0.0.0.0".into() });
+
+        // An ordinary (unidentified) user files a report.
+        assert!(has(&rs(&mut e, "000AAAAAU", "REPORT spammer flooding the lobby"), "has been sent"), "report accepted");
+        // The report is in the queue and — via the audit trail — searchable.
+        assert!(has(&rs(&mut e, "000AAAAAS", "LIST"), "spammer"), "oper sees the queue");
+        assert!(has(&os(&mut e, "000AAAAAS", "LOGSEARCH flooding"), "flooding"), "report searchable via LOGSEARCH");
+
+        // Detail, then close.
+        assert!(has(&rs(&mut e, "000AAAAAS", "VIEW 0"), "flooding the lobby"), "view detail");
+        assert!(has(&rs(&mut e, "000AAAAAS", "CLOSE 0"), "closed"), "close");
+        assert!(!has(&rs(&mut e, "000AAAAAS", "LIST"), "spammer"), "closed reports drop off the open list");
+
+        // Non-opers can't review; and filing is rate-limited.
+        assert!(has(&rs(&mut e, "000AAAAAU", "LIST"), "Access denied"), "review is oper-only");
+        assert!(has(&rs(&mut e, "000AAAAAU", "REPORT someone again"), "wait a moment"), "rate-limited");
+    }
+
+    // InfoServ bulletins over the shared news store: public bulletins greet
+    // everyone on connect, oper bulletins greet an operator on login.
+    #[test]
+    fn infoserv_bulletins_public_and_oper() {
+        use fedserv_infoserv::InfoServ;
+        let path = std::env::temp_dir().join("fedserv-infoserv.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("boss", "password1", None).unwrap();
+        db.register("plain", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(InfoServ { uid: "42SAAAAAJ".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        e.set_irc_out(tx);
+        let is = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAJ".into(), text: t.into() });
+        let has = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+
+        is(&mut e, "000AAAAAS", "POST Welcome to the network");
+        is(&mut e, "000AAAAAS", "OPOST Staff meeting at 5");
+
+        // A new user is greeted with the public bulletin on connect, not the oper one.
+        let out = e.handle(NetEvent::UserConnect { uid: "000AAAAAP".into(), nick: "plain".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "000AAAAAP" && text.contains("Welcome to the network"))), "public bulletin on connect: {out:?}");
+        assert!(!has(&out, "Staff meeting"), "a plain user doesn't get oper bulletins");
+
+        // An operator logging in is shown the oper bulletin (over the outbound path).
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        while rx.try_recv().is_ok() {} // drain the connect's public bulletin
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        let mut oper_bulletin = false;
+        while let Ok(a) = rx.try_recv() {
+            if let NetAction::Notice { to, text, .. } = a {
+                if to == "000AAAAAB" && text.contains("Staff meeting at 5") {
+                    oper_bulletin = true;
+                }
+            }
+        }
+        assert!(oper_bulletin, "oper bulletin shown to an operator on login");
+
+        // LIST shows the public one (to anyone); DEL removes it so a later connect is quiet.
+        assert!(has(&is(&mut e, "000AAAAAP", "LIST"), "Welcome to the network"), "anyone can list public bulletins");
+        is(&mut e, "000AAAAAS", "DEL 1");
+        let out = e.handle(NetEvent::UserConnect { uid: "000AAAAAQ".into(), nick: "late".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        assert!(!has(&out, "Welcome to the network"), "bulletin gone after DEL");
+
+        // A non-admin can't post.
+        assert!(has(&is(&mut e, "000AAAAAP", "POST sneaky"), "Access denied"), "non-admin refused");
+    }
+
+    // OperServ INFO staff notes: an admin annotates an account/channel; the note
+    // shows in that service's INFO to opers only, never to the account owner.
+    #[test]
+    fn operserv_info_staff_notes() {
+        use fedserv_chanserv::ChanServ;
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-osinfo.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("alice", "password1", None).unwrap();
+        db.register_channel("#room", "staff").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin).with(fedserv_api::Priv::Auspex));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let has = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAL".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAL".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+
+        // Admin attaches a note; it shows in NickServ INFO to the oper.
+        os(&mut e, "000AAAAAS", "INFO ADD alice known troublemaker");
+        assert!(has(&ns(&mut e, "000AAAAAS", "INFO alice"), "known troublemaker"), "note shown to oper in NS INFO");
+        assert!(has(&os(&mut e, "000AAAAAS", "INFO alice"), "known troublemaker"), "note shown via OperServ INFO");
+        // The account's own owner never sees the staff note.
+        assert!(!has(&ns(&mut e, "000AAAAAL", "INFO alice"), "Staff note"), "owner doesn't see the note");
+
+        // Channel notes show in ChanServ INFO to the oper.
+        os(&mut e, "000AAAAAS", "INFO ADD #room watch for drama");
+        assert!(has(&cs(&mut e, "000AAAAAS", "INFO #room"), "watch for drama"), "channel note in CS INFO");
+
+        // DEL clears it.
+        os(&mut e, "000AAAAAS", "INFO DEL alice");
+        assert!(!has(&ns(&mut e, "000AAAAAS", "INFO alice"), "Staff note"), "note cleared");
+
+        // A non-admin can't set notes.
+        assert!(has(&os(&mut e, "000AAAAAL", "INFO ADD staff x"), "Access denied"), "non-admin refused");
+    }
+
+    // OperServ SVSNICK / SVSJOIN: force a user's nick or channel join, admin-gated.
+    #[test]
+    fn operserv_svs_forces_nick_and_join() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-ossvs.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAT".into(), nick: "target".into(), host: "h".into() , ip: "0.0.0.0".into() });
+
+        // SVSNICK forces the rename.
+        let out = os(&mut e, "000AAAAAS", "SVSNICK target Renamed");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAT" && nick == "Renamed")), "svsnick issued: {out:?}");
+        // The ircd echoes the rename; once tracked, SVSJOIN resolves the new nick.
+        e.handle(NetEvent::NickChange { uid: "000AAAAAT".into(), nick: "Renamed".into() });
+        let out = os(&mut e, "000AAAAAS", "SVSJOIN Renamed #room");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForceJoin { uid, channel, .. } if uid == "000AAAAAT" && channel == "#room")), "svsjoin issued: {out:?}");
+
+        // An unknown target is reported, not forced.
+        assert!(os(&mut e, "000AAAAAS", "SVSNICK ghost x").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("no \x02ghost\x02"))), "unknown target");
+    }
+
+    // OperServ IGNORE: an admin silences a user, whose service commands are then
+    // dropped; DEL restores them; opers are never silenced.
+    #[test]
+    fn operserv_ignore_silences_and_restores() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-osignore.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAM".into(), nick: "menace".into(), host: "bad.host".into() , ip: "0.0.0.0".into() });
+
+        // Before the ignore, a NickServ command gets a reply.
+        assert!(!ns(&mut e, "000AAAAAM", "INFO").is_empty(), "responds before ignore");
+
+        // Ignore by host mask, then the same command yields nothing at all.
+        os(&mut e, "000AAAAAS", "IGNORE ADD *!*@bad.host flooding");
+        assert!(ns(&mut e, "000AAAAAM", "INFO").is_empty(), "ignored user's command is dropped");
+        assert!(os(&mut e, "000AAAAAM", "HELP").is_empty(), "ignored across every service");
+
+        // The operator is never silenced by an ignore against them.
+        os(&mut e, "000AAAAAS", "IGNORE ADD *!*@h staffignore");
+        assert!(!ns(&mut e, "000AAAAAS", "INFO").is_empty(), "an oper can't be ignored");
+
+        // DEL restores the menace.
+        os(&mut e, "000AAAAAS", "IGNORE DEL *!*@bad.host");
+        assert!(!ns(&mut e, "000AAAAAM", "INFO").is_empty(), "responds again after DEL");
+
+        // A non-admin (no longer ignored) can't manage the list — it's refused.
+        assert!(os(&mut e, "000AAAAAM", "IGNORE LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-admin refused");
+    }
+
+    // NOEXPIRE is oper-only.
+    #[test]
+    fn noexpire_command_is_oper_gated() {
+        let mut e = engine_with("noexp", "alice", "sesame");
+        e.db.register("mallory", "password1", None).unwrap();
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        // alice is not an oper: refused, and the flag is untouched.
+        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "NOEXPIRE mallory ON".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-oper refused: {out:?}");
+    }
+
+    // ChanFix: op-time is scored from live state, and CHANFIX reops the trusted
+    // regulars of an opless, unregistered channel; it defers to ChanServ.
+    #[test]
+    fn chanfix_scores_and_fixes_opless_channels() {
+        use fedserv_chanfix::ChanFix;
+        let path = std::env::temp_dir().join("fedserv-chanfix.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        for a in ["alice", "bob", "staff"] {
+            db.register(a, "password1", None).unwrap();
+        }
+        db.register_channel("#owned", "staff").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanFix { uid: "42SAAAAAM".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Auspex));
+        e.set_opers(opers);
+        let cf = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAM".into(), text: t.into() });
+        let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+        let opped = |out: &[NetAction], who: &str| out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == &format!("+o {who}")));
+
+        for (uid, nick) in [("000AAAAAA", "alice"), ("000AAAAAB", "bob"), ("000AAAAAS", "staff")] {
+            e.handle(NetEvent::UserConnect { uid: uid.into(), nick: nick.into(), host: "h".into(), ip: "0.0.0.0".into() });
+            e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        }
+        // alice and bob hold ops in an unregistered #lobby; score their op-time.
+        e.handle(NetEvent::Join { uid: "000AAAAAA".into(), channel: "#lobby".into(), op: true });
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#lobby".into(), op: true });
+        for _ in 0..15 {
+            e.chanfix_tick();
+        }
+
+        // SCORES shows the accumulated standings.
+        assert!(has(&cf(&mut e, "000AAAAAS", "SCORES #lobby"), "alice"), "scores recorded");
+        // A non-oper can't use ChanFix at all.
+        assert!(has(&cf(&mut e, "000AAAAAA", "SCORES #lobby"), "Access denied"), "oper-only");
+
+        // The channel goes opless; CHANFIX reops the trusted regulars still present.
+        e.handle(NetEvent::ChannelOp { channel: "#lobby".into(), uid: "000AAAAAA".into(), op: false });
+        e.handle(NetEvent::ChannelOp { channel: "#lobby".into(), uid: "000AAAAAB".into(), op: false });
+        let out = cf(&mut e, "000AAAAAS", "CHANFIX #lobby");
+        assert!(opped(&out, "000AAAAAA") && opped(&out, "000AAAAAB"), "reopped the regulars: {out:?}");
+
+        // It won't touch a ChanServ-registered channel.
+        assert!(has(&cf(&mut e, "000AAAAAS", "CHANFIX #owned"), "registered"), "defers to ChanServ");
+    }
+
+    // GroupServ interconnection: a channel grants access to a !group, and every
+    // group member inherits that channel access (auto-op on join).
+    #[test]
+    fn groupserv_grants_channel_access() {
+        use fedserv_chanserv::ChanServ;
+        use fedserv_groupserv::GroupServ;
+        let path = std::env::temp_dir().join("fedserv-groupserv.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        for a in ["alice", "bob", "carol"] {
+            db.register(a, "password1", None).unwrap();
+        }
+        db.register_channel("#room", "alice").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+                Box::new(GroupServ { uid: "42SAAAAAL".into() }),
+            ],
+            db,
+        );
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let gs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAL".into(), text: t.into() });
+        let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+        let opped = |out: &[NetAction], who: &str| out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == &format!("+o {who}")));
+
+        for (uid, nick) in [("000AAAAAA", "alice"), ("000AAAAAB", "bob"), ("000AAAAAC", "carol")] {
+            e.handle(NetEvent::UserConnect { uid: uid.into(), nick: nick.into(), host: "h".into(), ip: "0.0.0.0".into() });
+            e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        }
+
+        // alice makes a group, adds bob, and grants the group op access on #room.
+        assert!(has(&gs(&mut e, "000AAAAAA", "REGISTER !team"), "registered"), "group registered");
+        assert!(has(&gs(&mut e, "000AAAAAA", "ADD !team bob"), "Added"), "bob added");
+        assert!(has(&cs(&mut e, "000AAAAAA", "FLAGS #room !team +o"), "now holds"), "group granted channel op");
+
+        // bob, a group member, is auto-opped on join; carol (not in the group) isn't.
+        assert!(opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: false }), "000AAAAAB"), "group member auto-opped");
+        assert!(!opped(&e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#room".into(), op: false }), "000AAAAAC"), "non-member not opped");
+
+        // Removing bob from the group revokes his inherited channel access.
+        gs(&mut e, "000AAAAAA", "DEL !team bob");
+        assert_eq!(e.db.channel_join_mode("#room", "bob"), None, "access gone once out of the group");
+
+        // Managing the group needs the founder or the f flag.
+        assert!(has(&gs(&mut e, "000AAAAAC", "ADD !team carol"), "founder or the \x02f\x02 flag"), "outsider can't manage");
+        gs(&mut e, "000AAAAAA", "FLAGS !team carol +f");
+        assert!(has(&gs(&mut e, "000AAAAAC", "ADD !team bob"), "Added"), "carol with f can now manage");
+    }
+
+    // ChanServ FLAGS: granular access grants flow through the shared resolver, so
+    // a flag-granted +o gets auto-op like a legacy op entry; changing needs the
+    // founder or the 'a' flag.
+    #[test]
+    fn chanserv_flags_grant_access() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-csflags.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        for a in ["alice", "bob", "carol"] {
+            db.register(a, "password1", None).unwrap();
+        }
+        db.register_channel("#room", "alice").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        for (uid, nick) in [("000AAAAAA", "alice"), ("000AAAAAB", "bob"), ("000AAAAAC", "carol")] {
+            e.handle(NetEvent::UserConnect { uid: uid.into(), nick: nick.into(), host: "h".into(), ip: "0.0.0.0".into() });
+            e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        }
+
+        // Founder grants bob auto-op + topic via flags.
+        assert!(has(&cs(&mut e, "000AAAAAA", "FLAGS #room bob +ot"), "now holds"), "flags set");
+        // The grant confers real access: bob is auto-opped on join.
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: false });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#room" && modes.starts_with("+o"))), "flag-op is auto-opped: {out:?}");
+
+        // Change to voice-only; now the join mode is +v.
+        cs(&mut e, "000AAAAAA", "FLAGS #room bob -ot+v");
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room2".into(), op: false });
+        assert!(!out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes.starts_with("+o"))), "no longer auto-opped elsewhere");
+        assert_eq!(e.db.channel("#room").unwrap().join_mode("bob"), Some("+v"), "bob resolves to +v");
+
+        // A non-founder without the 'a' flag can't change access.
+        assert!(has(&cs(&mut e, "000AAAAAC", "FLAGS #room bob +o"), "founder or the \x02a\x02 flag"), "carol refused");
+        // Grant carol the 'a' flag; now she can.
+        cs(&mut e, "000AAAAAA", "FLAGS #room carol +a");
+        assert!(has(&cs(&mut e, "000AAAAAC", "FLAGS #room bob +i"), "now holds"), "carol with 'a' can change flags");
+
+        // An invalid flag letter is rejected.
+        assert!(has(&cs(&mut e, "000AAAAAA", "FLAGS #room bob +z"), "isn't a valid flag"), "bad flag rejected");
+    }
+
+    // ChanServ moderation: an op can op/kick/ban users; a non-op is refused.
+    #[test]
+    fn chanserv_moderation() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-cs-mod.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#m", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+
+        let to_cs = |e: &mut Engine, from: &str, text: &str| {
+            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+        };
+        // Founder alice identifies; target bob connects with a known host.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h1".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "1.2.3.4".into() , ip: "0.0.0.0".into() });
+
+        // OP a user by nick.
+        let out = to_cs(&mut e, "000AAAAAB", "OP #m bob");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#m" && modes == "+o 000AAAAAC")), "{out:?}");
+
+        // KICK a user by nick, with a reason.
+        let out = to_cs(&mut e, "000AAAAAB", "KICK #m bob rude");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { channel, uid, reason, .. } if channel == "#m" && uid == "000AAAAAC" && reason.starts_with("rude"))), "{out:?}");
+
+        // BAN sets +b *!*@host and kicks.
+        let out = to_cs(&mut e, "000AAAAAB", "BAN #m bob spam");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#m" && modes == "+b *!*@1.2.3.4")), "{out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAC")), "{out:?}");
+
+        // UNBAN clears it.
+        let out = to_cs(&mut e, "000AAAAAB", "UNBAN #m bob");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#m" && modes == "-b *!*@1.2.3.4")), "{out:?}");
+
+        // A user with no access is refused.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAD".into(), nick: "carol".into(), host: "h2".into() , ip: "0.0.0.0".into() });
+        assert!(to_cs(&mut e, "000AAAAAD", "KICK #m alice").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("operator access"))));
+    }
+
+    // ChanServ topic, invite, auto-kick (with enforcement on join), list and status.
+    #[test]
+    fn chanserv_topic_invite_akick() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-cs-tia.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+        let to_cs = |e: &mut Engine, from: &str, text: &str| {
+            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+        };
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h1".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "bad.host".into() , ip: "0.0.0.0".into() });
+
+        // TOPIC and INVITE are sourced from ChanServ.
+        let out = to_cs(&mut e, "000AAAAAB", "TOPIC #c hello there");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Topic { channel, topic, .. } if channel == "#c" && topic == "hello there")), "{out:?}");
+        let out = to_cs(&mut e, "000AAAAAB", "INVITE #c bob");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Invite { uid, channel, .. } if uid == "000AAAAAC" && channel == "#c")), "{out:?}");
+
+        // LIST and STATUS.
+        assert!(to_cs(&mut e, "000AAAAAB", "LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("#c"))));
+        assert!(to_cs(&mut e, "000AAAAAB", "STATUS #c").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("founder"))));
+
+        // AKICK a mask, then a matching join is banned and kicked.
+        assert!(to_cs(&mut e, "000AAAAAB", "AKICK #c ADD *!*@bad.host begone").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Added"))));
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#c".into(), op: false });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#c" && modes == "+b *!*@bad.host")), "{out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { channel, uid, reason, .. } if channel == "#c" && uid == "000AAAAAC" && reason.starts_with("begone"))), "{out:?}");
+
+        // The founder joining is never auto-kicked (they get +o instead).
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes.starts_with("+o"))), "{out:?}");
+    }
+
+    // ChanServ SET: description and founder transfer, founder-gated.
+    #[test]
+    fn chanserv_set() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-cs-set.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register("bob", "hunter2", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+        let to_cs = |e: &mut Engine, from: &str, text: &str| {
+            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+        };
+        let notice = |out: &[NetAction], needle: &str| {
+            out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)))
+        };
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h1".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+
+        // Description is stored and shows in INFO.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c DESC a friendly place"), "updated"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "INFO #c"), "a friendly place"));
+
+        // Transfer to a non-account is refused.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c FOUNDER nobody"), "isn't a registered account"));
+
+        // Transfer to bob works; alice is then no longer the founder.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c FOUNDER bob"), "transferred"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c DESC nope"), "founder can change"));
+    }
+
+    // ChanServ entrymsg, enforce, getkey, seen, clone and the xop lists.
+    #[test]
+    fn chanserv_extended() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-cs-ext.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register("carol", "pw", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+        let to_cs = |e: &mut Engine, from: &str, text: &str| {
+            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+        };
+        let notice = |out: &[NetAction], needle: &str| {
+            out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)))
+        };
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h1".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+
+        // ENTRYMSG: set it, then a joining user is noticed it.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "ENTRYMSG #c welcome aboard"), "updated"));
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "guest".into(), host: "h2".into() , ip: "0.0.0.0".into() });
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#c".into(), op: false });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "000AAAAAC" && text == "welcome aboard")), "{out:?}");
+
+        // XOP: AOP add shows in the AOP list and grants op access.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "AOP #c ADD carol"), "Added"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "AOP #c LIST"), "carol"));
+
+        // ENFORCE: alice present gets +o, the akick-matching guest is kicked.
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false });
+        to_cs(&mut e, "000AAAAAB", "AKICK #c ADD *!*@h2 out");
+        let out = to_cs(&mut e, "000AAAAAB", "ENFORCE #c");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+o 000AAAAAB")), "{out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAC")), "{out:?}");
+
+        // GETKEY: reflects a tracked key change.
+        e.handle(NetEvent::ChannelKey { channel: "#c".into(), key: Some("s3cret".into()) });
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "GETKEY #c"), "s3cret"));
+
+        // SEEN: an online user vs one who quit.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "SEEN alice"), "currently online"));
+        e.handle(NetEvent::Quit { uid: "000AAAAAC".into() });
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "SEEN guest"), "last seen"));
+
+        // CLONE: copy #c's settings (incl. the AOP) into a second owned channel.
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#d".into(), op: true });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "REGISTER #d".into() });
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "CLONE #c #d"), "Copied"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "AOP #d LIST"), "carol"));
+    }
+
+    // A registered channel (re)appearing re-asserts +r; an unregistered one does not.
+    #[test]
+    fn channel_create_reasserts_registered_mode() {
+        let path = std::env::temp_dir().join("fedserv-chancreate.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.register_channel("#reg", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let mut e = Engine::new(vec![Box::new(ns)], db);
+
+        let out = e.handle(NetEvent::ChannelCreate { channel: "#reg".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#reg" && modes == "+r")), "registered channel regains +r: {out:?}");
+
+        let out = e.handle(NetEvent::ChannelCreate { channel: "#other".into() });
+        assert!(out.is_empty(), "unregistered channel is left alone: {out:?}");
+    }
+
+    // A channel's mode lock is applied on creation and enforced on violation.
+    #[test]
+    fn mode_lock_is_applied_and_enforced() {
+        let path = std::env::temp_dir().join("fedserv-mlock-engine.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.register_channel("#lk", "alice").unwrap();
+        db.set_mlock("#lk", "nt", "s").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let mut e = Engine::new(vec![Box::new(ns)], db);
+
+        // Creation applies the full lock.
+        let out = e.handle(NetEvent::ChannelCreate { channel: "#lk".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#lk" && modes == "+rnt-s")), "{out:?}");
+
+        // Setting a locked-off mode is reverted.
+        let out = e.handle(NetEvent::ChannelModeChange { channel: "#lk".into(), modes: "+s".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#lk" && modes == "-s")), "{out:?}");
+
+        // An unrelated mode change is left alone.
+        assert!(e.handle(NetEvent::ChannelModeChange { channel: "#lk".into(), modes: "+m".into() }).is_empty());
+    }
+
+    // The founder is opped when they join their channel; others are not.
+    #[test]
+    fn founder_is_opped_on_join() {
+        let path = std::env::temp_dir().join("fedserv-autoop.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#x", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let mut e = Engine::new(vec![Box::new(ns)], db);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#x".into(), op: false });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#x" && modes == "+o 000AAAAAB")), "founder opped: {out:?}");
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
+        assert!(e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#x".into(), op: false }).is_empty(), "non-founder not opped");
+    }
+
+    // An access-list voice gets +v on join.
+    #[test]
+    fn access_voice_on_join() {
+        let path = std::env::temp_dir().join("fedserv-access-join.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("carol", "sesame", None).unwrap();
+        db.register_channel("#y", "boss").unwrap();
+        db.access_add("#y", "carol", "voice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let mut e = Engine::new(vec![Box::new(ns)], db);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "carol".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#y".into(), op: false });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#y" && modes == "+v 000AAAAAB")), "{out:?}");
+    }
