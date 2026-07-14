@@ -79,6 +79,13 @@ pub struct Account {
     // A vhost the user has requested, pending operator approval.
     #[serde(default)]
     pub vhost_request: Option<PendingVhost>,
+    // Unix time this account was last active (identified). 0 = never stamped
+    // since expiry tracking existed, in which case `ts` (registration) stands in.
+    #[serde(default)]
+    pub last_seen: u64,
+    // Pinned by an operator so inactivity-expiry never drops it.
+    #[serde(default)]
+    pub noexpire: bool,
 }
 
 // A requested vhost awaiting approval.
@@ -158,6 +165,13 @@ pub enum Event {
     VhostForbidAdded { pattern: String },
     VhostForbidRemoved { pattern: String },
     VhostTemplateSet { template: Option<String> },
+    // Inactivity-expiry bookkeeping. Seen/Used stamp last activity (coalesced, so
+    // at most one per account/channel per day); NoExpire pins a record so the
+    // sweep never expires it.
+    AccountSeen { account: String, ts: u64 },
+    ChannelUsed { channel: String, ts: u64 },
+    AccountNoExpire { account: String, on: bool },
+    ChannelNoExpire { channel: String, on: bool },
 }
 
 // Whether an event replicates across the federation. Account identity is Global
@@ -193,7 +207,9 @@ impl Event {
             | Event::MemoRead { .. }
             | Event::MemoDeleted { .. }
             | Event::NickGrouped { .. }
-            | Event::NickUngrouped { .. } => Scope::Global,
+            | Event::NickUngrouped { .. }
+            | Event::AccountSeen { .. }
+            | Event::AccountNoExpire { .. } => Scope::Global,
             Event::ChannelRegistered { .. }
             | Event::ChannelDropped { .. }
             | Event::ChannelMlock { .. }
@@ -219,7 +235,9 @@ impl Event {
             | Event::VhostOfferRemoved { .. }
             | Event::VhostForbidAdded { .. }
             | Event::VhostForbidRemoved { .. }
-            | Event::VhostTemplateSet { .. } => Scope::Local,
+            | Event::VhostTemplateSet { .. }
+            | Event::ChannelUsed { .. }
+            | Event::ChannelNoExpire { .. } => Scope::Local,
         }
     }
 }
@@ -358,6 +376,13 @@ pub struct ChannelInfo {
     pub triggers: Vec<Trigger>,
     #[serde(skip)]
     pub triggers_rev: u64,
+    // Unix time this channel was last used (a member joined). 0 = never stamped
+    // since expiry tracking existed, in which case `ts` (registration) stands in.
+    #[serde(default)]
+    pub last_used: u64,
+    // Pinned by an operator so inactivity-expiry never drops it.
+    #[serde(default)]
+    pub noexpire: bool,
 }
 
 // A bot auto-response: when a channel line matches `pattern`, the assigned bot
@@ -1059,6 +1084,8 @@ impl Db {
             greet: String::new(),
             vhost: None,
             vhost_request: None,
+            last_seen: now(),
+            noexpire: false,
         };
         self.log.append(Event::AccountRegistered(Box::new(account.clone()))).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
@@ -1539,6 +1566,84 @@ impl Db {
             .is_some_and(|s| s.expires.is_none_or(|e| e > now()))
     }
 
+    /// Stamp an account as active at `now`, coalesced: a fresh stamp is logged
+    /// only once its last one is a day old, so routine logins don't flood the
+    /// log. No-op for an account that doesn't exist.
+    pub fn mark_account_seen(&mut self, account: &str, now: u64) {
+        const COALESCE: u64 = 86_400;
+        let k = key(account);
+        let stale = self.accounts.get(&k).is_some_and(|a| now.saturating_sub(a.last_seen.max(a.ts)) >= COALESCE);
+        if stale {
+            let _ = self.log.append(Event::AccountSeen { account: account.to_string(), ts: now });
+            if let Some(a) = self.accounts.get_mut(&k) {
+                a.last_seen = a.last_seen.max(now);
+            }
+        }
+    }
+
+    /// Stamp a channel as used at `now`, coalesced like [`mark_account_seen`].
+    pub fn mark_channel_used(&mut self, channel: &str, now: u64) {
+        const COALESCE: u64 = 86_400;
+        let k = key(channel);
+        let stale = self.channels.get(&k).is_some_and(|c| now.saturating_sub(c.last_used.max(c.ts)) >= COALESCE);
+        if stale {
+            let _ = self.log.append(Event::ChannelUsed { channel: channel.to_string(), ts: now });
+            if let Some(c) = self.channels.get_mut(&k) {
+                c.last_used = c.last_used.max(now);
+            }
+        }
+    }
+
+    /// Pin or unpin an account against inactivity-expiry. Returns whether the
+    /// flag actually changed.
+    pub fn set_account_noexpire(&mut self, account: &str, on: bool) -> Result<bool, RegError> {
+        let k = key(account);
+        match self.accounts.get(&k) {
+            None => Err(RegError::Internal),
+            Some(a) if a.noexpire == on => Ok(false),
+            Some(_) => {
+                self.log.append(Event::AccountNoExpire { account: account.to_string(), on }).map_err(|_| RegError::Internal)?;
+                self.accounts.get_mut(&k).unwrap().noexpire = on;
+                Ok(true)
+            }
+        }
+    }
+
+    /// Pin or unpin a channel against inactivity-expiry.
+    pub fn set_channel_noexpire(&mut self, channel: &str, on: bool) -> Result<bool, ChanError> {
+        let k = key(channel);
+        match self.channels.get(&k) {
+            None => Err(ChanError::NoChannel),
+            Some(c) if c.noexpire == on => Ok(false),
+            Some(_) => {
+                self.log.append(Event::ChannelNoExpire { channel: channel.to_string(), on }).map_err(|_| ChanError::Internal)?;
+                self.channels.get_mut(&k).unwrap().noexpire = on;
+                Ok(true)
+            }
+        }
+    }
+
+    /// Accounts inactive longer than `ttl` seconds as of `now` and eligible to be
+    /// expired: not pinned (NOEXPIRE) and not currently suspended. Callers apply
+    /// their own further guards (skip opers and live sessions) before dropping.
+    pub fn expired_accounts(&self, now: u64, ttl: u64) -> Vec<String> {
+        self.accounts
+            .values()
+            .filter(|a| !a.noexpire && a.suspension.is_none() && now.saturating_sub(a.last_seen.max(a.ts)) > ttl)
+            .map(|a| a.name.clone())
+            .collect()
+    }
+
+    /// Channels unused longer than `ttl` seconds as of `now` and eligible to be
+    /// expired: not pinned and not suspended.
+    pub fn expired_channels(&self, now: u64, ttl: u64) -> Vec<String> {
+        self.channels
+            .values()
+            .filter(|c| !c.noexpire && c.suspension.is_none() && now.saturating_sub(c.last_used.max(c.ts)) > ttl)
+            .map(|c| c.name.clone())
+            .collect()
+    }
+
     /// The account's suspension record, if any (shown in INFO even once expired).
     pub fn suspension(&self, account: &str) -> Option<SuspensionView> {
         self.accounts
@@ -1557,7 +1662,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0 });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false });
         Ok(())
     }
 
@@ -2295,7 +2400,7 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             grouped.remove(&key(&nick));
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0 });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
@@ -2413,6 +2518,26 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::ChannelEntryMsgSet { channel, msg } => {
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.entrymsg = msg;
+            }
+        }
+        Event::AccountSeen { account, ts } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.last_seen = a.last_seen.max(ts); // monotonic: never move activity backwards
+            }
+        }
+        Event::ChannelUsed { channel, ts } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.last_used = c.last_used.max(ts);
+            }
+        }
+        Event::AccountNoExpire { account, on } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.noexpire = on;
+            }
+        }
+        Event::ChannelNoExpire { channel, on } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.noexpire = on;
             }
         }
     }
@@ -2641,6 +2766,12 @@ impl Store for Db {
     fn suspension(&self, account: &str) -> Option<SuspensionView> {
         Db::suspension(self, account)
     }
+    fn set_account_noexpire(&mut self, account: &str, on: bool) -> Result<bool, RegError> {
+        Db::set_account_noexpire(self, account, on)
+    }
+    fn set_channel_noexpire(&mut self, channel: &str, on: bool) -> Result<bool, ChanError> {
+        Db::set_channel_noexpire(self, channel, on)
+    }
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
         Db::register_channel(self, name, founder)
     }
@@ -2841,7 +2972,7 @@ mod tests {
     fn account_conflict_resolves_deterministically() {
         let alice = |hash: &str, ts: u64, home: &str| Account {
             name: "alice".into(), password_hash: hash.into(), email: None,
-            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None,
+            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: ts, noexpire: false,
         };
         let converge = |first: &Account, second: &Account| {
             let (mut acc, mut ch, mut gr, mut bo, mut hc) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HostConfig::default());
@@ -3117,7 +3248,7 @@ mod tests {
         db.register("alice", "pw", None).unwrap();
         let bob = Account {
             name: "bob".into(), password_hash: "x".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false,
         };
         let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, event: Event::AccountRegistered(Box::new(bob)) };
         db.ingest(entry).unwrap();

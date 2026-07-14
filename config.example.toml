@@ -55,3 +55,12 @@ protocol = 1206            # InspIRCd link protocol version (1206 = insp4, 1205 
 # surfaced. Omit the section to disable the feed.
 # [log]
 # channel = "#services"
+
+# Inactivity-expiry: accounts not identified to, and channels not joined, for
+# longer than the threshold are dropped on a periodic pass (opers, live
+# sessions, occupied channels, and NOEXPIRE-pinned records are spared). A zero
+# or omitted field leaves that kind never expiring. Omit the section to disable
+# expiry entirely.
+# [expire]
+# accounts_days = 90
+# channels_days = 30

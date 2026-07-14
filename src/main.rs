@@ -106,6 +106,9 @@ async fn main() -> Result<()> {
     engine.lock().await.set_opers(cfg.opers());
     engine.lock().await.set_sid(cfg.server.sid.clone());
     engine.lock().await.set_log_channel(cfg.log.as_ref().map(|l| l.channel.clone()));
+    if let Some(expire) = &cfg.expire {
+        engine.lock().await.set_expiry(expire.account_ttl(), expire.channel_ttl());
+    }
 
     if let Some(gossip) = cfg.gossip.clone() {
         tracing::info!(peers = cfg.peer.len(), "starting gossip");
@@ -130,8 +133,10 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(1800)).await;
-                if let Err(e) = engine.lock().await.maybe_compact() {
-                    tracing::warn!(%e, "compaction failed");
+                let mut e = engine.lock().await;
+                e.expire_sweep();
+                if let Err(err) = e.maybe_compact() {
+                    tracing::warn!(%err, "compaction failed");
                 }
             }
         });

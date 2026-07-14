@@ -629,6 +629,9 @@ pub trait Store {
     fn unsuspend_account(&mut self, account: &str) -> Result<bool, RegError>;
     fn is_suspended(&self, account: &str) -> bool;
     fn suspension(&self, account: &str) -> Option<SuspensionView>;
+    // Inactivity-expiry pins (oper-only, gated on Priv::Admin at the command layer).
+    fn set_account_noexpire(&mut self, account: &str, on: bool) -> Result<bool, RegError>;
+    fn set_channel_noexpire(&mut self, channel: &str, on: bool) -> Result<bool, ChanError>;
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError>;
     fn drop_channel(&mut self, name: &str) -> Result<(), ChanError>;
     fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError>;

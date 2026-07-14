@@ -160,7 +160,11 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::VhostOfferRemoved { .. }
         | Event::VhostForbidAdded { .. }
         | Event::VhostForbidRemoved { .. }
-        | Event::VhostTemplateSet { .. } => return None,
+        | Event::VhostTemplateSet { .. }
+        | Event::AccountSeen { .. }
+        | Event::ChannelUsed { .. }
+        | Event::AccountNoExpire { .. }
+        | Event::ChannelNoExpire { .. } => return None,
     };
     Some(ReplicationEvent { origin: entry.origin().to_string(), seq: entry.seq(), lamport: entry.lamport(), kind: Some(kind) })
 }
@@ -417,6 +421,8 @@ mod tests {
             greet: String::new(),
             vhost: None,
             vhost_request: None,
+            last_seen: 111,
+            noexpire: false,
         };
         let registered = LogEntry::for_test("A", 0, 1, Event::AccountRegistered(Box::new(acct)));
         let wire = to_wire(&registered).expect("account registration replicates");

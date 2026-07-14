@@ -29,6 +29,30 @@ pub struct Config {
     // Staff audit feed. Absent = no audit log is emitted.
     #[serde(default)]
     pub log: Option<Log>,
+    // Inactivity-expiry. Absent = accounts and channels never expire.
+    #[serde(default)]
+    pub expire: Option<Expire>,
+}
+
+// Inactivity-expiry thresholds, in days. A zero (or omitted) field leaves that
+// kind never expiring, so an operator can expire only accounts, only channels,
+// or both.
+#[derive(Debug, Deserialize, Clone)]
+pub struct Expire {
+    #[serde(default)]
+    pub accounts_days: u64,
+    #[serde(default)]
+    pub channels_days: u64,
+}
+
+impl Expire {
+    // The thresholds in seconds, or None where that kind is disabled (zero days).
+    pub fn account_ttl(&self) -> Option<u64> {
+        (self.accounts_days > 0).then(|| self.accounts_days * 86_400)
+    }
+    pub fn channel_ttl(&self) -> Option<u64> {
+        (self.channels_days > 0).then(|| self.channels_days * 86_400)
+    }
 }
 
 // The staff audit feed: notable service actions are announced to this channel

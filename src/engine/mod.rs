@@ -124,6 +124,9 @@ pub struct Engine {
     // Staff audit channel: notable service actions are announced here. None =
     // no audit feed.
     log_channel: Option<String>,
+    // Inactivity-expiry thresholds in seconds. None = that kind never expires.
+    account_ttl: Option<u64>,
+    channel_ttl: Option<u64>,
 }
 
 struct VoteState {
@@ -196,6 +199,8 @@ impl Engine {
             pending_unbans: Vec::new(),
             votes: HashMap::new(),
             log_channel: None,
+            account_ttl: None,
+            channel_ttl: None,
         }
     }
 
@@ -252,6 +257,12 @@ impl Engine {
     // The staff channel notable service actions are announced to.
     pub fn set_log_channel(&mut self, channel: Option<String>) {
         self.log_channel = channel;
+    }
+
+    // Inactivity-expiry thresholds (seconds); None leaves that kind never expiring.
+    pub fn set_expiry(&mut self, account_ttl: Option<u64>, channel_ttl: Option<u64>) {
+        self.account_ttl = account_ttl;
+        self.channel_ttl = channel_ttl;
     }
 
     // Bring the network's bot pseudo-clients in line with the registry: introduce
@@ -525,6 +536,52 @@ impl Engine {
         Ok(false)
     }
 
+    // Drop accounts and channels left inactive past the configured thresholds.
+    // Lazy: computed from stored last-activity stamps on this periodic pass, with
+    // no per-record timer. Opers, accounts with a live session, and occupied
+    // channels are spared; each expiry is announced to the audit channel. Emits
+    // cleanup directly over the outbound path (like a takeover cleanup).
+    pub fn expire_sweep(&mut self) {
+        let now = self.now_secs();
+        if let Some(ttl) = self.account_ttl {
+            for account in self.db.expired_accounts(now, ttl) {
+                // Never expire an operator's account or one still in use.
+                if self.opers.contains_key(&account.to_ascii_lowercase()) || !self.network.uids_logged_into(&account).is_empty() {
+                    continue;
+                }
+                if self.db.drop_account(&account).unwrap_or(false) {
+                    self.handle_account_gone(&account, "expired after a long period of inactivity");
+                    self.audit(format!("Account \x02{account}\x02 expired after inactivity."));
+                }
+            }
+        }
+        if let Some(ttl) = self.channel_ttl {
+            let cs = self.chan_service.clone();
+            for channel in self.db.expired_channels(now, ttl) {
+                // A channel people are currently sitting in is still in use.
+                if self.network.channel_members(&channel).next().is_some() {
+                    continue;
+                }
+                if self.db.drop_channel(&channel).is_ok() {
+                    if let Some(cs) = &cs {
+                        self.emit_irc(NetAction::ChannelMode { from: cs.clone(), channel: channel.clone(), modes: "-r".to_string() });
+                    }
+                    self.audit(format!("Channel \x02{channel}\x02 expired after inactivity."));
+                }
+            }
+        }
+    }
+
+    // Announce a line to the staff audit channel, if one is configured, sourced
+    // from the services server. Used for actions that aren't tied to a command.
+    fn audit(&self, text: String) {
+        if let Some(channel) = &self.log_channel {
+            if !self.sid.is_empty() {
+                self.emit_irc(NetAction::Notice { from: self.sid.clone(), to: channel.clone(), text });
+            }
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn test_register(&mut self, name: &str) {
         self.db.register(name, "pw", None).unwrap();
@@ -648,6 +705,10 @@ impl Engine {
             // members their status mode, and send the entry message.
             NetEvent::Join { uid, channel, op } => {
                 self.network.channel_join(&channel, &uid, op);
+                // A join to a registered channel is activity: keep it from expiring.
+                if self.db.channel(&channel).is_some() {
+                    self.db.mark_channel_used(&channel, self.now_secs());
+                }
                 // A suspended channel is frozen: no auto-op, akick, or entry message.
                 if self.db.is_channel_suspended(&channel) {
                     return Vec::new();
@@ -794,6 +855,8 @@ impl Engine {
                         self.network.clear_account(target);
                     } else {
                         self.network.set_account(target, value);
+                        // A login is activity: keep the account from expiring.
+                        self.db.mark_account_seen(value, self.now_secs());
                     }
                 }
             }
@@ -1448,12 +1511,20 @@ fn audit_summary(event: &db::Event) -> Option<String> {
             Some(t) => format!("set the vhost template to \x02{t}\x02"),
             None => "cleared the vhost template".to_string(),
         },
+        AccountNoExpire { account, on } => {
+            let verb = if *on { "pinned" } else { "unpinned" };
+            format!("{verb} account \x02{account}\x02 against expiry")
+        }
+        ChannelNoExpire { channel, on } => {
+            let verb = if *on { "pinned" } else { "unpinned" };
+            format!("{verb} channel \x02{channel}\x02 against expiry")
+        }
         // Private, self-service, or cosmetic — not surfaced.
         AjoinAdded { .. } | AjoinRemoved { .. } | AccountGreetSet { .. } | VhostRequested { .. }
         | VhostRequestCleared { .. } | MemoSent { .. } | MemoRead { .. } | MemoDeleted { .. }
         | ChannelMlock { .. } | ChannelDescSet { .. } | ChannelEntryMsgSet { .. } | ChannelSettingsSet { .. }
         | ChannelKickerSet { .. } | ChannelBadwordsSet { .. } | ChannelTriggersSet { .. }
-        | ChannelTopicSet { .. } => return None,
+        | ChannelTopicSet { .. } | AccountSeen { .. } | ChannelUsed { .. } => return None,
     };
     Some(s)
 }
@@ -2013,7 +2084,7 @@ mod tests {
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), password_hash: "OTHER".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false,
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)));
         e.gossip_ingest(entry).unwrap();
@@ -3602,6 +3673,88 @@ mod tests {
         e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#other".into(), op: true });
         let out = to_cs(&mut e, "000AAAAAB", "REGISTER #other");
         assert!(!out.iter().any(|a| matches!(a, NetAction::Notice { to, .. } if to == "#services")), "no feed when unset: {out:?}");
+    }
+
+    // Inactivity-expiry drops stale accounts and channels, but spares opers, live
+    // sessions, occupied channels, and anything pinned with NOEXPIRE. Each expiry
+    // is announced to the audit channel.
+    #[test]
+    fn expiry_sweep_respects_pins_sessions_and_opers() {
+        use fedserv_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("fedserv-expiry.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        for a in ["victim", "staff", "active", "pinned"] {
+            db.register(a, "password1", None).unwrap();
+        }
+        db.register_channel("#dead", "staff").unwrap(); // founder is an oper, so only the channel expires
+        db.register_channel("#pinned", "staff").unwrap();
+        db.register_channel("#live", "staff").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        e.set_log_channel(Some("#services".into()));
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        e.set_irc_out(tx);
+
+        // staff (an oper) pins one account and one channel against expiry.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "NOEXPIRE pinned ON".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAB".into(), text: "NOEXPIRE #pinned ON".into() });
+        // active keeps a live session; #live keeps a member sitting in it.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "active".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#live".into(), op: false });
+
+        // Jump far past the threshold and sweep.
+        e.now_override = Some(10_000_000_000);
+        e.set_expiry(Some(100), Some(100));
+        e.expire_sweep();
+
+        // Only the plain, unused, unpinned, session-less records are gone.
+        assert!(!e.db.exists("victim"), "inactive account expired");
+        assert!(e.db.channel("#dead").is_none(), "unused channel expired");
+        assert!(e.db.exists("staff"), "oper account spared");
+        assert!(e.db.exists("active"), "logged-in account spared");
+        assert!(e.db.exists("pinned"), "NOEXPIRE account spared");
+        assert!(e.db.channel("#pinned").is_some(), "NOEXPIRE channel spared");
+        assert!(e.db.channel("#live").is_some(), "occupied channel spared");
+
+        // The expiries were announced and the dropped channel had +r cleared.
+        let (mut acct_note, mut chan_note, mut unreg) = (false, false, false);
+        while let Ok(a) = rx.try_recv() {
+            match a {
+                NetAction::Notice { to, text, .. } if to == "#services" && text.contains("victim") && text.contains("expired") => acct_note = true,
+                NetAction::Notice { to, text, .. } if to == "#services" && text.contains("#dead") && text.contains("expired") => chan_note = true,
+                NetAction::ChannelMode { channel, modes, .. } if channel == "#dead" && modes == "-r" => unreg = true,
+                _ => {}
+            }
+        }
+        assert!(acct_note, "account expiry announced to audit channel");
+        assert!(chan_note, "channel expiry announced to audit channel");
+        assert!(unreg, "expired channel had +r cleared");
+    }
+
+    // NOEXPIRE is oper-only.
+    #[test]
+    fn noexpire_command_is_oper_gated() {
+        let mut e = engine_with("noexp", "alice", "sesame");
+        e.db.register("mallory", "password1", None).unwrap();
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        // alice is not an oper: refused, and the flag is untouched.
+        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "NOEXPIRE mallory ON".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-oper refused: {out:?}");
     }
 
     // ChanServ moderation: an op can op/kick/ban users; a non-op is refused.
