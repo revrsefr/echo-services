@@ -86,6 +86,10 @@ pub struct Account {
     // Pinned by an operator so inactivity-expiry never drops it.
     #[serde(default)]
     pub noexpire: bool,
+    // Whether an impending-expiry warning email has already been sent (reset on
+    // the next activity, so each idle spell warns at most once).
+    #[serde(default)]
+    pub expiry_warned: bool,
 }
 
 // A requested vhost awaiting approval.
@@ -172,6 +176,9 @@ pub enum Event {
     ChannelUsed { channel: String, ts: u64 },
     AccountNoExpire { account: String, on: bool },
     ChannelNoExpire { channel: String, on: bool },
+    // An impending-expiry warning email was sent; cleared by the next Seen/Used.
+    AccountExpiryWarned { account: String },
+    ChannelExpiryWarned { channel: String },
     // Network bans (OperServ AKILL). Global: a ban covers the whole network, so
     // every node holds the list and re-applies it at burst.
     AkillAdded { mask: String, setter: String, reason: String, ts: u64, expires: Option<u64> },
@@ -214,6 +221,7 @@ impl Event {
             | Event::NickUngrouped { .. }
             | Event::AccountSeen { .. }
             | Event::AccountNoExpire { .. }
+            | Event::AccountExpiryWarned { .. }
             | Event::AkillAdded { .. }
             | Event::AkillRemoved { .. } => Scope::Global,
             Event::ChannelRegistered { .. }
@@ -243,7 +251,8 @@ impl Event {
             | Event::VhostForbidRemoved { .. }
             | Event::VhostTemplateSet { .. }
             | Event::ChannelUsed { .. }
-            | Event::ChannelNoExpire { .. } => Scope::Local,
+            | Event::ChannelNoExpire { .. }
+            | Event::ChannelExpiryWarned { .. } => Scope::Local,
         }
     }
 }
@@ -401,6 +410,9 @@ pub struct ChannelInfo {
     // Pinned by an operator so inactivity-expiry never drops it.
     #[serde(default)]
     pub noexpire: bool,
+    // Whether an impending-expiry warning email has already been sent.
+    #[serde(default)]
+    pub expiry_warned: bool,
 }
 
 // A bot auto-response: when a channel line matches `pattern`, the assigned bot
@@ -1112,6 +1124,7 @@ impl Db {
             vhost_request: None,
             last_seen: now(),
             noexpire: false,
+            expiry_warned: false,
         };
         self.log.append(Event::AccountRegistered(Box::new(account.clone()))).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
@@ -1670,6 +1683,62 @@ impl Db {
             .collect()
     }
 
+    /// Accounts entering the warning window — inactive past `ttl - lead` but not
+    /// yet past `ttl` — that have an email, aren't pinned or suspended, and
+    /// haven't already been warned this idle spell. Returns (account, email,
+    /// seconds until expiry).
+    pub fn accounts_to_warn(&self, now: u64, ttl: u64, lead: u64) -> Vec<(String, String, u64)> {
+        let floor = ttl.saturating_sub(lead);
+        self.accounts
+            .values()
+            .filter(|a| !a.noexpire && !a.expiry_warned && a.suspension.is_none() && a.email.is_some())
+            .filter_map(|a| {
+                let idle = now.saturating_sub(a.last_seen.max(a.ts));
+                (idle > floor && idle <= ttl).then(|| (a.name.clone(), a.email.clone().unwrap_or_default(), ttl - idle))
+            })
+            .collect()
+    }
+
+    /// Channels entering the warning window, paired with their founder's email
+    /// (skipped when the founder has none). Returns (channel, email, seconds left).
+    pub fn channels_to_warn(&self, now: u64, ttl: u64, lead: u64) -> Vec<(String, String, u64)> {
+        let floor = ttl.saturating_sub(lead);
+        self.channels
+            .values()
+            .filter(|c| !c.noexpire && !c.expiry_warned && c.suspension.is_none())
+            .filter_map(|c| {
+                let idle = now.saturating_sub(c.last_used.max(c.ts));
+                if idle <= floor || idle > ttl {
+                    return None;
+                }
+                let email = self.accounts.get(&key(&c.founder)).and_then(|a| a.email.clone())?;
+                Some((c.name.clone(), email, ttl - idle))
+            })
+            .collect()
+    }
+
+    /// Record that an account has been warned about impending expiry.
+    pub fn mark_account_warned(&mut self, account: &str) {
+        let k = key(account);
+        if self.accounts.contains_key(&k) {
+            let _ = self.log.append(Event::AccountExpiryWarned { account: account.to_string() });
+            if let Some(a) = self.accounts.get_mut(&k) {
+                a.expiry_warned = true;
+            }
+        }
+    }
+
+    /// Record that a channel has been warned about impending expiry.
+    pub fn mark_channel_warned(&mut self, channel: &str) {
+        let k = key(channel);
+        if self.channels.contains_key(&k) {
+            let _ = self.log.append(Event::ChannelExpiryWarned { channel: channel.to_string() });
+            if let Some(c) = self.channels.get_mut(&k) {
+                c.expiry_warned = true;
+            }
+        }
+    }
+
     /// Add (or refresh) a network ban. Returns whether the mask was newly added.
     pub fn akill_add(&mut self, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
         let fresh = !self.akills.iter().any(|a| a.mask.eq_ignore_ascii_case(mask) && a.expires.is_none_or(|e| e > now()));
@@ -1720,7 +1789,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false });
         Ok(())
     }
 
@@ -2458,7 +2527,7 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
             grouped.remove(&key(&nick));
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
@@ -2581,11 +2650,13 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::AccountSeen { account, ts } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {
                 a.last_seen = a.last_seen.max(ts); // monotonic: never move activity backwards
+                a.expiry_warned = false; // activity clears the warning so a later idle spell warns afresh
             }
         }
         Event::ChannelUsed { channel, ts } => {
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.last_used = c.last_used.max(ts);
+                c.expiry_warned = false;
             }
         }
         Event::AccountNoExpire { account, on } => {
@@ -2606,6 +2677,16 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         }
         Event::AkillRemoved { mask } => {
             akills.retain(|a| !a.mask.eq_ignore_ascii_case(&mask));
+        }
+        Event::AccountExpiryWarned { account } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.expiry_warned = true;
+            }
+        }
+        Event::ChannelExpiryWarned { channel } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.expiry_warned = true;
+            }
         }
     }
 }
@@ -3048,7 +3129,7 @@ mod tests {
     fn account_conflict_resolves_deterministically() {
         let alice = |hash: &str, ts: u64, home: &str| Account {
             name: "alice".into(), password_hash: hash.into(), email: None,
-            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: ts, noexpire: false,
+            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: ts, noexpire: false, expiry_warned: false,
         };
         let converge = |first: &Account, second: &Account| {
             let (mut acc, mut ch, mut gr, mut bo, mut hc, mut ak) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HostConfig::default(), Vec::new());
@@ -3324,7 +3405,7 @@ mod tests {
         db.register("alice", "pw", None).unwrap();
         let bob = Account {
             name: "bob".into(), password_hash: "x".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false,
         };
         let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, event: Event::AccountRegistered(Box::new(bob)) };
         db.ingest(entry).unwrap();

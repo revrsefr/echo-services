@@ -113,7 +113,7 @@ async fn main() -> Result<()> {
     engine.lock().await.set_sid(cfg.server.sid.clone());
     engine.lock().await.set_log_channel(cfg.log.as_ref().map(|l| l.channel.clone()));
     if let Some(expire) = &cfg.expire {
-        engine.lock().await.set_expiry(expire.account_ttl(), expire.channel_ttl());
+        engine.lock().await.set_expiry(expire.account_ttl(), expire.channel_ttl(), expire.warn_ttl());
     }
 
     if let Some(gossip) = cfg.gossip.clone() {

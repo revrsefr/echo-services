@@ -64,3 +64,7 @@ protocol = 1206            # InspIRCd link protocol version (1206 = insp4, 1205 
 # [expire]
 # accounts_days = 90
 # channels_days = 30
+# warn_days sends the owner a heads-up email this many days before expiry (only
+# where an address is on file and [email] is configured); 0 or omitted = no
+# warning email.
+# warn_days = 7

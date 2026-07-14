@@ -43,6 +43,9 @@ pub struct Expire {
     pub accounts_days: u64,
     #[serde(default)]
     pub channels_days: u64,
+    // Days before expiry to email a warning to the owner (0 = no warning email).
+    #[serde(default)]
+    pub warn_days: u64,
 }
 
 impl Expire {
@@ -52,6 +55,10 @@ impl Expire {
     }
     pub fn channel_ttl(&self) -> Option<u64> {
         (self.channels_days > 0).then(|| self.channels_days * 86_400)
+    }
+    // The warning lead time in seconds, or None if warnings are off.
+    pub fn warn_ttl(&self) -> Option<u64> {
+        (self.warn_days > 0).then(|| self.warn_days * 86_400)
     }
 }
 

@@ -127,6 +127,8 @@ pub struct Engine {
     // Inactivity-expiry thresholds in seconds. None = that kind never expires.
     account_ttl: Option<u64>,
     channel_ttl: Option<u64>,
+    // How long before expiry to email a warning (seconds). None = no warnings.
+    expire_warn: Option<u64>,
 }
 
 struct VoteState {
@@ -201,6 +203,7 @@ impl Engine {
             log_channel: None,
             account_ttl: None,
             channel_ttl: None,
+            expire_warn: None,
         }
     }
 
@@ -259,10 +262,13 @@ impl Engine {
         self.log_channel = channel;
     }
 
-    // Inactivity-expiry thresholds (seconds); None leaves that kind never expiring.
-    pub fn set_expiry(&mut self, account_ttl: Option<u64>, channel_ttl: Option<u64>) {
+    // Inactivity-expiry thresholds (seconds); None leaves that kind never
+    // expiring. `warn` is the lead time before expiry to email a warning (None =
+    // no warning emails).
+    pub fn set_expiry(&mut self, account_ttl: Option<u64>, channel_ttl: Option<u64>, warn: Option<u64>) {
         self.account_ttl = account_ttl;
         self.channel_ttl = channel_ttl;
+        self.expire_warn = warn;
     }
 
     // Bring the network's bot pseudo-clients in line with the registry: introduce
@@ -543,6 +549,24 @@ impl Engine {
     // cleanup directly over the outbound path (like a takeover cleanup).
     pub fn expire_sweep(&mut self) {
         let now = self.now_secs();
+        // First, warn owners whose account/channel is approaching expiry and for
+        // whom we have an email — a chance to keep it before it's dropped.
+        if let Some(lead) = self.expire_warn.filter(|_| self.db.email_enabled()) {
+            if let Some(ttl) = self.account_ttl {
+                for (account, email, left) in self.db.accounts_to_warn(now, ttl, lead) {
+                    let mail = fedserv_api::email::expiry_warning(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), "account", &account, &human_duration(left));
+                    self.emit_irc(NetAction::SendEmail { to: email, subject: mail.subject, text: mail.text, html: Some(mail.html) });
+                    self.db.mark_account_warned(&account);
+                }
+            }
+            if let Some(ttl) = self.channel_ttl {
+                for (channel, email, left) in self.db.channels_to_warn(now, ttl, lead) {
+                    let mail = fedserv_api::email::expiry_warning(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), "channel", &channel, &human_duration(left));
+                    self.emit_irc(NetAction::SendEmail { to: email, subject: mail.subject, text: mail.text, html: Some(mail.html) });
+                    self.db.mark_channel_warned(&channel);
+                }
+            }
+        }
         if let Some(ttl) = self.account_ttl {
             for account in self.db.expired_accounts(now, ttl) {
                 // Never expire an operator's account or one still in use.
@@ -1471,6 +1495,17 @@ impl Engine {
     }
 }
 
+// A rough human span for an expiry deadline in an email ("7 days", "12 hours").
+fn human_duration(secs: u64) -> String {
+    let plural = |n: u64, unit: &str| format!("{n} {unit}{}", if n == 1 { "" } else { "s" });
+    match secs {
+        s if s >= 86_400 => plural(s / 86_400, "day"),
+        s if s >= 3_600 => plural(s / 3_600, "hour"),
+        s if s >= 60 => plural(s / 60, "minute"),
+        s => plural(s.max(1), "second"),
+    }
+}
+
 // A one-line, human-readable summary of a logged event for the staff audit
 // feed, or None for events that are private (memos), cosmetic self-service
 // (greets, auto-join, personal settings), or otherwise not worth surfacing.
@@ -1536,7 +1571,8 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         | VhostRequestCleared { .. } | MemoSent { .. } | MemoRead { .. } | MemoDeleted { .. }
         | ChannelMlock { .. } | ChannelDescSet { .. } | ChannelEntryMsgSet { .. } | ChannelSettingsSet { .. }
         | ChannelKickerSet { .. } | ChannelBadwordsSet { .. } | ChannelTriggersSet { .. }
-        | ChannelTopicSet { .. } | AccountSeen { .. } | ChannelUsed { .. } => return None,
+        | ChannelTopicSet { .. } | AccountSeen { .. } | ChannelUsed { .. }
+        | AccountExpiryWarned { .. } | ChannelExpiryWarned { .. } => return None,
     };
     Some(s)
 }
@@ -2096,7 +2132,7 @@ mod tests {
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), password_hash: "OTHER".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false,
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)));
         e.gossip_ingest(entry).unwrap();
@@ -3730,7 +3766,7 @@ mod tests {
 
         // Jump far past the threshold and sweep.
         e.now_override = Some(10_000_000_000);
-        e.set_expiry(Some(100), Some(100));
+        e.set_expiry(Some(100), Some(100), None);
         e.expire_sweep();
 
         // Only the plain, unused, unpinned, session-less records are gone.
@@ -3812,6 +3848,51 @@ mod tests {
         let out = os(&mut e, "000AAAAAS", "AKILL DEL 1");
         assert!(out.iter().any(|a| matches!(a, NetAction::DelLine { kind, mask } if kind == "G" && mask == "*@evil.host")), "G-line lifted: {out:?}");
         assert!(os(&mut e, "000AAAAAS", "AKILL LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("No matching"))), "list now empty");
+    }
+
+    // An account approaching expiry with an email on file is warned once by
+    // email, isn't dropped while still in the window, and isn't warned twice.
+    #[test]
+    fn expiry_warns_by_email_before_dropping() {
+        let path = std::env::temp_dir().join("fedserv-expwarn.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.set_email_enabled(true);
+        db.register("dozer", "password1", Some("dozer@example.test".to_string())).unwrap();
+        db.register("nomail", "password1", None).unwrap();
+        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+        e.set_sid("42S".into());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        e.set_irc_out(tx);
+
+        // A very wide warning window that brackets any freshly-registered account.
+        e.now_override = Some(10_000_000_000);
+        e.set_expiry(Some(9_900_000_000), None, Some(9_000_000_000));
+        e.expire_sweep();
+
+        // The account with an email got exactly one warning; neither was dropped.
+        let mut warns = 0;
+        while let Ok(a) = rx.try_recv() {
+            if let NetAction::SendEmail { to, subject, .. } = a {
+                assert_eq!(to, "dozer@example.test");
+                assert!(subject.contains("dozer") && subject.contains("expire"), "subject: {subject}");
+                warns += 1;
+            }
+        }
+        assert_eq!(warns, 1, "one warning email for the account with an address");
+        assert!(e.db.exists("dozer"), "still in the window, not dropped");
+        assert!(e.db.exists("nomail"), "no email, no warning, not dropped");
+
+        // A second sweep in the same window doesn't re-warn.
+        e.expire_sweep();
+        let mut again = 0;
+        while let Ok(a) = rx.try_recv() {
+            if matches!(a, NetAction::SendEmail { .. }) {
+                again += 1;
+            }
+        }
+        assert_eq!(again, 0, "warning isn't repeated while still idle");
     }
 
     // NOEXPIRE is oper-only.
