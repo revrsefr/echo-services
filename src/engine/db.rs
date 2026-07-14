@@ -945,9 +945,9 @@ fn valid_fp(fp: &str) -> bool {
 // registration. Split out from `register` so the derivation (argon2 + two SCRAM
 // verifiers, ~1s at the default cost) can run off the reactor via spawn_blocking.
 pub struct Credentials {
-    password_hash: String,
-    scram256: String,
-    scram512: String,
+    pub(crate) password_hash: String,
+    pub(crate) scram256: String,
+    pub(crate) scram512: String,
 }
 
 pub struct Db {
@@ -1265,6 +1265,46 @@ impl Db {
             scram512: Some(creds.scram512),
             certfps: Vec::new(),
             verified,
+            ajoin: Vec::new(),
+            suspension: None,
+            memos: Vec::new(),
+            greet: String::new(),
+            vhost: None,
+            vhost_request: None,
+            last_seen: now(),
+            noexpire: false,
+            expiry_warned: false,
+            oper_note: None,
+        };
+        self.log.append(Event::AccountRegistered(Box::new(account.clone()))).map_err(|_| RegError::Internal)?;
+        self.accounts.insert(key(name), account);
+        Ok(())
+    }
+
+    /// Provision a new account directly from pre-derived SCRAM verifiers (no
+    /// plaintext), for bulk backfill from an external authority that stores
+    /// verifiers rather than passwords. `password_hash` is left empty — typed-
+    /// password login stays disabled until a real password is set — but SCRAM and
+    /// keycard login work at once. Refuses if the account already exists (so a
+    /// backfill can't clobber a fully-credentialed account). `scram512` empty =
+    /// SCRAM-SHA-512 unavailable for this account (it falls back to 256).
+    pub fn provision_account(&mut self, name: &str, scram256: &str, scram512: &str, email: Option<String>) -> Result<(), RegError> {
+        if self.exists(name) {
+            return Err(RegError::Exists);
+        }
+        if name.is_empty() || scram256.is_empty() {
+            return Err(RegError::Internal);
+        }
+        let account = Account {
+            name: name.to_string(),
+            password_hash: String::new(),
+            email,
+            ts: now(),
+            home: self.log.origin.clone(),
+            scram256: Some(scram256.to_string()),
+            scram512: (!scram512.is_empty()).then(|| scram512.to_string()),
+            certfps: Vec::new(),
+            verified: true, // the external authority vouches for it
             ajoin: Vec::new(),
             suspension: None,
             memos: Vec::new(),

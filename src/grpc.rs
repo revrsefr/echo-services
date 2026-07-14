@@ -28,7 +28,7 @@ use pb::{
     AccountDropped, AccountEmailSet, AccountRecord, AccountRegistered, AccountReply, AccountVerified,
     AuthenticateReply, AuthenticateRequest, ChannelDescSet, ChannelDropped, ChannelFounderSet, ChannelRecord,
     ChannelRegistered, ConfirmRequest, DropRequest, ForceLogoutReply, ForceLogoutRequest, GroupNickRequest,
-    NickGrouped, NickUngrouped, RegisterRequest, ReplicationEvent, SetEmailRequest, SetPasswordRequest,
+    NickGrouped, NickUngrouped, ProvisionRequest, RegisterRequest, ReplicationEvent, SetEmailRequest, SetPasswordRequest,
     SnapshotRequest, SnapshotResponse, Status as PbStatus, StatsRequest, StatsResponse, SubscribeRequest,
     UngroupNickRequest,
 };
@@ -248,6 +248,17 @@ impl Accounts for AccountsService {
         let creds = tokio::task::spawn_blocking(move || Db::derive_credentials(&password, iterations)).await.unwrap_or(None);
         let email = if msg.email.is_empty() { None } else { Some(msg.email) };
         let status = self.engine.lock().await.authority_register(&msg.name, creds, email);
+        Ok(Response::new(reply(status, describe(status))))
+    }
+
+    async fn provision(&self, req: Request<ProvisionRequest>) -> Result<Response<AccountReply>, Status> {
+        authorize(&req, &self.token)?;
+        let msg = req.into_inner();
+        if msg.name.is_empty() || msg.scram256.is_empty() {
+            return Ok(Response::new(reply(AuthorityStatus::Invalid, "name and scram256 are required")));
+        }
+        let email = if msg.email.is_empty() { None } else { Some(msg.email) };
+        let status = self.engine.lock().await.authority_provision(&msg.name, &msg.scram256, &msg.scram512, email);
         Ok(Response::new(reply(status, describe(status))))
     }
 
@@ -559,6 +570,41 @@ mod tests {
             .unwrap()
             .into_inner();
         assert_eq!(bad.status, PbStatus::Invalid as i32);
+    }
+
+    #[tokio::test]
+    async fn provision_creates_account_from_verifiers() {
+        let (engine, _tx) = engine_with("acct-provision");
+        let svc = accounts_svc(engine);
+        // The authority (e.g. the website) already holds SCRAM verifiers.
+        let creds = Db::derive_credentials("password1", 4096).unwrap();
+
+        let prov = svc
+            .provision(authed(ProvisionRequest { name: "heidi".into(), scram256: creds.scram256.clone(), scram512: creds.scram512.clone(), email: String::new() }, "t"))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(prov.status, PbStatus::Ok as i32);
+
+        // Backfill is safe to re-run: an existing account isn't clobbered.
+        let dup = svc
+            .provision(authed(ProvisionRequest { name: "heidi".into(), scram256: creds.scram256.clone(), scram512: String::new(), email: String::new() }, "t"))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(dup.status, PbStatus::AlreadyExists as i32);
+
+        // A missing scram256 is rejected, and a bad bearer never gets in.
+        let invalid = svc
+            .provision(authed(ProvisionRequest { name: "ivan".into(), scram256: String::new(), scram512: String::new(), email: String::new() }, "t"))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(invalid.status, PbStatus::Invalid as i32);
+        assert!(svc
+            .provision(authed(ProvisionRequest { name: "ivan".into(), scram256: "v".into(), scram512: String::new(), email: String::new() }, "wrong"))
+            .await
+            .is_err());
     }
 
     #[tokio::test]

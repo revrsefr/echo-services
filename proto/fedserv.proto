@@ -96,6 +96,10 @@ message ChannelDescSet { string name = 1; string description = 2; }
 // an IRC-originated one does — gossip doesn't know or care where it came from.
 service Accounts {
   rpc Register(RegisterRequest) returns (AccountReply);
+  // Create-or-update an account from pre-derived SCRAM verifiers instead of a
+  // plaintext password. For bulk backfill from an authority (e.g. a website)
+  // that stores verifiers, not passwords. scram512 may be empty.
+  rpc Provision(ProvisionRequest) returns (AccountReply);
   rpc Authenticate(AuthenticateRequest) returns (AuthenticateReply);
   rpc SetPassword(SetPasswordRequest) returns (AccountReply);
   rpc SetEmail(SetEmailRequest) returns (AccountReply);
@@ -121,6 +125,7 @@ message AccountReply {
 }
 
 message RegisterRequest { string name = 1; string password = 2; string email = 3; }
+message ProvisionRequest { string name = 1; string scram256 = 2; string scram512 = 3; string email = 4; }
 
 message AuthenticateRequest { string name = 1; string password = 2; }
 message AuthenticateReply {

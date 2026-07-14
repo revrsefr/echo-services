@@ -406,6 +406,16 @@ impl Engine {
         Ok(())
     }
 
+    // Provision an account from pre-derived SCRAM verifiers (bulk backfill from
+    // the authority). No email confirmation — the authority already vouches for it.
+    pub fn authority_provision(&mut self, name: &str, scram256: &str, scram512: &str, email: Option<String>) -> AuthorityStatus {
+        match self.db.provision_account(name, scram256, scram512, email) {
+            Ok(()) => AuthorityStatus::Ok,
+            Err(RegError::Exists) => AuthorityStatus::AlreadyExists,
+            Err(_) => AuthorityStatus::Internal,
+        }
+    }
+
     pub fn authority_register(&mut self, name: &str, creds: Option<db::Credentials>, email: Option<String>) -> AuthorityStatus {
         let Some(creds) = creds else { return AuthorityStatus::Internal };
         let addr = email.clone();
