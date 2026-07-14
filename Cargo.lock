@@ -328,6 +328,7 @@ dependencies = [
  "fedserv-api",
  "fedserv-botserv",
  "fedserv-chanserv",
+ "fedserv-diceserv",
  "fedserv-example",
  "fedserv-hostserv",
  "fedserv-inspircd",
@@ -370,6 +371,14 @@ name = "fedserv-chanserv"
 version = "0.0.1"
 dependencies = [
  "fedserv-api",
+]
+
+[[package]]
+name = "fedserv-diceserv"
+version = "0.0.1"
+dependencies = [
+ "fedserv-api",
+ "rand",
 ]
 
 [[package]]
