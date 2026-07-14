@@ -1,4 +1,4 @@
-use fedserv_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::{Priv, Sender, ServiceCtx, Store};
 
 // DEFCON [1-5]: read or set the network defence level. 5 is normal; each lower
 // level adds a restriction — 4 freezes channel registrations, 3 freezes all

@@ -1,4 +1,4 @@
-use fedserv_api::{Kicker, Sender, ServiceCtx, Store};
+use echo_api::{Kicker, Sender, ServiceCtx, Store};
 
 // KICK <#channel> <type> {ON|OFF} [params]: configure the bot's kickers.
 // Types: CAPS [min [percent]], BOLDS, COLORS, UNDERLINES, REVERSES, ITALICS,

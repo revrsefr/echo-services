@@ -1,4 +1,4 @@
-use fedserv_api::{ChanError, Priv, Sender, ServiceCtx, Store};
+use echo_api::{ChanError, Priv, Sender, ServiceCtx, Store};
 
 // BOT ADD <nick> <user> <host> [gecos] | BOT DEL <nick> | BOT LIST — manage the
 // bot registry. Administering bots is oper-only (Priv::Admin).

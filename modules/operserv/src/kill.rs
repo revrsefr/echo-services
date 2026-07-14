@@ -1,4 +1,4 @@
-use fedserv_api::{NetView, Priv, Sender, ServiceCtx};
+use echo_api::{NetView, Priv, Sender, ServiceCtx};
 
 // KILL <nick> [reason]: disconnect a user from the network. Admin-only.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView) {

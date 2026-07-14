@@ -8,7 +8,7 @@
 //! `lib.rs` holds the dispatcher and the shared oper guard; each command lives
 //! in its own file.
 
-use fedserv_api::{NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "report.rs"]
 mod report;

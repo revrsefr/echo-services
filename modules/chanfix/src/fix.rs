@@ -1,4 +1,4 @@
-use fedserv_api::{NetView, Sender, ServiceCtx, Store};
+use echo_api::{NetView, Sender, ServiceCtx, Store};
 
 // A channel with this many ops isn't opless and needs no fix.
 const OP_THRESHOLD: usize = 3;

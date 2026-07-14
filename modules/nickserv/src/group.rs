@@ -1,5 +1,5 @@
-use fedserv_api::Store;
-use fedserv_api::{Sender, ServiceCtx};
+use echo_api::Store;
+use echo_api::{Sender, ServiceCtx};
 
 // GROUP <account> <password>: link your current nick to an existing account, so
 // you can identify to it under this nick too.

@@ -1,4 +1,4 @@
-use fedserv_api::{Sender, ServiceCtx, Store};
+use echo_api::{Sender, ServiceCtx, Store};
 
 // A full mailbox rejects new memos, so nobody can be flooded.
 const MAX_MEMOS: usize = 30;

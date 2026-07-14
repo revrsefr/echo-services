@@ -1,8 +1,8 @@
 [package]
-name = "fedserv-nickserv"
+name = "echo-nickserv"
 version = "0.0.1"
 edition = "2021"
-description = "NickServ account-registration service module for fedserv."
+description = "NickServ account-registration service module for echo."
 
 [dependencies]
-fedserv-api = { path = "../../api" }
+echo-api = { path = "../../api" }

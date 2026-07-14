@@ -1,4 +1,4 @@
-use fedserv_api::{NetView, Sender, ServiceCtx, Store};
+use echo_api::{NetView, Sender, ServiceCtx, Store};
 
 // <#channel>: the lines seen in a channel this session and its top talkers.
 // Founder-or-admin.

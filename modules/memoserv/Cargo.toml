@@ -1,8 +1,8 @@
 [package]
-name = "fedserv-memoserv"
+name = "echo-memoserv"
 version = "0.0.1"
 edition = "2021"
 description = "MemoServ: deliver messages to registered users, online or not."
 
 [dependencies]
-fedserv-api = { path = "../../api" }
+echo-api = { path = "../../api" }

@@ -1,4 +1,4 @@
-use fedserv_api::{NetView, Priv, Sender, ServiceCtx, Store};
+use echo_api::{NetView, Priv, Sender, ServiceCtx, Store};
 use std::collections::HashSet;
 
 // CHANKILL <#channel> [reason]: AKILL every user in a channel by host, clearing

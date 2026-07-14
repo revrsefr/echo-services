@@ -1,6 +1,6 @@
 //! A minimal example service module — the smallest complete `Service`, meant to
 //! be copied when writing a new pseudo-client. It depends on nothing but the
-//! `fedserv-api` SDK crate, reads through the `Store`/`NetView` traits, and
+//! `echo-api` SDK crate, reads through the `Store`/`NetView` traits, and
 //! answers users by pushing notices onto the `ServiceCtx`. It never mutates the
 //! store, so it is safe to enable anywhere.
 //!
@@ -8,7 +8,7 @@
 //! real module, replace the commands below with your own and register the struct
 //! in the daemon's `main.rs` (see MODULES.md).
 
-use fedserv_api::{human_time, NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{human_time, NetView, Sender, Service, ServiceCtx, Store};
 
 // A service is a plain struct. It is introduced to the network at burst and then
 // receives the commands users message it. `uid` is assigned by the daemon.

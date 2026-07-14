@@ -1,4 +1,4 @@
-use fedserv_api::{NetView, Priv, Sender, ServiceCtx};
+use echo_api::{NetView, Priv, Sender, ServiceCtx};
 
 // SVSNICK <nick> <newnick>: force a user to change nick. Admin-only.
 pub fn nick(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView) {

@@ -289,6 +289,160 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
+name = "echo"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "axum",
+ "axum-server",
+ "base64",
+ "echo-api",
+ "echo-botserv",
+ "echo-chanfix",
+ "echo-chanserv",
+ "echo-diceserv",
+ "echo-example",
+ "echo-groupserv",
+ "echo-helpserv",
+ "echo-hostserv",
+ "echo-infoserv",
+ "echo-inspircd",
+ "echo-memoserv",
+ "echo-nickserv",
+ "echo-operserv",
+ "echo-reportserv",
+ "echo-statserv",
+ "hmac",
+ "pbkdf2",
+ "prost",
+ "regex",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "tokio",
+ "tokio-rustls",
+ "tokio-stream",
+ "toml",
+ "tonic",
+ "tonic-build",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "echo-api"
+version = "0.0.1"
+
+[[package]]
+name = "echo-botserv"
+version = "0.0.1"
+dependencies = [
+ "echo-api",
+]
+
+[[package]]
+name = "echo-chanfix"
+version = "0.0.1"
+dependencies = [
+ "echo-api",
+]
+
+[[package]]
+name = "echo-chanserv"
+version = "0.0.1"
+dependencies = [
+ "echo-api",
+]
+
+[[package]]
+name = "echo-diceserv"
+version = "0.0.1"
+dependencies = [
+ "echo-api",
+ "rand",
+]
+
+[[package]]
+name = "echo-example"
+version = "0.0.1"
+dependencies = [
+ "echo-api",
+]
+
+[[package]]
+name = "echo-groupserv"
+version = "0.0.1"
+dependencies = [
+ "echo-api",
+]
+
+[[package]]
+name = "echo-helpserv"
+version = "0.0.1"
+dependencies = [
+ "echo-api",
+]
+
+[[package]]
+name = "echo-hostserv"
+version = "0.0.1"
+dependencies = [
+ "echo-api",
+]
+
+[[package]]
+name = "echo-infoserv"
+version = "0.0.1"
+dependencies = [
+ "echo-api",
+]
+
+[[package]]
+name = "echo-inspircd"
+version = "0.0.1"
+dependencies = [
+ "echo-api",
+]
+
+[[package]]
+name = "echo-memoserv"
+version = "0.0.1"
+dependencies = [
+ "echo-api",
+]
+
+[[package]]
+name = "echo-nickserv"
+version = "0.0.1"
+dependencies = [
+ "echo-api",
+]
+
+[[package]]
+name = "echo-operserv"
+version = "0.0.1"
+dependencies = [
+ "echo-api",
+]
+
+[[package]]
+name = "echo-reportserv"
+version = "0.0.1"
+dependencies = [
+ "echo-api",
+]
+
+[[package]]
+name = "echo-statserv"
+version = "0.0.1"
+dependencies = [
+ "echo-api",
+]
+
+[[package]]
 name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -315,160 +469,6 @@ name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
-
-[[package]]
-name = "fedserv"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "argon2",
- "axum",
- "axum-server",
- "base64",
- "fedserv-api",
- "fedserv-botserv",
- "fedserv-chanfix",
- "fedserv-chanserv",
- "fedserv-diceserv",
- "fedserv-example",
- "fedserv-groupserv",
- "fedserv-helpserv",
- "fedserv-hostserv",
- "fedserv-infoserv",
- "fedserv-inspircd",
- "fedserv-memoserv",
- "fedserv-nickserv",
- "fedserv-operserv",
- "fedserv-reportserv",
- "fedserv-statserv",
- "hmac",
- "pbkdf2",
- "prost",
- "regex",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "sha2",
- "subtle",
- "tokio",
- "tokio-rustls",
- "tokio-stream",
- "toml",
- "tonic",
- "tonic-build",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "fedserv-api"
-version = "0.0.1"
-
-[[package]]
-name = "fedserv-botserv"
-version = "0.0.1"
-dependencies = [
- "fedserv-api",
-]
-
-[[package]]
-name = "fedserv-chanfix"
-version = "0.0.1"
-dependencies = [
- "fedserv-api",
-]
-
-[[package]]
-name = "fedserv-chanserv"
-version = "0.0.1"
-dependencies = [
- "fedserv-api",
-]
-
-[[package]]
-name = "fedserv-diceserv"
-version = "0.0.1"
-dependencies = [
- "fedserv-api",
- "rand",
-]
-
-[[package]]
-name = "fedserv-example"
-version = "0.0.1"
-dependencies = [
- "fedserv-api",
-]
-
-[[package]]
-name = "fedserv-groupserv"
-version = "0.0.1"
-dependencies = [
- "fedserv-api",
-]
-
-[[package]]
-name = "fedserv-helpserv"
-version = "0.0.1"
-dependencies = [
- "fedserv-api",
-]
-
-[[package]]
-name = "fedserv-hostserv"
-version = "0.0.1"
-dependencies = [
- "fedserv-api",
-]
-
-[[package]]
-name = "fedserv-infoserv"
-version = "0.0.1"
-dependencies = [
- "fedserv-api",
-]
-
-[[package]]
-name = "fedserv-inspircd"
-version = "0.0.1"
-dependencies = [
- "fedserv-api",
-]
-
-[[package]]
-name = "fedserv-memoserv"
-version = "0.0.1"
-dependencies = [
- "fedserv-api",
-]
-
-[[package]]
-name = "fedserv-nickserv"
-version = "0.0.1"
-dependencies = [
- "fedserv-api",
-]
-
-[[package]]
-name = "fedserv-operserv"
-version = "0.0.1"
-dependencies = [
- "fedserv-api",
-]
-
-[[package]]
-name = "fedserv-reportserv"
-version = "0.0.1"
-dependencies = [
- "fedserv-api",
-]
-
-[[package]]
-name = "fedserv-statserv"
-version = "0.0.1"
-dependencies = [
- "fedserv-api",
-]
 
 [[package]]
 name = "find-msvc-tools"

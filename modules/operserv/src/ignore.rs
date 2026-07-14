@@ -1,4 +1,4 @@
-use fedserv_api::{parse_duration, Priv, Sender, ServiceCtx, Store};
+use echo_api::{parse_duration, Priv, Sender, ServiceCtx, Store};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // IGNORE ADD [+expiry] <mask> [reason] | DEL <mask> | LIST: services silently

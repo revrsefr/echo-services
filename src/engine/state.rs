@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 // The read-only network view a module sees; re-exported so the engine keeps
 // naming it locally.
-pub use fedserv_api::{IncidentView, NetView, SeenView};
+pub use echo_api::{IncidentView, NetView, SeenView};
 
 // The most recent moderation/action incidents kept for LOGSEARCH.
 const INCIDENT_CAP: usize = 10_000;

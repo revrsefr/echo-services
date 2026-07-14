@@ -1,4 +1,4 @@
-use fedserv_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::{Priv, Sender, ServiceCtx, Store};
 
 // DEL/ODEL <number>: remove a bulletin by its listed position. Admin only.
 pub fn handle(me: &str, from: &Sender, kind: &str, num: Option<&str>, ctx: &mut ServiceCtx, db: &mut dyn Store) {

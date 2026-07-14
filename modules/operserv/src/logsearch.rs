@@ -1,4 +1,4 @@
-use fedserv_api::{human_time, NetView, Priv, Sender, ServiceCtx};
+use echo_api::{human_time, NetView, Priv, Sender, ServiceCtx};
 
 // LOGSEARCH [pattern]: search the recent action log — every kick, kill, ban,
 // registration/drop, akill, suspension, vhost, note, and so on. A bare id (as

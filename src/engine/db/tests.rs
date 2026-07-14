@@ -1,7 +1,7 @@
     use super::*;
 
     fn tmp(name: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("fedserv-log-{name}.jsonl"));
+        let p = std::env::temp_dir().join(format!("echo-log-{name}.jsonl"));
         let _ = std::fs::remove_file(&p);
         p
     }
@@ -12,8 +12,8 @@
 
     #[test]
     fn formats_unix_time_as_utc() {
-        assert_eq!(fedserv_api::human_time(0), "1970-01-01 00:00:00 UTC");
-        assert_eq!(fedserv_api::human_time(1783844590), "2026-07-12 08:23:10 UTC");
+        assert_eq!(echo_api::human_time(0), "1970-01-01 00:00:00 UTC");
+        assert_eq!(echo_api::human_time(1783844590), "2026-07-12 08:23:10 UTC");
     }
 
     #[test]

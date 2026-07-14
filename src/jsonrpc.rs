@@ -46,7 +46,7 @@ pub async fn run(engine: Shared, cfg: JsonRpcCfg) {
         .with_state(state);
 
     match tls {
-        // TLS terminated here → HTTP/2 (ALPN) plus HTTP/1.1, encrypted to fedserv.
+        // TLS terminated here → HTTP/2 (ALPN) plus HTTP/1.1, encrypted to echo.
         Some(t) => {
             // The dependency tree carries more than one rustls crypto provider, so
             // pin one before building any TLS config (ignored if already set).
@@ -155,7 +155,7 @@ mod tests {
     use crate::engine::db::Db;
 
     fn engine_with_stat(tag: &str) -> Shared {
-        let path = std::env::temp_dir().join(format!("fedserv-jsonrpc-{tag}.jsonl"));
+        let path = std::env::temp_dir().join(format!("echo-jsonrpc-{tag}.jsonl"));
         let _ = std::fs::remove_file(&path);
         let mut e = Engine::new(vec![], Db::open(&path, "42S"));
         e.bump("botserv.messages");

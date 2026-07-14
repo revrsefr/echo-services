@@ -1,4 +1,4 @@
-use fedserv_api::{NetView, Sender, ServiceCtx, Store};
+use echo_api::{NetView, Sender, ServiceCtx, Store};
 
 // DEL <account>: remove an account's vhost, restoring the normal host on any
 // online sessions. Operators only.

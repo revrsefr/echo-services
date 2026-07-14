@@ -1,4 +1,4 @@
-use fedserv_api::{Sender, ServiceCtx, Store};
+use echo_api::{Sender, ServiceCtx, Store};
 
 // REQUEST <message> (aka HELPME): open a help-desk ticket for the staff.
 pub fn handle(me: &str, from: &Sender, rest: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {

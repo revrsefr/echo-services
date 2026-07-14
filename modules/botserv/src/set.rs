@@ -1,4 +1,4 @@
-use fedserv_api::{parse_duration, ChanSetting, Priv, Sender, ServiceCtx, Store};
+use echo_api::{parse_duration, ChanSetting, Priv, Sender, ServiceCtx, Store};
 
 // SET <#channel> <option> <value>: per-channel bot options (founder-or-admin) —
 // GREET <on|off>, BANEXPIRE <duration|off>, NOBOT <on|off>. Also

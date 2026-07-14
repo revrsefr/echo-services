@@ -1,4 +1,4 @@
-use fedserv_api::{NetView, Priv, Sender, ServiceCtx};
+use echo_api::{NetView, Priv, Sender, ServiceCtx};
 
 // KICK <#channel> <nick> [reason]: remove a user from a channel, sourced from
 // OperServ so it's clearly a staff action. Admin-only.

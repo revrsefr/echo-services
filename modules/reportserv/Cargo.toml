@@ -1,8 +1,8 @@
 [package]
-name = "fedserv-reportserv"
+name = "echo-reportserv"
 version = "0.0.1"
 edition = "2021"
 description = "ReportServ: users file abuse reports; operators review them."
 
 [dependencies]
-fedserv-api = { path = "../../api" }
+echo-api = { path = "../../api" }

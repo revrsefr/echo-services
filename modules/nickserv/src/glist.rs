@@ -1,5 +1,5 @@
-use fedserv_api::Store;
-use fedserv_api::{Sender, ServiceCtx};
+use echo_api::Store;
+use echo_api::{Sender, ServiceCtx};
 
 // GLIST: list the nicks grouped to your account.
 pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &dyn Store) {

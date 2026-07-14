@@ -1,4 +1,4 @@
-use fedserv_api::{Sender, ServiceCtx, Store};
+use echo_api::{Sender, ServiceCtx, Store};
 
 // DEL <num>|ALL: remove a memo (or the whole mailbox).
 pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {

@@ -1,4 +1,4 @@
-use fedserv_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::{Priv, Sender, ServiceCtx, Store};
 
 // JUPE <server.name> [reason] | JUPE DEL <server.name> | JUPE LIST: hold a
 // server name with a fake server so a rogue one can't link (or lift it). Admin-

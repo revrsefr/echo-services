@@ -1,4 +1,4 @@
-use fedserv_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::{Priv, Sender, ServiceCtx, Store};
 
 // INFO <target> | INFO ADD <target> <note> | INFO DEL <target>: attach a staff
 // note to an account or channel (a `#name` is a channel, else an account). The

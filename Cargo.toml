@@ -21,28 +21,28 @@ members = [
 ]
 
 [package]
-name = "fedserv"
+name = "echo"
 version = "0.0.1"
 edition = "2021"
 description = "Federated IRC services daemon (protocol-agnostic core, InspIRCd link first)"
 
 [dependencies]
-fedserv-api = { path = "api" }
-fedserv-inspircd = { path = "modules/protocol/inspircd" }
-fedserv-chanserv = { path = "modules/chanserv" }
-fedserv-nickserv = { path = "modules/nickserv" }
-fedserv-example = { path = "modules/example" }
-fedserv-botserv = { path = "modules/botserv" }
-fedserv-memoserv = { path = "modules/memoserv" }
-fedserv-statserv = { path = "modules/statserv" }
-fedserv-hostserv = { path = "modules/hostserv" }
-fedserv-operserv = { path = "modules/operserv" }
-fedserv-diceserv = { path = "modules/diceserv" }
-fedserv-infoserv = { path = "modules/infoserv" }
-fedserv-reportserv = { path = "modules/reportserv" }
-fedserv-groupserv = { path = "modules/groupserv" }
-fedserv-chanfix = { path = "modules/chanfix" }
-fedserv-helpserv = { path = "modules/helpserv" }
+echo-api = { path = "api" }
+echo-inspircd = { path = "modules/protocol/inspircd" }
+echo-chanserv = { path = "modules/chanserv" }
+echo-nickserv = { path = "modules/nickserv" }
+echo-example = { path = "modules/example" }
+echo-botserv = { path = "modules/botserv" }
+echo-memoserv = { path = "modules/memoserv" }
+echo-statserv = { path = "modules/statserv" }
+echo-hostserv = { path = "modules/hostserv" }
+echo-operserv = { path = "modules/operserv" }
+echo-diceserv = { path = "modules/diceserv" }
+echo-infoserv = { path = "modules/infoserv" }
+echo-reportserv = { path = "modules/reportserv" }
+echo-groupserv = { path = "modules/groupserv" }
+echo-chanfix = { path = "modules/chanfix" }
+echo-helpserv = { path = "modules/helpserv" }
 tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "time", "sync", "process"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

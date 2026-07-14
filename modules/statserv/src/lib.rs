@@ -3,7 +3,7 @@
 //! (a #channel argument, for its founder). `lib.rs` holds the dispatcher; each
 //! view lives in its own file.
 
-use fedserv_api::{NetView, Priv, Sender, Service, ServiceCtx, Store};
+use echo_api::{NetView, Priv, Sender, Service, ServiceCtx, Store};
 
 #[path = "global.rs"]
 mod global;

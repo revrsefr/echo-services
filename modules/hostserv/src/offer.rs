@@ -1,4 +1,4 @@
-use fedserv_api::{Sender, ServiceCtx, Store};
+use echo_api::{Sender, ServiceCtx, Store};
 
 // OFFER <host>: add a vhost to the self-serve menu (operators).
 pub fn add(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {

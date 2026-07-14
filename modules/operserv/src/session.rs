@@ -1,4 +1,4 @@
-use fedserv_api::{NetView, Priv, Sender, ServiceCtx, Store};
+use echo_api::{NetView, Priv, Sender, ServiceCtx, Store};
 
 // SESSION LIST <min> | SESSION VIEW <ip>: inspect live per-IP session counts.
 // EXCEPTION ADD <ip-mask> <limit> [reason] | DEL <ip-mask> | LIST: manage the

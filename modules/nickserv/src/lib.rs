@@ -1,6 +1,6 @@
-use fedserv_api::Store;
-use fedserv_api::{Sender, Service, ServiceCtx};
-use fedserv_api::NetView;
+use echo_api::Store;
+use echo_api::{Sender, Service, ServiceCtx};
+use echo_api::NetView;
 
 #[path = "register.rs"]
 mod register;

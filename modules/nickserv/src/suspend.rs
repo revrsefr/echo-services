@@ -1,4 +1,4 @@
-use fedserv_api::{parse_duration, NetView, Priv, Sender, ServiceCtx, Store};
+use echo_api::{parse_duration, NetView, Priv, Sender, ServiceCtx, Store};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // SUSPEND <account> [+expiry] [reason] / UNSUSPEND <account>: freeze or unfreeze

@@ -1,4 +1,4 @@
-use fedserv_api::{parse_duration, NetView, Sender, ServiceCtx, Store};
+use echo_api::{parse_duration, NetView, Sender, ServiceCtx, Store};
 
 // SET <account> <host> [duration]: assign a vhost to an account, applying it at
 // once to online sessions. An optional duration (e.g. 30d) makes it temporary.

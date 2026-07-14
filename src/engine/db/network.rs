@@ -376,7 +376,7 @@ impl Db {
         self.net.groups.iter().find(|g| key(&g.name) == k).map(|g| GroupView {
             name: g.name.clone(),
             founder: g.founder.clone(),
-            members: g.members.iter().map(|m| fedserv_api::GroupMemberView { account: m.account.clone(), flags: m.flags.clone() }).collect(),
+            members: g.members.iter().map(|m| echo_api::GroupMemberView { account: m.account.clone(), flags: m.flags.clone() }).collect(),
         })
     }
 
@@ -409,7 +409,7 @@ impl Db {
     pub fn channel_caps(&self, channel: &str, account: &str) -> Caps {
         let Some(c) = self.channels.get(&key(channel)) else { return Caps::default() };
         if c.founder.eq_ignore_ascii_case(account) {
-            return fedserv_api::level_caps("founder");
+            return echo_api::level_caps("founder");
         }
         let mut caps = Caps::default();
         for a in &c.access {
@@ -418,7 +418,7 @@ impl Db {
                 None => a.account.eq_ignore_ascii_case(account),
             };
             if applies {
-                caps = caps.union(fedserv_api::level_caps(&a.level));
+                caps = caps.union(echo_api::level_caps(&a.level));
             }
         }
         caps

@@ -1,8 +1,8 @@
 [package]
-name = "fedserv-inspircd"
+name = "echo-inspircd"
 version = "0.0.1"
 edition = "2021"
-description = "InspIRCd server-to-server protocol module for fedserv."
+description = "InspIRCd server-to-server protocol module for echo."
 
 [dependencies]
-fedserv-api = { path = "../../../api" }
+echo-api = { path = "../../../api" }

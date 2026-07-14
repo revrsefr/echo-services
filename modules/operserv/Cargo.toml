@@ -1,8 +1,8 @@
 [package]
-name = "fedserv-operserv"
+name = "echo-operserv"
 version = "0.0.1"
 edition = "2021"
 description = "OperServ: network operator tools, starting with AKILL network bans."
 
 [dependencies]
-fedserv-api = { path = "../../api" }
+echo-api = { path = "../../api" }

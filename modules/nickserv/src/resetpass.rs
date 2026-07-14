@@ -1,5 +1,5 @@
-use fedserv_api::{CodeKind, Store};
-use fedserv_api::{Sender, ServiceCtx};
+use echo_api::{CodeKind, Store};
+use echo_api::{Sender, ServiceCtx};
 
 // RESETPASS <account>: email a reset code to the address on file.
 // RESETPASS <account> <code> <newpassword>: complete the reset with that code.
@@ -19,7 +19,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             };
             let code = db.issue_code(&canonical, CodeKind::Reset);
-            let mail = fedserv_api::email::reset(db.email_brand(), db.email_accent(), db.email_logo(), &canonical, &code);
+            let mail = echo_api::email::reset(db.email_brand(), db.email_accent(), db.email_logo(), &canonical, &code);
             ctx.send_email(email, mail.subject, mail.text, Some(mail.html));
             ctx.notice(me, from.uid, format!("A reset code has been emailed to the address on file for \x02{canonical}\x02."));
         }

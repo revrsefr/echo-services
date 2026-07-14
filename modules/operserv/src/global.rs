@@ -1,4 +1,4 @@
-use fedserv_api::{Priv, Sender, ServiceCtx};
+use echo_api::{Priv, Sender, ServiceCtx};
 
 // GLOBAL <message>: send an announcement to every user on the network. Admin-
 // only — it reaches everyone, so it's the heaviest voice services have.

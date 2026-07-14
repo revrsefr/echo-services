@@ -8,7 +8,7 @@
 // website only ever sees its own network's channels, matching what gossip
 // federates.
 syntax = "proto3";
-package fedserv.v1;
+package echo.v1;
 
 service Directory {
   // One-shot full read of current state, for a subscriber's initial load.
@@ -92,7 +92,7 @@ message ChannelDescSet { string name = 1; string description = 2; }
 // NOT re-check the account's own password (the caller is trusted, the same
 // model as an admin-level override) — Register and Authenticate are the two
 // exceptions, since the password is the actual input/question there.
-// A write committed here replicates to every other fedserv node exactly like
+// A write committed here replicates to every other echo node exactly like
 // an IRC-originated one does — gossip doesn't know or care where it came from.
 service Accounts {
   rpc Register(RegisterRequest) returns (AccountReply);

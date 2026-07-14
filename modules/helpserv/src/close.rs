@@ -1,4 +1,4 @@
-use fedserv_api::{Sender, ServiceCtx, Store};
+use echo_api::{Sender, ServiceCtx, Store};
 
 // CLOSE <id> (aka RESOLVE): resolve a ticket.
 pub fn handle(me: &str, from: &Sender, id: Option<&str>, ctx: &mut ServiceCtx, db: &mut dyn Store) {

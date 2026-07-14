@@ -1,4 +1,4 @@
-use fedserv_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::{Priv, Sender, ServiceCtx, Store};
 
 // NOEXPIRE <#channel> {ON|OFF}: pin a channel so inactivity-expiry never drops
 // it (or lift the pin). Oper-only (Priv::Admin).

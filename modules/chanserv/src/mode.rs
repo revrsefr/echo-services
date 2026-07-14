@@ -1,5 +1,5 @@
-use fedserv_api::Store;
-use fedserv_api::{Sender, ServiceCtx};
+use echo_api::Store;
+use echo_api::{Sender, ServiceCtx};
 
 // MODE <#channel> <modes>: the founder sets channel modes via ChanServ.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {

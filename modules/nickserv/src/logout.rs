@@ -1,4 +1,4 @@
-use fedserv_api::{Sender, ServiceCtx};
+use echo_api::{Sender, ServiceCtx};
 
 // LOGOUT: log out and rename to a guest nick (prefix + a per-logout sequence).
 pub fn handle(me: &str, guest_nick: &str, guest_seq: &mut u32, from: &Sender, ctx: &mut ServiceCtx) {

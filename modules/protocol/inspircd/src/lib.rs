@@ -1,7 +1,7 @@
 // InspIRCd spanning-tree link protocol. Handshake + UID + PING mirror the
 // sequence in Network-Links (protocols/inspircd.py); mode/burst details get
 // firmed up against a live insp4 uplink.
-use fedserv_api::{NetAction, NetEvent, Protocol};
+use echo_api::{NetAction, NetEvent, Protocol};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct InspIrcd {
@@ -352,7 +352,7 @@ impl Protocol for InspIrcd {
 
 // Whether a channel mode consumes a parameter — the shared canonical arity, so
 // parsing here and MODE-building in services never drift.
-use fedserv_api::chanmode_takes_param as takes_param;
+use echo_api::chanmode_takes_param as takes_param;
 
 // Walk a mode change and its params for a key (+k/-k). Returns Some(Some(key))
 // when a key is set, Some(None) when cleared, None when `k` isn't in the change.

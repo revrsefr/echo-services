@@ -9,7 +9,7 @@
 //! and any operator may OLIST. `lib.rs` holds the dispatcher; each command
 //! (parameterised by bulletin kind) lives in its own file.
 
-use fedserv_api::{NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "post.rs"]
 mod post;

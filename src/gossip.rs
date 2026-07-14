@@ -265,10 +265,10 @@ async fn send(tx: &mpsc::Sender<String>, msg: &Msg) -> Result<(), ()> {
 mod tests {
     use super::*;
     use crate::engine::db::Db;
-    use fedserv_nickserv::NickServ;
+    use echo_nickserv::NickServ;
 
     fn engine(origin: &str, tag: &str) -> (Shared, Outbound) {
-        let path = std::env::temp_dir().join(format!("fedserv-gossip-{tag}.jsonl"));
+        let path = std::env::temp_dir().join(format!("echo-gossip-{tag}.jsonl"));
         let _ = std::fs::remove_file(&path);
         let (tx, _) = broadcast::channel(1024);
         let mut db = Db::open(&path, origin);
@@ -411,18 +411,18 @@ mod tests {
     // Generate a CA + node cert with openssl into a temp dir; None if unavailable.
     fn gen_certs() -> Option<String> {
         use std::process::Command;
-        let dir = std::env::temp_dir().join(format!("fedserv-tls-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("echo-tls-{}", std::process::id()));
         std::fs::create_dir_all(&dir).ok()?;
         let d = dir.to_str()?.to_string();
         let run = |args: &[&str]| Command::new("openssl").args(args).status().map(|s| s.success()).unwrap_or(false);
         let ok = run(&["req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
-            "-keyout", &format!("{d}/ca.key"), "-out", &format!("{d}/ca.crt"), "-days", "1", "-subj", "/CN=fedserv-ca"])
+            "-keyout", &format!("{d}/ca.key"), "-out", &format!("{d}/ca.crt"), "-days", "1", "-subj", "/CN=echo-ca"])
             && run(&["req", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
-            "-keyout", &format!("{d}/node.key"), "-out", &format!("{d}/node.csr"), "-subj", "/CN=fedserv"]);
+            "-keyout", &format!("{d}/node.key"), "-out", &format!("{d}/node.csr"), "-subj", "/CN=echo"]);
         if !ok {
             return None;
         }
-        std::fs::write(format!("{d}/ext"), "subjectAltName=DNS:fedserv,IP:127.0.0.1\n").ok()?;
+        std::fs::write(format!("{d}/ext"), "subjectAltName=DNS:echo,IP:127.0.0.1\n").ok()?;
         run(&["x509", "-req", "-in", &format!("{d}/node.csr"), "-CA", &format!("{d}/ca.crt"),
             "-CAkey", &format!("{d}/ca.key"), "-CAcreateserial", "-out", &format!("{d}/node.crt"),
             "-days", "1", "-extfile", &format!("{d}/ext")])
@@ -441,7 +441,7 @@ mod tests {
         a.lock().await.test_register("alice");
 
         let (sside, cside) = tokio::io::duplex(64 * 1024);
-        let name = ServerName::try_from("fedserv").unwrap();
+        let name = ServerName::try_from("echo").unwrap();
         let (server, client) = tokio::join!(acceptor.accept(sside), connector.connect(name, cside));
         let sa = tokio::spawn(session(server.expect("tls accept"), a.clone(), "s3cret".into(), "A".into(), atx));
         let sb = tokio::spawn(session(client.expect("tls connect"), b.clone(), "s3cret".into(), "B".into(), btx));

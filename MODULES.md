@@ -1,10 +1,10 @@
 # Writing a module
 
-fedserv is a small core plus a set of module crates. A module depends on one
-crate — `fedserv-api` — and nothing else: not the engine, not the storage, not
+Echo is a small core plus a set of module crates. A module depends on one
+crate — `echo-api` — and nothing else: not the engine, not the storage, not
 the network code. That crate carries the traits a module implements and the
 normalized vocabulary the engine speaks. If your module compiles against
-`fedserv-api`, the core can run it.
+`echo-api`, the core can run it.
 
 There are two kinds of module.
 
@@ -21,18 +21,18 @@ minimal service to copy from; `modules/protocol/inspircd/` is the reference prot
 ```toml
 # modules/mymod/Cargo.toml
 [package]
-name = "fedserv-mymod"
+name = "echo-mymod"
 version = "0.0.1"
 edition = "2021"
 
 [dependencies]
-fedserv-api = { path = "../../api" }
+echo-api = { path = "../../api" }
 ```
 
 **2. The service.** A plain struct implementing `Service`:
 
 ```rust
-use fedserv_api::{NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{NetView, Sender, Service, ServiceCtx, Store};
 
 pub struct MyServ {
     pub uid: String, // assigned by the daemon
@@ -79,14 +79,14 @@ an IRC-originated one does — you do not write any replication code.
 members = [..., "modules/mymod"]
 
 [dependencies]
-fedserv-mymod = { path = "modules/mymod" }
+echo-mymod = { path = "modules/mymod" }
 ```
 
 Construct it in `src/main.rs` alongside the others, behind its config name:
 
 ```rust
 if enabled("mymod") {
-    services.push(Box::new(fedserv_mymod::MyServ {
+    services.push(Box::new(echo_mymod::MyServ {
         uid: format!("{}AAAAAD", cfg.server.sid), // a stable, unique suffix
     }));
 }

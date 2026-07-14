@@ -2,7 +2,7 @@
 //! and (in later slices) run fantasy commands. `lib.rs` holds the dispatcher;
 //! each command lives in its own file, matching NickServ/ChanServ.
 
-use fedserv_api::{NetView, Priv, Sender, Service, ServiceCtx, Store};
+use echo_api::{NetView, Priv, Sender, Service, ServiceCtx, Store};
 
 #[path = "bot.rs"]
 mod bot;

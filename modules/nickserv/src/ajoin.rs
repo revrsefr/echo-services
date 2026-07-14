@@ -1,5 +1,5 @@
-use fedserv_api::Store;
-use fedserv_api::{Sender, ServiceCtx};
+use echo_api::Store;
+use echo_api::{Sender, ServiceCtx};
 
 // A sane cap so a runaway list can't bloat an account or flood a user on identify.
 const MAX_AJOIN: usize = 25;

@@ -1,4 +1,4 @@
-# fedserv
+# Echo
 
 A federated IRC services daemon in Rust. Protocol-agnostic core, InspIRCd link first.
 
@@ -8,9 +8,9 @@ derived from any project's source.
 ## Design
 
 The core lives in `src/`. The pluggable parts are separate crates in a Cargo
-workspace, each depending only on the `fedserv-api` SDK crate.
+workspace, each depending only on the `echo-api` SDK crate.
 
-- **`api/`** (`fedserv-api`) the module SDK: the `Service`, `Protocol`, `Store`
+- **`api/`** (`echo-api`) the module SDK: the `Service`, `Protocol`, `Store`
   and `NetView` traits a module implements or is handed, plus the normalized
   `NetEvent`/`NetAction` vocabulary and the read views. It has no storage or
   runtime dependencies, so a third-party module builds against it alone.
@@ -21,8 +21,8 @@ workspace, each depending only on the `fedserv-api` SDK crate.
   stay out of a module's reach.
 - **`src/gossip.rs`** node-to-node replication over the logs.
 - **`modules/`** the loadable modules, each its own crate depending only on the
-  `fedserv-api` SDK:
-  - **`modules/protocol/inspircd/`** (`fedserv-inspircd`) the ircd link layer. A
+  `echo-api` SDK:
+  - **`modules/protocol/inspircd/`** (`echo-inspircd`) the ircd link layer. A
     `Protocol` impl maps raw server-to-server lines to and from the normalized
     model, so the engine never touches a raw line and a new ircd is one new crate
     under `modules/protocol/`.
@@ -57,7 +57,7 @@ grows. An account registered on any node works on all of them.
 ## Directory API (gRPC)
 
 **`src/grpc.rs`** exposes the account/channel directory over gRPC (see
-`proto/fedserv.proto`) so a website can mirror it without touching IRC: a
+`proto/echo.proto`) so a website can mirror it without touching IRC: a
 one-shot `Snapshot` for the initial load, then `Subscribe` for a live stream of
 every change from that point on. It subscribes to the same committed-entry
 channel gossip does, so a change reaches a subscriber in the same push, no
@@ -77,7 +77,7 @@ calls do not re-check the account's own password (an admin-level override, the
 same trust model a JSON-RPC integration to another services package would
 use) — `Register` and `Authenticate` are the two exceptions, since the
 password is the actual input there. A write committed this way replicates to
-every other fedserv node exactly like an IRC-originated one does — gossip
+every other Echo node exactly like an IRC-originated one does — gossip
 doesn't know or care where it came from.
 
 ## Config

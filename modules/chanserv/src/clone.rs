@@ -1,5 +1,5 @@
-use fedserv_api::Store;
-use fedserv_api::{Sender, ServiceCtx};
+use echo_api::Store;
+use echo_api::{Sender, ServiceCtx};
 
 // CLONE <source> <target>: copy a channel's settings (mode lock, access,
 // auto-kick, description, entry message) into another. Founder of both.

@@ -1,5 +1,5 @@
-use fedserv_api::{human_time, Store};
-use fedserv_api::{Sender, ServiceCtx};
+use echo_api::{human_time, Store};
+use echo_api::{Sender, ServiceCtx};
 
 // IDENTIFY [account] <password>: log in. The account defaults to the current
 // nick, so both the bare-password and account+password forms work.

@@ -1,4 +1,4 @@
-use fedserv_api::{Sender, ServiceCtx, Store};
+use echo_api::{Sender, ServiceCtx, Store};
 
 // REGISTER <!group>: create a group with you as its founder.
 pub fn handle(me: &str, from: &Sender, name: Option<&str>, ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -14,7 +14,7 @@ pub fn handle(me: &str, from: &Sender, name: Option<&str>, ctx: &mut ServiceCtx,
     let acc = acc.to_string();
     match db.group_register(name, &acc) {
         Ok(()) => ctx.notice(me, from.uid, format!("Group \x02{name}\x02 registered — you're the founder.")),
-        Err(fedserv_api::ChanError::Exists) => ctx.notice(me, from.uid, format!("\x02{name}\x02 is already registered.")),
+        Err(echo_api::ChanError::Exists) => ctx.notice(me, from.uid, format!("\x02{name}\x02 is already registered.")),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
 }

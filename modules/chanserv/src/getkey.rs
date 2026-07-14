@@ -1,6 +1,6 @@
-use fedserv_api::Store;
-use fedserv_api::{Sender, ServiceCtx};
-use fedserv_api::NetView;
+use echo_api::Store;
+use echo_api::{Sender, ServiceCtx};
+use echo_api::NetView;
 
 // GETKEY <#channel>: report the channel key (+k), for ops who need to let
 // someone in.

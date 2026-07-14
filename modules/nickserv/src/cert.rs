@@ -1,5 +1,5 @@
-use fedserv_api::{CertError, Store};
-use fedserv_api::{Sender, ServiceCtx};
+use echo_api::{CertError, Store};
+use echo_api::{Sender, ServiceCtx};
 
 // CERT ADD|DEL|LIST <password> [fingerprint]: manage the TLS certificate
 // fingerprints that may log in to your account via SASL EXTERNAL. Each

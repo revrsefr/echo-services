@@ -1,5 +1,5 @@
-use fedserv_api::Store;
-use fedserv_api::{Sender, ServiceCtx};
+use echo_api::Store;
+use echo_api::{Sender, ServiceCtx};
 
 // ENTRYMSG <#channel> [CLEAR | <text>]: message noticed to users as they join.
 // With no argument, show the current message.

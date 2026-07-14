@@ -7,7 +7,7 @@
 //! `lib.rs` holds the dispatcher and the shared guard/claim helpers; each
 //! command lives in its own file.
 
-use fedserv_api::{NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "request.rs"]
 mod request;

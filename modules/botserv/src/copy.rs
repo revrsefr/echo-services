@@ -1,4 +1,4 @@
-use fedserv_api::{Sender, ServiceCtx, Store};
+use echo_api::{Sender, ServiceCtx, Store};
 
 // COPY <#source> <#dest>: copy a channel's bot configuration — kickers,
 // badwords, greet and nobot — onto another. Requires founder-or-admin on both.

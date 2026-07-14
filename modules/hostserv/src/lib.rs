@@ -3,7 +3,7 @@
 //! with SET/DEL and review with LIST. `lib.rs` holds the dispatcher; each
 //! command lives in its own file.
 
-use fedserv_api::{NetView, Priv, Sender, Service, ServiceCtx, Store};
+use echo_api::{NetView, Priv, Sender, Service, ServiceCtx, Store};
 
 #[path = "on.rs"]
 mod on;

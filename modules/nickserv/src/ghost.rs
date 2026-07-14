@@ -1,6 +1,6 @@
-use fedserv_api::Store;
-use fedserv_api::{Sender, ServiceCtx};
-use fedserv_api::NetView;
+use echo_api::Store;
+use echo_api::{Sender, ServiceCtx};
+use echo_api::NetView;
 
 // GHOST/RECOVER <nick> [password]: rename off a session using a nick you own,
 // either by being identified to its account or giving that account's password.

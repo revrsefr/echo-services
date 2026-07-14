@@ -1,5 +1,5 @@
-use fedserv_api::{CodeKind, Store};
-use fedserv_api::{Sender, ServiceCtx};
+use echo_api::{CodeKind, Store};
+use echo_api::{Sender, ServiceCtx};
 
 // CONFIRM <code>: confirm your account's email with the code you were emailed.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {

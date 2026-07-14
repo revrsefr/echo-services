@@ -1,6 +1,6 @@
-use fedserv_api::{ChanError, ChannelView, Priv, Store};
-use fedserv_api::{Sender, Service, ServiceCtx};
-use fedserv_api::NetView;
+use echo_api::{ChanError, ChannelView, Priv, Store};
+use echo_api::{Sender, Service, ServiceCtx};
+use echo_api::NetView;
 
 #[path = "mode.rs"]
 mod mode;
@@ -109,7 +109,7 @@ impl Service for ChanServ {
                         if !info.desc.is_empty() {
                             ctx.notice(me, from.uid, format!("  Description: {}", info.desc));
                         }
-                        ctx.notice(me, from.uid, format!("  Registered : {}", fedserv_api::human_time(info.ts)));
+                        ctx.notice(me, from.uid, format!("  Registered : {}", echo_api::human_time(info.ts)));
                         if let Some(s) = db.channel_suspension(chan) {
                             ctx.notice(me, from.uid, format!("  Suspended  : by \x02{}\x02 — {}", s.by, s.reason));
                         }

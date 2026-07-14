@@ -1,5 +1,5 @@
-use fedserv_api::Store;
-use fedserv_api::{Sender, ServiceCtx};
+use echo_api::Store;
+use echo_api::{Sender, ServiceCtx};
 
 // AKICK <#channel> ADD <mask> [reason] | DEL <mask> | LIST
 // Masks are nick!user@host globs; matching users are banned and kicked on join.

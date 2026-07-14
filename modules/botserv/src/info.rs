@@ -1,4 +1,4 @@
-use fedserv_api::{Sender, ServiceCtx, Store};
+use echo_api::{Sender, ServiceCtx, Store};
 
 // INFO <bot> — describe a bot and list the channels it serves.
 // INFO <#channel> — show which bot (if any) is assigned to a channel.

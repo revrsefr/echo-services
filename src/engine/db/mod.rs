@@ -39,9 +39,9 @@ pub use event::Event;
 pub(crate) use event::{apply, Scope};
 
 // Error kinds, the emailed-code purpose, and the module-facing views live in the
-// fedserv-api SDK crate; re-exported so the engine keeps naming them locally and
+// echo-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
-pub use fedserv_api::{
+pub use echo_api::{
     AccountView, AjoinView, AkillView, BotView, Caps, GroupView, HelpView, IgnoreView, MemoView, NewsView, Privs, ReportView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
 };
 
@@ -538,7 +538,7 @@ impl ChannelInfo {
         self.access
             .iter()
             .find(|a| a.account.eq_ignore_ascii_case(account))
-            .and_then(|a| fedserv_api::level_caps(&a.level).auto)
+            .and_then(|a| echo_api::level_caps(&a.level).auto)
     }
 
     /// The matching auto-kick entry for `hostmask` (nick!user@host), if any.

@@ -1,4 +1,4 @@
-use fedserv_api::{Sender, ServiceCtx, Store};
+use echo_api::{Sender, ServiceCtx, Store};
 
 // TEMPLATE [<pattern>]: show the auto-vhost template, or (operators) set it.
 // Use $account for the requester's sanitised account name, e.g.

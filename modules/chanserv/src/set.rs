@@ -1,4 +1,4 @@
-use fedserv_api::{ChanSetting, Sender, ServiceCtx, Store};
+use echo_api::{ChanSetting, Sender, ServiceCtx, Store};
 
 // SET <#channel> FOUNDER <account> | DESC <text>: founder-only channel settings.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {

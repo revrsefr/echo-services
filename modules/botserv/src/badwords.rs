@@ -1,4 +1,4 @@
-use fedserv_api::{ChanError, Sender, ServiceCtx, Store};
+use echo_api::{ChanError, Sender, ServiceCtx, Store};
 
 // BADWORDS <#channel> ADD <regex> | DEL <regex> | LIST | CLEAR: manage the
 // channel's badword patterns. Each entry is a regular expression, so a channel

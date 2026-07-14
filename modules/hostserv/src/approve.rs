@@ -1,4 +1,4 @@
-use fedserv_api::{NetView, Sender, ServiceCtx, Store};
+use echo_api::{NetView, Sender, ServiceCtx, Store};
 
 // ACTIVATE <account> / REJECT <account>: approve a pending vhost request (setting
 // and applying it) or turn it down. Operators only.

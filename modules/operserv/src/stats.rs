@@ -1,4 +1,4 @@
-use fedserv_api::{Sender, ServiceCtx, Store};
+use echo_api::{Sender, ServiceCtx, Store};
 
 // STATS: an at-a-glance summary of the enforcement state OperServ holds — how
 // many network bans of each kind and how many services ignores are live.

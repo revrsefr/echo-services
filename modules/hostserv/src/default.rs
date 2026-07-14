@@ -1,4 +1,4 @@
-use fedserv_api::{Sender, ServiceCtx, Store};
+use echo_api::{Sender, ServiceCtx, Store};
 
 // DEFAULT: give yourself the auto-vhost from the network template, with your
 // account name substituted for $account.

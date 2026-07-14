@@ -1,4 +1,4 @@
-use fedserv_api::{ChanError, Sender, ServiceCtx, Store};
+use echo_api::{ChanError, Sender, ServiceCtx, Store};
 
 // TRIGGER <#channel> ADD <regex>|<response> | DEL <num> | LIST | CLEAR: manage
 // the channel's auto-responses. When a line matches <regex>, the assigned bot

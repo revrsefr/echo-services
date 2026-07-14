@@ -4,7 +4,7 @@
 //! account data. `lib.rs` holds the dispatcher; each command lives in its own
 //! file, matching NickServ/ChanServ.
 
-use fedserv_api::{NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "send.rs"]
 mod send;

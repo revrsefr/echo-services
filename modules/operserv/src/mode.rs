@@ -1,4 +1,4 @@
-use fedserv_api::{chanmode_takes_param, NetView, Priv, Sender, ServiceCtx, STATUS_MODES};
+use echo_api::{chanmode_takes_param, NetView, Priv, Sender, ServiceCtx, STATUS_MODES};
 
 // MODE <#channel> <modes> [params]: set channel modes as a services override
 // (forced, so it applies regardless of the current TS). Admin-only. Status-mode

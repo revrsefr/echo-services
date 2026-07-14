@@ -1,4 +1,4 @@
-use fedserv_api::{NetView, Sender, ServiceCtx};
+use echo_api::{NetView, Sender, ServiceCtx};
 
 // SCORES <#channel>: show the op-time standings ChanFix would reop from.
 pub fn handle(me: &str, from: &Sender, chan: Option<&str>, ctx: &mut ServiceCtx, net: &dyn NetView) {

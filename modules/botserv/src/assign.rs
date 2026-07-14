@@ -1,4 +1,4 @@
-use fedserv_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::{Priv, Sender, ServiceCtx, Store};
 
 // ASSIGN <#channel> <bot> / UNASSIGN <#channel>: put a bot in a channel (or take
 // it out). Channel founder only (or a services admin).

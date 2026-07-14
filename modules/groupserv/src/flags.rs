@@ -1,4 +1,4 @@
-use fedserv_api::{apply_flags, Sender, ServiceCtx, Store, GROUP_FLAGS};
+use echo_api::{apply_flags, Sender, ServiceCtx, Store, GROUP_FLAGS};
 
 // FLAGS <!group> [account [+/-flags]]: list, show, or change group-access flags.
 // Listing/showing is open; changing needs the founder or the `f` flag.

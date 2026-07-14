@@ -1,4 +1,4 @@
-use fedserv_api::{NetView, Priv, Sender, ServiceCtx, Store};
+use echo_api::{NetView, Priv, Sender, ServiceCtx, Store};
 
 // SERVER: the shared, cross-service counter registry plus a couple of live
 // gauges. Operators only (Priv::Auspex), since it is network-wide.

@@ -3,7 +3,7 @@
 //! announcement to every user, and KILL to disconnect one. `lib.rs` dispatches;
 //! each command family is its own file.
 
-use fedserv_api::{NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "xline.rs"]
 mod xline;

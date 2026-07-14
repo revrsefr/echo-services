@@ -36,7 +36,7 @@ pub struct Config {
     // Per-IP session limiting. Absent = unlimited.
     #[serde(default)]
     pub session: Option<Session>,
-    // Account authority. Absent = built-in (fedserv owns accounts). With
+    // Account authority. Absent = built-in (echo owns accounts). With
     // `external = true`, an outside authority (e.g. the website) owns identity
     // and pushes accounts in; IRC can only authenticate.
     #[serde(default)]
@@ -109,10 +109,10 @@ pub struct Oper {
 
 impl Config {
     // The account -> privileges table (casefolded keys) built from [[oper]].
-    pub fn opers(&self) -> std::collections::HashMap<String, fedserv_api::Privs> {
+    pub fn opers(&self) -> std::collections::HashMap<String, echo_api::Privs> {
         let mut map = std::collections::HashMap::new();
         for o in &self.oper {
-            map.insert(o.account.to_ascii_lowercase(), fedserv_api::Privs::from_names(&o.privs));
+            map.insert(o.account.to_ascii_lowercase(), echo_api::Privs::from_names(&o.privs));
         }
         map
     }
@@ -234,7 +234,7 @@ pub struct Peer {
 }
 
 fn default_peer_name() -> String {
-    "fedserv".to_string()
+    "echo".to_string()
 }
 
 #[derive(Debug, Deserialize)]

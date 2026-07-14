@@ -6,7 +6,7 @@
 //! `lib.rs` holds the dispatcher; the command lives in roll.rs and the
 //! expression evaluator in expr.rs.
 
-use fedserv_api::{NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "expr.rs"]
 mod expr;

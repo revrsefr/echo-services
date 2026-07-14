@@ -1,5 +1,5 @@
-use fedserv_api::Store;
-use fedserv_api::{Sender, ServiceCtx};
+use echo_api::Store;
+use echo_api::{Sender, ServiceCtx};
 
 // AOP/SOP/VOP <#channel> ADD <account> | DEL <account> | LIST — tiered
 // shortcuts over the access list. `level` is the access level they map to

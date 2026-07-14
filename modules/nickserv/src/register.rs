@@ -1,5 +1,5 @@
-use fedserv_api::{Sender, ServiceCtx};
-use fedserv_api::RegReply;
+use echo_api::{Sender, ServiceCtx};
+use echo_api::RegReply;
 
 // REGISTER <password> [email]: register the sender's current nick. The engine
 // derives the password off-thread, commits, and answers.

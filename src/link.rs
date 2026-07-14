@@ -106,7 +106,7 @@ fn dispatch_email(email: &Option<crate::config::Email>, to: String, subject: Str
         let headers = format!("From: {}\r\nTo: {to}\r\nSubject: {subject}\r\nMIME-Version: 1.0\r\n", email.from);
         let msg = match html {
             Some(html) => {
-                let b = "fedserv-alt-boundary-x9";
+                let b = "echo-alt-boundary-x9";
                 format!(
                     "{headers}Content-Type: multipart/alternative; boundary=\"{b}\"\r\n\r\n\
                      --{b}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{text}\r\n\

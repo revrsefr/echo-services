@@ -1,4 +1,4 @@
-use fedserv_api::{parse_duration, Sender, ServiceCtx, Store};
+use echo_api::{parse_duration, Sender, ServiceCtx, Store};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // A network-ban command family (AKILL, SQLINE, …): the ircd X-line `kind`, the

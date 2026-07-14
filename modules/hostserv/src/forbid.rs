@@ -1,4 +1,4 @@
-use fedserv_api::{Sender, ServiceCtx, Store};
+use echo_api::{Sender, ServiceCtx, Store};
 
 // FORBID <pattern>: block user-requested vhosts matching this regex (operators),
 // e.g. (?i)(oper|admin|staff|services) to stop impersonation.

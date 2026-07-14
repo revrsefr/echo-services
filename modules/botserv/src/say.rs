@@ -1,4 +1,4 @@
-use fedserv_api::{NetView, Priv, Sender, ServiceCtx, Store};
+use echo_api::{NetView, Priv, Sender, ServiceCtx, Store};
 
 // SAY <#channel> <text> — make the channel's assigned bot say something.
 // ACT <#channel> <text> — the same, as a CTCP ACTION (/me).

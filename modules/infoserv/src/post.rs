@@ -1,4 +1,4 @@
-use fedserv_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::{Priv, Sender, ServiceCtx, Store};
 
 // POST/OPOST <message>: add a bulletin (public or oper). Admin only.
 pub fn handle(me: &str, from: &Sender, kind: &str, rest: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {

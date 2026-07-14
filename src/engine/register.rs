@@ -40,7 +40,7 @@ impl Engine {
         if status == AuthorityStatus::Ok && !self.db.is_verified(name) {
             if let Some(addr) = addr {
                 let code = self.db.issue_code(name, db::CodeKind::Confirm);
-                let mail = fedserv_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), name, &code);
+                let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), name, &code);
                 self.emit_irc(NetAction::SendEmail { to: addr, subject: mail.subject, text: mail.text, html: Some(mail.html) });
             }
         }
@@ -177,7 +177,7 @@ impl Engine {
         if ok && !self.db.is_verified(account) {
             if let (Some(addr), RegReply::NickServ { agent, uid, .. }) = (addr, &reply) {
                 let code = self.db.issue_code(account, db::CodeKind::Confirm);
-                let mail = fedserv_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), account, &code);
+                let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), account, &code);
                 out.push(NetAction::SendEmail { to: addr, subject: mail.subject, text: mail.text, html: Some(mail.html) });
                 out.push(NetAction::Notice { from: agent.clone(), to: uid.clone(), text: "A confirmation code has been emailed to you. Confirm with \x02CONFIRM <code>\x02.".to_string() });
             }

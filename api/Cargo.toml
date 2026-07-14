@@ -1,5 +1,5 @@
 [package]
-name = "fedserv-api"
+name = "echo-api"
 version = "0.0.1"
 edition = "2021"
 description = "Stable module SDK: the traits and vocabulary a service or protocol module builds against."

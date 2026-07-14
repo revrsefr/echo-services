@@ -1,4 +1,4 @@
-use fedserv_api::{human_time, Sender, ServiceCtx, Store};
+use echo_api::{human_time, Sender, ServiceCtx, Store};
 
 // LIST: show every memo with a one-line preview; \x02*\x02 marks unread.
 pub fn handle(me: &str, from: &Sender, account: &str, ctx: &mut ServiceCtx, db: &dyn Store) {

@@ -1,5 +1,5 @@
-use fedserv_api::{Sender, ServiceCtx};
-use fedserv_api::NetView;
+use echo_api::{Sender, ServiceCtx};
+use echo_api::NetView;
 
 // SEEN <nick>: when a nick was last seen, and doing what.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView) {
@@ -12,7 +12,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         return;
     }
     match net.last_seen(nick) {
-        Some(s) => ctx.notice(me, from.uid, format!("\x02{}\x02 was last seen {} ({}).", s.nick, fedserv_api::human_time(s.ts), s.what)),
+        Some(s) => ctx.notice(me, from.uid, format!("\x02{}\x02 was last seen {} ({}).", s.nick, echo_api::human_time(s.ts), s.what)),
         None => ctx.notice(me, from.uid, format!("I have no record of \x02{nick}\x02.")),
     }
 }

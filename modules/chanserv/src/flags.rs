@@ -1,4 +1,4 @@
-use fedserv_api::{apply_flags, Sender, ServiceCtx, Store, ACCESS_FLAGS};
+use echo_api::{apply_flags, Sender, ServiceCtx, Store, ACCESS_FLAGS};
 
 // FLAGS <#channel> [account [+/-flags]]: the granular access model. With no
 // account, list the access entries and their flags; with an account, show or

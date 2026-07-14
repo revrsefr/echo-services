@@ -1,5 +1,5 @@
     use super::*;
-    use fedserv_nickserv::NickServ;
+    use echo_nickserv::NickServ;
 
     fn plain(authzid: &[u8], authcid: &[u8], passwd: &[u8]) -> String {
         let mut payload = Vec::new();
@@ -12,7 +12,7 @@
     }
 
     fn engine_with(name: &str, account: &str, password: &str) -> Engine {
-        let path = std::env::temp_dir().join(format!("fedserv-sasl-{name}.jsonl"));
+        let path = std::env::temp_dir().join(format!("echo-sasl-{name}.jsonl"));
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "test");
         db.scram_iterations = 4096; // keep the debug-build verifier cheap in tests
@@ -360,7 +360,7 @@
     // folding the log (with its origin/seq metadata) rather than a snapshot.
     #[test]
     fn account_store_survives_reopen() {
-        let path = std::env::temp_dir().join("fedserv-reopen.jsonl");
+        let path = std::env::temp_dir().join("echo-reopen.jsonl");
         let _ = std::fs::remove_file(&path);
         {
             let mut db = Db::open(&path, "n1");
@@ -391,8 +391,8 @@
     // notifies them over the services-initiated outbound path.
     #[test]
     fn lost_conflict_logs_out_local_session() {
-        use fedserv_chanserv::ChanServ;
-        let path = std::env::temp_dir().join("fedserv-lostconf.jsonl");
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-lostconf.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "test");
         db.scram_iterations = 4096;
@@ -440,8 +440,8 @@
     // lists the channels the account founds or has access on.
     #[test]
     fn nickserv_info_and_alist() {
-        use fedserv_chanserv::ChanServ;
-        let path = std::env::temp_dir().join("fedserv-nsinfo.jsonl");
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-nsinfo.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "test");
         db.scram_iterations = 4096;
@@ -571,7 +571,7 @@
     // account and emails a confirmation code; CONFIRM <code> verifies it.
     #[test]
     fn nickserv_confirm() {
-        let path = std::env::temp_dir().join("fedserv-nsconfirm.jsonl");
+        let path = std::env::temp_dir().join("echo-nsconfirm.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "test");
         db.scram_iterations = 4096;
@@ -641,8 +641,8 @@
     // SECUREOPS strips channel-operator status from a user without op-level access.
     #[test]
     fn secureops_strips_op_from_a_user_without_access() {
-        use fedserv_chanserv::ChanServ;
-        let path = std::env::temp_dir().join("fedserv-secureops.jsonl");
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-secureops.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.register_channel("#c", "boss").unwrap();
@@ -664,9 +664,9 @@
     // BotServ BOT ADD/LIST is oper-gated (Priv::Admin) and the bot is remembered.
     #[test]
     fn botserv_bot_add_list_is_oper_gated() {
-        use fedserv_botserv::BotServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-botserv.jsonl");
+        use echo_botserv::BotServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-botserv.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -679,7 +679,7 @@
             db,
         );
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
         let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
@@ -698,9 +698,9 @@
     // A bot is introduced on the network when added, and quit when deleted.
     #[test]
     fn botserv_introduces_and_quits_bots() {
-        use fedserv_botserv::BotServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-botintro.jsonl");
+        use echo_botserv::BotServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-botintro.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -714,7 +714,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
@@ -735,9 +735,9 @@
     // ASSIGN puts the bot in the channel; UNASSIGN takes it out.
     #[test]
     fn botserv_assign_joins_and_unassign_parts() {
-        use fedserv_botserv::BotServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-bsassign.jsonl");
+        use echo_botserv::BotServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-bsassign.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -753,7 +753,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
         let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
@@ -775,9 +775,9 @@
     // BOT DEL * removes every bot at once, quitting each.
     #[test]
     fn botserv_mass_bot_removal() {
-        use fedserv_botserv::BotServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-bsmass.jsonl");
+        use echo_botserv::BotServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-bsmass.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -791,7 +791,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
@@ -810,9 +810,9 @@
     // it when only the identity changes; the network client is refreshed both ways.
     #[test]
     fn botserv_bot_change_renames_and_reidentifies() {
-        use fedserv_botserv::BotServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-bschange.jsonl");
+        use echo_botserv::BotServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-bschange.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -827,7 +827,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
         let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
@@ -853,9 +853,9 @@
     // the founder is refused, a services admin is allowed.
     #[test]
     fn botserv_nobot_and_private_gate_assign() {
-        use fedserv_botserv::BotServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-bsprot.jsonl");
+        use echo_botserv::BotServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-bsprot.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -872,7 +872,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
         let boss = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
@@ -899,9 +899,9 @@
     // SAY/ACT speak through the channel's assigned bot, sourced from the bot's uid.
     #[test]
     fn botserv_say_speaks_through_bot() {
-        use fedserv_botserv::BotServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-bssay.jsonl");
+        use echo_botserv::BotServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-bssay.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -917,7 +917,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
         let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
@@ -951,9 +951,9 @@
     // operators when DONTKICKOPS is on, and leaves ordinary lines alone.
     #[test]
     fn botserv_caps_kicker_kicks() {
-        use fedserv_botserv::BotServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-bskick.jsonl");
+        use echo_botserv::BotServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-bskick.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -968,7 +968,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
         let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
@@ -1062,9 +1062,9 @@
     // COPY clones one channel's kicker/badword config onto another.
     #[test]
     fn botserv_copy_bot_config() {
-        use fedserv_botserv::BotServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-bscopy.jsonl");
+        use echo_botserv::BotServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-bscopy.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1080,7 +1080,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
@@ -1139,9 +1139,9 @@
     // operators, and its administration is oper-gated with host validation.
     #[test]
     fn hostserv_assigns_and_applies_vhosts() {
-        use fedserv_hostserv::HostServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-hostserv.jsonl");
+        use echo_hostserv::HostServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-hostserv.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1157,7 +1157,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
         let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
@@ -1187,9 +1187,9 @@
     // assigned to two accounts (uniqueness on the normalised form).
     #[test]
     fn hostserv_normalises_and_dedupes() {
-        use fedserv_hostserv::HostServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-hsnorm.jsonl");
+        use echo_hostserv::HostServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-hsnorm.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1205,7 +1205,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
         let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
@@ -1230,9 +1230,9 @@
     // A temporary vhost applies while valid; an already-expired one is ignored.
     #[test]
     fn hostserv_vhost_expiry() {
-        use fedserv_hostserv::HostServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-hsexpiry.jsonl");
+        use echo_hostserv::HostServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-hsexpiry.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1249,7 +1249,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
         let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
@@ -1272,9 +1272,9 @@
     // gives a user a $account-based vhost.
     #[test]
     fn hostserv_forbid_and_template() {
-        use fedserv_hostserv::HostServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-hsforbid.jsonl");
+        use echo_hostserv::HostServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-hsforbid.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1289,7 +1289,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
         let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
@@ -1316,9 +1316,9 @@
     // The vhost OFFER menu: operators OFFER specs, users TAKE them self-serve.
     #[test]
     fn hostserv_offer_menu() {
-        use fedserv_hostserv::HostServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-hsoffer.jsonl");
+        use echo_hostserv::HostServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-hsoffer.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1333,7 +1333,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
         let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
@@ -1357,9 +1357,9 @@
     // An ident@host vhost applies both the ident (CHGIDENT) and the host.
     #[test]
     fn hostserv_ident_at_host() {
-        use fedserv_hostserv::HostServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-hsident.jsonl");
+        use echo_hostserv::HostServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-hsident.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1386,9 +1386,9 @@
     // REJECT clears the request without assigning anything.
     #[test]
     fn hostserv_request_workflow() {
-        use fedserv_hostserv::HostServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-hsreq.jsonl");
+        use echo_hostserv::HostServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-hsreq.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1404,7 +1404,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
         let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
@@ -1437,10 +1437,10 @@
     // (SERVER, operators only).
     #[test]
     fn statserv_reports_channel_and_global() {
-        use fedserv_botserv::BotServ;
-        use fedserv_nickserv::NickServ;
-        use fedserv_statserv::StatServ;
-        let path = std::env::temp_dir().join("fedserv-statserv.jsonl");
+        use echo_botserv::BotServ;
+        use echo_nickserv::NickServ;
+        use echo_statserv::StatServ;
+        let path = std::env::temp_dir().join("echo-statserv.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1456,7 +1456,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin).with(fedserv_api::Priv::Auspex));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin).with(echo_api::Priv::Auspex));
         e.set_opers(opers);
         let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
         let ss = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAF".into(), text: t.into() });
@@ -1608,9 +1608,9 @@
     // Registers #c with founder boss (admin), a live assigned bot Bendy, and
     // returns the engine ready for KICK configuration + a spammer uid 000AAAAAS.
     fn kicker_fixture(tag: &str) -> (Engine, std::path::PathBuf) {
-        use fedserv_botserv::BotServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join(format!("fedserv-{tag}.jsonl"));
+        use echo_botserv::BotServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join(format!("echo-{tag}.jsonl"));
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1625,7 +1625,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "spammer".into(), host: "h".into() , ip: "0.0.0.0".into() });
@@ -1639,10 +1639,10 @@
     // channel enables greets and the member has access.
     #[test]
     fn botserv_greet_shown_on_join() {
-        use fedserv_botserv::BotServ;
-        use fedserv_chanserv::ChanServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-bsgreet.jsonl");
+        use echo_botserv::BotServ;
+        use echo_chanserv::ChanServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-bsgreet.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1658,7 +1658,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         e.chan_service = Some("42SAAAAAB".into());
         let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
@@ -1689,10 +1689,10 @@
     // from the assigned bot.
     #[test]
     fn fantasy_roll_speaks_dice_through_the_bot() {
-        use fedserv_botserv::BotServ;
-        use fedserv_chanserv::ChanServ;
-        use fedserv_diceserv::DiceServ;
-        let path = std::env::temp_dir().join("fedserv-fantasyroll.jsonl");
+        use echo_botserv::BotServ;
+        use echo_chanserv::ChanServ;
+        use echo_diceserv::DiceServ;
+        let path = std::env::temp_dir().join("echo-fantasyroll.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1710,7 +1710,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
         let chan = |e: &mut Engine, uid: &str, c: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: c.into(), text: t.into() });
@@ -1732,10 +1732,10 @@
 
     #[test]
     fn botserv_fantasy_routes_through_bot() {
-        use fedserv_botserv::BotServ;
-        use fedserv_chanserv::ChanServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-bsfantasy.jsonl");
+        use echo_botserv::BotServ;
+        use echo_chanserv::ChanServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-bsfantasy.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1752,7 +1752,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
         let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
@@ -1778,9 +1778,9 @@
     // MemoServ delivers a memo to an offline account and notifies them on login.
     #[test]
     fn memoserv_delivers_and_notifies_on_login() {
-        use fedserv_memoserv::MemoServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-memoserv.jsonl");
+        use echo_memoserv::MemoServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-memoserv.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1811,9 +1811,9 @@
     // Channel SUSPEND is oper-gated and freezes founder management until lifted.
     #[test]
     fn channel_suspend_is_oper_gated_and_freezes_management() {
-        use fedserv_chanserv::ChanServ;
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-chansuspendcmd.jsonl");
+        use echo_chanserv::ChanServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-chansuspendcmd.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1828,7 +1828,7 @@
             db,
         );
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Suspend));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Suspend));
         e.set_opers(opers);
         let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
         let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
@@ -1853,8 +1853,8 @@
     // SUSPEND is oper-gated, blocks the victim's login, and UNSUSPEND restores it.
     #[test]
     fn suspend_blocks_login_and_needs_oper() {
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-suspendcmd.jsonl");
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-suspendcmd.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1862,7 +1862,7 @@
         db.register("staff", "password1", None).unwrap();
         let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Suspend));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Suspend));
         e.set_opers(opers);
         let to_ns = |e: &mut Engine, uid: &str, text: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: text.into() });
         let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
@@ -1885,8 +1885,8 @@
     // An auspex oper sees another account's hidden INFO (email); a non-oper does not.
     #[test]
     fn auspex_oper_sees_hidden_info() {
-        use fedserv_nickserv::NickServ;
-        let path = std::env::temp_dir().join("fedserv-auspex.jsonl");
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-auspex.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1894,7 +1894,7 @@
         db.register("operator", "password1", None).unwrap();
         let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
         let mut opers = std::collections::HashMap::new();
-        opers.insert("operator".to_string(), Privs::default().with(fedserv_api::Priv::Auspex));
+        opers.insert("operator".to_string(), Privs::default().with(echo_api::Priv::Auspex));
         e.set_opers(opers);
         let info_alice = |e: &mut Engine, uid: &str| {
             e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "INFO alice".into() })
@@ -1915,8 +1915,8 @@
     // remembered topic when the channel is recreated.
     #[test]
     fn topiclock_reverts_and_keeptopic_restores() {
-        use fedserv_chanserv::ChanServ;
-        let path = std::env::temp_dir().join("fedserv-topic.jsonl");
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-topic.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.register_channel("#c", "boss").unwrap();
@@ -1937,8 +1937,8 @@
     // only the founder can drop.
     #[test]
     fn chanserv_register_info_drop() {
-        use fedserv_chanserv::ChanServ;
-        let path = std::env::temp_dir().join("fedserv-chanserv.jsonl");
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-chanserv.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -1999,8 +1999,8 @@
     // means no feed.
     #[test]
     fn audit_feed_announces_notable_actions() {
-        use fedserv_chanserv::ChanServ;
-        let path = std::env::temp_dir().join("fedserv-audit.jsonl");
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-audit.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2050,8 +2050,8 @@
     // is announced to the audit channel.
     #[test]
     fn expiry_sweep_respects_pins_sessions_and_opers() {
-        use fedserv_chanserv::ChanServ;
-        let path = std::env::temp_dir().join("fedserv-expiry.jsonl");
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-expiry.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2071,7 +2071,7 @@
         e.set_sid("42S".into());
         e.set_log_channel(Some("#services".into()));
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         e.set_irc_out(tx);
@@ -2120,8 +2120,8 @@
     // out entirely.
     #[test]
     fn operserv_akill_add_list_del_and_burst() {
-        use fedserv_operserv::OperServ;
-        let path = std::env::temp_dir().join("fedserv-akill.jsonl");
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-akill.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2137,7 +2137,7 @@
         e.set_sid("42S".into());
         e.set_log_channel(Some("#services".into()));
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
 
@@ -2176,7 +2176,7 @@
     // email, isn't dropped while still in the window, and isn't warned twice.
     #[test]
     fn expiry_warns_by_email_before_dropping() {
-        let path = std::env::temp_dir().join("fedserv-expwarn.jsonl");
+        let path = std::env::temp_dir().join("echo-expwarn.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2222,8 +2222,8 @@
     // each is admin-gated.
     #[test]
     fn operserv_sqline_global_and_kill() {
-        use fedserv_operserv::OperServ;
-        let path = std::env::temp_dir().join("fedserv-osmore.jsonl");
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-osmore.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2238,7 +2238,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
 
@@ -2284,8 +2284,8 @@
     // to its uid) and KICK (remove a user from a channel), both admin-gated.
     #[test]
     fn operserv_mode_and_kick() {
-        use fedserv_operserv::OperServ;
-        let path = std::env::temp_dir().join("fedserv-osmodekick.jsonl");
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-osmodekick.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2300,7 +2300,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
 
@@ -2333,8 +2333,8 @@
     // the command audit trail); gated on auspex.
     #[test]
     fn operserv_logsearch_finds_actions() {
-        use fedserv_operserv::OperServ;
-        let path = std::env::temp_dir().join("fedserv-logsearch.jsonl");
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-logsearch.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2349,8 +2349,8 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin).with(fedserv_api::Priv::Auspex));
-        opers.insert("mod".to_string(), Privs::default().with(fedserv_api::Priv::Suspend));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin).with(echo_api::Priv::Auspex));
+        opers.insert("mod".to_string(), Privs::default().with(echo_api::Priv::Suspend));
         e.set_opers(opers);
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
         let has = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
@@ -2380,8 +2380,8 @@
     // recorded in the searchable log.
     #[test]
     fn removals_get_incident_ids() {
-        use fedserv_operserv::OperServ;
-        let path = std::env::temp_dir().join("fedserv-incident.jsonl");
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-incident.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2395,7 +2395,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
 
@@ -2422,8 +2422,8 @@
     // banning the operator who ran it.
     #[test]
     fn operserv_chankill_clears_a_channel() {
-        use fedserv_operserv::OperServ;
-        let path = std::env::temp_dir().join("fedserv-oschankill.jsonl");
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-oschankill.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2437,7 +2437,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
         let conn = |e: &mut Engine, uid: &str, host: &str| e.handle(NetEvent::UserConnect { uid: uid.into(), nick: uid.into(), host: host.into(), ip: "0.0.0.0".into() });
@@ -2465,8 +2465,8 @@
     // and lift it with a squit. Admin-only.
     #[test]
     fn operserv_jupe_holds_and_lifts() {
-        use fedserv_operserv::OperServ;
-        let path = std::env::temp_dir().join("fedserv-osjupe.jsonl");
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-osjupe.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2480,7 +2480,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
 
@@ -2504,11 +2504,11 @@
     }
 
     // External-account mode: IRC can log in against pushed-in accounts but can't
-    // register or change identity; channels (fedserv's own domain) still work.
+    // register or change identity; channels (echo's own domain) still work.
     #[test]
     fn external_accounts_delegate_identity() {
-        use fedserv_chanserv::ChanServ;
-        let path = std::env::temp_dir().join("fedserv-external.jsonl");
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-external.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2541,7 +2541,7 @@
         let reply = crate::proto::RegReply::NickServ { agent: "42SAAAAAA".into(), uid: "000AAAAAB".into(), nick: "bob".into() };
         assert!(e.pre_register_check("bob", &reply).is_some_and(|r| r.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("website")))), "relay refused");
 
-        // Channels are fedserv's own domain — still registerable.
+        // Channels are echo's own domain — still registerable.
         e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: true });
         assert!(has(&cs(&mut e, "000AAAAAB", "REGISTER #room"), "now registered"), "channels still work");
     }
@@ -2550,9 +2550,9 @@
     // channel then all registrations, cap sessions, and lock out new connections.
     #[test]
     fn operserv_defcon_levels() {
-        use fedserv_chanserv::ChanServ;
-        use fedserv_operserv::OperServ;
-        let path = std::env::temp_dir().join("fedserv-defcon.jsonl");
+        use echo_chanserv::ChanServ;
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-defcon.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2567,7 +2567,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
         let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
@@ -2609,8 +2609,8 @@
     // killed; SESSION inspects counts; EXCEPTION raises the allowance per IP-mask.
     #[test]
     fn operserv_session_limit_and_exceptions() {
-        use fedserv_operserv::OperServ;
-        let path = std::env::temp_dir().join("fedserv-ossession.jsonl");
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-ossession.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2625,7 +2625,7 @@
         e.set_sid("42S".into());
         e.set_session_limit(Some(2));
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
         let conn = |e: &mut Engine, uid: &str, ip: &str| e.handle(NetEvent::UserConnect { uid: uid.into(), nick: uid.into(), host: "h".into(), ip: ip.into() });
@@ -2658,8 +2658,8 @@
     // config opers), and revoking removes them. Admin-only.
     #[test]
     fn operserv_oper_grants_runtime_privileges() {
-        use fedserv_operserv::OperServ;
-        let path = std::env::temp_dir().join("fedserv-osoper.jsonl");
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-osoper.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2674,7 +2674,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
         let denied = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied")));
@@ -2703,8 +2703,8 @@
     // A temporary OPER grant confers privileges until it lazily expires.
     #[test]
     fn operserv_oper_grant_can_expire() {
-        use fedserv_operserv::OperServ;
-        let path = std::env::temp_dir().join("fedserv-opertmp.jsonl");
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-opertmp.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2719,7 +2719,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
         let denied = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied")));
@@ -2743,9 +2743,9 @@
     // (LOGSEARCH), and operators TAKE / CLOSE it. Reviewing is oper-only.
     #[test]
     fn helpserv_ticket_flow() {
-        use fedserv_helpserv::HelpServ;
-        use fedserv_operserv::OperServ;
-        let path = std::env::temp_dir().join("fedserv-helpserv.jsonl");
+        use echo_helpserv::HelpServ;
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-helpserv.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2760,7 +2760,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin).with(fedserv_api::Priv::Auspex));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin).with(echo_api::Priv::Auspex));
         e.set_opers(opers);
         let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAN".into(), text: t.into() });
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
@@ -2790,9 +2790,9 @@
     // through the audit trail so OperServ LOGSEARCH finds it. Reviewing is oper-only.
     #[test]
     fn reportserv_files_and_is_searchable() {
-        use fedserv_operserv::OperServ;
-        use fedserv_reportserv::ReportServ;
-        let path = std::env::temp_dir().join("fedserv-reportserv.jsonl");
+        use echo_operserv::OperServ;
+        use echo_reportserv::ReportServ;
+        let path = std::env::temp_dir().join("echo-reportserv.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2807,7 +2807,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin).with(fedserv_api::Priv::Auspex));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin).with(echo_api::Priv::Auspex));
         e.set_opers(opers);
         let rs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAK".into(), text: t.into() });
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
@@ -2837,8 +2837,8 @@
     // everyone on connect, oper bulletins greet an operator on login.
     #[test]
     fn infoserv_bulletins_public_and_oper() {
-        use fedserv_infoserv::InfoServ;
-        let path = std::env::temp_dir().join("fedserv-infoserv.jsonl");
+        use echo_infoserv::InfoServ;
+        let path = std::env::temp_dir().join("echo-infoserv.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2854,8 +2854,8 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
-        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         e.set_irc_out(tx);
@@ -2901,9 +2901,9 @@
     // shows in that service's INFO to opers only, never to the account owner.
     #[test]
     fn operserv_info_staff_notes() {
-        use fedserv_chanserv::ChanServ;
-        use fedserv_operserv::OperServ;
-        let path = std::env::temp_dir().join("fedserv-osinfo.jsonl");
+        use echo_chanserv::ChanServ;
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-osinfo.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2920,7 +2920,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin).with(fedserv_api::Priv::Auspex));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin).with(echo_api::Priv::Auspex));
         e.set_opers(opers);
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
         let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
@@ -2954,8 +2954,8 @@
     // OperServ SVSNICK / SVSJOIN: force a user's nick or channel join, admin-gated.
     #[test]
     fn operserv_svs_forces_nick_and_join() {
-        use fedserv_operserv::OperServ;
-        let path = std::env::temp_dir().join("fedserv-ossvs.jsonl");
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-ossvs.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -2969,7 +2969,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
 
@@ -2993,8 +2993,8 @@
     // dropped; DEL restores them; opers are never silenced.
     #[test]
     fn operserv_ignore_silences_and_restores() {
-        use fedserv_operserv::OperServ;
-        let path = std::env::temp_dir().join("fedserv-osignore.jsonl");
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-osignore.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -3008,7 +3008,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
         let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
@@ -3053,8 +3053,8 @@
     // regulars of an opless, unregistered channel; it defers to ChanServ.
     #[test]
     fn chanfix_scores_and_fixes_opless_channels() {
-        use fedserv_chanfix::ChanFix;
-        let path = std::env::temp_dir().join("fedserv-chanfix.jsonl");
+        use echo_chanfix::ChanFix;
+        let path = std::env::temp_dir().join("echo-chanfix.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -3071,7 +3071,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Auspex));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Auspex));
         e.set_opers(opers);
         let cf = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAM".into(), text: t.into() });
         let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
@@ -3107,9 +3107,9 @@
     // group member inherits that channel access (auto-op on join).
     #[test]
     fn groupserv_grants_channel_access() {
-        use fedserv_chanserv::ChanServ;
-        use fedserv_groupserv::GroupServ;
-        let path = std::env::temp_dir().join("fedserv-groupserv.jsonl");
+        use echo_chanserv::ChanServ;
+        use echo_groupserv::GroupServ;
+        let path = std::env::temp_dir().join("echo-groupserv.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -3159,8 +3159,8 @@
     // founder or the 'a' flag.
     #[test]
     fn chanserv_flags_grant_access() {
-        use fedserv_chanserv::ChanServ;
-        let path = std::env::temp_dir().join("fedserv-csflags.jsonl");
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-csflags.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -3208,8 +3208,8 @@
     // ChanServ moderation: an op can op/kick/ban users; a non-op is refused.
     #[test]
     fn chanserv_moderation() {
-        use fedserv_chanserv::ChanServ;
-        let path = std::env::temp_dir().join("fedserv-cs-mod.jsonl");
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-cs-mod.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -3252,8 +3252,8 @@
     // ChanServ topic, invite, auto-kick (with enforcement on join), list and status.
     #[test]
     fn chanserv_topic_invite_akick() {
-        use fedserv_chanserv::ChanServ;
-        let path = std::env::temp_dir().join("fedserv-cs-tia.jsonl");
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-cs-tia.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -3293,8 +3293,8 @@
     // ChanServ SET: description and founder transfer, founder-gated.
     #[test]
     fn chanserv_set() {
-        use fedserv_chanserv::ChanServ;
-        let path = std::env::temp_dir().join("fedserv-cs-set.jsonl");
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-cs-set.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -3328,8 +3328,8 @@
     // ChanServ entrymsg, enforce, getkey, seen, clone and the xop lists.
     #[test]
     fn chanserv_extended() {
-        use fedserv_chanserv::ChanServ;
-        let path = std::env::temp_dir().join("fedserv-cs-ext.jsonl");
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-cs-ext.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -3384,7 +3384,7 @@
     // A registered channel (re)appearing re-asserts +r; an unregistered one does not.
     #[test]
     fn channel_create_reasserts_registered_mode() {
-        let path = std::env::temp_dir().join("fedserv-chancreate.jsonl");
+        let path = std::env::temp_dir().join("echo-chancreate.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.register_channel("#reg", "alice").unwrap();
@@ -3401,7 +3401,7 @@
     // A channel's mode lock is applied on creation and enforced on violation.
     #[test]
     fn mode_lock_is_applied_and_enforced() {
-        let path = std::env::temp_dir().join("fedserv-mlock-engine.jsonl");
+        let path = std::env::temp_dir().join("echo-mlock-engine.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.register_channel("#lk", "alice").unwrap();
@@ -3424,7 +3424,7 @@
     // The founder is opped when they join their channel; others are not.
     #[test]
     fn founder_is_opped_on_join() {
-        let path = std::env::temp_dir().join("fedserv-autoop.jsonl");
+        let path = std::env::temp_dir().join("echo-autoop.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;
@@ -3445,7 +3445,7 @@
     // An access-list voice gets +v on join.
     #[test]
     fn access_voice_on_join() {
-        let path = std::env::temp_dir().join("fedserv-access-join.jsonl");
+        let path = std::env::temp_dir().join("echo-access-join.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "42S");
         db.scram_iterations = 4096;

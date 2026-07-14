@@ -1,6 +1,6 @@
 // Directory replication over gRPC: lets a website (Django, or anything else
 // with a protoc-generated client) mirror the account/channel directory this
-// node owns. See proto/fedserv.proto for the wire contract and exactly which
+// node owns. See proto/echo.proto for the wire contract and exactly which
 // fields are exposed — no credentials of any kind cross this API.
 use std::pin::Pin;
 use std::sync::Arc;
@@ -17,7 +17,7 @@ use crate::engine::db::{Account, ChannelInfo, Db, Event, LogEntry};
 use crate::engine::{AuthorityStatus, Engine};
 
 pub mod pb {
-    tonic::include_proto!("fedserv.v1");
+    tonic::include_proto!("echo.v1");
 }
 
 use pb::accounts_server::{Accounts, AccountsServer};
@@ -414,12 +414,12 @@ pub async fn run(engine: Shared, cfg: GrpcCfg, outbound: broadcast::Sender<LogEn
 mod tests {
     use super::*;
     use crate::engine::db::Db;
-    use fedserv_nickserv::NickServ;
+    use echo_nickserv::NickServ;
     use tokio_stream::StreamExt;
     use tonic::metadata::MetadataValue;
 
     fn engine_with(tag: &str) -> (Shared, broadcast::Sender<LogEntry>) {
-        let path = std::env::temp_dir().join(format!("fedserv-grpc-{tag}.jsonl"));
+        let path = std::env::temp_dir().join(format!("echo-grpc-{tag}.jsonl"));
         let _ = std::fs::remove_file(&path);
         let (tx, _) = broadcast::channel(1024);
         let mut db = Db::open(&path, "A");
@@ -670,12 +670,12 @@ mod tests {
     }
 
     // Full round trip through the real confirmation-email pipeline: register with
-    // email confirmation on, capture the code fedserv actually emails out (never
+    // email confirmation on, capture the code echo actually emails out (never
     // returned by the RPC — proving the caller can't skip owning the inbox), then
     // confirm with it.
     #[tokio::test]
     async fn confirm_completes_with_the_real_emailed_code() {
-        let path = std::env::temp_dir().join("fedserv-grpc-acct-confirm.jsonl");
+        let path = std::env::temp_dir().join("echo-grpc-acct-confirm.jsonl");
         let _ = std::fs::remove_file(&path);
         let (tx, _) = broadcast::channel(1024);
         let mut db = Db::open(&path, "A");

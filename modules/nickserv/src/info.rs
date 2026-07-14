@@ -1,5 +1,5 @@
-use fedserv_api::{human_time, Priv, Store};
-use fedserv_api::{Sender, ServiceCtx};
+use echo_api::{human_time, Priv, Store};
+use echo_api::{Sender, ServiceCtx};
 
 // INFO [account]: show an account's registration details. The email and other
 // private fields are shown to the account's own owner, or to an oper with the

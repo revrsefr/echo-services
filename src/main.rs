@@ -1,6 +1,6 @@
 // Core lives in src/; the pseudo-clients and the ircd link are external module
-// crates (fedserv-nickserv, fedserv-chanserv, fedserv-inspircd), each depending
-// only on the fedserv-api SDK.
+// crates (echo-nickserv, echo-chanserv, echo-inspircd), each depending
+// only on the echo-api SDK.
 mod config;
 mod engine;
 mod gossip;
@@ -15,28 +15,28 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 use engine::Engine;
-use fedserv_botserv::BotServ;
-use fedserv_chanserv::ChanServ;
-use fedserv_memoserv::MemoServ;
-use fedserv_statserv::StatServ;
-use fedserv_hostserv::HostServ;
-use fedserv_operserv::OperServ;
-use fedserv_diceserv::DiceServ;
-use fedserv_infoserv::InfoServ;
-use fedserv_reportserv::ReportServ;
-use fedserv_groupserv::GroupServ;
-use fedserv_chanfix::ChanFix;
-use fedserv_helpserv::HelpServ;
-use fedserv_example::ExampleServ;
-use fedserv_inspircd::InspIrcd;
-use fedserv_nickserv::NickServ;
+use echo_botserv::BotServ;
+use echo_chanserv::ChanServ;
+use echo_memoserv::MemoServ;
+use echo_statserv::StatServ;
+use echo_hostserv::HostServ;
+use echo_operserv::OperServ;
+use echo_diceserv::DiceServ;
+use echo_infoserv::InfoServ;
+use echo_reportserv::ReportServ;
+use echo_groupserv::GroupServ;
+use echo_chanfix::ChanFix;
+use echo_helpserv::HelpServ;
+use echo_example::ExampleServ;
+use echo_inspircd::InspIrcd;
+use echo_nickserv::NickServ;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "fedserv=debug".into()),
+                .unwrap_or_else(|_| "echo=debug".into()),
         )
         .init();
 
@@ -131,7 +131,7 @@ async fn main() -> Result<()> {
         }));
     }
     let (gossip_tx, _) = tokio::sync::broadcast::channel::<engine::db::LogEntry>(1024);
-    let mut db = engine::db::Db::open("fedserv.db.jsonl", &cfg.server.sid);
+    let mut db = engine::db::Db::open("echo.db.jsonl", &cfg.server.sid);
     db.scram_iterations = cfg.server.scram_iterations;
     db.set_outbound(gossip_tx.clone());
     db.set_email_enabled(cfg.email.is_some());

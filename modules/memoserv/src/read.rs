@@ -1,4 +1,4 @@
-use fedserv_api::{human_time, MemoView, Sender, ServiceCtx, Store};
+use echo_api::{human_time, MemoView, Sender, ServiceCtx, Store};
 
 // READ <num>|NEW|ALL: display memos and mark them read.
 pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {

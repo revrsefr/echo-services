@@ -1,6 +1,6 @@
-use fedserv_api::Store;
-use fedserv_api::{Sender, ServiceCtx};
-use fedserv_api::NetView;
+use echo_api::Store;
+use echo_api::{Sender, ServiceCtx};
+use echo_api::NetView;
 
 // BAN <#channel> <nick> [reason]: ban *!*@host and kick the user.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &dyn Store) {
