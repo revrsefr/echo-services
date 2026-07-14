@@ -1,0 +1,482 @@
+use super::*;
+
+impl Db {
+    /// Add (or refresh) a `kind` network ban. Returns whether it was newly added.
+    pub fn akill_add(&mut self, kind: &str, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
+        let same = |a: &Akill| a.kind == kind && a.mask.eq_ignore_ascii_case(mask);
+        let fresh = !self.net.akills.iter().any(|a| same(a) && a.expires.is_none_or(|e| e > now()));
+        self.log
+            .append(Event::AkillAdded { kind: kind.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now(), expires })
+            .map_err(|_| RegError::Internal)?;
+        self.net.akills.retain(|a| !same(a));
+        self.net.akills.push(Akill { kind: kind.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now(), expires });
+        Ok(fresh)
+    }
+
+    /// Lift a `kind` network ban. Returns whether a live one was removed.
+    pub fn akill_del(&mut self, kind: &str, mask: &str) -> Result<bool, RegError> {
+        let same = |a: &Akill| a.kind == kind && a.mask.eq_ignore_ascii_case(mask);
+        let existed = self.net.akills.iter().any(|a| same(a) && a.expires.is_none_or(|e| e > now()));
+        if !existed {
+            return Ok(false);
+        }
+        self.log.append(Event::AkillRemoved { kind: kind.to_string(), mask: mask.to_string() }).map_err(|_| RegError::Internal)?;
+        self.net.akills.retain(|a| !same(a));
+        Ok(true)
+    }
+
+    /// The live network bans (expired ones hidden lazily), oldest first.
+    pub fn akills(&self) -> Vec<AkillView> {
+        let now = now();
+        self.net.akills
+            .iter()
+            .filter(|a| a.expires.is_none_or(|e| e > now))
+            .map(|a| AkillView { kind: a.kind.clone(), mask: a.mask.clone(), setter: a.setter.clone(), reason: a.reason.clone(), ts: a.ts, expires: a.expires })
+            .collect()
+    }
+
+    /// Add (or replace) a session-limit exception for an IP-mask.
+    pub fn session_except_add(&mut self, mask: &str, limit: u32, reason: &str) {
+        let _ = self.log.append(Event::SessionExceptionAdded { mask: mask.to_string(), limit, reason: reason.to_string() });
+        self.net.sess_exceptions.retain(|e| !e.mask.eq_ignore_ascii_case(mask));
+        self.net.sess_exceptions.push(SessionException { mask: mask.to_string(), limit, reason: reason.to_string() });
+    }
+
+    /// Remove a session-limit exception. Returns whether one existed.
+    pub fn session_except_del(&mut self, mask: &str) -> bool {
+        let existed = self.net.sess_exceptions.iter().any(|e| e.mask.eq_ignore_ascii_case(mask));
+        if existed {
+            let _ = self.log.append(Event::SessionExceptionRemoved { mask: mask.to_string() });
+            self.net.sess_exceptions.retain(|e| !e.mask.eq_ignore_ascii_case(mask));
+        }
+        existed
+    }
+
+    /// The session-limit exceptions, as (mask, limit, reason).
+    pub fn session_exceptions(&self) -> Vec<(String, u32, String)> {
+        self.net.sess_exceptions.iter().map(|e| (e.mask.clone(), e.limit, e.reason.clone())).collect()
+    }
+
+    /// The session allowance for `ip` from any matching exception (the most
+    /// permissive wins), or None if none matches. A limit of 0 means unlimited.
+    pub fn session_exception_for(&self, ip: &str) -> Option<u32> {
+        self.net
+            .sess_exceptions
+            .iter()
+            .filter(|e| glob_match(&e.mask.to_ascii_lowercase(), &ip.to_ascii_lowercase()))
+            .map(|e| e.limit)
+            .max_by_key(|&l| if l == 0 { u32::MAX } else { l })
+    }
+
+    /// Grant runtime operator privileges to an account (replaces any existing),
+    /// optionally expiring at an absolute unix time.
+    pub fn oper_grant(&mut self, account: &str, privs: Vec<String>, expires: Option<u64>) {
+        let _ = self.log.append(Event::OperGranted { account: account.to_string(), privs: privs.clone(), expires });
+        self.net.opers.insert(key(account), OperGrant { privs, expires });
+    }
+
+    /// Revoke a runtime operator grant. Returns whether one existed.
+    pub fn oper_revoke(&mut self, account: &str) -> bool {
+        if !self.net.opers.contains_key(&key(account)) {
+            return false;
+        }
+        let _ = self.log.append(Event::OperRevoked { account: account.to_string() });
+        self.net.opers.remove(&key(account));
+        true
+    }
+
+    /// The live runtime operator grants, as (account, privilege-names, expiry);
+    /// expired ones are hidden.
+    pub fn opers_list(&self) -> Vec<(String, Vec<String>, Option<u64>)> {
+        let now = now();
+        self.net
+            .opers
+            .iter()
+            .filter(|(_, g)| g.expires.is_none_or(|e| e > now))
+            .map(|(a, g)| (a.clone(), g.privs.clone(), g.expires))
+            .collect()
+    }
+
+    /// The runtime privileges granted to an account as of `now`, if the grant is
+    /// present and unexpired (config opers are merged in separately by the engine).
+    pub fn oper_privs_of(&self, account: &str, now: u64) -> Option<Privs> {
+        self.net
+            .opers
+            .get(&key(account))
+            .filter(|g| g.expires.is_none_or(|e| e > now))
+            .map(|g| Privs::from_names(&g.privs))
+    }
+
+    /// Add a news item of `kind` ("logon"/"oper"). Returns its stable id.
+    pub fn news_add(&mut self, kind: &str, text: &str, setter: &str) -> u64 {
+        let id = self.net.news_seq;
+        let ts = now();
+        let _ = self.log.append(Event::NewsAdded { id, kind: kind.to_string(), text: text.to_string(), setter: setter.to_string(), ts });
+        self.net.news_seq = id + 1;
+        self.net.news.push(News { id, kind: kind.to_string(), text: text.to_string(), setter: setter.to_string(), ts });
+        id
+    }
+
+    /// Delete a news item by id. Returns whether one existed.
+    pub fn news_del(&mut self, id: u64) -> bool {
+        let existed = self.net.news.iter().any(|n| n.id == id);
+        if existed {
+            let _ = self.log.append(Event::NewsDeleted { id });
+            self.net.news.retain(|n| n.id != id);
+        }
+        existed
+    }
+
+    /// The news items of `kind`, oldest first.
+    pub fn news(&self, kind: &str) -> Vec<NewsView> {
+        self.net
+            .news
+            .iter()
+            .filter(|n| n.kind == kind)
+            .map(|n| NewsView { id: n.id, text: n.text.clone(), setter: n.setter.clone(), ts: n.ts })
+            .collect()
+    }
+
+    /// Whether account identity is owned by an external authority.
+    pub fn external_accounts(&self) -> bool {
+        self.external_accounts
+    }
+
+    /// Set external-account mode (from config, at startup).
+    pub fn set_external_accounts(&mut self, on: bool) {
+        self.external_accounts = on;
+    }
+
+    /// The network defence level (5 = normal, 1 = full lockdown).
+    pub fn defcon(&self) -> u8 {
+        self.defcon
+    }
+
+    /// Set the defence level, clamped to 1..=5.
+    pub fn set_defcon(&mut self, level: u8) {
+        self.defcon = level.clamp(1, 5);
+    }
+
+    /// Whether new nick/account registrations are frozen (defcon 3 or lower).
+    pub fn registrations_frozen(&self) -> bool {
+        self.defcon <= 3
+    }
+
+    /// Whether new channel registrations are frozen (defcon 4 or lower).
+    pub fn channel_regs_frozen(&self) -> bool {
+        self.defcon <= 4
+    }
+
+    /// Jupe a server name: allocate a fake sid, store it, return the sid to
+    /// introduce (or the existing sid if the name is already juped).
+    pub fn jupe_add(&mut self, name: &str, reason: &str) -> String {
+        if let Some(j) = self.jupes.iter().find(|j| j.name.eq_ignore_ascii_case(name)) {
+            return j.sid.clone();
+        }
+        let sid = jupe_sid(self.jupe_seq);
+        self.jupe_seq += 1;
+        self.jupes.push(Jupe { name: name.to_string(), sid: sid.clone(), reason: reason.to_string() });
+        sid
+    }
+
+    /// Lift a jupe. Returns the sid to squit if it existed.
+    pub fn jupe_del(&mut self, name: &str) -> Option<String> {
+        let sid = self.jupes.iter().find(|j| j.name.eq_ignore_ascii_case(name)).map(|j| j.sid.clone())?;
+        self.jupes.retain(|j| !j.name.eq_ignore_ascii_case(name));
+        Some(sid)
+    }
+
+    /// The juped servers, as (name, sid, reason).
+    pub fn jupes(&self) -> Vec<(String, String, String)> {
+        self.jupes.iter().map(|j| (j.name.clone(), j.sid.clone(), j.reason.clone())).collect()
+    }
+
+    /// File an abuse report, rate-limited per reporter. Returns the new report's
+    /// id, or None if the reporter filed one too recently.
+    pub fn report_file(&mut self, reporter: &str, target: &str, reason: &str) -> Option<u64> {
+        const COOLDOWN: u64 = 30;
+        let now = now();
+        let key = reporter.to_ascii_lowercase();
+        if self.report_times.get(&key).is_some_and(|&t| now.saturating_sub(t) < COOLDOWN) {
+            return None;
+        }
+        self.report_times.insert(key, now);
+        let id = self.net.report_seq;
+        let _ = self.log.append(Event::ReportFiled { id, reporter: reporter.to_string(), target: target.to_string(), reason: reason.to_string(), ts: now });
+        self.net.report_seq = id + 1;
+        self.net.reports.push(Report { id, reporter: reporter.to_string(), target: target.to_string(), reason: reason.to_string(), ts: now, open: true });
+        Some(id)
+    }
+
+    /// Close (resolve) a report. Returns whether an open one was closed.
+    pub fn report_close(&mut self, id: u64) -> bool {
+        let closed = self.net.reports.iter().any(|r| r.id == id && r.open);
+        if closed {
+            let _ = self.log.append(Event::ReportClosed { id });
+            if let Some(r) = self.net.reports.iter_mut().find(|r| r.id == id) {
+                r.open = false;
+            }
+        }
+        closed
+    }
+
+    /// Delete a report entirely. Returns whether one existed.
+    pub fn report_del(&mut self, id: u64) -> bool {
+        let existed = self.net.reports.iter().any(|r| r.id == id);
+        if existed {
+            let _ = self.log.append(Event::ReportDeleted { id });
+            self.net.reports.retain(|r| r.id != id);
+        }
+        existed
+    }
+
+    /// The reports, newest first. `open_only` hides closed ones.
+    pub fn reports(&self, open_only: bool) -> Vec<ReportView> {
+        self.net
+            .reports
+            .iter()
+            .rev()
+            .filter(|r| !open_only || r.open)
+            .map(|r| ReportView { id: r.id, reporter: r.reporter.clone(), target: r.target.clone(), reason: r.reason.clone(), ts: r.ts, open: r.open })
+            .collect()
+    }
+
+    /// A single report by id, if present.
+    pub fn report(&self, id: u64) -> Option<ReportView> {
+        self.net.reports.iter().find(|r| r.id == id).map(|r| ReportView { id: r.id, reporter: r.reporter.clone(), target: r.target.clone(), reason: r.reason.clone(), ts: r.ts, open: r.open })
+    }
+
+    /// Open a help-desk ticket, rate-limited per requester (shares the report
+    /// throttle namespace). Returns the new ticket's id, or None if too soon.
+    pub fn help_request(&mut self, requester: &str, message: &str) -> Option<u64> {
+        const COOLDOWN: u64 = 30;
+        let now = now();
+        let tkey = format!("help:{}", requester.to_ascii_lowercase());
+        if self.report_times.get(&tkey).is_some_and(|&t| now.saturating_sub(t) < COOLDOWN) {
+            return None;
+        }
+        self.report_times.insert(tkey, now);
+        let id = self.net.help_seq;
+        let _ = self.log.append(Event::HelpRequested { id, requester: requester.to_string(), message: message.to_string(), ts: now });
+        self.net.help_seq = id + 1;
+        self.net.help.push(HelpTicket { id, requester: requester.to_string(), message: message.to_string(), ts: now, handler: None, open: true });
+        Some(id)
+    }
+
+    /// Assign an open ticket to a handler. Returns whether an open one was taken.
+    pub fn help_take(&mut self, id: u64, handler: &str) -> bool {
+        let ok = self.net.help.iter().any(|t| t.id == id && t.open);
+        if ok {
+            let _ = self.log.append(Event::HelpTaken { id, handler: handler.to_string() });
+            if let Some(t) = self.net.help.iter_mut().find(|t| t.id == id) {
+                t.handler = Some(handler.to_string());
+            }
+        }
+        ok
+    }
+
+    /// Close a ticket. Returns whether an open one was closed.
+    pub fn help_close(&mut self, id: u64) -> bool {
+        let ok = self.net.help.iter().any(|t| t.id == id && t.open);
+        if ok {
+            let _ = self.log.append(Event::HelpClosed { id });
+            if let Some(t) = self.net.help.iter_mut().find(|t| t.id == id) {
+                t.open = false;
+            }
+        }
+        ok
+    }
+
+    /// The tickets, newest first. `open_only` hides closed ones.
+    pub fn help_tickets(&self, open_only: bool) -> Vec<HelpView> {
+        self.net
+            .help
+            .iter()
+            .rev()
+            .filter(|t| !open_only || t.open)
+            .map(|t| HelpView { id: t.id, requester: t.requester.clone(), message: t.message.clone(), ts: t.ts, handler: t.handler.clone(), open: t.open })
+            .collect()
+    }
+
+    /// A single ticket by id.
+    pub fn help_ticket(&self, id: u64) -> Option<HelpView> {
+        self.net.help.iter().find(|t| t.id == id).map(|t| HelpView { id: t.id, requester: t.requester.clone(), message: t.message.clone(), ts: t.ts, handler: t.handler.clone(), open: t.open })
+    }
+
+    /// The id of the oldest open, unassigned ticket (for HelpServ NEXT).
+    pub fn help_next_open(&self) -> Option<u64> {
+        self.net.help.iter().find(|t| t.open && t.handler.is_none()).map(|t| t.id)
+    }
+
+    /// Register a new group (name must start with `!`). Founder is an account.
+    pub fn group_register(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
+        if !name.starts_with('!') || name.len() < 2 {
+            return Err(ChanError::InvalidPattern);
+        }
+        if self.group(name).is_some() {
+            return Err(ChanError::Exists);
+        }
+        let ts = now();
+        self.log.append(Event::GroupRegistered { name: name.to_string(), founder: founder.to_string(), ts }).map_err(|_| ChanError::Internal)?;
+        self.net.groups.push(Group { name: name.to_string(), founder: founder.to_string(), ts, members: Vec::new() });
+        Ok(())
+    }
+
+    /// Drop a group.
+    pub fn group_drop(&mut self, name: &str) -> Result<(), ChanError> {
+        if self.group(name).is_none() {
+            return Err(ChanError::NoChannel);
+        }
+        self.log.append(Event::GroupDropped { name: name.to_string() }).map_err(|_| ChanError::Internal)?;
+        let k = key(name);
+        self.net.groups.retain(|g| key(&g.name) != k);
+        Ok(())
+    }
+
+    /// Upsert a group member with `flags` (empty = a plain member).
+    pub fn group_set_flags(&mut self, name: &str, account: &str, flags: &str) -> Result<(), ChanError> {
+        let k = key(name);
+        let Some(g) = self.net.groups.iter_mut().find(|g| key(&g.name) == k) else {
+            return Err(ChanError::NoChannel);
+        };
+        self.log.append(Event::GroupFlagsSet { name: name.to_string(), account: account.to_string(), flags: flags.to_string() }).map_err(|_| ChanError::Internal)?;
+        g.members.retain(|m| !m.account.eq_ignore_ascii_case(account));
+        g.members.push(GroupMember { account: account.to_string(), flags: flags.to_string() });
+        Ok(())
+    }
+
+    /// Remove a member from a group. Returns whether one was present.
+    pub fn group_del_member(&mut self, name: &str, account: &str) -> Result<bool, ChanError> {
+        let k = key(name);
+        let Some(g) = self.net.groups.iter_mut().find(|g| key(&g.name) == k) else {
+            return Err(ChanError::NoChannel);
+        };
+        if !g.members.iter().any(|m| m.account.eq_ignore_ascii_case(account)) {
+            return Ok(false);
+        }
+        self.log.append(Event::GroupMemberDel { name: name.to_string(), account: account.to_string() }).map_err(|_| ChanError::Internal)?;
+        g.members.retain(|m| !m.account.eq_ignore_ascii_case(account));
+        Ok(true)
+    }
+
+    /// Transfer a group's founder to another account.
+    pub fn group_set_founder(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
+        let k = key(name);
+        let Some(g) = self.net.groups.iter_mut().find(|g| key(&g.name) == k) else {
+            return Err(ChanError::NoChannel);
+        };
+        self.log.append(Event::GroupFounderSet { name: name.to_string(), founder: founder.to_string() }).map_err(|_| ChanError::Internal)?;
+        g.founder = founder.to_string();
+        Ok(())
+    }
+
+    /// A group view (founder + members), if it exists.
+    pub fn group(&self, name: &str) -> Option<GroupView> {
+        let k = key(name);
+        self.net.groups.iter().find(|g| key(&g.name) == k).map(|g| GroupView {
+            name: g.name.clone(),
+            founder: g.founder.clone(),
+            members: g.members.iter().map(|m| fedserv_api::GroupMemberView { account: m.account.clone(), flags: m.flags.clone() }).collect(),
+        })
+    }
+
+    /// Every group's name, sorted.
+    pub fn groups(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.net.groups.iter().map(|g| g.name.clone()).collect();
+        names.sort();
+        names
+    }
+
+    /// The groups an account belongs to (founder or member).
+    pub fn groups_of(&self, account: &str) -> Vec<String> {
+        self.net
+            .groups
+            .iter()
+            .filter(|g| g.founder.eq_ignore_ascii_case(account) || g.members.iter().any(|m| m.account.eq_ignore_ascii_case(account)))
+            .map(|g| g.name.clone())
+            .collect()
+    }
+
+    /// Whether an account is in a group (its founder or a member).
+    pub fn is_group_member(&self, name: &str, account: &str) -> bool {
+        let k = key(name);
+        self.net.groups.iter().find(|g| key(&g.name) == k).is_some_and(|g| g.founder.eq_ignore_ascii_case(account) || g.members.iter().any(|m| m.account.eq_ignore_ascii_case(account)))
+    }
+
+    /// An account's effective channel capabilities, combining its direct access
+    /// entry with any `!group` access entry it belongs to (the interconnection
+    /// that lets a channel grant access to a whole group).
+    pub fn channel_caps(&self, channel: &str, account: &str) -> Caps {
+        let Some(c) = self.channels.get(&key(channel)) else { return Caps::default() };
+        if c.founder.eq_ignore_ascii_case(account) {
+            return fedserv_api::level_caps("founder");
+        }
+        let mut caps = Caps::default();
+        for a in &c.access {
+            let applies = match a.account.strip_prefix('!') {
+                Some(g) => self.is_group_member(&format!("!{g}"), account),
+                None => a.account.eq_ignore_ascii_case(account),
+            };
+            if applies {
+                caps = caps.union(fedserv_api::level_caps(&a.level));
+            }
+        }
+        caps
+    }
+
+    /// A user's join status mode for a channel, group-aware.
+    pub fn channel_join_mode(&self, channel: &str, account: &str) -> Option<&'static str> {
+        self.channel_caps(channel, account).auto
+    }
+
+    /// Add a services ignore, replacing any existing entry for the same mask.
+    pub fn ignore_add(&mut self, mask: &str, reason: &str, expires: Option<u64>) {
+        self.ignores.retain(|i| !i.mask.eq_ignore_ascii_case(mask));
+        self.ignores.push(Ignore { mask: mask.to_string(), reason: reason.to_string(), expires });
+    }
+
+    /// Remove a services ignore. Returns whether a live one was removed.
+    pub fn ignore_del(&mut self, mask: &str) -> bool {
+        let now = now();
+        let existed = self.ignores.iter().any(|i| i.mask.eq_ignore_ascii_case(mask) && i.expires.is_none_or(|e| e > now));
+        self.ignores.retain(|i| !i.mask.eq_ignore_ascii_case(mask));
+        existed
+    }
+
+    /// The live services ignores (expired hidden lazily), oldest first.
+    pub fn ignores(&self) -> Vec<IgnoreView> {
+        let now = now();
+        self.ignores
+            .iter()
+            .filter(|i| i.expires.is_none_or(|e| e > now))
+            .map(|i| IgnoreView { mask: i.mask.clone(), reason: i.reason.clone(), expires: i.expires })
+            .collect()
+    }
+
+    /// Whether a user is currently ignored by services. A mask with an `@` is
+    /// matched against `nick!*@host` (we don't track ident); a bare mask against
+    /// the nick. Expired entries are swept as they're encountered.
+    pub fn is_ignored(&mut self, nick: &str, host: &str) -> bool {
+        let now = now();
+        self.ignores.retain(|i| i.expires.is_none_or(|e| e > now));
+        let full = format!("{}!*@{}", nick.to_ascii_lowercase(), host.to_ascii_lowercase());
+        let nick_lc = nick.to_ascii_lowercase();
+        self.ignores.iter().any(|i| {
+            let m = i.mask.to_ascii_lowercase();
+            if m.contains('@') {
+                glob_match(&m, &full)
+            } else {
+                glob_match(&m, &nick_lc)
+            }
+        })
+    }
+
+    /// The account's suspension record, if any (shown in INFO even once expired).
+    pub fn suspension(&self, account: &str) -> Option<SuspensionView> {
+        self.accounts
+            .get(&key(account))
+            .and_then(|a| a.suspension.as_ref())
+            .map(|s| SuspensionView { by: s.by.clone(), reason: s.reason.clone(), ts: s.ts, expires: s.expires })
+    }
+
+}
