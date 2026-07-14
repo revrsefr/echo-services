@@ -115,6 +115,9 @@ async fn main() -> Result<()> {
     if let Some(expire) = &cfg.expire {
         engine.lock().await.set_expiry(expire.account_ttl(), expire.channel_ttl(), expire.warn_ttl());
     }
+    if let Some(session) = &cfg.session {
+        engine.lock().await.set_session_limit(session.limit());
+    }
 
     if let Some(gossip) = cfg.gossip.clone() {
         tracing::info!(peers = cfg.peer.len(), "starting gossip");

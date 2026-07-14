@@ -191,6 +191,9 @@ pub enum Event {
     // Runtime operator grants (OperServ OPER).
     OperGranted { account: String, privs: Vec<String> },
     OperRevoked { account: String },
+    // Session-limit exceptions (OperServ SESSION).
+    SessionExceptionAdded { mask: String, limit: u32, reason: String },
+    SessionExceptionRemoved { mask: String },
     // Network bans (OperServ AKILL / SQLINE). Global: a ban covers the whole
     // network, so every node holds the list and re-applies it at burst. `kind`
     // is the ircd X-line type and defaults to "G" for records predating it.
@@ -253,7 +256,9 @@ impl Event {
             | Event::NewsAdded { .. }
             | Event::NewsDeleted { .. }
             | Event::OperGranted { .. }
-            | Event::OperRevoked { .. } => Scope::Global,
+            | Event::OperRevoked { .. }
+            | Event::SessionExceptionAdded { .. }
+            | Event::SessionExceptionRemoved { .. } => Scope::Global,
             Event::ChannelRegistered { .. }
             | Event::ChannelDropped { .. }
             | Event::ChannelMlock { .. }
@@ -367,6 +372,17 @@ pub struct NetData {
     // Runtime services operators (OperServ OPER), casefolded account -> privilege
     // names. Merged with the declarative [[oper]] config at the engine.
     pub opers: HashMap<String, Vec<String>>,
+    // Session-limit exceptions (OperServ SESSION): per-IP-mask allowances.
+    pub sess_exceptions: Vec<SessionException>,
+}
+
+// A session-limit exception: an IP-mask glob and the session allowance for IPs
+// that match it (0 = unlimited).
+#[derive(Debug, Clone)]
+pub struct SessionException {
+    pub mask: String,
+    pub limit: u32,
+    pub reason: String,
 }
 
 // A memo left for an account (MemoServ).
@@ -1094,6 +1110,9 @@ impl Db {
         }
         for (account, privs) in &self.net.opers {
             snapshot.push(Event::OperGranted { account: account.clone(), privs: privs.clone() });
+        }
+        for e in &self.net.sess_exceptions {
+            snapshot.push(Event::SessionExceptionAdded { mask: e.mask.clone(), limit: e.limit, reason: e.reason.clone() });
         }
         self.log.compact(snapshot)?;
         tracing::info!(before, after = self.log.len(), "compacted event log");
@@ -1893,6 +1912,39 @@ impl Db {
             .filter(|a| a.expires.is_none_or(|e| e > now))
             .map(|a| AkillView { kind: a.kind.clone(), mask: a.mask.clone(), setter: a.setter.clone(), reason: a.reason.clone(), ts: a.ts, expires: a.expires })
             .collect()
+    }
+
+    /// Add (or replace) a session-limit exception for an IP-mask.
+    pub fn session_except_add(&mut self, mask: &str, limit: u32, reason: &str) {
+        let _ = self.log.append(Event::SessionExceptionAdded { mask: mask.to_string(), limit, reason: reason.to_string() });
+        self.net.sess_exceptions.retain(|e| !e.mask.eq_ignore_ascii_case(mask));
+        self.net.sess_exceptions.push(SessionException { mask: mask.to_string(), limit, reason: reason.to_string() });
+    }
+
+    /// Remove a session-limit exception. Returns whether one existed.
+    pub fn session_except_del(&mut self, mask: &str) -> bool {
+        let existed = self.net.sess_exceptions.iter().any(|e| e.mask.eq_ignore_ascii_case(mask));
+        if existed {
+            let _ = self.log.append(Event::SessionExceptionRemoved { mask: mask.to_string() });
+            self.net.sess_exceptions.retain(|e| !e.mask.eq_ignore_ascii_case(mask));
+        }
+        existed
+    }
+
+    /// The session-limit exceptions, as (mask, limit, reason).
+    pub fn session_exceptions(&self) -> Vec<(String, u32, String)> {
+        self.net.sess_exceptions.iter().map(|e| (e.mask.clone(), e.limit, e.reason.clone())).collect()
+    }
+
+    /// The session allowance for `ip` from any matching exception (the most
+    /// permissive wins), or None if none matches. A limit of 0 means unlimited.
+    pub fn session_exception_for(&self, ip: &str) -> Option<u32> {
+        self.net
+            .sess_exceptions
+            .iter()
+            .filter(|e| glob_match(&e.mask.to_ascii_lowercase(), &ip.to_ascii_lowercase()))
+            .map(|e| e.limit)
+            .max_by_key(|&l| if l == 0 { u32::MAX } else { l })
     }
 
     /// Grant runtime operator privileges to an account (replaces any existing).
@@ -2936,6 +2988,13 @@ fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String,
         Event::OperRevoked { account } => {
             net.opers.remove(&key(&account));
         }
+        Event::SessionExceptionAdded { mask, limit, reason } => {
+            net.sess_exceptions.retain(|e| !e.mask.eq_ignore_ascii_case(&mask));
+            net.sess_exceptions.push(SessionException { mask, limit, reason });
+        }
+        Event::SessionExceptionRemoved { mask } => {
+            net.sess_exceptions.retain(|e| !e.mask.eq_ignore_ascii_case(&mask));
+        }
     }
 }
 
@@ -3215,6 +3274,15 @@ impl Store for Db {
     }
     fn opers_list(&self) -> Vec<(String, Vec<String>)> {
         Db::opers_list(self)
+    }
+    fn session_except_add(&mut self, mask: &str, limit: u32, reason: &str) {
+        Db::session_except_add(self, mask, limit, reason)
+    }
+    fn session_except_del(&mut self, mask: &str) -> bool {
+        Db::session_except_del(self, mask)
+    }
+    fn session_exceptions(&self) -> Vec<(String, u32, String)> {
+        Db::session_exceptions(self)
     }
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
         Db::register_channel(self, name, founder)

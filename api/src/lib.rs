@@ -16,7 +16,7 @@ pub enum NetEvent {
     EndBurst,
     Ping { token: String, from: Option<String> },
     Privmsg { from: String, to: String, text: String },
-    UserConnect { uid: String, nick: String, host: String },
+    UserConnect { uid: String, nick: String, host: String, ip: String },
     NickChange { uid: String, nick: String },
     // A channel was created or bursted (an FJOIN). Subsequent single joins arrive
     // as IJOIN and are not surfaced.
@@ -764,6 +764,10 @@ pub trait Store {
     fn oper_grant(&mut self, account: &str, privs: Vec<String>);
     fn oper_revoke(&mut self, account: &str) -> bool;
     fn opers_list(&self) -> Vec<(String, Vec<String>)>;
+    // Session-limit exceptions (OperServ SESSION EXCEPTION).
+    fn session_except_add(&mut self, mask: &str, limit: u32, reason: &str);
+    fn session_except_del(&mut self, mask: &str) -> bool;
+    fn session_exceptions(&self) -> Vec<(String, u32, String)>;
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError>;
     fn drop_channel(&mut self, name: &str) -> Result<(), ChanError>;
     fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError>;
@@ -834,6 +838,9 @@ pub trait NetView {
     fn channel_activity(&self, channel: &str) -> Option<(u64, Vec<(String, u64)>)>;
     // The shared stat counters (namespaced key -> count), for StatServ.
     fn stat_counters(&self) -> Vec<(String, u64)>;
+    // Session limiting: live sessions from an IP, and IPs at/over a threshold.
+    fn session_count(&self, ip: &str) -> u32;
+    fn sessions_over(&self, min: u32) -> Vec<(String, u32)>;
 }
 
 // A pseudo-client (NickServ, ChanServ, ...). Introduced at burst, receives the

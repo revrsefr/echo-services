@@ -73,14 +73,16 @@ impl Protocol for InspIrcd {
             }
             // UID <uuid> <nickts> <nick> … — track who's online so services can
             // resolve a sender's current nick.
-            // UID <uuid> <nickts> <nick> <realhost> <disphost> … — take the
-            // displayed host for ban masks.
+            // UID <uuid> <nickts> <nick> <realhost> <disphost> <realuser> <dispuser>
+            // <ip> <signon> … — take the displayed host for ban masks and the ip
+            // (index 7) for session limiting.
             "UID" => {
                 let a: Vec<&str> = tokens.collect();
                 match (a.first(), a.get(2)) {
                     (Some(uid), Some(nick)) => {
                         let host = a.get(4).unwrap_or(&"").to_string();
-                        vec![NetEvent::UserConnect { uid: uid.to_string(), nick: nick.to_string(), host }]
+                        let ip = a.get(7).unwrap_or(&"").to_string();
+                        vec![NetEvent::UserConnect { uid: uid.to_string(), nick: nick.to_string(), host, ip }]
                     }
                     _ => vec![],
                 }

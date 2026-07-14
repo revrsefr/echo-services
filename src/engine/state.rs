@@ -20,12 +20,15 @@ pub struct Network {
     // Shared, namespaced stat counters any service contributes to (ephemeral,
     // ordered for a stable snapshot). Read by StatServ and the gRPC Stats API.
     stats: BTreeMap<String, u64>,
+    // Live session count per connecting IP, for OperServ session limiting.
+    sessions: HashMap<String, u32>,
 }
 
 pub struct User {
     pub uid: String,
     pub nick: String,
     pub host: String,
+    pub ip: String,
 }
 
 // A channel's live membership, ops, and current key (+k), tracked from the burst.
@@ -56,8 +59,23 @@ fn lc(s: &str) -> String {
 }
 
 impl Network {
-    pub fn user_connect(&mut self, uid: String, nick: String, host: String) {
-        self.users.insert(uid.clone(), User { uid, nick, host });
+    pub fn user_connect(&mut self, uid: String, nick: String, host: String, ip: String) {
+        if !ip.is_empty() {
+            *self.sessions.entry(ip.clone()).or_insert(0) += 1;
+        }
+        self.users.insert(uid.clone(), User { uid, nick, host, ip });
+    }
+
+    // Live sessions from `ip`.
+    pub fn session_count(&self, ip: &str) -> u32 {
+        self.sessions.get(ip).copied().unwrap_or(0)
+    }
+
+    // IPs with at least `min` live sessions, most sessions first.
+    pub fn sessions_over(&self, min: u32) -> Vec<(String, u32)> {
+        let mut v: Vec<(String, u32)> = self.sessions.iter().filter(|(_, &n)| n >= min).map(|(ip, &n)| (ip.clone(), n)).collect();
+        v.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+        v
     }
 
     // Resolve a nick to its uid (case-insensitive). Checks real users first,
@@ -97,6 +115,13 @@ impl Network {
     pub fn user_quit(&mut self, uid: &str) {
         if let Some(u) = self.users.get(uid) {
             self.seen.insert(lc(&u.nick), Seen { nick: u.nick.clone(), ts: now(), what: "quitting".to_string() });
+            // Release the user's session slot.
+            if let Some(n) = self.sessions.get_mut(&u.ip) {
+                *n -= 1;
+                if *n == 0 {
+                    self.sessions.remove(&u.ip);
+                }
+            }
         }
         self.users.remove(uid);
         self.accounts.remove(uid);
@@ -275,5 +300,11 @@ impl NetView for Network {
     }
     fn stat_counters(&self) -> Vec<(String, u64)> {
         Network::stat_counters(self).iter().map(|(k, v)| (k.clone(), *v)).collect()
+    }
+    fn session_count(&self, ip: &str) -> u32 {
+        Network::session_count(self, ip)
+    }
+    fn sessions_over(&self, min: u32) -> Vec<(String, u32)> {
+        Network::sessions_over(self, min)
     }
 }

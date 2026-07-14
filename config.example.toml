@@ -68,3 +68,9 @@ protocol = 1206            # InspIRCd link protocol version (1206 = insp4, 1205 
 # where an address is on file and [email] is configured); 0 or omitted = no
 # warning email.
 # warn_days = 7
+
+# Per-IP session limiting: the connection that puts an IP over `default_limit`
+# is killed on connect. OperServ EXCEPTION entries raise or lower the allowance
+# per IP-mask (an exception limit of 0 means unlimited). 0 or omitted = off.
+# [session]
+# default_limit = 3

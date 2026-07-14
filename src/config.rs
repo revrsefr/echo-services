@@ -32,6 +32,23 @@ pub struct Config {
     // Inactivity-expiry. Absent = accounts and channels never expire.
     #[serde(default)]
     pub expire: Option<Expire>,
+    // Per-IP session limiting. Absent = unlimited.
+    #[serde(default)]
+    pub session: Option<Session>,
+}
+
+// Session limiting: the default connections allowed per IP (0/absent = off),
+// which OperServ EXCEPTION entries can raise or lower per IP-mask.
+#[derive(Debug, Deserialize, Clone)]
+pub struct Session {
+    #[serde(default)]
+    pub default_limit: u32,
+}
+
+impl Session {
+    pub fn limit(&self) -> Option<u32> {
+        (self.default_limit > 0).then_some(self.default_limit)
+    }
 }
 
 // Inactivity-expiry thresholds, in days. A zero (or omitted) field leaves that
