@@ -1130,6 +1130,37 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     pi == p.len()
 }
 
+// One command's help: its name, a one-line summary shown in the command list,
+// and the detail shown for `HELP <command>` (newline-separated lines).
+pub struct HelpEntry {
+    pub cmd: &'static str,
+    pub summary: &'static str,
+    pub detail: &'static str,
+}
+
+// Centralized HELP for a service: `HELP` lists the commands, `HELP <command>`
+// prints that command's detail. Every service routes its HELP command here, so
+// the shape is identical across every service on the network.
+pub fn help(me: &str, from: &Sender, ctx: &mut ServiceCtx, blurb: &str, topics: &[HelpEntry], topic: Option<&str>) {
+    match topic {
+        None => {
+            ctx.notice(me, from.uid, blurb);
+            for e in topics {
+                ctx.notice(me, from.uid, format!("  \x02{}\x02  {}", e.cmd, e.summary));
+            }
+            ctx.notice(me, from.uid, "Type \x02HELP <command>\x02 for detail on one command.");
+        }
+        Some(t) => match topics.iter().find(|e| e.cmd.eq_ignore_ascii_case(t)) {
+            Some(e) => {
+                for line in e.detail.lines() {
+                    ctx.notice(me, from.uid, line);
+                }
+            }
+            None => ctx.notice(me, from.uid, format!("No help for \x02{}\x02. Type \x02HELP\x02 for the command list.", t.to_ascii_uppercase())),
+        },
+    }
+}
+
 // Format a Unix timestamp (seconds) as "YYYY-MM-DD HH:MM:SS UTC", using Howard
 // Hinnant's civil-from-days algorithm so no date crate is needed.
 pub fn human_time(ts: u64) -> String {

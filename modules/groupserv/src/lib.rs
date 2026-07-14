@@ -8,7 +8,7 @@
 //! `lib.rs` holds the dispatcher and the two shared guards; each command lives
 //! in its own file.
 
-use echo_api::{NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "register.rs"]
 mod register;
@@ -24,6 +24,18 @@ mod add;
 mod del;
 #[path = "flags.rs"]
 mod flags;
+
+const BLURB: &str = "GroupServ manages user groups: a \x02!name\x02 owning member accounts. A channel can grant access to a group, and every member then inherits it.";
+
+const TOPICS: &[HelpEntry] = &[
+    HelpEntry { cmd: "REGISTER", summary: "create a group you found", detail: "Syntax: \x02REGISTER <!group>\x02\nCreates a group with you as founder. A group name starts with '!', e.g. !staff." },
+    HelpEntry { cmd: "DROP", summary: "delete a group you founded", detail: "Syntax: \x02DROP <!group>\x02\nDeletes a group. Founder only." },
+    HelpEntry { cmd: "INFO", summary: "show a group's founder and size", detail: "Syntax: \x02INFO <!group>\x02\nShows a group's founder and member count." },
+    HelpEntry { cmd: "LIST", summary: "list groups you belong to", detail: "Syntax: \x02LIST\x02\nLists the groups you belong to. Operators see every group." },
+    HelpEntry { cmd: "ADD", summary: "add a member", detail: "Syntax: \x02ADD <!group> <account>\x02\nAdds a plain member. Needs the founder or the 'f' flag." },
+    HelpEntry { cmd: "DEL", summary: "remove a member", detail: "Syntax: \x02DEL <!group> <account>\x02\nRemoves a member. Needs the founder or the 'f' flag." },
+    HelpEntry { cmd: "FLAGS", summary: "view or change group flags", detail: "Syntax: \x02FLAGS <!group> [account [+/-flags]]\x02\nLists, shows, or changes group-access flags (F founder, f manage, i invite, c channel-access, s set, m memo). Changing needs the founder or the 'f' flag." },
+];
 
 pub struct GroupServ {
     pub uid: String,
@@ -50,7 +62,7 @@ impl Service for GroupServ {
             Some("ADD") => add::handle(me, from, args.get(1).copied(), args.get(2).copied(), ctx, db),
             Some("DEL") => del::handle(me, from, args.get(1).copied(), args.get(2).copied(), ctx, db),
             Some("FLAGS") => flags::handle(me, from, args.get(1).copied(), args.get(2).copied(), args.get(3).copied(), ctx, db),
-            Some("HELP") | None => ctx.notice(me, from.uid, "GroupServ manages user groups. \x02REGISTER\x02 <!group>, \x02DROP\x02 <!group>, \x02INFO\x02 <!group>, \x02LIST\x02, \x02ADD\x02/\x02DEL\x02 <!group> <account>, \x02FLAGS\x02 <!group> [account [+/-flags]]. Grant a group channel access with ChanServ \x02FLAGS #chan !group +o\x02 — every member then inherits it."),
+            Some("HELP") | None => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02HELP\x02.")),
         }
     }

@@ -9,7 +9,7 @@
 //! and any operator may OLIST. `lib.rs` holds the dispatcher; each command
 //! (parameterised by bulletin kind) lives in its own file.
 
-use echo_api::{NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "post.rs"]
 mod post;
@@ -21,6 +21,17 @@ mod list;
 // The two bulletin kinds in the shared news store.
 const PUBLIC: &str = "logon";
 const OPER: &str = "oper";
+
+const BLURB: &str = "InfoServ holds the network's information bulletins: public ones show on connect, oper ones on login.";
+
+const TOPICS: &[HelpEntry] = &[
+    HelpEntry { cmd: "POST", summary: "post a public bulletin", detail: "Syntax: \x02POST <message>\x02\nAdds a public bulletin, shown to everyone on connect. Admin only. Also \x02ADD\x02." },
+    HelpEntry { cmd: "LIST", summary: "show public bulletins", detail: "Syntax: \x02LIST\x02\nShows the public bulletins. Open to everyone." },
+    HelpEntry { cmd: "DEL", summary: "remove a public bulletin", detail: "Syntax: \x02DEL <number>\x02\nRemoves a public bulletin by its listed number. Admin only. Also \x02REMOVE\x02." },
+    HelpEntry { cmd: "OPOST", summary: "post an oper bulletin", detail: "Syntax: \x02OPOST <message>\x02\nAdds an oper bulletin, shown to operators on login. Admin only." },
+    HelpEntry { cmd: "OLIST", summary: "show oper bulletins", detail: "Syntax: \x02OLIST\x02\nShows the oper bulletins. Operators only." },
+    HelpEntry { cmd: "ODEL", summary: "remove an oper bulletin", detail: "Syntax: \x02ODEL <number>\x02\nRemoves an oper bulletin by its listed number. Admin only." },
+];
 
 pub struct InfoServ {
     pub uid: String,
@@ -48,7 +59,7 @@ impl Service for InfoServ {
             Some("LIST") | None => list::handle(me, from, PUBLIC, false, ctx, db),
             // Oper bulletins are for operators only.
             Some("OLIST") => list::handle(me, from, OPER, true, ctx, db),
-            Some("HELP") => ctx.notice(me, from.uid, "InfoServ holds the network's information bulletins. \x02LIST\x02 shows the public ones. Operators: \x02POST\x02 <message> / \x02DEL\x02 <number> (public, shown on connect), \x02OPOST\x02 / \x02OLIST\x02 / \x02ODEL\x02 (oper-only, shown on login)."),
+            Some("HELP") => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02LIST\x02 or \x02HELP\x02.")),
         }
     }

@@ -6,12 +6,27 @@
 //! SCORES <#channel> shows the standings; CHANFIX <#channel> performs the fix.
 //! `lib.rs` holds the dispatcher; each command lives in its own file.
 
-use echo_api::{NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "scores.rs"]
 mod scores;
 #[path = "fix.rs"]
 mod fix;
+
+const BLURB: &str = "ChanFix recovers opless channels from accumulated op-time. It defers to ChanServ and won't touch a registered channel. Operator-only.";
+
+const TOPICS: &[HelpEntry] = &[
+    HelpEntry {
+        cmd: "SCORES",
+        summary: "show a channel's op-time standings",
+        detail: "Syntax: \x02SCORES <#channel>\x02\nShows the accumulated op-time scores, highest first. These are the identities ChanFix would reop.",
+    },
+    HelpEntry {
+        cmd: "CHANFIX",
+        summary: "reop a channel's trusted regulars",
+        detail: "Syntax: \x02CHANFIX <#channel>\x02\nReops the present regulars of an opless channel by their accumulated op-time. Needs the channel opless (under three ops) with real history, and refuses a ChanServ-registered channel.",
+    },
+];
 
 pub struct ChanFix {
     pub uid: String,
@@ -38,7 +53,7 @@ impl Service for ChanFix {
         match args.first().map(|s| s.to_ascii_uppercase()).as_deref() {
             Some("SCORES") => scores::handle(me, from, args.get(1).copied(), ctx, net),
             Some("CHANFIX") | Some("FIX") => fix::handle(me, from, args.get(1).copied(), ctx, net, db),
-            Some("HELP") | None => ctx.notice(me, from.uid, "ChanFix recovers opless channels from accumulated op-time. \x02SCORES\x02 <#channel> shows the standings; \x02CHANFIX\x02 <#channel> reops its trusted regulars. It won't touch a ChanServ-registered channel."),
+            Some("HELP") | None => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02SCORES\x02 or \x02CHANFIX\x02 <#channel>.")),
         }
     }

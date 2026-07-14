@@ -7,7 +7,7 @@
 //! `lib.rs` holds the dispatcher and the shared guard/claim helpers; each
 //! command lives in its own file.
 
-use echo_api::{NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "request.rs"]
 mod request;
@@ -23,6 +23,18 @@ mod take;
 mod next;
 #[path = "close.rs"]
 mod close;
+
+const BLURB: &str = "HelpServ is the help desk. Open a ticket with \x02REQUEST\x02; operators work the queue.";
+
+const TOPICS: &[HelpEntry] = &[
+    HelpEntry { cmd: "REQUEST", summary: "open a help-desk ticket", detail: "Syntax: \x02REQUEST <message>\x02\nOpens a ticket for the staff. Also \x02HELPME\x02." },
+    HelpEntry { cmd: "CANCEL", summary: "withdraw your ticket", detail: "Syntax: \x02CANCEL\x02\nWithdraws your own newest open ticket." },
+    HelpEntry { cmd: "LIST", summary: "list the ticket queue", detail: "Syntax: \x02LIST [ALL]\x02\nOperators: list open tickets, or every ticket with ALL." },
+    HelpEntry { cmd: "VIEW", summary: "read a ticket", detail: "Syntax: \x02VIEW <id>\x02\nOperators: read a ticket in full. Also \x02READ\x02." },
+    HelpEntry { cmd: "TAKE", summary: "claim a ticket", detail: "Syntax: \x02TAKE <id>\x02\nOperators: claim a specific ticket. Also \x02ASSIGN\x02." },
+    HelpEntry { cmd: "NEXT", summary: "claim the oldest ticket", detail: "Syntax: \x02NEXT\x02\nOperators: claim the oldest unassigned ticket." },
+    HelpEntry { cmd: "CLOSE", summary: "resolve a ticket", detail: "Syntax: \x02CLOSE <id>\x02\nOperators: resolve a ticket. Also \x02RESOLVE\x02." },
+];
 
 pub struct HelpServ {
     pub uid: String,
@@ -49,7 +61,7 @@ impl Service for HelpServ {
             Some("TAKE") | Some("ASSIGN") => take::handle(me, from, args.get(1).copied(), ctx, db),
             Some("NEXT") => next::handle(me, from, ctx, db),
             Some("CLOSE") | Some("RESOLVE") => close::handle(me, from, args.get(1).copied(), ctx, db),
-            Some("HELP") | None => ctx.notice(me, from.uid, "HelpServ is the help desk. \x02REQUEST\x02 <message> opens a ticket for the staff; \x02CANCEL\x02 withdraws yours. Operators: \x02LIST\x02 [ALL], \x02VIEW\x02 <id>, \x02TAKE\x02 <id>, \x02NEXT\x02, \x02CLOSE\x02 <id>."),
+            Some("HELP") | None => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02REQUEST\x02 <message> or \x02HELP\x02.")),
         }
     }

@@ -6,12 +6,21 @@
 //! `lib.rs` holds the dispatcher; the command lives in roll.rs and the
 //! expression evaluator in expr.rs.
 
-use echo_api::{NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "expr.rs"]
 mod expr;
 #[path = "roll.rs"]
 mod roll;
+
+const BLURB: &str = "DiceServ rolls dice and evaluates maths for tabletop games. Dice: \x022d6\x02, \x02d20\x02, \x02d%\x02. Also + - * / ^ %, parentheses, functions (sqrt, floor, min, ...), \x02pi\x02/\x02e\x02, and \x023~2d6\x02 to repeat.";
+
+const TOPICS: &[HelpEntry] = &[
+    HelpEntry { cmd: "ROLL", summary: "roll dice, whole-number result", detail: "Syntax: \x02ROLL <expr>\x02\nEvaluates a dice/math expression and rounds to a whole number, e.g. ROLL 2d6+3." },
+    HelpEntry { cmd: "CALC", summary: "evaluate, keeping decimals", detail: "Syntax: \x02CALC <expr>\x02\nEvaluates an expression and keeps the decimals." },
+    HelpEntry { cmd: "EXROLL", summary: "ROLL and show each die", detail: "Syntax: \x02EXROLL <expr>\x02\nLike ROLL, and also shows each individual die rolled." },
+    HelpEntry { cmd: "EXCALC", summary: "CALC and show each die", detail: "Syntax: \x02EXCALC <expr>\x02\nLike CALC, and also shows each individual die rolled." },
+];
 
 pub struct DiceServ {
     pub uid: String,
@@ -35,7 +44,7 @@ impl Service for DiceServ {
             Some("EXROLL") => roll::handle(me, from, &args[1..], ctx, true, true),
             Some("CALC") => roll::handle(me, from, &args[1..], ctx, false, false),
             Some("EXCALC") => roll::handle(me, from, &args[1..], ctx, true, false),
-            Some("HELP") | None => ctx.notice(me, from.uid, "DiceServ rolls dice and does maths. \x02ROLL\x02 <expr> (whole-number result), \x02CALC\x02 <expr> (keeps decimals), \x02EXROLL\x02/\x02EXCALC\x02 also show each die. Dice: \x022d6\x02, \x02d20\x02, \x02d%\x02. Also + - * / ^ %, parentheses, functions (sqrt, floor, min, …), \x02pi\x02/\x02e\x02, and \x023~2d6\x02 to repeat."),
+            Some("HELP") | None => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02ROLL\x02, \x02CALC\x02, or \x02HELP\x02.")),
         }
     }

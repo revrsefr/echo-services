@@ -1,5 +1,5 @@
 use echo_api::Store;
-use echo_api::{Sender, Service, ServiceCtx};
+use echo_api::{HelpEntry, Sender, Service, ServiceCtx};
 use echo_api::NetView;
 
 #[path = "register.rs"]
@@ -37,6 +37,29 @@ mod suspend;
 mod noexpire;
 #[path = "password.rs"]
 mod password;
+
+const BLURB: &str = "NickServ looks after your nickname and account: register it, identify to it, and manage its settings.";
+
+const TOPICS: &[HelpEntry] = &[
+    HelpEntry { cmd: "REGISTER", summary: "register your nick as an account", detail: "Syntax: \x02REGISTER <password> [email]\x02\nRegisters your current nick as an account. If an email is given and confirmation is on, you get a code to \x02CONFIRM\x02." },
+    HelpEntry { cmd: "IDENTIFY", summary: "log in to your account", detail: "Syntax: \x02IDENTIFY [account] <password>\x02\nLogs you in. Also \x02ID\x02." },
+    HelpEntry { cmd: "LOGOUT", summary: "log out to a guest nick", detail: "Syntax: \x02LOGOUT\x02\nLogs you out and moves you to a guest nick. Also \x02LOGOFF\x02." },
+    HelpEntry { cmd: "INFO", summary: "show account information", detail: "Syntax: \x02INFO [account]\x02\nShows account information. The email is shown only to the owner." },
+    HelpEntry { cmd: "ALIST", summary: "list channels you have access on", detail: "Syntax: \x02ALIST\x02\nLists the channels you hold access on." },
+    HelpEntry { cmd: "SET", summary: "change password or email", detail: "Syntax: \x02SET PASSWORD <new>\x02 or \x02SET EMAIL <address>\x02\nChanges your account password or email." },
+    HelpEntry { cmd: "GROUP", summary: "link this nick to an account", detail: "Syntax: \x02GROUP <account> <password>\x02\nLinks your current nick to an account as an alias, so identifying under it logs into that account." },
+    HelpEntry { cmd: "GLIST", summary: "list your grouped nicks", detail: "Syntax: \x02GLIST\x02\nLists the nicks grouped to your account." },
+    HelpEntry { cmd: "UNGROUP", summary: "remove a grouped nick", detail: "Syntax: \x02UNGROUP [nick]\x02\nRemoves a grouped nick (your current one by default)." },
+    HelpEntry { cmd: "GHOST", summary: "disconnect a session on your nick", detail: "Syntax: \x02GHOST <nick> [password]\x02\nDisconnects a session using a nick you own. Also \x02RECOVER\x02." },
+    HelpEntry { cmd: "RESETPASS", summary: "reset your password by email", detail: "Syntax: \x02RESETPASS <account>\x02, then \x02RESETPASS <account> <code> <newpassword>\x02\nEmails a reset code, then sets a new password with it." },
+    HelpEntry { cmd: "CONFIRM", summary: "confirm your email", detail: "Syntax: \x02CONFIRM <code>\x02\nConfirms the email on a newly registered account with the code you were sent." },
+    HelpEntry { cmd: "DROP", summary: "delete your account", detail: "Syntax: \x02DROP <password>\x02\nDeletes your account and releases the channels you founded." },
+    HelpEntry { cmd: "CERT", summary: "manage SASL EXTERNAL certs", detail: "Syntax: \x02CERT ADD <password> [fingerprint]\x02, \x02CERT DEL <fingerprint>\x02, \x02CERT LIST\x02\nManages the TLS certificate fingerprints that can log in via SASL EXTERNAL." },
+    HelpEntry { cmd: "AJOIN", summary: "auto-join channels on login", detail: "Syntax: \x02AJOIN ADD <#channel>\x02, \x02AJOIN DEL <#channel>\x02, \x02AJOIN LIST\x02\nChannels you are auto-joined to when you identify." },
+    HelpEntry { cmd: "SUSPEND", summary: "block an account (operator)", detail: "Syntax: \x02SUSPEND <account> [reason]\x02\nBlocks an account from logging in. Operators only." },
+    HelpEntry { cmd: "UNSUSPEND", summary: "lift a suspension (operator)", detail: "Syntax: \x02UNSUSPEND <account>\x02\nLifts a suspension. Operators only." },
+    HelpEntry { cmd: "NOEXPIRE", summary: "pin against expiry (operator)", detail: "Syntax: \x02NOEXPIRE <account> {ON|OFF}\x02\nPins an account so inactivity expiry never drops it. Operators only." },
+];
 
 pub struct NickServ {
     pub uid: String,
@@ -88,7 +111,7 @@ impl Service for NickServ {
             Some("SUSPEND") => suspend::handle(me, from, args, ctx, net, db, true),
             Some("UNSUSPEND") => suspend::handle(me, from, args, ctx, net, db, false),
             Some("NOEXPIRE") => noexpire::handle(me, from, args, ctx, db),
-            Some("HELP") => ctx.notice(me, from.uid, "NickServ looks after your nickname. Commands: \x02REGISTER\x02 <password> [email], \x02IDENTIFY\x02 [account] <password>, \x02INFO\x02 [account], \x02ALIST\x02, \x02GROUP\x02/\x02GLIST\x02/\x02UNGROUP\x02, \x02GHOST\x02 <nick> [password], \x02SET\x02 PASSWORD|EMAIL, \x02AJOIN\x02 ADD|DEL|LIST, \x02RESETPASS\x02 <account>, \x02CONFIRM\x02 <code>, \x02DROP\x02 <password>, \x02LOGOUT\x02, \x02CERT\x02 ADD|DEL|LIST <password> [fingerprint]. Operators also have \x02SUSPEND\x02/\x02UNSUSPEND\x02 and \x02NOEXPIRE\x02 <account> {ON|OFF}."),
+            Some("HELP") => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
         }
