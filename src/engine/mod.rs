@@ -1131,6 +1131,14 @@ impl Engine {
                 self.bump("botserv.messages");
             }
         } else {
+            // A services ignore silences a user's commands entirely — but an oper
+            // can never be ignored (else they could lock themselves out).
+            if !privs.any() {
+                let host = self.network.host_of(from).unwrap_or("").to_string();
+                if self.db.is_ignored(&nick, &host) {
+                    return Vec::new();
+                }
+            }
             let mut matched: Option<String> = None;
             {
                 let Self { services, network, db, .. } = self;
@@ -4004,6 +4012,54 @@ mod tests {
             assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-admin refused {cmd}");
             assert!(!out.iter().any(|a| matches!(a, NetAction::ChannelMode { .. } | NetAction::Kick { .. })), "no action from non-admin {cmd}");
         }
+    }
+
+    // OperServ IGNORE: an admin silences a user, whose service commands are then
+    // dropped; DEL restores them; opers are never silenced.
+    #[test]
+    fn operserv_ignore_silences_and_restores() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-osignore.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAM".into(), nick: "menace".into(), host: "bad.host".into() });
+
+        // Before the ignore, a NickServ command gets a reply.
+        assert!(!ns(&mut e, "000AAAAAM", "INFO").is_empty(), "responds before ignore");
+
+        // Ignore by host mask, then the same command yields nothing at all.
+        os(&mut e, "000AAAAAS", "IGNORE ADD *!*@bad.host flooding");
+        assert!(ns(&mut e, "000AAAAAM", "INFO").is_empty(), "ignored user's command is dropped");
+        assert!(os(&mut e, "000AAAAAM", "HELP").is_empty(), "ignored across every service");
+
+        // The operator is never silenced by an ignore against them.
+        os(&mut e, "000AAAAAS", "IGNORE ADD *!*@h staffignore");
+        assert!(!ns(&mut e, "000AAAAAS", "INFO").is_empty(), "an oper can't be ignored");
+
+        // DEL restores the menace.
+        os(&mut e, "000AAAAAS", "IGNORE DEL *!*@bad.host");
+        assert!(!ns(&mut e, "000AAAAAM", "INFO").is_empty(), "responds again after DEL");
+
+        // A non-admin (no longer ignored) can't manage the list — it's refused.
+        assert!(os(&mut e, "000AAAAAM", "IGNORE LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-admin refused");
     }
 
     // NOEXPIRE is oper-only.

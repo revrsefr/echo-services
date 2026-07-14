@@ -449,6 +449,14 @@ pub struct AkillView {
     pub expires: Option<u64>,
 }
 
+// A services ignore held by OperServ.
+#[derive(Debug, Clone)]
+pub struct IgnoreView {
+    pub mask: String,
+    pub reason: String,
+    pub expires: Option<u64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct BotView {
     pub nick: String,
@@ -701,6 +709,10 @@ pub trait Store {
     fn akill_add(&mut self, kind: &str, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError>;
     fn akill_del(&mut self, kind: &str, mask: &str) -> Result<bool, RegError>;
     fn akills(&self) -> Vec<AkillView>;
+    // Services ignores (node-local, oper-only).
+    fn ignore_add(&mut self, mask: &str, reason: &str, expires: Option<u64>);
+    fn ignore_del(&mut self, mask: &str) -> bool;
+    fn ignores(&self) -> Vec<IgnoreView>;
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError>;
     fn drop_channel(&mut self, name: &str) -> Result<(), ChanError>;
     fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError>;

@@ -30,7 +30,7 @@ use super::scram::{self, Hash};
 // fedserv-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use fedserv_api::{
-    AccountView, AjoinView, AkillView, BotView, MemoView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
+    AccountView, AjoinView, AkillView, BotView, IgnoreView, MemoView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -313,6 +313,16 @@ pub struct Akill {
 // The default ban kind for records written before bans carried one: a G-line.
 fn gline_kind() -> String {
     "G".to_string()
+}
+
+// A services ignore: services silently drop commands from a matching user. Node-
+// local and in-memory (like the auth throttle) — a fast, transient moderation
+// tool, not persisted or federated.
+#[derive(Debug, Clone)]
+pub struct Ignore {
+    pub mask: String,
+    pub reason: String,
+    pub expires: Option<u64>,
 }
 
 // A memo left for an account (MemoServ).
@@ -881,6 +891,8 @@ pub struct Db {
     host_cfg: HostConfig,
     // Network bans (OperServ AKILL), in insertion order.
     akills: Vec<Akill>,
+    // Services ignores (OperServ IGNORE), node-local and in-memory.
+    ignores: Vec<Ignore>,
 }
 
 // Network-wide HostServ configuration, rebuilt from the event log.
@@ -936,7 +948,7 @@ impl Db {
             apply(&mut accounts, &mut channels, &mut grouped, &mut bots, &mut host_cfg, &mut akills, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), bots, host_cfg, akills }
+        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), bots, host_cfg, akills, ignores: Vec::new() }
     }
 
     /// Fold an entry authored by another node into the store — the services-side
@@ -1792,6 +1804,48 @@ impl Db {
             .filter(|a| a.expires.is_none_or(|e| e > now))
             .map(|a| AkillView { kind: a.kind.clone(), mask: a.mask.clone(), setter: a.setter.clone(), reason: a.reason.clone(), ts: a.ts, expires: a.expires })
             .collect()
+    }
+
+    /// Add a services ignore, replacing any existing entry for the same mask.
+    pub fn ignore_add(&mut self, mask: &str, reason: &str, expires: Option<u64>) {
+        self.ignores.retain(|i| !i.mask.eq_ignore_ascii_case(mask));
+        self.ignores.push(Ignore { mask: mask.to_string(), reason: reason.to_string(), expires });
+    }
+
+    /// Remove a services ignore. Returns whether a live one was removed.
+    pub fn ignore_del(&mut self, mask: &str) -> bool {
+        let now = now();
+        let existed = self.ignores.iter().any(|i| i.mask.eq_ignore_ascii_case(mask) && i.expires.is_none_or(|e| e > now));
+        self.ignores.retain(|i| !i.mask.eq_ignore_ascii_case(mask));
+        existed
+    }
+
+    /// The live services ignores (expired hidden lazily), oldest first.
+    pub fn ignores(&self) -> Vec<IgnoreView> {
+        let now = now();
+        self.ignores
+            .iter()
+            .filter(|i| i.expires.is_none_or(|e| e > now))
+            .map(|i| IgnoreView { mask: i.mask.clone(), reason: i.reason.clone(), expires: i.expires })
+            .collect()
+    }
+
+    /// Whether a user is currently ignored by services. A mask with an `@` is
+    /// matched against `nick!*@host` (we don't track ident); a bare mask against
+    /// the nick. Expired entries are swept as they're encountered.
+    pub fn is_ignored(&mut self, nick: &str, host: &str) -> bool {
+        let now = now();
+        self.ignores.retain(|i| i.expires.is_none_or(|e| e > now));
+        let full = format!("{}!*@{}", nick.to_ascii_lowercase(), host.to_ascii_lowercase());
+        let nick_lc = nick.to_ascii_lowercase();
+        self.ignores.iter().any(|i| {
+            let m = i.mask.to_ascii_lowercase();
+            if m.contains('@') {
+                glob_match(&m, &full)
+            } else {
+                glob_match(&m, &nick_lc)
+            }
+        })
     }
 
     /// The account's suspension record, if any (shown in INFO even once expired).
@@ -2951,6 +3005,15 @@ impl Store for Db {
     }
     fn akills(&self) -> Vec<AkillView> {
         Db::akills(self)
+    }
+    fn ignore_add(&mut self, mask: &str, reason: &str, expires: Option<u64>) {
+        Db::ignore_add(self, mask, reason, expires)
+    }
+    fn ignore_del(&mut self, mask: &str) -> bool {
+        Db::ignore_del(self, mask)
+    }
+    fn ignores(&self) -> Vec<IgnoreView> {
+        Db::ignores(self)
     }
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
         Db::register_channel(self, name, founder)
