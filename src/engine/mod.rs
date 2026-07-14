@@ -1593,6 +1593,7 @@ fn ban_kind_label(kind: &str) -> &'static str {
         "Q" => "nick ban",
         "R" => "realname ban",
         "SHUN" => "shun",
+        "CBAN" => "channel ban",
         _ => "network ban",
     }
 }
@@ -4053,6 +4054,9 @@ mod tests {
         assert!(os(&mut e, "000AAAAAS", "SNLINE ADD .*free.money.* spambot").iter().any(|a| matches!(a, NetAction::AddLine { kind, mask, .. } if kind == "R" && mask == ".*free.money.*")), "R-line added");
         // SHUN drives a SHUN X-line on a user@host mask.
         assert!(os(&mut e, "000AAAAAS", "SHUN ADD *@noisy.host quiet down").iter().any(|a| matches!(a, NetAction::AddLine { kind, mask, .. } if kind == "SHUN" && mask == "*@noisy.host")), "shun added");
+        // CBAN drives a channel-name ban; an all-wildcard channel mask is refused.
+        assert!(os(&mut e, "000AAAAAS", "CBAN ADD #warez* piracy").iter().any(|a| matches!(a, NetAction::AddLine { kind, mask, .. } if kind == "CBAN" && mask == "#warez*")), "cban added");
+        assert!(os(&mut e, "000AAAAAS", "CBAN ADD #* everything").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("too wide"))), "wildcard channel refused");
 
         // GLOBAL fans out to every user via the $* server glob.
         let out = os(&mut e, "000AAAAAS", "GLOBAL rebooting in 5");

@@ -127,6 +127,10 @@ pub const SNLINE: Xline = Xline { kind: "R", name: "SNLINE", target: "realname-r
 // drops their commands — a quieter alternative to an AKILL.
 pub const SHUN: Xline = Xline { kind: "SHUN", name: "SHUN", target: "user@host", normalize: norm_userhost };
 
+// CBAN: a channel-name ban. Users can't join (or create) a channel matching the
+// mask, which is a channel glob like `#warez*`.
+pub const CBAN: Xline = Xline { kind: "CBAN", name: "CBAN", target: "#channel", normalize: norm_channel };
+
 fn norm_userhost(input: &str) -> Option<String> {
     let body = input.rsplit('!').next().unwrap_or(input);
     let (user, host) = body.split_once('@')?;
@@ -151,10 +155,19 @@ fn norm_realname(input: &str) -> Option<String> {
     (!input.is_empty()).then(|| input.to_string())
 }
 
+fn norm_channel(input: &str) -> Option<String> {
+    // A channel-name glob: must carry a channel prefix and a non-empty body.
+    if (!input.starts_with('#') && !input.starts_with('&')) || input.len() < 2 || input.contains(|c: char| c.is_whitespace() || c == ',') {
+        return None;
+    }
+    Some(input.to_ascii_lowercase())
+}
+
 // A mask whose every meaningful character is a wildcard would match nearly all.
+// A leading channel prefix is ignored so `#*` counts as too wide.
 fn too_wide(mask: &str) -> bool {
-    let trivial = |s: &str| s.chars().all(|c| c == '*' || c == '?' || c == '.' || c == '@');
-    trivial(mask)
+    let body = mask.strip_prefix('#').or_else(|| mask.strip_prefix('&')).unwrap_or(mask);
+    body.is_empty() || body.chars().all(|c| c == '*' || c == '?' || c == '.' || c == '@')
 }
 
 fn human_secs(secs: u64) -> String {
