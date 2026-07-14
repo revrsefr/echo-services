@@ -1,0 +1,26 @@
+# Build, lint, and test on every push and pull request. Adjust `runs-on` to a
+# label your Forgejo runner advertises (commonly `ubuntu-latest` or `docker`).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    container:
+      image: rust:1-bookworm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build
+        run: cargo build --workspace --locked
+
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --workspace --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --locked
