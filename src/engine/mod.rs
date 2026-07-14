@@ -1593,28 +1593,46 @@ impl Engine {
         // Fantasy only works through an assigned, live bot.
         let Some(botnick) = self.db.channel(chan).and_then(|c| c.assigned_bot.clone()) else { return };
         let Some(botuid) = self.network.uid_by_nick(&botnick).map(str::to_string) else { return };
-        let Some(csuid) = self
-            .services
-            .iter()
-            .find(|s| s.nick().eq_ignore_ascii_case("ChanServ"))
-            .map(|s| s.uid().to_string())
-        else {
-            return;
-        };
-        // Rewrite `!cmd args…` into `CMD #channel args…` for ChanServ.
-        let mut args: Vec<&str> = Vec::new();
-        args.push(cmd);
-        args.push(chan);
-        args.extend(words);
-        {
-            let Self { services, network, db, .. } = self;
-            if let Some(cs) = services.iter_mut().find(|s| s.uid() == csuid) {
-                cs.on_command(sender, &args, ctx, network, db);
+
+        // A dice command (!roll/!calc/…) goes to DiceServ, if it's loaded, and its
+        // reply is spoken into the channel by the bot; everything else is a channel
+        // command handled by ChanServ.
+        if matches!(cmd.to_ascii_uppercase().as_str(), "ROLL" | "CALC" | "EXROLL" | "EXCALC") {
+            let Some(dsuid) = self.service_uid("DiceServ") else { return };
+            let mark = ctx.actions.len();
+            let args: Vec<&str> = std::iter::once(cmd).chain(words).collect();
+            self.route_to(&dsuid, sender, &args, ctx);
+            // Turn DiceServ's private notices into the bot speaking to the channel.
+            for a in ctx.actions[mark..].iter_mut() {
+                if let NetAction::Notice { text, .. } = a {
+                    *a = NetAction::Privmsg { from: botuid.clone(), to: chan.to_string(), text: std::mem::take(text) };
+                }
             }
+            return;
         }
+
+        let Some(csuid) = self.service_uid("ChanServ") else { return };
+        // Rewrite `!cmd args…` into `CMD #channel args…` for ChanServ.
+        let mark = ctx.actions.len();
+        let args: Vec<&str> = [cmd, chan].into_iter().chain(words).collect();
+        self.route_to(&csuid, sender, &args, ctx);
         // Make the bot the source of everything ChanServ just emitted.
-        for a in ctx.actions.iter_mut() {
+        for a in ctx.actions[mark..].iter_mut() {
             resource_action(a, &csuid, &botuid);
+        }
+    }
+
+    // The uid of a loaded service by nick, if present.
+    fn service_uid(&self, nick: &str) -> Option<String> {
+        self.services.iter().find(|s| s.nick().eq_ignore_ascii_case(nick)).map(|s| s.uid().to_string())
+    }
+
+    // Dispatch a command to a specific service (by uid), borrowing the disjoint
+    // engine fields it needs.
+    fn route_to(&mut self, uid: &str, sender: &Sender, args: &[&str], ctx: &mut ServiceCtx) {
+        let Self { services, network, db, .. } = self;
+        if let Some(svc) = services.iter_mut().find(|s| s.uid() == uid) {
+            svc.on_command(sender, args, ctx, network, db);
         }
     }
 }
@@ -3580,6 +3598,49 @@ mod tests {
 
     // Fantasy commands typed in-channel route through ChanServ and are sourced
     // from the assigned bot.
+    #[test]
+    fn fantasy_roll_speaks_dice_through_the_bot() {
+        use fedserv_botserv::BotServ;
+        use fedserv_chanserv::ChanServ;
+        use fedserv_diceserv::DiceServ;
+        let path = std::env::temp_dir().join("fedserv-fantasyroll.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        db.register_channel("#d", "boss").unwrap(); // no bot
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+                Box::new(DiceServ { uid: "42SAAAAAI".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let chan = |e: &mut Engine, uid: &str, c: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: c.into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        bs(&mut e, "000AAAAAB", "BOT ADD Bendy bot serv.host Helper");
+        bs(&mut e, "000AAAAAB", "ASSIGN #c Bendy");
+
+        // `!roll` is answered by DiceServ but spoken into the channel by the bot.
+        let out = chan(&mut e, "000AAAAAB", "#c", "!roll 2d6+1");
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text } if from.starts_with("42SB") && to == "#c" && text.contains("2d6+1") && text.contains('='))),
+            "fantasy roll spoken by the bot: {out:?}"
+        );
+        // No DiceServ (or no bot) → no dice fantasy.
+        assert!(chan(&mut e, "000AAAAAB", "#d", "!roll 2d6").is_empty(), "no bot, no roll");
+    }
+
     #[test]
     fn botserv_fantasy_routes_through_bot() {
         use fedserv_botserv::BotServ;
