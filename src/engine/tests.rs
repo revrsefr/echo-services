@@ -3503,3 +3503,167 @@ fn helpserv_fronts_the_network_help_index() {
     let own = ask(&mut e, "HELP REQUEST");
     assert!(own.iter().any(|l| l.contains("Syntax:") && l.contains("REQUEST")), "{own:?}");
 }
+
+// ---- Per-service integration coverage --------------------------------------
+// The service crates carry almost no unit tests; exercise each one's core path
+// through a real Engine so a regression in a command handler is caught.
+
+// Connect uid 000AAAAAB as `acct` and identify (password "sesame"). The account
+// must already be registered in the engine's db.
+fn svc_login(e: &mut Engine, acct: &str) {
+    e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: acct.into(), host: "h".into(), ip: "0.0.0.0".into() });
+    e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+}
+
+// Grant the account full operator privileges.
+fn svc_oper(e: &mut Engine, acct: &str) {
+    let mut opers = std::collections::HashMap::new();
+    opers.insert(acct.to_string(), echo_api::Privs::from_names(&["admin", "suspend", "auspex"]));
+    e.set_opers(opers);
+}
+
+// Send a command to a service uid; return the NOTICE texts it produced.
+fn svc_ask(e: &mut Engine, uid: &str, text: &str) -> Vec<String> {
+    e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: uid.into(), text: text.into() })
+        .into_iter()
+        .filter_map(|a| match a { NetAction::Notice { text, .. } => Some(text), _ => None })
+        .collect()
+}
+
+fn svc_db(tag: &str) -> Db {
+    let path = std::env::temp_dir().join(format!("echo-svc-{tag}.jsonl"));
+    let _ = std::fs::remove_file(&path);
+    let mut db = Db::open(&path, "test");
+    db.scram_iterations = 4096;
+    db
+}
+
+fn ns() -> Box<NickServ> {
+    Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })
+}
+
+#[test]
+fn memoserv_delivers_a_memo_to_an_offline_account() {
+    let mut db = svc_db("memo");
+    db.register("alice", "sesame", None).unwrap();
+    db.register("bob", "sesame", None).unwrap();
+    let mut e = Engine::new(vec![ns(), Box::new(echo_memoserv::MemoServ { uid: "42SAAAAAE".into() })], db);
+    svc_login(&mut e, "alice");
+    let out = svc_ask(&mut e, "42SAAAAAE", "SEND bob hi there");
+    assert!(out.iter().any(|l| l.contains("Memo sent")), "{out:?}");
+    assert_eq!(e.db.unread_memos("bob"), 1);
+}
+
+#[test]
+fn groupserv_registers_a_group_and_adds_a_member() {
+    let mut db = svc_db("group");
+    db.register("alice", "sesame", None).unwrap();
+    db.register("bob", "sesame", None).unwrap();
+    let mut e = Engine::new(vec![ns(), Box::new(echo_groupserv::GroupServ { uid: "42SAAAAAL".into() })], db);
+    svc_login(&mut e, "alice");
+    assert!(svc_ask(&mut e, "42SAAAAAL", "REGISTER !team").iter().any(|l| l.contains("registered")));
+    svc_ask(&mut e, "42SAAAAAL", "ADD !team bob");
+    let g = e.db.group("!team").expect("group exists");
+    assert!(g.founder.eq_ignore_ascii_case("alice"));
+    assert_eq!(g.members.len(), 1, "bob is a member");
+}
+
+#[test]
+fn reportserv_files_then_an_oper_closes() {
+    let mut db = svc_db("report");
+    db.register("alice", "sesame", None).unwrap();
+    let mut e = Engine::new(vec![ns(), Box::new(echo_reportserv::ReportServ { uid: "42SAAAAAK".into() })], db);
+    svc_login(&mut e, "alice");
+    svc_ask(&mut e, "42SAAAAAK", "REPORT bob being a nuisance");
+    assert_eq!(e.db.reports(true).len(), 1, "one open report");
+    svc_oper(&mut e, "alice");
+    svc_ask(&mut e, "42SAAAAAK", "CLOSE 0"); // report ids start at 0
+    assert_eq!(e.db.reports(true).len(), 0, "closed");
+}
+
+#[test]
+fn infoserv_posts_a_bulletin_admin_only() {
+    let mut db = svc_db("info");
+    db.register("alice", "sesame", None).unwrap();
+    let mut e = Engine::new(vec![ns(), Box::new(echo_infoserv::InfoServ { uid: "42SAAAAAJ".into() })], db);
+    svc_login(&mut e, "alice");
+    // Not an oper yet: refused.
+    assert!(svc_ask(&mut e, "42SAAAAAJ", "POST scheduled maintenance tonight").iter().any(|l| l.contains("Access denied")));
+    assert_eq!(e.db.news("logon").len(), 0);
+    svc_oper(&mut e, "alice");
+    svc_ask(&mut e, "42SAAAAAJ", "POST scheduled maintenance tonight");
+    assert_eq!(e.db.news("logon").len(), 1, "bulletin posted");
+}
+
+#[test]
+fn hostserv_request_then_operator_activate() {
+    let mut db = svc_db("host");
+    db.register("alice", "sesame", None).unwrap();
+    let mut e = Engine::new(vec![ns(), Box::new(echo_hostserv::HostServ { uid: "42SAAAAAG".into() })], db);
+    svc_login(&mut e, "alice");
+    svc_ask(&mut e, "42SAAAAAG", "REQUEST cool.vhost");
+    assert_eq!(e.db.vhost_requests().len(), 1, "request pending");
+    svc_oper(&mut e, "alice");
+    svc_ask(&mut e, "42SAAAAAG", "ACTIVATE alice");
+    assert!(e.db.vhosts().iter().any(|(acct, host, _, _)| acct.eq_ignore_ascii_case("alice") && host == "cool.vhost"), "vhost assigned: {:?}", e.db.vhosts());
+}
+
+#[test]
+fn operserv_akill_add_and_remove() {
+    let mut db = svc_db("oper");
+    db.register("alice", "sesame", None).unwrap();
+    let mut e = Engine::new(vec![ns(), Box::new(echo_operserv::OperServ { uid: "42SAAAAAH".into() })], db);
+    svc_login(&mut e, "alice");
+    // Not an oper: refused.
+    svc_ask(&mut e, "42SAAAAAH", "AKILL ADD *@bad.host spamming");
+    assert_eq!(e.db.akills().len(), 0);
+    svc_oper(&mut e, "alice");
+    svc_ask(&mut e, "42SAAAAAH", "AKILL ADD *@bad.host spamming");
+    assert_eq!(e.db.akills().len(), 1, "akill added");
+    svc_ask(&mut e, "42SAAAAAH", "AKILL DEL *@bad.host");
+    assert_eq!(e.db.akills().len(), 0, "akill removed");
+}
+
+#[test]
+fn botserv_bot_add_is_operator_gated() {
+    let mut db = svc_db("bot");
+    db.register("alice", "sesame", None).unwrap();
+    let mut e = Engine::new(vec![ns(), Box::new(echo_botserv::BotServ { uid: "42SAAAAAD".into() })], db);
+    svc_login(&mut e, "alice");
+    svc_ask(&mut e, "42SAAAAAD", "BOT ADD Helper helper services.local A bot");
+    assert_eq!(e.db.bots().count(), 0, "not an oper");
+    svc_oper(&mut e, "alice");
+    svc_ask(&mut e, "42SAAAAAD", "BOT ADD Helper helper services.local A bot");
+    assert_eq!(e.db.bots().count(), 1, "bot created by oper");
+}
+
+#[test]
+fn statserv_server_needs_an_operator() {
+    let mut db = svc_db("stat");
+    db.register("alice", "sesame", None).unwrap();
+    let mut e = Engine::new(vec![ns(), Box::new(echo_statserv::StatServ { uid: "42SAAAAAF".into() })], db);
+    svc_login(&mut e, "alice");
+    assert!(svc_ask(&mut e, "42SAAAAAF", "SERVER").iter().any(|l| l.to_lowercase().contains("denied") || l.contains("operator")), "non-oper refused");
+    svc_oper(&mut e, "alice");
+    assert!(!svc_ask(&mut e, "42SAAAAAF", "SERVER").is_empty(), "oper gets stats");
+}
+
+#[test]
+fn chanfix_and_diceserv_basic_paths() {
+    let mut db = svc_db("misc");
+    db.register("alice", "sesame", None).unwrap();
+    let mut e = Engine::new(
+        vec![
+            ns(),
+            Box::new(echo_chanfix::ChanFix { uid: "42SAAAAAM".into() }),
+            Box::new(echo_diceserv::DiceServ { uid: "42SAAAAAI".into() }),
+        ],
+        db,
+    );
+    svc_login(&mut e, "alice");
+    // ChanFix is oper-only; SCORES on an unknown channel reports no history.
+    svc_oper(&mut e, "alice");
+    assert!(svc_ask(&mut e, "42SAAAAAM", "SCORES #ghost").iter().any(|l| l.contains("No op-time")), "chanfix empty case");
+    // DiceServ evaluates an expression.
+    assert!(svc_ask(&mut e, "42SAAAAAI", "ROLL 2d6").iter().any(|l| l.contains('=')), "dice result");
+}
