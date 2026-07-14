@@ -25,6 +25,7 @@ use fedserv_diceserv::DiceServ;
 use fedserv_infoserv::InfoServ;
 use fedserv_reportserv::ReportServ;
 use fedserv_groupserv::GroupServ;
+use fedserv_chanfix::ChanFix;
 use fedserv_example::ExampleServ;
 use fedserv_inspircd::InspIrcd;
 use fedserv_nickserv::NickServ;
@@ -113,6 +114,11 @@ async fn main() -> Result<()> {
             uid: format!("{}AAAAAL", cfg.server.sid),
         }));
     }
+    if enabled("chanfix") {
+        services.push(Box::new(ChanFix {
+            uid: format!("{}AAAAAM", cfg.server.sid),
+        }));
+    }
     if enabled("example") {
         services.push(Box::new(ExampleServ {
             uid: format!("{}AAAAAC", cfg.server.sid),
@@ -172,6 +178,17 @@ async fn main() -> Result<()> {
                 if let Err(err) = e.maybe_compact() {
                     tracing::warn!(%err, "compaction failed");
                 }
+            }
+        });
+    }
+
+    // ChanFix scores op-time on a shorter cadence so the fix has fresh data.
+    if enabled("chanfix") {
+        let engine = engine.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                engine.lock().await.chanfix_tick();
             }
         });
     }

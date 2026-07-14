@@ -327,6 +327,7 @@ dependencies = [
  "base64",
  "fedserv-api",
  "fedserv-botserv",
+ "fedserv-chanfix",
  "fedserv-chanserv",
  "fedserv-diceserv",
  "fedserv-example",
@@ -364,6 +365,13 @@ version = "0.0.1"
 
 [[package]]
 name = "fedserv-botserv"
+version = "0.0.1"
+dependencies = [
+ "fedserv-api",
+]
+
+[[package]]
+name = "fedserv-chanfix"
 version = "0.0.1"
 dependencies = [
  "fedserv-api",

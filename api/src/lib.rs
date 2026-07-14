@@ -1027,6 +1027,10 @@ pub trait NetView {
     // Session limiting: live sessions from an IP, and IPs at/over a threshold.
     fn session_count(&self, ip: &str) -> u32;
     fn sessions_over(&self, min: u32) -> Vec<(String, u32)>;
+    // ChanFix: op-time scores (identity -> score, highest first) and the current
+    // op count for a channel.
+    fn chanfix_scores(&self, channel: &str) -> Vec<(String, u32)>;
+    fn op_count(&self, channel: &str) -> usize;
     // Search the recent moderation/action incident log (newest first, capped at
     // `limit`). An empty pattern returns the most recent; otherwise matches the
     // id or a case-insensitive substring of the summary.

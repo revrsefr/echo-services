@@ -575,6 +575,11 @@ impl Engine {
         Ok(false)
     }
 
+    // One ChanFix scoring pass over the live network (run periodically).
+    pub fn chanfix_tick(&mut self) {
+        self.network.chanfix_sample();
+    }
+
     // Drop accounts and channels left inactive past the configured thresholds.
     // Lazy: computed from stored last-activity stamps on this periodic pass, with
     // no per-record timer. Opers, accounts with a live session, and occupied
@@ -4842,6 +4847,60 @@ mod tests {
         // alice is not an oper: refused, and the flag is untouched.
         let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "NOEXPIRE mallory ON".into() });
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-oper refused: {out:?}");
+    }
+
+    // ChanFix: op-time is scored from live state, and CHANFIX reops the trusted
+    // regulars of an opless, unregistered channel; it defers to ChanServ.
+    #[test]
+    fn chanfix_scores_and_fixes_opless_channels() {
+        use fedserv_chanfix::ChanFix;
+        let path = std::env::temp_dir().join("fedserv-chanfix.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        for a in ["alice", "bob", "staff"] {
+            db.register(a, "password1", None).unwrap();
+        }
+        db.register_channel("#owned", "staff").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanFix { uid: "42SAAAAAM".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Auspex));
+        e.set_opers(opers);
+        let cf = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAM".into(), text: t.into() });
+        let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+        let opped = |out: &[NetAction], who: &str| out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == &format!("+o {who}")));
+
+        for (uid, nick) in [("000AAAAAA", "alice"), ("000AAAAAB", "bob"), ("000AAAAAS", "staff")] {
+            e.handle(NetEvent::UserConnect { uid: uid.into(), nick: nick.into(), host: "h".into(), ip: "0.0.0.0".into() });
+            e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        }
+        // alice and bob hold ops in an unregistered #lobby; score their op-time.
+        e.handle(NetEvent::Join { uid: "000AAAAAA".into(), channel: "#lobby".into(), op: true });
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#lobby".into(), op: true });
+        for _ in 0..15 {
+            e.chanfix_tick();
+        }
+
+        // SCORES shows the accumulated standings.
+        assert!(has(&cf(&mut e, "000AAAAAS", "SCORES #lobby"), "alice"), "scores recorded");
+        // A non-oper can't use ChanFix at all.
+        assert!(has(&cf(&mut e, "000AAAAAA", "SCORES #lobby"), "Access denied"), "oper-only");
+
+        // The channel goes opless; CHANFIX reops the trusted regulars still present.
+        e.handle(NetEvent::ChannelOp { channel: "#lobby".into(), uid: "000AAAAAA".into(), op: false });
+        e.handle(NetEvent::ChannelOp { channel: "#lobby".into(), uid: "000AAAAAB".into(), op: false });
+        let out = cf(&mut e, "000AAAAAS", "CHANFIX #lobby");
+        assert!(opped(&out, "000AAAAAA") && opped(&out, "000AAAAAB"), "reopped the regulars: {out:?}");
+
+        // It won't touch a ChanServ-registered channel.
+        assert!(has(&cf(&mut e, "000AAAAAS", "CHANFIX #owned"), "registered"), "defers to ChanServ");
     }
 
     // GroupServ interconnection: a channel grants access to a !group, and every

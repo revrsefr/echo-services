@@ -28,7 +28,14 @@ pub struct Network {
     // Recent moderation/action incidents (bounded ring), for OperServ LOGSEARCH.
     incidents: VecDeque<Incident>,
     incident_seq: u64,
+    // ChanFix op-time scores: channel (lowercase) -> identity (account or host) ->
+    // score. Sampled from live op state; ephemeral (node-local, rebuilt over time).
+    chanfix: HashMap<String, HashMap<String, u32>>,
 }
+
+// ChanFix scoring caps and rates.
+const CHANFIX_MAX: u32 = 5000;
+const CHANFIX_BUMP: u32 = 2; // per sample while opped (net +1 after the -1 decay)
 
 // One recorded action: a short id (also stamped into the action's reason), the
 // unix time it happened, and a human summary.
@@ -303,6 +310,45 @@ impl Network {
         self.channels.get(&lc(channel)).into_iter().flat_map(|c| c.members.iter().map(String::as_str))
     }
 
+    // How many uids currently hold op in `channel`.
+    pub fn op_count(&self, channel: &str) -> usize {
+        self.channels.get(&lc(channel)).map_or(0, |c| c.ops.len())
+    }
+
+    // One ChanFix sampling pass: every tracked score decays by 1; every currently-
+    // opped user's identity (its account, else its host) gains CHANFIX_BUMP — a net
+    // +1 while opped, -1 while idle, so trusted regulars rise and stale ops fade.
+    pub fn chanfix_sample(&mut self) {
+        for scores in self.chanfix.values_mut() {
+            for v in scores.values_mut() {
+                *v = v.saturating_sub(1);
+            }
+        }
+        let mut samples: Vec<(String, String)> = Vec::new();
+        for (chan, c) in &self.channels {
+            for uid in &c.ops {
+                if let Some(id) = self.accounts.get(uid).cloned().or_else(|| self.users.get(uid).map(|u| u.host.clone())) {
+                    samples.push((chan.clone(), id));
+                }
+            }
+        }
+        for (chan, id) in samples {
+            let s = self.chanfix.entry(chan).or_default().entry(id).or_insert(0);
+            *s = (*s + CHANFIX_BUMP).min(CHANFIX_MAX);
+        }
+        for scores in self.chanfix.values_mut() {
+            scores.retain(|_, v| *v > 0);
+        }
+        self.chanfix.retain(|_, m| !m.is_empty());
+    }
+
+    // A channel's ChanFix scores (identity -> score), highest first.
+    pub fn chanfix_scores(&self, channel: &str) -> Vec<(String, u32)> {
+        let mut v: Vec<(String, u32)> = self.chanfix.get(&lc(channel)).into_iter().flat_map(|m| m.iter().map(|(k, &s)| (k.clone(), s))).collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        v
+    }
+
     pub fn set_channel_key(&mut self, channel: &str, key: Option<String>) {
         self.channels.entry(lc(channel)).or_default().key = key;
     }
@@ -364,5 +410,11 @@ impl NetView for Network {
     }
     fn search_incidents(&self, pattern: &str, limit: usize) -> Vec<IncidentView> {
         Network::search_incidents(self, pattern, limit)
+    }
+    fn chanfix_scores(&self, channel: &str) -> Vec<(String, u32)> {
+        Network::chanfix_scores(self, channel)
+    }
+    fn op_count(&self, channel: &str) -> usize {
+        Network::op_count(self, channel)
     }
 }
