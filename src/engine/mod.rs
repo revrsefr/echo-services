@@ -4016,6 +4016,44 @@ mod tests {
         }
     }
 
+    // OperServ SVSNICK / SVSJOIN: force a user's nick or channel join, admin-gated.
+    #[test]
+    fn operserv_svs_forces_nick_and_join() {
+        use fedserv_operserv::OperServ;
+        let path = std::env::temp_dir().join("fedserv-ossvs.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(fedserv_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAT".into(), nick: "target".into(), host: "h".into() });
+
+        // SVSNICK forces the rename.
+        let out = os(&mut e, "000AAAAAS", "SVSNICK target Renamed");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAT" && nick == "Renamed")), "svsnick issued: {out:?}");
+        // The ircd echoes the rename; once tracked, SVSJOIN resolves the new nick.
+        e.handle(NetEvent::NickChange { uid: "000AAAAAT".into(), nick: "Renamed".into() });
+        let out = os(&mut e, "000AAAAAS", "SVSJOIN Renamed #room");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForceJoin { uid, channel, .. } if uid == "000AAAAAT" && channel == "#room")), "svsjoin issued: {out:?}");
+
+        // An unknown target is reported, not forced.
+        assert!(os(&mut e, "000AAAAAS", "SVSNICK ghost x").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("no \x02ghost\x02"))), "unknown target");
+    }
+
     // OperServ IGNORE: an admin silences a user, whose service commands are then
     // dropped; DEL restores them; opers are never silenced.
     #[test]
