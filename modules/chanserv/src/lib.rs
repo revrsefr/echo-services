@@ -9,6 +9,8 @@ mod access;
 mod flags;
 #[path = "op.rs"]
 mod op;
+#[path = "updown.rs"]
+mod updown;
 #[path = "kick.rs"]
 mod kick;
 #[path = "ban.rs"]
@@ -55,6 +57,7 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "AOP/SOP/VOP", summary: "tiered access shortcuts", detail: "Syntax: \x02AOP|SOP|VOP <#channel> ADD <account> | DEL <account> | LIST\x02\nTiered shortcuts over ACCESS: AOP and SOP grant op, VOP grants voice." },
     HelpEntry { cmd: "STATUS", summary: "show a user's access", detail: "Syntax: \x02STATUS <#channel> [nick]\x02\nShows a user's access level on a channel." },
     HelpEntry { cmd: "OP/DEOP/VOICE/DEVOICE", summary: "give or take op/voice", detail: "Syntax: \x02OP|DEOP|VOICE|DEVOICE <#channel> [nick]\x02\nGives or takes channel op or voice." },
+    HelpEntry { cmd: "UP/DOWN", summary: "apply or drop your status", detail: "Syntax: \x02UP|DOWN <#channel>\x02\nUP re-applies the op/voice your access entitles you to; DOWN removes your status." },
     HelpEntry { cmd: "KICK", summary: "kick from the channel", detail: "Syntax: \x02KICK <#channel> <nick> [reason]\x02\nKicks a user from the channel." },
     HelpEntry { cmd: "BAN/UNBAN", summary: "ban or unban a user", detail: "Syntax: \x02BAN <#channel> <nick> [reason]\x02, \x02UNBAN <#channel> [nick]\x02\nBans or unbans a user by host." },
     HelpEntry { cmd: "AKICK", summary: "manage the auto-kick list", detail: "Syntax: \x02AKICK <#channel> ADD <mask> [reason] | DEL <mask> | LIST\x02\nManages the auto-kick list; matches are banned and kicked on join." },
@@ -250,6 +253,8 @@ impl Service for ChanServ {
             Some("DEOP") => op::handle(me, from, "-o", args, ctx, net, db),
             Some("VOICE") => op::handle(me, from, "+v", args, ctx, net, db),
             Some("DEVOICE") => op::handle(me, from, "-v", args, ctx, net, db),
+            Some("UP") => updown::handle(me, from, true, args, ctx, net, db),
+            Some("DOWN") => updown::handle(me, from, false, args, ctx, net, db),
             Some("KICK") => kick::handle(me, from, args, ctx, net, db),
             Some("BAN") => ban::handle(me, from, args, ctx, net, db),
             Some("UNBAN") => unban::handle(me, from, args, ctx, net, db),

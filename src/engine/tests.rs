@@ -745,6 +745,37 @@
         assert!(out.is_empty(), "no enforcement when SECUREOPS is off: {out:?}");
     }
 
+    // ChanServ UP applies the status your access entitles you to; DOWN strips it.
+    #[test]
+    fn chanserv_up_down_status() {
+        use echo_chanserv::ChanServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-csupdown.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false });
+
+        let cs = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: text.into() });
+        let out = cs(&mut e, "UP #c");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+o 000AAAAAB")), "UP applies the founder's +o: {out:?}");
+        let out = cs(&mut e, "DOWN #c");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes.starts_with("-ov"))), "DOWN strips status: {out:?}");
+        let out = cs(&mut e, "UP #nope");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't registered"))), "unknown channel refused: {out:?}");
+    }
+
     // BotServ BOT ADD/LIST is oper-gated (Priv::Admin) and the bot is remembered.
     #[test]
     fn botserv_bot_add_list_is_oper_gated() {
