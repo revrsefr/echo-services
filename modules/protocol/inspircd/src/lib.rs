@@ -186,28 +186,29 @@ impl Protocol for InspIrcd {
                 }
             }
             "QUIT" => vec![NetEvent::Quit { uid: source.unwrap_or_default() }],
-            // account-registration relay from an ircd:
-            // ACCTREGISTER <reqid> <origin> <kind> <account> <p2> :<p3>
-            "ACCTREGISTER" => {
-                let a: Vec<&str> = tokens.by_ref().take(5).collect();
-                if a.len() == 5 {
-                    vec![NetEvent::AccountRequest {
-                        reqid: a[0].to_string(),
-                        origin: a[1].to_string(),
-                        kind: a[2].to_string(),
-                        account: a[3].to_string(),
-                        p2: a[4].to_string(),
-                        p3: trailing(rest),
-                    }]
-                } else {
-                    vec![]
-                }
-            }
-            // ENCAP <target> <subcmd> …  — we only care about relayed SASL:
-            // ENCAP <target> SASL <client> <agent> <mode> [data…]
+            // ENCAP <target> <subcmd> …  — we care about relayed SASL and the
+            // account-registration relay (the ircd's account module forwards a
+            // leaf's REGISTER/VERIFY/RESEND/STATUS to us, the authority server).
             "ENCAP" => {
                 let _target = tokens.next();
                 match tokens.next().map(|s| s.to_ascii_uppercase()).as_deref() {
+                    // SWACCTREG <reqid> <origin> <kind> <account> <p2> :<p3>
+                    Some("SWACCTREG") => {
+                        let a: Vec<&str> = tokens.by_ref().take(5).collect();
+                        if a.len() == 5 {
+                            vec![NetEvent::AccountRequest {
+                                reqid: a[0].to_string(),
+                                origin: a[1].to_string(),
+                                kind: a[2].to_string(),
+                                account: a[3].to_string(),
+                                p2: a[4].to_string(),
+                                p3: trailing(rest),
+                            }]
+                        } else {
+                            vec![]
+                        }
+                    }
+                    // ENCAP <target> SASL <client> <agent> <mode> [data…]
                     Some("SASL") => {
                         let p: Vec<&str> = tokens.collect();
                         if p.len() >= 3 {
@@ -248,11 +249,12 @@ impl Protocol for InspIrcd {
             NetAction::Notice { from, to, text } => {
                 vec![format!(":{} NOTICE {} :{}", from, to, text)]
             }
-            // ACCTREGRESULT <reqid> <kind> <account> <status> <code> :<message>
-            NetAction::AccountResponse { reqid, kind, account, status, code, message } => {
+            // Answer the origin server: ENCAP <origin> SWACCTRES <reqid> <kind>
+            // <account> <status> <code> :<message>
+            NetAction::AccountResponse { reqid, origin, kind, account, status, code, message } => {
                 vec![self.sourced(format!(
-                    "ACCTREGRESULT {} {} {} {} {} :{}",
-                    reqid, kind, account, status, code, message
+                    "ENCAP {} SWACCTRES {} {} {} {} {} :{}",
+                    origin, reqid, kind, account, status, code, message
                 ))]
             }
             // ENCAP * SASL <agent> <client> <mode> [data…]
@@ -492,6 +494,37 @@ mod tests {
         });
         assert_eq!(lines, vec![":42SAAAAAA NOTICE 0IRAAAAAB :hiKILL 0IRAAAAAB :pwned".to_string()]);
         assert!(!lines[0].contains('\n') && !lines[0].contains('\r'));
+    }
+
+    // Account-registration relay wire format, matching the ircd's account module:
+    // a leaf forwards ENCAP <us> SWACCTREG <reqid> <origin> <kind> <account> <p2>
+    // :<p3>, and we answer the origin server with ENCAP <origin> SWACCTRES. The
+    // password is the trailing field so it may contain spaces.
+    #[test]
+    fn account_registration_relay_roundtrip() {
+        let ev = proto().parse(":0IR ENCAP 42S SWACCTREG req1 0IR REGISTER neo neo@example.org :trinity pass");
+        match ev.as_slice() {
+            [NetEvent::AccountRequest { reqid, origin, kind, account, p2, p3 }] => {
+                assert_eq!(reqid, "req1");
+                assert_eq!(origin, "0IR");
+                assert_eq!(kind, "REGISTER");
+                assert_eq!(account, "neo");
+                assert_eq!(p2, "neo@example.org");
+                assert_eq!(p3, "trinity pass", "the password is trailing, spaces preserved");
+            }
+            other => panic!("expected one AccountRequest, got {other:?}"),
+        }
+
+        let lines = proto().serialize(&NetAction::AccountResponse {
+            reqid: "req1".into(),
+            origin: "0IR".into(),
+            kind: "REGISTER".into(),
+            account: "neo".into(),
+            status: "verification_required".into(),
+            code: "VERIFICATION_REQUIRED".into(),
+            message: "check your email".into(),
+        });
+        assert_eq!(lines, vec![":42S ENCAP 0IR SWACCTRES req1 REGISTER neo verification_required VERIFICATION_REQUIRED :check your email".to_string()]);
     }
 
     // A network ban serializes to ADDLINE / DELLINE, sourced from our server.

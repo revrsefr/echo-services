@@ -611,7 +611,7 @@
         let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
 
         // REGISTER <account> <email> :<password> relayed from the ircd.
-        let reg = e.account_request("r1".into(), "REGISTER".into(), "neo".into(), "neo@example.org".into(), "trinity".into());
+        let reg = e.account_request("r1".into(), "leaf".into(), "REGISTER".into(), "neo".into(), "neo@example.org".into(), "trinity".into());
         let (account, password, email, reply) = reg.iter().find_map(|a| match a {
             NetAction::DeferRegister { account, password, email, reply } => Some((account.clone(), password.clone(), email.clone(), reply.clone())),
             _ => None,
@@ -623,16 +623,16 @@
         let code = body.split("CONFIRM ").nth(1).unwrap().split_whitespace().next().unwrap().to_string();
 
         // VERIFY with the code succeeds; a stale/duplicate VERIFY then fails.
-        let ok = e.account_request("r2".into(), "VERIFY".into(), "neo".into(), code, String::new());
+        let ok = e.account_request("r2".into(), "leaf".into(), "VERIFY".into(), "neo".into(), code, String::new());
         assert!(ok.iter().any(|a| matches!(a, NetAction::AccountResponse { status, .. } if status == "success")), "{ok:?}");
         assert!(e.db.is_verified("neo"), "verified after VERIFY");
-        let again = e.account_request("r3".into(), "VERIFY".into(), "neo".into(), "000000".into(), String::new());
+        let again = e.account_request("r3".into(), "leaf".into(), "VERIFY".into(), "neo".into(), "000000".into(), String::new());
         assert!(again.iter().any(|a| matches!(a, NetAction::AccountResponse { code, .. } if code == "INVALID_CODE")), "{again:?}");
 
         // STATUS reports verified; VERIFY on an unknown account is a clean error.
-        let st = e.account_request("r4".into(), "STATUS".into(), "neo".into(), String::new(), String::new());
+        let st = e.account_request("r4".into(), "leaf".into(), "STATUS".into(), "neo".into(), String::new(), String::new());
         assert!(st.iter().any(|a| matches!(a, NetAction::AccountResponse { code, .. } if code == "VERIFIED")), "{st:?}");
-        let unknown = e.account_request("r5".into(), "VERIFY".into(), "ghost".into(), "x".into(), String::new());
+        let unknown = e.account_request("r5".into(), "leaf".into(), "VERIFY".into(), "ghost".into(), "x".into(), String::new());
         assert!(unknown.iter().any(|a| matches!(a, NetAction::AccountResponse { code, .. } if code == "ACCOUNT_UNKNOWN")), "{unknown:?}");
     }
 

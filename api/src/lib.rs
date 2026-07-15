@@ -55,7 +55,7 @@ pub enum NetAction {
     IntroduceUser { uid: String, nick: String, ident: String, host: String, gecos: String },
     Privmsg { from: String, to: String, text: String },
     Notice { from: String, to: String, text: String },
-    AccountResponse { reqid: String, kind: String, account: String, status: String, code: String, message: String },
+    AccountResponse { reqid: String, origin: String, kind: String, account: String, status: String, code: String, message: String },
     // A SASL exchange step back to the ircd, sourced from our SASL agent. mode = C/D.
     Sasl { agent: String, client: String, mode: String, data: Vec<String> },
     // Publish network state to the uplink: target "*" is server-global (e.g. the
@@ -115,8 +115,9 @@ pub enum NetAction {
 // How to answer a registration once its credentials have been derived.
 #[derive(Debug, Clone)]
 pub enum RegReply {
-    // IRCv3 account-registration relay: answer the requesting ircd.
-    Relay { reqid: String, kind: String },
+    // IRCv3 account-registration relay: answer the requesting ircd. `origin` is
+    // the server the request came from, which the response is ENCAP'd back to.
+    Relay { reqid: String, kind: String, origin: String },
     // NickServ REGISTER: NOTICE the requesting user, logging them in on success.
     NickServ { agent: String, uid: String, nick: String },
 }

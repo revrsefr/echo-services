@@ -809,8 +809,8 @@ impl Engine {
                 Vec::new()
             }
             NetEvent::Privmsg { from, to, text } => self.dispatch(&from, &to, &text),
-            NetEvent::AccountRequest { reqid, kind, account, p2, p3, .. } => {
-                self.account_request(reqid, kind, account, p2, p3)
+            NetEvent::AccountRequest { reqid, origin, kind, account, p2, p3 } => {
+                self.account_request(reqid, origin, kind, account, p2, p3)
             }
             NetEvent::Sasl { client, mode, data, .. } => self.sasl(client, mode, data),
             _ => Vec::new(),
@@ -1146,7 +1146,7 @@ enum RegOutcome {
 // so both the pre-check rejection and the post-derivation result share one place.
 fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAction> {
     match reply {
-        RegReply::Relay { reqid, kind } => {
+        RegReply::Relay { reqid, kind, origin } => {
             let (status, code, message) = match outcome {
                 RegOutcome::Ok => ("success", "*", "Account registered."),
                 RegOutcome::VerifyRequired => ("verification_required", "VERIFICATION_REQUIRED", "Registered — check your email for a code, then VERIFY."),
@@ -1158,6 +1158,7 @@ fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAct
             };
             vec![NetAction::AccountResponse {
                 reqid: reqid.clone(),
+                origin: origin.clone(),
                 kind: kind.clone(),
                 account: account.to_string(),
                 status: status.to_string(),

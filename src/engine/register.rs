@@ -134,16 +134,17 @@ impl Engine {
     // registration). REGISTER hands off to the link layer (which derives the
     // password off-thread) via DeferRegister; VERIFY/RESEND/STATUS are answered
     // here directly against the emailed-code flow.
-    pub(crate) fn account_request(&mut self, reqid: String, kind: String, account: String, p2: String, p3: String) -> Vec<NetAction> {
+    pub(crate) fn account_request(&mut self, reqid: String, origin: String, kind: String, account: String, p2: String, p3: String) -> Vec<NetAction> {
         if kind.eq_ignore_ascii_case("REGISTER") {
             let email = if p2.is_empty() || p2 == "*" { None } else { Some(p2) };
-            return vec![NetAction::DeferRegister { account, password: p3, email, reply: RegReply::Relay { reqid, kind } }];
+            return vec![NetAction::DeferRegister { account, password: p3, email, reply: RegReply::Relay { reqid, kind, origin } }];
         }
 
         // Relay-only replies, built directly (REGISTER goes through complete_register).
         let resp = |status: &str, code: &str, message: &str| {
             vec![NetAction::AccountResponse {
                 reqid: reqid.clone(),
+                origin: origin.clone(),
                 kind: kind.clone(),
                 account: account.clone(),
                 status: status.to_string(),
