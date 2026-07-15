@@ -168,6 +168,8 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::ChannelNoExpire { .. }
         | Event::AkillAdded { .. }
         | Event::AkillRemoved { .. }
+        | Event::ForbidAdded { .. }
+        | Event::ForbidRemoved { .. }
         | Event::AccountExpiryWarned { .. }
         | Event::ChannelExpiryWarned { .. }
         | Event::AccountOperNoteSet { .. }

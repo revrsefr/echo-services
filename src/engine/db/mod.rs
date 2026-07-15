@@ -40,7 +40,7 @@ pub(crate) use event::{apply, Scope};
 // echo-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use echo_api::{
-    AccountView, AjoinView, AkillView, BotView, Caps, GroupView, HelpView, IgnoreView, MemoView, NewsView, Privs, ReportView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
+    AccountView, AjoinView, AkillView, BotView, Caps, ForbidView, GroupView, HelpView, IgnoreView, MemoView, NewsView, Privs, ReportView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,6 +166,18 @@ pub struct Akill {
     pub expires: Option<u64>,
 }
 
+// A registration ban: an account name, channel, or email pattern that may not be
+// registered. `kind` is "NICK", "CHAN", or "EMAIL". Network-wide policy like an
+// AKILL, so it gossips and every node enforces it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Forbid {
+    pub kind: String,
+    pub mask: String,
+    pub setter: String,
+    pub reason: String,
+    pub ts: u64,
+}
+
 // The default ban kind for records written before bans carried one: a G-line.
 fn gline_kind() -> String {
     "G".to_string()
@@ -249,6 +261,7 @@ pub struct Report {
 #[derive(Debug, Clone, Default)]
 pub struct NetData {
     pub akills: Vec<Akill>,
+    pub forbids: Vec<Forbid>,
     pub news: Vec<News>,
     pub news_seq: u64,
     // Abuse reports (ReportServ), oldest first.
@@ -1039,6 +1052,9 @@ impl Db {
         }
         // Compaction is a good moment to forget akills that have already expired.
         let now = now();
+        for f in &self.net.forbids {
+            snapshot.push(Event::ForbidAdded { kind: f.kind.clone(), mask: f.mask.clone(), setter: f.setter.clone(), reason: f.reason.clone(), ts: f.ts });
+        }
         for a in self.net.akills.iter().filter(|a| a.expires.is_none_or(|e| e > now)) {
             snapshot.push(Event::AkillAdded { kind: a.kind.clone(), mask: a.mask.clone(), setter: a.setter.clone(), reason: a.reason.clone(), ts: a.ts, expires: a.expires });
         }

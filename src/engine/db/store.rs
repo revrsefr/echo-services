@@ -186,6 +186,18 @@ impl Store for Db {
     fn akills(&self) -> Vec<AkillView> {
         Db::akills(self)
     }
+    fn forbid_add(&mut self, kind: &str, mask: &str, setter: &str, reason: &str) -> Result<bool, RegError> {
+        Db::forbid_add(self, kind, mask, setter, reason)
+    }
+    fn forbid_del(&mut self, kind: &str, mask: &str) -> Result<bool, RegError> {
+        Db::forbid_del(self, kind, mask)
+    }
+    fn forbids(&self) -> Vec<ForbidView> {
+        Db::forbids(self)
+    }
+    fn is_forbidden(&self, kind: &str, name: &str) -> Option<String> {
+        Db::is_forbidden(self, kind, name)
+    }
     fn ignore_add(&mut self, mask: &str, reason: &str, expires: Option<u64>) {
         Db::ignore_add(self, mask, reason, expires)
     }

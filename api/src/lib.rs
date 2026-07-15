@@ -625,6 +625,16 @@ pub struct AkillView {
     pub expires: Option<u64>,
 }
 
+// A registration ban held by OperServ FORBID (kind = NICK/CHAN/EMAIL).
+#[derive(Debug, Clone)]
+pub struct ForbidView {
+    pub kind: String,
+    pub mask: String,
+    pub setter: String,
+    pub reason: String,
+    pub ts: u64,
+}
+
 // A services ignore held by OperServ.
 #[derive(Debug, Clone)]
 pub struct IgnoreView {
@@ -917,6 +927,11 @@ pub trait Store {
     fn akill_add(&mut self, kind: &str, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError>;
     fn akill_del(&mut self, kind: &str, mask: &str) -> Result<bool, RegError>;
     fn akills(&self) -> Vec<AkillView>;
+    // Registration bans (OperServ FORBID).
+    fn forbid_add(&mut self, kind: &str, mask: &str, setter: &str, reason: &str) -> Result<bool, RegError>;
+    fn forbid_del(&mut self, kind: &str, mask: &str) -> Result<bool, RegError>;
+    fn forbids(&self) -> Vec<ForbidView>;
+    fn is_forbidden(&self, kind: &str, name: &str) -> Option<String>;
     // Services ignores (node-local, oper-only).
     fn ignore_add(&mut self, mask: &str, reason: &str, expires: Option<u64>);
     fn ignore_del(&mut self, mask: &str) -> bool;

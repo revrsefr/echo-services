@@ -206,6 +206,9 @@ impl Engine {
         if self.db.exists(account) {
             return Some(reg_reply(reply, RegOutcome::Exists, account));
         }
+        if self.db.is_forbidden("NICK", account).is_some() {
+            return Some(reg_reply(reply, RegOutcome::Forbidden, account));
+        }
         if !self.reg_limiter.allow() {
             return Some(reg_reply(reply, RegOutcome::RateLimited, account));
         }

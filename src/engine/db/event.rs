@@ -118,6 +118,10 @@ pub enum Event {
         kind: String,
         mask: String,
     },
+    // Registration bans (OperServ FORBID). Global network policy. `kind` is
+    // "NICK", "CHAN", or "EMAIL".
+    ForbidAdded { kind: String, mask: String, setter: String, reason: String, ts: u64 },
+    ForbidRemoved { kind: String, mask: String },
 }
 
 // Whether an event replicates across the federation. Account identity is Global
@@ -160,6 +164,8 @@ impl Event {
             | Event::AccountOperNoteSet { .. }
             | Event::AkillAdded { .. }
             | Event::AkillRemoved { .. }
+            | Event::ForbidAdded { .. }
+            | Event::ForbidRemoved { .. }
             | Event::NewsAdded { .. }
             | Event::NewsDeleted { .. }
             | Event::ReportFiled { .. }
@@ -494,6 +500,13 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         }
         Event::AkillRemoved { kind, mask } => {
             net.akills.retain(|a| !(a.kind == kind && a.mask.eq_ignore_ascii_case(&mask)));
+        }
+        Event::ForbidAdded { kind, mask, setter, reason, ts } => {
+            net.forbids.retain(|f| !(f.kind == kind && f.mask.eq_ignore_ascii_case(&mask)));
+            net.forbids.push(Forbid { kind, mask, setter, reason, ts });
+        }
+        Event::ForbidRemoved { kind, mask } => {
+            net.forbids.retain(|f| !(f.kind == kind && f.mask.eq_ignore_ascii_case(&mask)));
         }
         Event::AccountExpiryWarned { account } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {

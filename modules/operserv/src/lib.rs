@@ -7,6 +7,8 @@ use echo_api::{HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "xline.rs"]
 mod xline;
+#[path = "forbid.rs"]
+mod forbid;
 #[path = "global.rs"]
 mod global;
 #[path = "kill.rs"]
@@ -68,6 +70,7 @@ impl Service for OperServ {
             Some(cmd) if cmd.eq_ignore_ascii_case("SNLINE") => xline::SNLINE.handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("SHUN") => xline::SHUN.handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("CBAN") => xline::CBAN.handle(me, from, args, ctx, db),
+            Some(cmd) if cmd.eq_ignore_ascii_case("FORBID") => forbid::handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("GLOBAL") => global::handle(me, from, args, ctx),
             Some(cmd) if cmd.eq_ignore_ascii_case("KILL") => kill::handle(me, from, args, ctx, net),
             Some(cmd) if cmd.eq_ignore_ascii_case("KICK") => kick::handle(me, from, args, ctx, net),
@@ -95,6 +98,7 @@ const BLURB: &str = "OperServ holds the network operator tools. Every command is
 
 const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "AKILL", summary: "network-ban a user@host", detail: "Syntax: \x02AKILL ADD [+expiry] <user@host> <reason> | AKILL DEL <mask|number> | AKILL LIST [pattern]\x02\nA network-wide user@host ban." },
+    HelpEntry { cmd: "FORBID", summary: "ban a nick/chan/email from registration", detail: "Syntax: \x02FORBID ADD <NICK|CHAN|EMAIL> <mask> <reason> | FORBID DEL <NICK|CHAN|EMAIL> <mask> | FORBID LIST\x02\nStops a nick, channel, or email pattern from being registered." },
     HelpEntry { cmd: "SQLINE", summary: "ban a nick pattern", detail: "Syntax: \x02SQLINE ADD [+expiry] <nick> <reason> | SQLINE DEL <mask|number> | SQLINE LIST [pattern]\x02\nBans matching nicknames." },
     HelpEntry { cmd: "SNLINE", summary: "ban a realname pattern", detail: "Syntax: \x02SNLINE ADD [+expiry] <realname> <reason> | SNLINE DEL <mask|number> | SNLINE LIST [pattern]\x02\nBans matching real names." },
     HelpEntry { cmd: "SHUN", summary: "silence a host", detail: "Syntax: \x02SHUN ADD [+expiry] <mask> <reason> | SHUN DEL <mask|number> | SHUN LIST [pattern]\x02\nSilences a matching host: it stays connected but can't act." },

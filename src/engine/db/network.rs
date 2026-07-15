@@ -35,6 +35,46 @@ impl Db {
             .collect()
     }
 
+    /// Add a registration ban of `kind` ("NICK"/"CHAN"/"EMAIL") for `mask`.
+    /// Returns whether it was new.
+    pub fn forbid_add(&mut self, kind: &str, mask: &str, setter: &str, reason: &str) -> Result<bool, RegError> {
+        let same = |f: &Forbid| f.kind == kind && f.mask.eq_ignore_ascii_case(mask);
+        let fresh = !self.net.forbids.iter().any(same);
+        self.log
+            .append(Event::ForbidAdded { kind: kind.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now() })
+            .map_err(|_| RegError::Internal)?;
+        self.net.forbids.retain(|f| !same(f));
+        self.net.forbids.push(Forbid { kind: kind.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now() });
+        Ok(fresh)
+    }
+
+    /// Remove a registration ban of `kind` for `mask`. Returns whether one existed.
+    pub fn forbid_del(&mut self, kind: &str, mask: &str) -> Result<bool, RegError> {
+        let same = |f: &Forbid| f.kind == kind && f.mask.eq_ignore_ascii_case(mask);
+        if !self.net.forbids.iter().any(same) {
+            return Ok(false);
+        }
+        self.log.append(Event::ForbidRemoved { kind: kind.to_string(), mask: mask.to_string() }).map_err(|_| RegError::Internal)?;
+        self.net.forbids.retain(|f| !same(f));
+        Ok(true)
+    }
+
+    /// All registration bans, oldest first.
+    pub fn forbids(&self) -> Vec<ForbidView> {
+        self.net.forbids
+            .iter()
+            .map(|f| ForbidView { kind: f.kind.clone(), mask: f.mask.clone(), setter: f.setter.clone(), reason: f.reason.clone(), ts: f.ts })
+            .collect()
+    }
+
+    /// The reason `name` is forbidden for `kind` registration (glob), if it is.
+    pub fn is_forbidden(&self, kind: &str, name: &str) -> Option<String> {
+        self.net.forbids
+            .iter()
+            .find(|f| f.kind == kind && glob_match(&f.mask, name))
+            .map(|f| f.reason.clone())
+    }
+
     /// Add (or replace) a session-limit exception for an IP-mask.
     pub fn session_except_add(&mut self, mask: &str, limit: u32, reason: &str) {
         let _ = self.log.append(Event::SessionExceptionAdded { mask: mask.to_string(), limit, reason: reason.to_string() });

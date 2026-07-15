@@ -934,6 +934,48 @@
         assert!(e.db.account("alice").is_none(), "the dropped account is gone");
     }
 
+    // OperServ FORBID bans a nick/channel pattern from registration.
+    #[test]
+    fn operserv_forbid_blocks_registration() {
+        use echo_nickserv::NickServ;
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-osforbid.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "pw", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        let os = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: t.into() });
+        let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        assert!(notice(&os(&mut e, "FORBID ADD NICK evil* squatting"), "Forbade"), "nick forbid added");
+        assert!(notice(&os(&mut e, "FORBID ADD CHAN #warez piracy"), "Forbade"), "chan forbid added");
+
+        let reply = crate::proto::RegReply::NickServ { agent: "42SAAAAAA".into(), uid: "000AAAAAC".into(), nick: "evilbob".into() };
+        assert!(e.pre_register_check("evilbob", &reply).is_some(), "forbidden nick refused");
+        assert!(e.pre_register_check("cleanname", &reply).is_none(), "clean nick allowed");
+        assert!(e.db.is_forbidden("CHAN", "#warez").is_some(), "channel is forbidden");
+
+        assert!(notice(&os(&mut e, "FORBID LIST"), "evil*"), "list shows the nick forbid");
+        assert!(notice(&os(&mut e, "FORBID DEL NICK evil*"), "Removed"), "nick forbid removed");
+        assert!(e.pre_register_check("evilbob", &reply).is_none(), "no longer forbidden");
+
+        // A non-oper cannot FORBID.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAD".into(), nick: "rando".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        assert!(notice(&e.handle(NetEvent::Privmsg { from: "000AAAAAD".into(), to: "42SAAAAAH".into(), text: "FORBID ADD NICK x y".into() }), "Access denied"), "non-oper refused");
+    }
+
     // BotServ BOT ADD/LIST is oper-gated (Priv::Admin) and the bot is remembered.
     #[test]
     fn botserv_bot_add_list_is_oper_gated() {

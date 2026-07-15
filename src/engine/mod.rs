@@ -1119,6 +1119,8 @@ fn audit_summary(event: &db::Event) -> Option<String> {
             format!("set a {} on \x02{mask}\x02{temp} ({reason})", ban_kind_label(kind))
         }
         AkillRemoved { kind, mask } => format!("lifted the {} on \x02{mask}\x02", ban_kind_label(kind)),
+        ForbidAdded { kind, mask, reason, .. } => format!("forbade {} \x02{mask}\x02 ({reason})", kind.to_ascii_lowercase()),
+        ForbidRemoved { kind, mask } => format!("un-forbade {} \x02{mask}\x02", kind.to_ascii_lowercase()),
         AccountOperNoteSet { account, note } => match note {
             Some(_) => format!("set a staff note on \x02{account}\x02"),
             None => format!("cleared the staff note on \x02{account}\x02"),
@@ -1241,6 +1243,8 @@ enum RegOutcome {
     Ok,
     /// Registered, but an emailed code must be confirmed before it's verified.
     VerifyRequired,
+    /// The name is on the OperServ FORBID list.
+    Forbidden,
     Exists,
     RateLimited,
     Frozen,
@@ -1256,6 +1260,7 @@ fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAct
             let (status, code, message) = match outcome {
                 RegOutcome::Ok => ("success", "*", "Account registered."),
                 RegOutcome::VerifyRequired => ("verification_required", "VERIFICATION_REQUIRED", "Registered — check your email for a code, then VERIFY."),
+                RegOutcome::Forbidden => ("error", "BAD_ACCOUNT_NAME", "That account name is forbidden by network policy."),
                 RegOutcome::Exists => ("error", "ACCOUNT_EXISTS", "That account name is already registered."),
                 RegOutcome::RateLimited => ("error", "TEMPORARILY_UNAVAILABLE", "Too many registrations, please wait a moment."),
                 RegOutcome::Frozen => ("error", "TEMPORARILY_UNAVAILABLE", "Registrations are temporarily frozen by network staff."),
@@ -1282,6 +1287,7 @@ fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAct
                     NetAction::Metadata { target: uid.clone(), key: "accountname".to_string(), value: nick.clone() },
                     notice(format!("Your nick \x02{nick}\x02 is now registered and you're logged in. Welcome!")),
                 ],
+                RegOutcome::Forbidden => vec![notice("That nickname is forbidden and can't be registered.".to_string())],
                 RegOutcome::Exists => vec![notice(format!("\x02{nick}\x02 is already registered. If it's yours, use \x02IDENTIFY <password>\x02."))],
                 RegOutcome::RateLimited => vec![notice("Registrations are busy right now. Please try again in a moment.".to_string())],
                 RegOutcome::Frozen => vec![notice("Registrations are temporarily frozen by network staff. Please try again later.".to_string())],

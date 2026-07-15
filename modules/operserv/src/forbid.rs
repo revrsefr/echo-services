@@ -1,0 +1,62 @@
+use echo_api::{human_time, Priv, Sender, ServiceCtx, Store};
+
+// FORBID ADD <NICK|CHAN|EMAIL> <mask> <reason> | DEL <NICK|CHAN|EMAIL> <mask> | LIST
+// Bans a nick, channel, or email pattern from being registered. Admin-only.
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
+    if !from.privs.has(Priv::Admin) {
+        ctx.notice(me, from.uid, "Access denied — FORBID needs the \x02admin\x02 privilege.");
+        return;
+    }
+    match args.get(1).map(|s| s.to_ascii_uppercase()).as_deref() {
+        Some("ADD") => {
+            let (Some(kind), Some(&mask)) = (args.get(2).and_then(|k| norm_kind(k)), args.get(3)) else {
+                ctx.notice(me, from.uid, "Syntax: FORBID ADD <NICK|CHAN|EMAIL> <mask> <reason>");
+                return;
+            };
+            if args.len() < 5 {
+                ctx.notice(me, from.uid, "Please give a reason.");
+                return;
+            }
+            let reason = args[4..].join(" ");
+            let setter = from.account.unwrap_or(from.nick);
+            match db.forbid_add(kind, mask, setter, &reason) {
+                Ok(true) => ctx.notice(me, from.uid, format!("Forbade {} \x02{mask}\x02.", kind.to_lowercase())),
+                Ok(false) => ctx.notice(me, from.uid, format!("Updated the forbid on {} \x02{mask}\x02.", kind.to_lowercase())),
+                Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+            }
+        }
+        Some("DEL") | Some("REMOVE") => {
+            let (Some(kind), Some(&mask)) = (args.get(2).and_then(|k| norm_kind(k)), args.get(3)) else {
+                ctx.notice(me, from.uid, "Syntax: FORBID DEL <NICK|CHAN|EMAIL> <mask>");
+                return;
+            };
+            match db.forbid_del(kind, mask) {
+                Ok(true) => ctx.notice(me, from.uid, format!("Removed the forbid on {} \x02{mask}\x02.", kind.to_lowercase())),
+                Ok(false) => ctx.notice(me, from.uid, format!("No forbid on {} \x02{mask}\x02.", kind.to_lowercase())),
+                Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+            }
+        }
+        Some("LIST") | Some("VIEW") => {
+            let forbids = db.forbids();
+            if forbids.is_empty() {
+                ctx.notice(me, from.uid, "The forbid list is empty.");
+                return;
+            }
+            ctx.notice(me, from.uid, "Registration bans:");
+            for f in &forbids {
+                ctx.notice(me, from.uid, format!("  [{}] \x02{}\x02 by {} ({}) — {}", f.kind, f.mask, f.setter, human_time(f.ts), f.reason));
+            }
+        }
+        _ => ctx.notice(me, from.uid, "Syntax: FORBID ADD <NICK|CHAN|EMAIL> <mask> <reason> | DEL <NICK|CHAN|EMAIL> <mask> | LIST"),
+    }
+}
+
+// Canonicalise the kind argument to NICK / CHAN / EMAIL.
+fn norm_kind(k: &str) -> Option<&'static str> {
+    match k.to_ascii_uppercase().as_str() {
+        "NICK" | "NICKNAME" | "ACCOUNT" => Some("NICK"),
+        "CHAN" | "CHANNEL" => Some("CHAN"),
+        "EMAIL" | "MAIL" => Some("EMAIL"),
+        _ => None,
+    }
+}

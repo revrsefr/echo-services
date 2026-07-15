@@ -124,6 +124,10 @@ impl Service for ChanServ {
                     ctx.notice(me, from.uid, format!("You must be a channel operator (\x02@\x02) in \x02{chan}\x02 to register it."));
                     return;
                 }
+                if let Some(reason) = db.is_forbidden("CHAN", chan) {
+                    ctx.notice(me, from.uid, format!("\x02{chan}\x02 can't be registered: {reason}"));
+                    return;
+                }
                 match db.register_channel(chan, account) {
                     Ok(()) => {
                         ctx.channel_mode(me, chan, "+r"); // mark the channel registered
