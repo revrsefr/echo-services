@@ -762,8 +762,15 @@ impl EventLog {
     }
 
     fn persist(&self, entry: &LogEntry) -> std::io::Result<()> {
+        // Serialise first, and treat a failure as an error rather than writing a
+        // blank line, which would silently drop a committed change.
+        let line = serde_json::to_string(entry)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&self.path)?;
-        writeln!(f, "{}", serde_json::to_string(entry).unwrap_or_default())
+        writeln!(f, "{line}")?;
+        // fsync: a committed account/channel change is on disk before we report
+        // success, so a crash or power loss can't lose it.
+        f.sync_all()
     }
 
     // How many entries the log currently holds.

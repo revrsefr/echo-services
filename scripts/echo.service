@@ -1,0 +1,43 @@
+# Systemd unit for running Echo in production. Copy to /etc/systemd/system/,
+# edit the paths and User, then: systemctl daemon-reload && systemctl enable --now echo
+#
+# Assumes a dedicated system user and a data directory holding config.toml and
+# the event log (echo.db.jsonl, written relative to WorkingDirectory):
+#   useradd --system --home-dir /opt/echo --shell /usr/sbin/nologin echo
+#   install -o echo -g echo target/release/echo /opt/echo/echo
+#   install -o echo -g echo config.toml /opt/echo/config.toml
+
+[Unit]
+Description=Echo IRC services
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=echo
+Group=echo
+WorkingDirectory=/opt/echo
+ExecStart=/opt/echo/echo /opt/echo/config.toml
+Restart=on-failure
+RestartSec=5s
+# Give in-flight work a moment; the store fsyncs every event so a hard stop
+# never loses a committed change.
+TimeoutStopSec=15s
+
+# Hardening. Echo needs only the network and its own data directory.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+ReadWritePaths=/opt/echo
+# If you do NOT run a local sendmail (i.e. [email] uses a network relay like
+# msmtp), you can tighten this to ProtectSystem=strict for a read-only root.
+
+[Install]
+WantedBy=multi-user.target

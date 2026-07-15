@@ -64,6 +64,7 @@ The [wiki](https://git.devtronic.pro/fedserv/echo/wiki) has the detail:
 - [Configuration](https://git.devtronic.pro/fedserv/echo/wiki/Configuration) — the `config.toml` reference
 - [Directory API](https://git.devtronic.pro/fedserv/echo/wiki/Directory-API) — the gRPC account and channel directory for websites
 - [Writing a Module](https://git.devtronic.pro/fedserv/echo/wiki/Writing-a-Module) — build your own service or ircd link
+- [Deployment](https://git.devtronic.pro/fedserv/echo/wiki/Deployment) — running Echo in production: install, durability, backups
 
 ## Status
 
