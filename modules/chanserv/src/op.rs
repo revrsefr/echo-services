@@ -9,7 +9,13 @@ pub fn handle(me: &str, from: &Sender, mode: &str, args: &[&str], ctx: &mut Serv
         ctx.notice(me, from.uid, "Syntax: OP/DEOP/VOICE/DEVOICE <#channel> [nick]");
         return;
     };
-    if !super::require_op(me, from, chan, ctx, db) {
+    // Granting owner (+q) is founder-only; op/halfop/protect need op access.
+    let allowed = if mode.contains('q') {
+        super::require_founder(me, from, chan, ctx, db)
+    } else {
+        super::require_op(me, from, chan, ctx, db)
+    };
+    if !allowed {
         return;
     }
     let target = match args.get(2) {

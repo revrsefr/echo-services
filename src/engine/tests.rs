@@ -866,6 +866,43 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("empty"))), "now empty: {out:?}");
     }
 
+    // ChanServ OWNER (+q) is founder-only; PROTECT (+a) and HALFOP (+h) need op.
+    #[test]
+    fn chanserv_owner_protect_halfop() {
+        use echo_chanserv::ChanServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-csstatus.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register("bob", "pw", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let mode = |out: &[NetAction], m: &str| out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == m));
+
+        assert!(mode(&cs(&mut e, "000AAAAAB", "OWNER #c"), "+q 000AAAAAB"), "founder grants +q to self");
+        assert!(mode(&cs(&mut e, "000AAAAAB", "PROTECT #c"), "+a 000AAAAAB"), "founder grants +a");
+        assert!(mode(&cs(&mut e, "000AAAAAB", "HALFOP #c"), "+h 000AAAAAB"), "founder grants +h");
+
+        // bob has no access: OWNER is refused (no +q emitted for him).
+        let out = cs(&mut e, "000AAAAAC", "OWNER #c");
+        assert!(!mode(&out, "+q 000AAAAAC"), "non-founder cannot grant owner: {out:?}");
+    }
+
     // BotServ BOT ADD/LIST is oper-gated (Priv::Admin) and the bot is remembered.
     #[test]
     fn botserv_bot_add_list_is_oper_gated() {
