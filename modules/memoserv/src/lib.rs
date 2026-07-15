@@ -20,6 +20,8 @@ mod cancel;
 mod check;
 #[path = "info.rs"]
 mod info;
+#[path = "sendall.rs"]
+mod sendall;
 
 const BLURB: &str = "MemoServ delivers messages to registered users, online or not. You must be identified to use it.";
 
@@ -34,6 +36,7 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "CANCEL", summary: "recall a memo you sent", detail: "Syntax: \x02CANCEL <nick>\x02\nRecalls the last memo you sent them, as long as they haven't read it yet." },
     HelpEntry { cmd: "CHECK", summary: "see if a memo was read", detail: "Syntax: \x02CHECK <nick>\x02\nReports whether the last memo you sent them has been read." },
     HelpEntry { cmd: "INFO", summary: "your mailbox summary", detail: "Syntax: \x02INFO\x02\nShows how many memos you have, how many are unread, and your capacity." },
+    HelpEntry { cmd: "SENDALL", summary: "memo every account (admin)", detail: "Syntax: \x02SENDALL <text>\x02\nLeaves a memo on every registered account. Requires the admin privilege." },
 ];
 
 pub struct MemoServ {
@@ -75,6 +78,7 @@ impl Service for MemoServ {
             Some("CANCEL") => cancel::handle(me, from, account, args, ctx, db),
             Some("CHECK") => check::handle(me, from, account, args, ctx, db),
             Some("INFO") => info::handle(me, from, account, ctx, db),
+            Some("SENDALL") => sendall::handle(me, from, account, args, ctx, db),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
         }

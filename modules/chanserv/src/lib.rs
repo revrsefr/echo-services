@@ -60,7 +60,7 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "UP/DOWN", summary: "apply or drop your status", detail: "Syntax: \x02UP|DOWN <#channel>\x02\nUP re-applies the op/voice your access entitles you to; DOWN removes your status." },
     HelpEntry { cmd: "KICK", summary: "kick from the channel", detail: "Syntax: \x02KICK <#channel> <nick> [reason]\x02\nKicks a user from the channel." },
     HelpEntry { cmd: "BAN/UNBAN", summary: "ban or unban a user", detail: "Syntax: \x02BAN <#channel> <nick> [reason]\x02, \x02UNBAN <#channel> [nick]\x02\nBans or unbans a user by host." },
-    HelpEntry { cmd: "AKICK", summary: "manage the auto-kick list", detail: "Syntax: \x02AKICK <#channel> ADD <mask> [reason] | DEL <mask> | LIST\x02\nManages the auto-kick list; matches are banned and kicked on join." },
+    HelpEntry { cmd: "AKICK", summary: "manage the auto-kick list", detail: "Syntax: \x02AKICK <#channel> ADD <mask> [reason] | DEL <mask> | LIST | CLEAR\x02\nManages the auto-kick list; matches are banned and kicked on join. CLEAR empties it." },
     HelpEntry { cmd: "ENFORCE", summary: "re-apply lock and access", detail: "Syntax: \x02ENFORCE <#channel>\x02\nRe-applies the mode-lock, access, and akick list to everyone present." },
     HelpEntry { cmd: "TOPIC", summary: "set the topic", detail: "Syntax: \x02TOPIC <#channel> <text>\x02\nSets the channel topic." },
     HelpEntry { cmd: "ENTRYMSG", summary: "message on join", detail: "Syntax: \x02ENTRYMSG <#channel> [CLEAR | <text>]\x02\nSets a message noticed to users as they join." },

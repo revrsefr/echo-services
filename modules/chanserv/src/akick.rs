@@ -47,6 +47,17 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
-        _ => ctx.notice(me, from.uid, "Syntax: AKICK <#channel> ADD <mask> [reason] | DEL <mask> | LIST"),
+        Some("CLEAR") => {
+            if !super::require_op(me, from, chan, ctx, db) {
+                return;
+            }
+            // Snapshot the masks, then remove each (the read borrow ends first).
+            let masks: Vec<String> = db.channel(chan).map_or_else(Vec::new, |info| info.akick.iter().map(|k| k.mask.clone()).collect());
+            for mask in &masks {
+                let _ = db.akick_del(chan, mask);
+            }
+            ctx.notice(me, from.uid, format!("Cleared \x02{}\x02 entr{} from \x02{chan}\x02's auto-kick list.", masks.len(), if masks.len() == 1 { "y" } else { "ies" }));
+        }
+        _ => ctx.notice(me, from.uid, "Syntax: AKICK <#channel> ADD <mask> [reason] | DEL <mask> | LIST | CLEAR"),
     }
 }

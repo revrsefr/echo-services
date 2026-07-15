@@ -807,6 +807,65 @@
         assert!(notice(&out, "refreshed"), "UPDATE confirms: {out:?}");
     }
 
+    // MemoServ SENDALL (admin) drops a memo on every registered account.
+    #[test]
+    fn memoserv_sendall() {
+        use echo_memoserv::MemoServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-mssendall.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "pw", None).unwrap();
+        db.register("alice", "pw", None).unwrap();
+        db.register("bob", "pw", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(MemoServ { uid: "42SAAAAAE".into() }),
+            ],
+            db,
+        );
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAE".into(), text: "SENDALL hello everyone".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("sent to") && text.contains('3'))), "sent to all 3: {out:?}");
+        assert_eq!(e.db.unread_memos("alice"), 1);
+        assert_eq!(e.db.unread_memos("bob"), 1);
+    }
+
+    // ChanServ AKICK CLEAR empties the auto-kick list.
+    #[test]
+    fn chanserv_akick_clear() {
+        use echo_chanserv::ChanServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-csakickclear.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "pw", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        let cs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: t.into() });
+        cs(&mut e, "AKICK #c ADD *!*@bad1");
+        cs(&mut e, "AKICK #c ADD *!*@bad2");
+        let out = cs(&mut e, "AKICK #c CLEAR");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Cleared") && text.contains('2'))), "clears 2: {out:?}");
+        let out = cs(&mut e, "AKICK #c LIST");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("empty"))), "now empty: {out:?}");
+    }
+
     // BotServ BOT ADD/LIST is oper-gated (Priv::Admin) and the bot is remembered.
     #[test]
     fn botserv_bot_add_list_is_oper_gated() {
