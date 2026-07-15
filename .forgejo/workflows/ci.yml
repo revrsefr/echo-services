@@ -10,17 +10,19 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # A Node image, because the JS-based actions/checkout needs `node` in the
+    # container. Rust is installed on top; a rust:* image has no node.
     container:
-      image: rust:1-bookworm
+      image: node:20-bookworm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build
-        run: cargo build --workspace --locked
-
-      - name: Clippy (warnings are errors)
-        run: cargo clippy --workspace --locked -- -D warnings
-
-      - name: Test
-        run: cargo test --workspace --locked
+      - name: Build, lint, and test
+        run: |
+          set -e
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal -c clippy
+          . "$HOME/.cargo/env"
+          cargo build --workspace --locked
+          cargo clippy --workspace --locked -- -D warnings
+          cargo test --workspace --locked
