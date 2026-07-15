@@ -345,7 +345,7 @@ mod tests {
 
         let mut converged = false;
         for _ in 0..100 {
-            let (ha, hb) = (a.lock().await.test_account_hash("alice"), b.lock().await.test_account_hash("alice"));
+            let (ha, hb) = (a.lock().await.test_account_verifier("alice"), b.lock().await.test_account_verifier("alice"));
             if ha.is_some() && ha == hb {
                 converged = true;
                 break;

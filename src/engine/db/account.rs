@@ -11,7 +11,6 @@ impl Db {
         let verified = !(self.email_enabled && email.is_some());
         let account = Account {
             name: name.to_string(),
-            password_hash: creds.password_hash,
             email,
             ts: now(),
             home: self.log.origin.clone(),
@@ -37,10 +36,10 @@ impl Db {
 
     /// Provision a new account directly from pre-derived SCRAM verifiers (no
     /// plaintext), for bulk backfill from an external authority that stores
-    /// verifiers rather than passwords. `password_hash` is left empty — typed-
-    /// password login stays disabled until a real password is set — but SCRAM and
-    /// keycard login work at once. Refuses if the account already exists (so a
-    /// backfill can't clobber a fully-credentialed account). `scram512` empty =
+    /// verifiers rather than passwords. The verifier is the account's sole
+    /// password credential, so SCRAM, PLAIN, and IDENTIFY all work at once (see
+    /// `authenticate`). Refuses if the account already exists (so a backfill
+    /// can't clobber a fully-credentialed account). `scram512` empty =
     /// SCRAM-SHA-512 unavailable for this account (it falls back to 256).
     pub fn provision_account(&mut self, name: &str, scram256: &str, scram512: &str, email: Option<String>) -> Result<(), RegError> {
         if self.exists(name) {
@@ -51,7 +50,6 @@ impl Db {
         }
         let account = Account {
             name: name.to_string(),
-            password_hash: String::new(),
             email,
             ts: now(),
             home: self.log.origin.clone(),
@@ -84,15 +82,19 @@ impl Db {
     }
 
     #[cfg(test)]
-    pub(crate) fn test_hash(&self, name: &str) -> Option<String> {
-        self.accounts.get(&key(name)).map(|a| a.password_hash.clone())
+    pub(crate) fn test_verifier(&self, name: &str) -> Option<String> {
+        self.accounts.get(&key(name)).and_then(|a| a.scram256.clone())
     }
 
     /// Check credentials; on success return the account's canonical name (its
-    /// stored casing), else None.
+    /// stored casing), else None. The SCRAM-SHA-256 verifier is the sole password
+    /// credential, so PLAIN and IDENTIFY verify the plaintext against it exactly
+    /// as a SCRAM login proves knowledge of it (see `scram::verify_plain`).
     pub fn authenticate(&self, name: &str, password: &str) -> Option<&str> {
         let account = self.accounts.get(&self.resolved_key(name)?)?;
-        verify_password(password, &account.password_hash).then_some(account.name.as_str())
+        let verifier = account.scram256.as_deref()?;
+        crate::engine::scram::verify_plain(crate::engine::scram::Hash::Sha256, verifier, password)
+            .then_some(account.name.as_str())
     }
 
     /// The account's canonical name and its SCRAM verifier for `mech`, if any.
@@ -425,13 +427,11 @@ impl Db {
         self.log
             .append(Event::AccountPasswordSet {
                 account: account.to_string(),
-                password_hash: creds.password_hash.clone(),
                 scram256: creds.scram256.clone(),
                 scram512: creds.scram512.clone(),
             })
             .map_err(|_| RegError::Internal)?;
         let a = self.accounts.get_mut(&k).unwrap();
-        a.password_hash = creds.password_hash;
         a.scram256 = Some(creds.scram256);
         a.scram512 = Some(creds.scram512);
         Ok(())

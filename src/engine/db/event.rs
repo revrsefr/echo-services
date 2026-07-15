@@ -15,7 +15,7 @@ pub enum Event {
     CertRemoved { account: String, fp: String },
     AccountEmailSet { account: String, email: Option<String> },
     AccountGreetSet { account: String, greet: String },
-    AccountPasswordSet { account: String, password_hash: String, scram256: String, scram512: String },
+    AccountPasswordSet { account: String, scram256: String, scram512: String },
     AccountDropped { account: String },
     AccountVerified { account: String },
     AjoinAdded { account: String, channel: String, key: String },
@@ -256,9 +256,8 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
                 a.greet = greet;
             }
         }
-        Event::AccountPasswordSet { account, password_hash, scram256, scram512 } => {
+        Event::AccountPasswordSet { account, scram256, scram512 } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {
-                a.password_hash = password_hash;
                 a.scram256 = Some(scram256);
                 a.scram512 = Some(scram512);
             }

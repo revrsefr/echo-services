@@ -410,7 +410,7 @@
 
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
-            name: "alice".into(), password_hash: "OTHER".into(), email: None,
+            name: "alice".into(), email: None,
             ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)));
@@ -597,6 +597,43 @@
         let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: format!("CONFIRM {code}") });
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("now confirmed"))), "{out:?}");
         assert!(e.db.is_verified("newbie"), "confirmed after CONFIRM");
+    }
+
+    // draft/account-registration over the ircd relay: REGISTER defers, replies
+    // verification_required and emails a code; VERIFY confirms; STATUS reports it.
+    #[test]
+    fn account_registration_relay_verify_flow() {
+        let path = std::env::temp_dir().join("echo-acctreg-relay.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "test");
+        db.scram_iterations = 4096;
+        db.set_email_enabled(true);
+        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+
+        // REGISTER <account> <email> :<password> relayed from the ircd.
+        let reg = e.account_request("r1".into(), "REGISTER".into(), "neo".into(), "neo@example.org".into(), "trinity".into());
+        let (account, password, email, reply) = reg.iter().find_map(|a| match a {
+            NetAction::DeferRegister { account, password, email, reply } => Some((account.clone(), password.clone(), email.clone(), reply.clone())),
+            _ => None,
+        }).expect("relay register defers");
+        let out = e.complete_register(&account, Db::derive_credentials(&password, 4096), email, reply);
+        assert!(out.iter().any(|a| matches!(a, NetAction::AccountResponse { status, .. } if status == "verification_required")), "{out:?}");
+        assert!(!e.db.is_verified("neo"), "unverified until the code is confirmed");
+        let body = out.iter().find_map(|a| match a { NetAction::SendEmail { text, .. } => Some(text.clone()), _ => None }).expect("a code is emailed on the relay path too");
+        let code = body.split("CONFIRM ").nth(1).unwrap().split_whitespace().next().unwrap().to_string();
+
+        // VERIFY with the code succeeds; a stale/duplicate VERIFY then fails.
+        let ok = e.account_request("r2".into(), "VERIFY".into(), "neo".into(), code, String::new());
+        assert!(ok.iter().any(|a| matches!(a, NetAction::AccountResponse { status, .. } if status == "success")), "{ok:?}");
+        assert!(e.db.is_verified("neo"), "verified after VERIFY");
+        let again = e.account_request("r3".into(), "VERIFY".into(), "neo".into(), "000000".into(), String::new());
+        assert!(again.iter().any(|a| matches!(a, NetAction::AccountResponse { code, .. } if code == "INVALID_CODE")), "{again:?}");
+
+        // STATUS reports verified; VERIFY on an unknown account is a clean error.
+        let st = e.account_request("r4".into(), "STATUS".into(), "neo".into(), String::new(), String::new());
+        assert!(st.iter().any(|a| matches!(a, NetAction::AccountResponse { code, .. } if code == "VERIFIED")), "{st:?}");
+        let unknown = e.account_request("r5".into(), "VERIFY".into(), "ghost".into(), "x".into(), String::new());
+        assert!(unknown.iter().any(|a| matches!(a, NetAction::AccountResponse { code, .. } if code == "ACCOUNT_UNKNOWN")), "{unknown:?}");
     }
 
     // GHOST renames off a session using a nick the caller owns.

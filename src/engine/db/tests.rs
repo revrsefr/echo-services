@@ -28,15 +28,17 @@
 
     #[test]
     fn account_conflict_resolves_deterministically() {
-        let alice = |hash: &str, ts: u64, home: &str| Account {
-            name: "alice".into(), password_hash: hash.into(), email: None,
+        // `tag` (carried in the email field, a free identity slot here) labels
+        // which of the two competing registrations we're looking at.
+        let alice = |tag: &str, ts: u64, home: &str| Account {
+            name: "alice".into(), email: Some(tag.into()),
             ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: ts, noexpire: false, expiry_warned: false, oper_note: None,
         };
         let converge = |first: &Account, second: &Account| {
             let (mut acc, mut ch, mut gr, mut bo, mut hc, mut nd) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HostConfig::default(), NetData::default());
             apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, &mut nd, Event::AccountRegistered(Box::new(first.clone())));
             apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, &mut nd, Event::AccountRegistered(Box::new(second.clone())));
-            acc["alice"].password_hash.clone()
+            acc["alice"].email.clone().unwrap()
         };
         // Earlier registration wins, regardless of which claim applies first.
         let early = alice("EARLY", 100, "nodeB");
@@ -305,7 +307,7 @@
         db.scram_iterations = 4096;
         db.register("alice", "pw", None).unwrap();
         let bob = Account {
-            name: "bob".into(), password_hash: "x".into(), email: None,
+            name: "bob".into(), email: None,
             ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
         };
         let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, event: Event::AccountRegistered(Box::new(bob)) };
@@ -340,6 +342,23 @@
         assert!(db.authenticate("alice", "pw").is_some(), "password survives compaction");
         assert!(db.certfps("alice").is_empty(), "churned certs are gone");
         assert_eq!(db.certfps("bob"), &[kept][..], "kept cert survives");
+    }
+
+    // An account provisioned from a SCRAM verifier alone (external authority)
+    // must authenticate over the PLAIN / IDENTIFY path (db.authenticate), not
+    // only over SCRAM — the verifier is the sole credential, so a backfilled
+    // member can still `/msg NickServ IDENTIFY`.
+    #[test]
+    fn provisioned_account_authenticates_over_plain() {
+        let mut db = Db::open(tmp("prov-plain"), "N1");
+        db.scram_iterations = 4096;
+        let creds = Db::derive_credentials("hunter2", 4096).unwrap();
+        db.provision_account("ext", &creds.scram256, "", None).unwrap();
+
+        // The verifier is the only credential on file, and PLAIN/IDENTIFY works.
+        assert!(db.test_verifier("ext").is_some(), "provisioned: verifier is the credential");
+        assert_eq!(db.authenticate("ext", "hunter2"), Some("ext"), "right password logs in");
+        assert!(db.authenticate("ext", "wrong").is_none(), "wrong password rejected");
     }
 
     // A peer with an empty log converges from a node that has already compacted.

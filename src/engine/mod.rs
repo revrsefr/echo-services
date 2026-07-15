@@ -566,8 +566,8 @@ impl Engine {
     }
 
     #[cfg(test)]
-    pub(crate) fn test_account_hash(&self, name: &str) -> Option<String> {
-        self.db.test_hash(name)
+    pub(crate) fn test_account_verifier(&self, name: &str) -> Option<String> {
+        self.db.test_verifier(name)
     }
 
     #[cfg(test)]
@@ -1133,6 +1133,8 @@ fn sasl_success(agent: &str, client: &str, account: String) -> Vec<NetAction> {
 // Outcome of a registration attempt, rendered to the right wire response below.
 enum RegOutcome {
     Ok,
+    /// Registered, but an emailed code must be confirmed before it's verified.
+    VerifyRequired,
     Exists,
     RateLimited,
     Frozen,
@@ -1147,6 +1149,7 @@ fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAct
         RegReply::Relay { reqid, kind } => {
             let (status, code, message) = match outcome {
                 RegOutcome::Ok => ("success", "*", "Account registered."),
+                RegOutcome::VerifyRequired => ("verification_required", "VERIFICATION_REQUIRED", "Registered — check your email for a code, then VERIFY."),
                 RegOutcome::Exists => ("error", "ACCOUNT_EXISTS", "That account name is already registered."),
                 RegOutcome::RateLimited => ("error", "TEMPORARILY_UNAVAILABLE", "Too many registrations, please wait a moment."),
                 RegOutcome::Frozen => ("error", "TEMPORARILY_UNAVAILABLE", "Registrations are temporarily frozen by network staff."),
@@ -1165,8 +1168,10 @@ fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAct
         RegReply::NickServ { agent, uid, nick } => {
             let notice = |text: String| NetAction::Notice { from: agent.clone(), to: uid.clone(), text };
             match outcome {
-                RegOutcome::Ok => vec![
-                    // Registering identifies you to the nick right away (drives 900).
+                // Registering identifies you to the nick right away (drives 900).
+                // VerifyRequired still logs you in; the emailed-code notice is
+                // appended by complete_register.
+                RegOutcome::Ok | RegOutcome::VerifyRequired => vec![
                     NetAction::Metadata { target: uid.clone(), key: "accountname".to_string(), value: nick.clone() },
                     notice(format!("Your nick \x02{nick}\x02 is now registered and you're logged in. Welcome!")),
                 ],

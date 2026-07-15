@@ -18,9 +18,7 @@ pub fn build_badword_set(patterns: &[String]) -> regex::RegexSet {
 }
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use argon2::password_hash::rand_core::{OsRng, RngCore};
-use argon2::password_hash::SaltString;
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
@@ -48,7 +46,6 @@ pub use echo_api::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
     pub name: String,
-    pub password_hash: String,
     pub email: Option<String>,
     pub ts: u64,
     // The node that first registered this account (its "home"). With `ts` it
@@ -833,10 +830,12 @@ fn valid_fp(fp: &str) -> bool {
 }
 
 // The expensive, password-derived half of an account, computed once at
-// registration. Split out from `register` so the derivation (argon2 + two SCRAM
+// registration. Split out from `register` so the derivation (two SCRAM
 // verifiers, ~1s at the default cost) can run off the reactor via spawn_blocking.
+// The SCRAM verifier is the sole password credential: SCRAM logins use it
+// directly, and PLAIN/IDENTIFY verify the plaintext against it (see
+// `scram::verify_plain`), so there is no separate password hash to keep in step.
 pub struct Credentials {
-    pub(crate) password_hash: String,
     pub(crate) scram256: String,
     pub(crate) scram512: String,
 }
@@ -1155,7 +1154,6 @@ impl Db {
     /// `register_prepared` then commits the result.
     pub fn derive_credentials(password: &str, iterations: u32) -> Option<Credentials> {
         Some(Credentials {
-            password_hash: hash_password(password)?,
             scram256: scram::make_verifier(Hash::Sha256, password, iterations),
             scram512: scram::make_verifier(Hash::Sha512, password, iterations),
         })
@@ -1204,16 +1202,6 @@ fn gen_code() -> String {
     b.iter().map(|x| ALPHABET[(*x % 32) as usize] as char).collect()
 }
 
-fn hash_password(password: &str) -> Option<String> {
-    let salt = SaltString::generate(&mut OsRng);
-    Argon2::default().hash_password(password.as_bytes(), &salt).ok().map(|h| h.to_string())
-}
-
-fn verify_password(password: &str, hash: &str) -> bool {
-    PasswordHash::new(hash)
-        .map(|parsed| Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok())
-        .unwrap_or(false)
-}
 
 // The module-facing account/channel store. Every method forwards to Db's own
 // (fully-qualified so it is the inherent method, never this trait method), with

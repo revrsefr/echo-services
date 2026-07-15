@@ -130,14 +130,66 @@ impl Engine {
         }
     }
 
-    // Authority side of the IRCv3 account-registration relay. Hands the work to
-    // the link layer (which derives the password off-thread) via DeferRegister.
+    // Authority side of the IRCv3 account-registration relay (draft/account-
+    // registration). REGISTER hands off to the link layer (which derives the
+    // password off-thread) via DeferRegister; VERIFY/RESEND/STATUS are answered
+    // here directly against the emailed-code flow.
     pub(crate) fn account_request(&mut self, reqid: String, kind: String, account: String, p2: String, p3: String) -> Vec<NetAction> {
-        if !kind.eq_ignore_ascii_case("REGISTER") {
-            return Vec::new(); // VERIFY / RESEND / STATUS: later
+        if kind.eq_ignore_ascii_case("REGISTER") {
+            let email = if p2.is_empty() || p2 == "*" { None } else { Some(p2) };
+            return vec![NetAction::DeferRegister { account, password: p3, email, reply: RegReply::Relay { reqid, kind } }];
         }
-        let email = if p2.is_empty() || p2 == "*" { None } else { Some(p2) };
-        vec![NetAction::DeferRegister { account, password: p3, email, reply: RegReply::Relay { reqid, kind } }]
+
+        // Relay-only replies, built directly (REGISTER goes through complete_register).
+        let resp = |status: &str, code: &str, message: &str| {
+            vec![NetAction::AccountResponse {
+                reqid: reqid.clone(),
+                kind: kind.clone(),
+                account: account.clone(),
+                status: status.to_string(),
+                code: code.to_string(),
+                message: message.to_string(),
+            }]
+        };
+        // Identity is the website's in external mode; the relay shouldn't manage it.
+        if self.db.external_accounts() {
+            return resp("error", "ACCOUNT_REGISTRATION_DISABLED", "Accounts are managed on the website.");
+        }
+
+        match kind.to_ascii_uppercase().as_str() {
+            // VERIFY <account> <code> — confirm the emailed code.
+            "VERIFY" => {
+                let code = if !p2.is_empty() { p2 } else { p3 };
+                if self.db.account(&account).is_none() {
+                    resp("error", "ACCOUNT_UNKNOWN", "No such account.")
+                } else if self.db.take_code(&account, db::CodeKind::Confirm, &code) {
+                    let _ = self.db.verify_account(&account);
+                    resp("success", "*", "Account verified.")
+                } else {
+                    resp("error", "INVALID_CODE", "That verification code is wrong or has expired.")
+                }
+            }
+            // RESEND <account> — issue and email a fresh confirmation code.
+            "RESEND" => match self.db.account(&account).map(|a| (a.verified, a.email.clone())) {
+                None => resp("error", "ACCOUNT_UNKNOWN", "No such account."),
+                Some((true, _)) => resp("error", "ALREADY_VERIFIED", "That account is already verified."),
+                Some((false, None)) => resp("error", "NO_EMAIL", "No email address is on file for that account."),
+                Some((false, Some(addr))) => {
+                    let code = self.db.issue_code(&account, db::CodeKind::Confirm);
+                    let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), &account, &code);
+                    let mut out = resp("verification_required", "VERIFICATION_REQUIRED", "A new confirmation code has been emailed.");
+                    out.push(NetAction::SendEmail { to: addr, subject: mail.subject, text: mail.text, html: Some(mail.html) });
+                    out
+                }
+            },
+            // STATUS <account> — report registration/verification state.
+            "STATUS" => match self.db.account(&account).map(|a| a.verified) {
+                None => resp("error", "ACCOUNT_UNKNOWN", "No such account."),
+                Some(true) => resp("success", "VERIFIED", "Account is registered and verified."),
+                Some(false) => resp("verification_required", "VERIFICATION_REQUIRED", "Account is registered but not yet verified."),
+            },
+            _ => Vec::new(),
+        }
     }
 
     // Cheap gate run before the expensive derivation: reject an already-taken name
@@ -166,20 +218,25 @@ impl Engine {
         };
         let addr = email.clone();
         let outcome = match self.db.register_prepared(account, creds, email) {
-            Ok(()) => RegOutcome::Ok,
+            Ok(()) if self.db.is_verified(account) => RegOutcome::Ok,
+            Ok(()) => RegOutcome::VerifyRequired,
             Err(RegError::Exists) => RegOutcome::Exists,
             Err(RegError::Internal) => RegOutcome::Internal,
         };
-        let ok = matches!(outcome, RegOutcome::Ok);
+        let needs_verify = matches!(outcome, RegOutcome::VerifyRequired);
         let mut out = reg_reply(&reply, outcome, account);
         self.track_accounts(&out);
-        // If this created an unverified account (email confirmation applies), email a code.
-        if ok && !self.db.is_verified(account) {
-            if let (Some(addr), RegReply::NickServ { agent, uid, .. }) = (addr, &reply) {
+        // Unverified (email confirmation applies): email a code, on either the
+        // NickServ or the account-registration relay path. The relay reply
+        // already carries verification_required; NickServ users get a notice.
+        if needs_verify {
+            if let Some(addr) = addr {
                 let code = self.db.issue_code(account, db::CodeKind::Confirm);
                 let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), account, &code);
                 out.push(NetAction::SendEmail { to: addr, subject: mail.subject, text: mail.text, html: Some(mail.html) });
-                out.push(NetAction::Notice { from: agent.clone(), to: uid.clone(), text: "A confirmation code has been emailed to you. Confirm with \x02CONFIRM <code>\x02.".to_string() });
+                if let RegReply::NickServ { agent, uid, .. } = &reply {
+                    out.push(NetAction::Notice { from: agent.clone(), to: uid.clone(), text: "A confirmation code has been emailed to you. Confirm with \x02CONFIRM <code>\x02.".to_string() });
+                }
             }
         }
         out

@@ -252,7 +252,7 @@ impl Accounts for AccountsService {
         if let Err(status) = self.engine.lock().await.authority_pre_check(&msg.name) {
             return Ok(Response::new(reply(status, "cannot register that name right now")));
         }
-        // Expensive Argon2/SCRAM derivation runs off the shared engine lock, same
+        // Expensive SCRAM verifier derivation runs off the shared engine lock, same
         // as an IRC-originated REGISTER (see link.rs's DeferRegister handling).
         let iterations = self.engine.lock().await.scram_iterations();
         let password = msg.password.clone();
@@ -441,7 +441,6 @@ mod tests {
     fn to_wire_filters_credentials_and_maps_directory_events() {
         let acct = Account {
             name: "alice".into(),
-            password_hash: "secret-hash".into(),
             email: Some("alice@example.com".into()),
             ts: 111,
             home: "A".into(),
@@ -473,7 +472,7 @@ mod tests {
 
         let pw_change = LogEntry::for_test(
             "A", 1, 2,
-            Event::AccountPasswordSet { account: "alice".into(), password_hash: "x".into(), scram256: "x".into(), scram512: "x".into() },
+            Event::AccountPasswordSet { account: "alice".into(), scram256: "x".into(), scram512: "x".into() },
         );
         assert!(to_wire(&pw_change).is_none(), "credential changes must never replicate");
 
