@@ -201,5 +201,38 @@ async fn main() -> Result<()> {
 
     let addr = format!("{}:{}", cfg.uplink.host, cfg.uplink.port);
     tracing::info!(server = %cfg.server.name, %addr, "linking to uplink");
-    link::run(proto, engine, &addr, irc_rx, cfg.email.clone()).await
+    // Run until the uplink loop ends or the process is asked to stop. Every
+    // committed change is already fsync'd, so a clean stop loses nothing; this
+    // just lets systemd stop us without waiting out the kill timeout.
+    tokio::select! {
+        res = link::run(proto, engine, &addr, irc_rx, cfg.email.clone()) => res,
+        _ = shutdown_signal() => {
+            tracing::info!("received shutdown signal, exiting");
+            Ok(())
+        }
+    }
+}
+
+// Resolve on Ctrl-C or SIGTERM (systemd stop).
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(_) => {
+                let _ = ctrl_c.await;
+                return;
+            }
+        };
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = ctrl_c.await;
+    }
 }

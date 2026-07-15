@@ -25,6 +25,7 @@ name = "echo"
 version = "0.0.1"
 edition = "2021"
 description = "Federated IRC services daemon (protocol-agnostic core, InspIRCd link first)"
+license = "AGPL-3.0-or-later"
 
 [dependencies]
 echo-api = { path = "api" }
@@ -43,7 +44,7 @@ echo-reportserv = { path = "modules/reportserv" }
 echo-groupserv = { path = "modules/groupserv" }
 echo-chanfix = { path = "modules/chanfix" }
 echo-helpserv = { path = "modules/helpserv" }
-tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "time", "sync", "process"] }
+tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "time", "sync", "process", "signal"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
