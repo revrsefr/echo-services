@@ -98,6 +98,12 @@ pub struct Engine {
     irc_out: Option<mpsc::UnboundedSender<NetAction>>, // services-initiated actions -> the uplink
     opers: HashMap<String, Privs>, // casefolded account -> privileges (from [[oper]] config)
     sid: String, // our services SID, for minting bot uids
+    // Nick-protection enforcement. `synced` gates it until the uplink's initial
+    // burst is done, so a relink doesn't enforce every already-online user.
+    synced: bool,
+    guest_nick: String, // base for the Guest#### rename on enforcement
+    enforce_seq: u32,   // counter appended to guest_nick
+    pending_enforce: Vec<PendingEnforce>, // registered nicks awaiting identify-or-rename
     bot_uids: HashMap<String, String>, // casefolded bot nick -> live uid (per connection)
     bot_idents: HashMap<String, u64>, // casefolded bot nick -> hash of user/host/gecos (to spot BOT CHANGE)
     next_bot_index: u32,
@@ -138,6 +144,17 @@ struct VoteState {
     voters: std::collections::HashSet<String>, // voter uids, one vote each
     started: u64,
 }
+
+// A user sitting on a registered nick they haven't identified to. If still
+// unidentified on that nick when `deadline` passes, they're renamed to a guest.
+struct PendingEnforce {
+    uid: String,
+    nick: String, // the registered nick they must identify to (lowercased account)
+    deadline: u64, // unix secs
+}
+
+// How long a user has to identify to a registered nick before being renamed.
+const ENFORCE_GRACE: u64 = 60;
 
 struct CachedBadwords {
     rev: u64,
@@ -207,6 +224,10 @@ impl Engine {
             irc_out: None,
             opers: HashMap::new(),
             sid: String::new(),
+            synced: false,
+            guest_nick: "Guest".to_string(),
+            enforce_seq: 0,
+            pending_enforce: Vec::new(),
             bot_uids: HashMap::new(),
             bot_idents: HashMap::new(),
             next_bot_index: 0,
@@ -533,6 +554,67 @@ impl Engine {
             .collect()
     }
 
+    // The guest-nick base used when nick-protection renames an unidentified user.
+    pub fn set_guest_nick(&mut self, base: &str) {
+        if !base.is_empty() {
+            self.guest_nick = base.to_string();
+        }
+    }
+
+    // A user arrived on (or changed to) a registered nick: if they aren't logged
+    // into that account, prompt them to IDENTIFY and schedule a rename. Gated on
+    // `synced` so a netburst can't enforce every already-online user; a user who
+    // authenticated via SASL already has their account set, so they're skipped.
+    fn enforce_registered_nick(&mut self, uid: &str, nick: &str) -> Vec<NetAction> {
+        if !self.synced {
+            return Vec::new();
+        }
+        let Some(account) = self.db.resolve_account(nick) else { return Vec::new() };
+        let account = account.to_string();
+        if self.network.account_of(uid) == Some(account.as_str()) {
+            return Vec::new(); // already identified to it
+        }
+        let Some(ns) = self.nick_service.clone() else { return Vec::new() };
+        let deadline = self.now_secs() + ENFORCE_GRACE;
+        self.pending_enforce.retain(|p| p.uid != uid);
+        self.pending_enforce.push(PendingEnforce { uid: uid.to_string(), nick: nick.to_string(), deadline });
+        vec![NetAction::Notice {
+            from: ns,
+            to: uid.to_string(),
+            text: format!(
+                "This nickname is registered to \x02{account}\x02. Log in with \x02/msg NickServ IDENTIFY <password>\x02 within {ENFORCE_GRACE} seconds or you will be renamed."
+            ),
+        }]
+    }
+
+    // Rename anyone who never identified to their registered nick in time. Run on
+    // a short cadence from main; emits via the same irc_out path as the other sweeps.
+    pub fn enforce_sweep(&mut self) {
+        let now = self.now_secs();
+        let mut fire = Vec::new();
+        let mut i = 0;
+        while i < self.pending_enforce.len() {
+            if self.pending_enforce[i].deadline <= now {
+                let p = self.pending_enforce.remove(i);
+                let still_there = self.network.uid_by_nick(&p.nick) == Some(p.uid.as_str());
+                let identified = self.network.account_of(&p.uid) == self.db.resolve_account(&p.nick);
+                if still_there && !identified {
+                    fire.push(p.uid);
+                }
+            } else {
+                i += 1;
+            }
+        }
+        for uid in fire {
+            let guest = format!("{}{}", self.guest_nick, self.enforce_seq);
+            self.enforce_seq = self.enforce_seq.wrapping_add(1);
+            if let Some(ns) = self.nick_service.clone() {
+                self.emit_irc(NetAction::Notice { from: ns, to: uid.clone(), text: "You didn't identify in time; you've been renamed.".to_string() });
+            }
+            self.emit_irc(NetAction::ForceNick { uid, nick: guest });
+        }
+    }
+
     // Record a line to the searchable incident log and, if an audit channel is
     // configured, announce it there. For actions not tied to a command (expiry).
     fn audit(&mut self, text: String) {
@@ -641,6 +723,7 @@ impl Engine {
         let evout = match event {
             NetEvent::Ping { token, from } => vec![NetAction::Pong { token, from }],
             NetEvent::UserConnect { uid, nick, host, ip } => {
+                let arriving_nick = nick.clone();
                 self.network.user_connect(uid.clone(), nick, host, ip.clone());
                 // DEFCON 1 is a full lockdown: no new connections are accepted.
                 if self.db.defcon() == 1 && !self.sid.is_empty() {
@@ -661,11 +744,23 @@ impl Engine {
                         }];
                     }
                 }
-                // Greet the arriving user with the logon news.
-                self.news_notices("logon", "News", &uid)
+                // Greet with the logon news, and — separately — prompt-then-
+                // enforce if they arrived on a registered nick they aren't
+                // identified to.
+                let mut out = self.news_notices("logon", "News", &uid);
+                out.extend(self.enforce_registered_nick(&uid, &arriving_nick));
+                out
             }
             NetEvent::NickChange { uid, nick } => {
+                let new_nick = nick.clone();
                 self.network.user_nick_change(&uid, nick);
+                self.pending_enforce.retain(|p| p.uid != uid); // they left the old nick
+                self.enforce_registered_nick(&uid, &new_nick)
+            }
+            // The uplink finished its initial burst: from here on connections are
+            // live, so nick-protection prompts/enforcement are safe to run.
+            NetEvent::EndBurst => {
+                self.synced = true;
                 Vec::new()
             }
             // A registered channel just (re)appeared: re-assert +r. Fires on
@@ -805,6 +900,7 @@ impl Engine {
             NetEvent::Quit { uid } => {
                 self.network.user_quit(&uid);
                 self.sasl_sessions.remove(&uid); // drop any half-finished exchange
+                self.pending_enforce.retain(|p| p.uid != uid);
                 self.forget_chatter_everywhere(&uid);
                 Vec::new()
             }
@@ -876,6 +972,8 @@ impl Engine {
                         self.network.clear_account(target);
                     } else {
                         self.network.set_account(target, value);
+                        // Identified now: cancel any pending nick-protection rename.
+                        self.pending_enforce.retain(|p| p.uid != *target);
                         // A login is activity: keep the account from expiring.
                         self.db.mark_account_seen(value, self.now_secs());
                         // An operator logging in is shown the staff (oper) news.

@@ -148,6 +148,7 @@ async fn main() -> Result<()> {
     engine.lock().await.set_irc_out(irc_tx);
     engine.lock().await.set_opers(cfg.opers());
     engine.lock().await.set_sid(cfg.server.sid.clone());
+    engine.lock().await.set_guest_nick(&cfg.server.guest_nick);
     engine.lock().await.set_log_channel(cfg.log.as_ref().map(|l| l.channel.clone()));
     if let Some(expire) = &cfg.expire {
         engine.lock().await.set_expiry(expire.account_ttl(), expire.channel_ttl(), expire.warn_ttl());
@@ -184,6 +185,18 @@ async fn main() -> Result<()> {
                 if let Err(err) = e.maybe_compact() {
                     tracing::warn!(%err, "compaction failed");
                 }
+            }
+        });
+    }
+
+    // Nick protection: rename anyone who didn't identify to their registered nick
+    // in time. Short cadence so the grace period is honoured closely.
+    {
+        let engine = engine.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                engine.lock().await.enforce_sweep();
             }
         });
     }

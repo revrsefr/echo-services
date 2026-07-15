@@ -636,6 +636,53 @@
         assert!(unknown.iter().any(|a| matches!(a, NetAction::AccountResponse { code, .. } if code == "ACCOUNT_UNKNOWN")), "{unknown:?}");
     }
 
+    // Nick protection: a user on a registered nick is prompted, then renamed to a
+    // guest if they don't identify before the grace period; the burst is exempt.
+    #[test]
+    fn nick_protection_enforces_after_grace() {
+        let mut e = engine_with("nickprot", "alice", "sesame");
+        e.set_sid("42S".into());
+        e.now_override = Some(1000);
+
+        // During the uplink burst (not yet synced) nobody is enforced.
+        let out = e.handle(NetEvent::UserConnect { uid: "000AAAAAZ".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        assert!(!out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("registered"))), "no enforcement during burst: {out:?}");
+        e.handle(NetEvent::Quit { uid: "000AAAAAZ".into() });
+        e.handle(NetEvent::EndBurst);
+
+        // Live: an unidentified user lands on the registered nick and is prompted.
+        let out = e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "000AAAAAB" && text.contains("registered"))), "prompted to identify: {out:?}");
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        e.set_irc_out(tx);
+        e.now_override = Some(1000 + ENFORCE_GRACE - 1);
+        e.enforce_sweep();
+        assert!(rx.try_recv().is_err(), "no rename before the grace period");
+        e.now_override = Some(1000 + ENFORCE_GRACE + 1);
+        e.enforce_sweep();
+        let renamed = std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAB" && nick.starts_with("Guest")));
+        assert!(renamed, "unidentified user on a registered nick is renamed after grace");
+    }
+
+    // Identifying before the grace period cancels the pending rename.
+    #[test]
+    fn nick_protection_cancelled_by_identify() {
+        let mut e = engine_with("nickprot2", "alice", "sesame");
+        e.set_sid("42S".into());
+        e.now_override = Some(1000);
+        e.handle(NetEvent::EndBurst);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        e.set_irc_out(tx);
+        e.now_override = Some(1000 + ENFORCE_GRACE + 1);
+        e.enforce_sweep();
+        assert!(rx.try_recv().is_err(), "an identified user is never renamed");
+    }
+
     // GHOST renames off a session using a nick the caller owns.
     #[test]
     fn nickserv_ghost() {
