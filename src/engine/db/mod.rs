@@ -359,6 +359,10 @@ pub struct ChannelInfo {
     pub access: Vec<ChanAccess>,
     #[serde(default)]
     pub akick: Vec<ChanAkick>,
+    // Account that inherits the channel if the founder's account is dropped or
+    // expires; None means the channel is released instead.
+    #[serde(default)]
+    pub successor: Option<String>,
     // Free-text description, shown in INFO.
     #[serde(default)]
     pub desc: String,

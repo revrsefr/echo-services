@@ -1028,6 +1028,10 @@ pub trait Store {
     fn memo_check(&self, account: &str, sender: &str) -> Option<(bool, u64)>;
     fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError>;
     fn set_founder(&mut self, channel: &str, account: &str) -> Result<(), ChanError>;
+    fn set_successor(&mut self, channel: &str, successor: Option<&str>) -> Result<(), ChanError>;
+    /// Transfer channels founded by `account` to their successor, or drop them.
+    /// Returns (transferred as (channel, successor), dropped channels).
+    fn release_founded_channels(&mut self, account: &str) -> (Vec<(String, String)>, Vec<String>);
     fn access_add(&mut self, channel: &str, account: &str, level: &str) -> Result<(), ChanError>;
     fn access_del(&mut self, channel: &str, account: &str) -> Result<bool, ChanError>;
     fn akick_add(&mut self, channel: &str, mask: &str, reason: &str) -> Result<(), ChanError>;

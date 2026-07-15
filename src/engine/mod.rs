@@ -440,15 +440,19 @@ impl Engine {
     // channels it founded locally — their founder identity no longer exists here.
     fn handle_account_gone(&mut self, account: &str, reason: &str) {
         let victims = self.network.uids_logged_into(account);
-        let orphaned = self.db.channels_owned_by(account);
-        for chan in &orphaned {
-            let _ = self.db.drop_channel(chan);
-        }
+        // A channel with a valid successor is inherited rather than released.
+        let (inherited, orphaned) = self.db.release_founded_channels(account);
         let (cs, ns) = (self.chan_service.clone(), self.nick_service.clone());
-        // Release the registered mode on each dropped channel.
+        // Release the registered mode on each dropped (not inherited) channel.
         for chan in &orphaned {
             if let Some(cs) = &cs {
                 self.emit_irc(NetAction::ChannelMode { from: cs.clone(), channel: chan.clone(), modes: "-r".to_string() });
+            }
+        }
+        // Tell any online successor they inherited a channel.
+        for (chan, s) in &inherited {
+            if let (Some(ns), Some(uid)) = (&ns, self.network.uids_logged_into(s).into_iter().next()) {
+                self.emit_irc(NetAction::Notice { from: ns.clone(), to: uid, text: format!("You are now the founder of \x02{chan}\x02 (inherited from \x02{account}\x02).") });
             }
         }
         // Log out and inform each local session that held the name.
@@ -1088,6 +1092,10 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         ChannelRegistered { name, founder, .. } => format!("registered channel \x02{name}\x02 (founder \x02{founder}\x02)"),
         ChannelDropped { name } => format!("dropped channel \x02{name}\x02"),
         ChannelFounderSet { channel, founder } => format!("set founder of \x02{channel}\x02 to \x02{founder}\x02"),
+        ChannelSuccessorSet { channel, successor } => match successor {
+            Some(s) => format!("set successor of \x02{channel}\x02 to \x02{s}\x02"),
+            None => format!("cleared the successor of \x02{channel}\x02"),
+        },
         ChannelAccessAdd { channel, account, level } => format!("set \x02{account}\x02 to {level} on \x02{channel}\x02"),
         ChannelAccessDel { channel, account } => format!("removed \x02{account}\x02 from \x02{channel}\x02 access"),
         ChannelAkickAdd { channel, mask, reason } => format!("added akick \x02{mask}\x02 on \x02{channel}\x02 ({reason})"),

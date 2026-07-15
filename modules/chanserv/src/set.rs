@@ -35,6 +35,28 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
+        Some("SUCCESSOR") => {
+            match args.get(3) {
+                Some(&acct) if !acct.eq_ignore_ascii_case("OFF") => {
+                    if !db.exists(acct) {
+                        ctx.notice(me, from.uid, format!("\x02{acct}\x02 isn't a registered account."));
+                        return;
+                    }
+                    if acct.eq_ignore_ascii_case(&founder) {
+                        ctx.notice(me, from.uid, "The successor must be someone other than the founder.");
+                        return;
+                    }
+                    match db.set_successor(chan, Some(acct)) {
+                        Ok(()) => ctx.notice(me, from.uid, format!("Successor of \x02{chan}\x02 set to \x02{acct}\x02. They inherit it if your account is dropped or expires.")),
+                        Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+                    }
+                }
+                _ => match db.set_successor(chan, None) {
+                    Ok(()) => ctx.notice(me, from.uid, format!("Successor of \x02{chan}\x02 cleared.")),
+                    Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+                },
+            }
+        }
         Some("DESC") => {
             let desc = if args.len() > 3 { args[3..].join(" ") } else { String::new() };
             match db.set_desc(chan, &desc) {
@@ -48,7 +70,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         Some("SECUREOPS") => toggle(me, from, ctx, db, chan, ChanSetting::SecureOps, args.get(3).copied()),
         Some("KEEPTOPIC") => toggle(me, from, ctx, db, chan, ChanSetting::KeepTopic, args.get(3).copied()),
         Some("TOPICLOCK") => toggle(me, from, ctx, db, chan, ChanSetting::TopicLock, args.get(3).copied()),
-        _ => ctx.notice(me, from.uid, "Syntax: SET <#channel> FOUNDER <account> | DESC <text> | SIGNKICK {ON|OFF} | PRIVATE {ON|OFF} | PEACE {ON|OFF} | SECUREOPS {ON|OFF} | KEEPTOPIC {ON|OFF} | TOPICLOCK {ON|OFF}"),
+        _ => ctx.notice(me, from.uid, "Syntax: SET <#channel> FOUNDER <account> | SUCCESSOR <account>|OFF | DESC <text> | SIGNKICK {ON|OFF} | PRIVATE {ON|OFF} | PEACE {ON|OFF} | SECUREOPS {ON|OFF} | KEEPTOPIC {ON|OFF} | TOPICLOCK {ON|OFF}"),
     }
 }
 

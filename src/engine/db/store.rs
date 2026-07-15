@@ -447,6 +447,12 @@ impl Store for Db {
     fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError> {
         Db::set_entrymsg(self, channel, msg)
     }
+    fn set_successor(&mut self, channel: &str, successor: Option<&str>) -> Result<(), ChanError> {
+        Db::set_successor(self, channel, successor)
+    }
+    fn release_founded_channels(&mut self, account: &str) -> (Vec<(String, String)>, Vec<String>) {
+        Db::release_founded_channels(self, account)
+    }
     fn set_founder(&mut self, channel: &str, account: &str) -> Result<(), ChanError> {
         Db::set_founder(self, channel, account)
     }

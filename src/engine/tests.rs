@@ -903,6 +903,37 @@
         assert!(!mode(&out, "+q 000AAAAAC"), "non-founder cannot grant owner: {out:?}");
     }
 
+    // ChanServ SET SUCCESSOR: the successor inherits the channel when the founder
+    // account is dropped, instead of the channel being released.
+    #[test]
+    fn chanserv_successor_inherits_on_drop() {
+        use echo_chanserv::ChanServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-cssucc.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register("bob", "pw", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "SET #c SUCCESSOR bob".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Successor") && text.contains("bob"))), "successor set: {out:?}");
+
+        // alice drops her account -> #c is inherited by bob, not released.
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "DROP sesame".into() });
+        assert_eq!(e.db.channel("#c").map(|c| c.founder.clone()), Some("bob".to_string()), "channel inherited by the successor");
+        assert!(e.db.account("alice").is_none(), "the dropped account is gone");
+    }
+
     // BotServ BOT ADD/LIST is oper-gated (Priv::Admin) and the bot is remembered.
     #[test]
     fn botserv_bot_add_list_is_oper_gated() {

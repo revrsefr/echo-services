@@ -145,6 +145,7 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::ChannelAkickAdd { .. }
         | Event::ChannelAkickDel { .. }
         | Event::ChannelEntryMsgSet { .. }
+        | Event::ChannelSuccessorSet { .. }
         | Event::ChannelSettingsSet { .. }
         | Event::ChannelKickerSet { .. }
         | Event::ChannelBadwordsSet { .. }

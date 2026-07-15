@@ -11,7 +11,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), successor: None, desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
         Ok(())
     }
 
@@ -132,6 +132,46 @@ impl Db {
             .map_err(|_| ChanError::Internal)?;
         self.channels.get_mut(&k).unwrap().founder = account.to_string();
         Ok(())
+    }
+
+    /// Set (or clear, with None) `channel`'s successor account.
+    pub fn set_successor(&mut self, channel: &str, successor: Option<&str>) -> Result<(), ChanError> {
+        let k = key(channel);
+        if !self.channels.contains_key(&k) {
+            return Err(ChanError::NoChannel);
+        }
+        let successor = successor.map(|s| s.to_string());
+        self.log
+            .append(Event::ChannelSuccessorSet { channel: channel.to_string(), successor: successor.clone() })
+            .map_err(|_| ChanError::Internal)?;
+        self.channels.get_mut(&k).unwrap().successor = successor;
+        Ok(())
+    }
+
+    /// The successor account set on `channel`, if any.
+    pub fn channel_successor(&self, channel: &str) -> Option<String> {
+        self.channels.get(&key(channel)).and_then(|c| c.successor.clone())
+    }
+
+    /// Release the channels founded by `account` because the account is going
+    /// away: one with a valid successor is transferred to them, the rest are
+    /// dropped. Returns (transferred as (channel, successor), dropped channels).
+    pub fn release_founded_channels(&mut self, account: &str) -> (Vec<(String, String)>, Vec<String>) {
+        let (mut transferred, mut dropped) = (Vec::new(), Vec::new());
+        for chan in self.channels_owned_by(account) {
+            let successor = self.channel_successor(&chan).filter(|s| !s.eq_ignore_ascii_case(account) && self.exists(s));
+            match successor {
+                Some(s) if self.set_founder(&chan, &s).is_ok() => {
+                    let _ = self.set_successor(&chan, None); // consumed
+                    transferred.push((chan, s));
+                }
+                _ => {
+                    let _ = self.drop_channel(&chan);
+                    dropped.push(chan);
+                }
+            }
+        }
+        (transferred, dropped)
     }
 
     /// Set `channel`'s description (empty clears it).

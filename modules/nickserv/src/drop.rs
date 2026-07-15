@@ -17,9 +17,9 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         ctx.notice(me, from.uid, "Invalid password.");
         return;
     }
-    let channels = db.channels_owned_by(account);
-    for chan in &channels {
-        let _ = db.drop_channel(chan);
+    // A channel with a successor is inherited; the rest are dropped and released.
+    let (inherited, dropped) = db.release_founded_channels(account);
+    for chan in &dropped {
         ctx.channel_mode("", chan, "-r"); // server-sourced: release the registered mode
     }
     let _ = db.drop_account(account);
@@ -27,7 +27,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         ctx.logout(&uid);
     }
     ctx.notice(me, from.uid, format!("Your account \x02{account}\x02 has been dropped."));
-    if !channels.is_empty() {
-        ctx.notice(me, from.uid, format!("Channels released: {}.", channels.join(", ")));
+    if !dropped.is_empty() {
+        ctx.notice(me, from.uid, format!("Channels released: {}.", dropped.join(", ")));
+    }
+    if !inherited.is_empty() {
+        let list: Vec<String> = inherited.iter().map(|(c, s)| format!("{c} -> {s}")).collect();
+        ctx.notice(me, from.uid, format!("Channels passed to their successor: {}.", list.join(", ")));
     }
 }

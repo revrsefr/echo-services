@@ -39,6 +39,7 @@ pub enum Event {
     ChannelAkickAdd { channel: String, mask: String, reason: String },
     ChannelAkickDel { channel: String, mask: String },
     ChannelFounderSet { channel: String, founder: String },
+    ChannelSuccessorSet { channel: String, successor: Option<String> },
     ChannelDescSet { channel: String, desc: String },
     ChannelEntryMsgSet { channel: String, msg: String },
     ChannelSettingsSet { channel: String, settings: ChanSettings },
@@ -184,6 +185,7 @@ impl Event {
             | Event::ChannelAkickAdd { .. }
             | Event::ChannelAkickDel { .. }
             | Event::ChannelFounderSet { .. }
+            | Event::ChannelSuccessorSet { .. }
             | Event::ChannelDescSet { .. }
             | Event::ChannelEntryMsgSet { .. }
             | Event::ChannelSettingsSet { .. }
@@ -337,7 +339,7 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
             grouped.remove(&key(&nick));
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), successor: None, desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
@@ -373,6 +375,11 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         Event::ChannelFounderSet { channel, founder } => {
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.founder = founder;
+            }
+        }
+        Event::ChannelSuccessorSet { channel, successor } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.successor = successor;
             }
         }
         Event::ChannelDescSet { channel, desc } => {
