@@ -776,6 +776,37 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't registered"))), "unknown channel refused: {out:?}");
     }
 
+    // NickServ LIST is auspex-gated and glob-matches; UPDATE refreshes a session.
+    #[test]
+    fn nickserv_list_and_update() {
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-nslistupd.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("alice", "pw", None).unwrap();
+        db.register("albert", "pw", None).unwrap();
+        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Auspex));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "rando".into(), host: "h".into(), ip: "0.0.0.0".into() });
+
+        assert!(notice(&ns(&mut e, "000AAAAAB", "LIST *"), "Access denied"), "non-oper LIST refused");
+        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        let out = ns(&mut e, "000AAAAAC", "LIST al*");
+        assert!(notice(&out, "alice") && notice(&out, "albert"), "LIST al* shows the matches: {out:?}");
+        assert!(!notice(&out, "\x02staff\x02"), "LIST al* excludes non-matches: {out:?}");
+
+        let out = ns(&mut e, "000AAAAAC", "UPDATE");
+        assert!(notice(&out, "refreshed"), "UPDATE confirms: {out:?}");
+    }
+
     // BotServ BOT ADD/LIST is oper-gated (Priv::Admin) and the bot is remembered.
     #[test]
     fn botserv_bot_add_list_is_oper_gated() {

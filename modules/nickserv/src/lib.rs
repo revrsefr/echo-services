@@ -32,6 +32,10 @@ mod resetpass;
 mod confirm;
 #[path = "ajoin.rs"]
 mod ajoin;
+#[path = "update.rs"]
+mod update;
+#[path = "list.rs"]
+mod list;
 #[path = "suspend.rs"]
 mod suspend;
 mod noexpire;
@@ -56,6 +60,8 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "DROP", summary: "delete your account", detail: "Syntax: \x02DROP <password>\x02\nDeletes your account and releases the channels you founded." },
     HelpEntry { cmd: "CERT", summary: "manage SASL EXTERNAL certs", detail: "Syntax: \x02CERT ADD <password> [fingerprint]\x02, \x02CERT DEL <fingerprint>\x02, \x02CERT LIST\x02\nManages the TLS certificate fingerprints that can log in via SASL EXTERNAL." },
     HelpEntry { cmd: "AJOIN", summary: "auto-join channels on login", detail: "Syntax: \x02AJOIN ADD <#channel>\x02, \x02AJOIN DEL <#channel>\x02, \x02AJOIN LIST\x02\nChannels you are auto-joined to when you identify." },
+    HelpEntry { cmd: "UPDATE", summary: "refresh your session", detail: "Syntax: \x02UPDATE\x02\nRe-applies your auto-joins and vhost and re-checks for new memos." },
+    HelpEntry { cmd: "LIST", summary: "list accounts (oper)", detail: "Syntax: \x02LIST <pattern>\x02\nLists registered accounts matching a glob. Requires the auspex privilege." },
     HelpEntry { cmd: "SUSPEND", summary: "block an account (operator)", detail: "Syntax: \x02SUSPEND <account> [reason]\x02\nBlocks an account from logging in. Operators only." },
     HelpEntry { cmd: "UNSUSPEND", summary: "lift a suspension (operator)", detail: "Syntax: \x02UNSUSPEND <account>\x02\nLifts a suspension. Operators only." },
     HelpEntry { cmd: "NOEXPIRE", summary: "pin against expiry (operator)", detail: "Syntax: \x02NOEXPIRE <account> {ON|OFF}\x02\nPins an account so inactivity expiry never drops it. Operators only." },
@@ -115,6 +121,8 @@ impl Service for NickServ {
             Some("SUSPEND") => suspend::handle(me, from, args, ctx, net, db, true),
             Some("UNSUSPEND") => suspend::handle(me, from, args, ctx, net, db, false),
             Some("NOEXPIRE") => noexpire::handle(me, from, args, ctx, db),
+            Some("UPDATE") => update::handle(me, from, ctx, db),
+            Some("LIST") => list::handle(me, from, args, ctx, db),
             Some("HELP") => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}

@@ -16,6 +16,12 @@ impl Store for Db {
     fn resolve_account(&self, name: &str) -> Option<&str> {
         Db::resolve_account(self, name)
     }
+    fn accounts_matching(&self, pattern: &str) -> Vec<AccountView> {
+        self.accounts()
+            .filter(|a| super::glob_match(pattern, &a.name))
+            .map(|a| AccountView { name: a.name.clone(), email: a.email.clone(), ts: a.ts, verified: a.verified, greet: a.greet.clone() })
+            .collect()
+    }
     fn authenticate(&self, name: &str, password: &str) -> Option<&str> {
         Db::authenticate(self, name, password)
     }

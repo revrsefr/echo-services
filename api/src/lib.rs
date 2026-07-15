@@ -851,6 +851,8 @@ pub trait Store {
     fn account(&self, name: &str) -> Option<AccountView>;
     // Canonical account name for a nick (following a grouping), if registered.
     fn resolve_account(&self, name: &str) -> Option<&str>;
+    /// Registered accounts whose name matches `pattern` (a glob), for oper LIST.
+    fn accounts_matching(&self, pattern: &str) -> Vec<AccountView>;
     // The canonical account name if the password is correct, else None.
     fn authenticate(&self, name: &str, password: &str) -> Option<&str>;
     fn grouped_nicks(&self, account: &str) -> Vec<String>;
