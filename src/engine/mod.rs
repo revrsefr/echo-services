@@ -818,6 +818,14 @@ impl Engine {
                 if op && mode != Some("+o") && self.db.channel(&channel).is_some_and(|c| c.settings.secureops) {
                     out.push(NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: format!("-o {uid}") });
                 }
+                // RESTRICTED: only users with access (or opers) may be in the channel.
+                if mode.is_none() && self.db.channel(&channel).is_some_and(|c| c.settings.restricted) {
+                    let is_oper = account.as_deref().is_some_and(|a| self.oper_privs(a).any());
+                    if !is_oper {
+                        out.push(NetAction::Kick { from, channel, uid, reason: "This channel is restricted to users with access.".to_string() });
+                        return out;
+                    }
+                }
                 match mode {
                     // A user with access gets their status mode, plus the entry message.
                     Some(m) => {

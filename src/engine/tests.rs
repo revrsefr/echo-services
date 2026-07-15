@@ -976,6 +976,64 @@
         assert!(notice(&e.handle(NetEvent::Privmsg { from: "000AAAAAD".into(), to: "42SAAAAAH".into(), text: "FORBID ADD NICK x y".into() }), "Access denied"), "non-oper refused");
     }
 
+    // NickServ GETEMAIL (oper) finds accounts by their email glob.
+    #[test]
+    fn nickserv_getemail() {
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-getemail.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "pw", None).unwrap();
+        db.register("alice", "pw", Some("alice@x.com".into())).unwrap();
+        db.register("bob", "pw", Some("bob@x.com".into())).unwrap();
+        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Auspex));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "rando".into(), host: "h".into(), ip: "0.0.0.0".into() });
+
+        assert!(notice(&ns(&mut e, "000AAAAAC", "GETEMAIL *@x.com"), "Access denied"), "non-oper refused");
+        ns(&mut e, "000AAAAAB", "IDENTIFY pw");
+        let out = ns(&mut e, "000AAAAAB", "GETEMAIL *@x.com");
+        assert!(notice(&out, "alice") && notice(&out, "bob"), "finds both: {out:?}");
+        assert!(notice(&ns(&mut e, "000AAAAAB", "GETEMAIL nobody@z.com"), "No accounts"), "no match reported");
+    }
+
+    // ChanServ SET RESTRICTED kicks joining users who have no channel access.
+    #[test]
+    fn chanserv_restricted_kicks_users_without_access() {
+        use echo_chanserv::ChanServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-restricted.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "SET #c RESTRICTED ON".into() });
+
+        // The founder has access and is not kicked.
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false });
+        assert!(!out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAB")), "founder not kicked: {out:?}");
+        // A user with no access is kicked.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "rando".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#c".into(), op: false });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { uid, channel, .. } if uid == "000AAAAAC" && channel == "#c")), "no-access user kicked: {out:?}");
+    }
+
     // BotServ BOT ADD/LIST is oper-gated (Priv::Admin) and the bot is remembered.
     #[test]
     fn botserv_bot_add_list_is_oper_gated() {

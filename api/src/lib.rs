@@ -744,6 +744,8 @@ pub enum ChanSetting {
     SecureOps,
     KeepTopic,
     TopicLock,
+    // Kick users without channel access when they join.
+    Restricted,
     // BotServ: show members' personal greets on join.
     BotGreet,
     // BotServ: forbid the founder from (un)assigning a bot (admin override only).
@@ -863,6 +865,8 @@ pub trait Store {
     fn resolve_account(&self, name: &str) -> Option<&str>;
     /// Registered accounts whose name matches `pattern` (a glob), for oper LIST.
     fn accounts_matching(&self, pattern: &str) -> Vec<AccountView>;
+    /// Names of accounts whose email matches `pattern` (a glob), for oper GETEMAIL.
+    fn accounts_by_email(&self, pattern: &str) -> Vec<String>;
     // The canonical account name if the password is correct, else None.
     fn authenticate(&self, name: &str, password: &str) -> Option<&str>;
     fn grouped_nicks(&self, account: &str) -> Vec<String>;

@@ -343,6 +343,9 @@ pub struct ChanSettings {
     // Strip channel-operator status from anyone without op-level access.
     #[serde(default)]
     pub secureops: bool,
+    // Kick anyone without channel access when they join.
+    #[serde(default)]
+    pub restricted: bool,
     // Remember the topic and restore it when the channel is recreated.
     #[serde(default)]
     pub keeptopic: bool,

@@ -22,6 +22,12 @@ impl Store for Db {
             .map(|a| AccountView { name: a.name.clone(), email: a.email.clone(), ts: a.ts, verified: a.verified, greet: a.greet.clone() })
             .collect()
     }
+    fn accounts_by_email(&self, pattern: &str) -> Vec<String> {
+        self.accounts()
+            .filter(|a| a.email.as_deref().is_some_and(|e| super::glob_match(pattern, e)))
+            .map(|a| a.name.clone())
+            .collect()
+    }
     fn authenticate(&self, name: &str, password: &str) -> Option<&str> {
         Db::authenticate(self, name, password)
     }
