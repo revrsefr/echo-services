@@ -1020,6 +1020,10 @@ pub trait Store {
     fn memo_read(&mut self, account: &str, index: usize) -> Option<MemoView>;
     fn memo_del(&mut self, account: &str, index: usize) -> bool;
     fn unread_memos(&self, account: &str) -> usize;
+    /// Recall the most recent unread memo `sender` left for `account` (true if one was).
+    fn memo_cancel(&mut self, account: &str, sender: &str) -> bool;
+    /// Read-status and timestamp of the most recent memo `sender` left for `account`.
+    fn memo_check(&self, account: &str, sender: &str) -> Option<(bool, u64)>;
     fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError>;
     fn set_founder(&mut self, channel: &str, account: &str) -> Result<(), ChanError>;
     fn access_add(&mut self, channel: &str, account: &str, level: &str) -> Result<(), ChanError>;

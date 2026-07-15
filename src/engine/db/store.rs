@@ -429,6 +429,12 @@ impl Store for Db {
     fn memo_del(&mut self, account: &str, index: usize) -> bool {
         Db::memo_del(self, account, index)
     }
+    fn memo_cancel(&mut self, account: &str, sender: &str) -> bool {
+        Db::memo_cancel(self, account, sender)
+    }
+    fn memo_check(&self, account: &str, sender: &str) -> Option<(bool, u64)> {
+        Db::memo_check(self, account, sender)
+    }
     fn unread_memos(&self, account: &str) -> usize {
         Db::unread_memos(self, account)
     }

@@ -591,6 +591,28 @@ impl Db {
         true
     }
 
+    /// Recall the most recent UNREAD memo `sender` left for `account`. Returns
+    /// whether one was cancelled — a memo the recipient already read can't be recalled.
+    pub fn memo_cancel(&mut self, account: &str, sender: &str) -> bool {
+        let sender_lc = sender.to_ascii_lowercase();
+        let idx = self.accounts.get(&key(account)).and_then(|a| {
+            a.memos.iter().enumerate().rev().find(|(_, m)| !m.read && m.from.to_ascii_lowercase() == sender_lc).map(|(i, _)| i)
+        });
+        match idx {
+            Some(i) => self.memo_del(account, i),
+            None => false,
+        }
+    }
+
+    /// The read-status and timestamp of the most recent memo `sender` left for
+    /// `account`, or None if they have none in that mailbox.
+    pub fn memo_check(&self, account: &str, sender: &str) -> Option<(bool, u64)> {
+        let sender_lc = sender.to_ascii_lowercase();
+        self.accounts.get(&key(account)).and_then(|a| {
+            a.memos.iter().rev().find(|m| m.from.to_ascii_lowercase() == sender_lc).map(|m| (m.read, m.ts))
+        })
+    }
+
     /// How many unread memos an account has.
     pub fn unread_memos(&self, account: &str) -> usize {
         self.accounts.get(&key(account)).map_or(0, |a| a.memos.iter().filter(|m| !m.read).count())

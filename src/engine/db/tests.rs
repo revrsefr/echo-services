@@ -234,6 +234,27 @@
         assert_eq!(db.unread_memos("alice"), 1);
     }
 
+    // CANCEL recalls the sender's most recent unread memo; CHECK reports read-state.
+    #[test]
+    fn memo_cancel_and_check() {
+        let mut db = Db::open(tmp("memo-cc"), "N1");
+        db.scram_iterations = 4096;
+        db.register("alice", "pw", None).unwrap();
+        db.memo_send("alice", "bob", "hi").unwrap();
+        db.memo_send("alice", "bob", "you there?").unwrap();
+
+        assert_eq!(db.memo_check("alice", "bob").map(|(read, _)| read), Some(false), "unread so far");
+        assert!(db.memo_cancel("alice", "bob"), "recalls the most recent unread");
+        assert_eq!(db.memo_list("alice").len(), 1, "one memo cancelled");
+
+        db.memo_read("alice", 0); // alice reads the remaining memo
+        assert!(!db.memo_cancel("alice", "bob"), "a read memo can't be recalled");
+        assert_eq!(db.memo_check("alice", "bob").map(|(read, _)| read), Some(true), "now shows read");
+
+        assert_eq!(db.memo_check("alice", "carol"), None, "no memo from carol");
+        assert!(!db.memo_cancel("alice", "carol"));
+    }
+
     // A wrong code is tolerated a few times, then the code is burned so it can't
     // be ground down online even though it is short.
     #[test]

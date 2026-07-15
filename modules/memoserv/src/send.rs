@@ -1,7 +1,6 @@
 use echo_api::{Sender, ServiceCtx, Store};
 
-// A full mailbox rejects new memos, so nobody can be flooded.
-const MAX_MEMOS: usize = 30;
+use super::MAX_MEMOS;
 
 // SEND <nick> <text>: leave a memo on a registered account's mailbox.
 pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
