@@ -102,6 +102,27 @@ fn records<'a>(data: &'a Value, kind: &str) -> Vec<&'a Value> {
     }
 }
 
+// Map one Anope access entry to echo's op/voice tiers, whatever provider stored
+// it: numeric access/access (by the channel's AUTOOP/AUTOVOICE thresholds), the
+// XOP words, or a flags string. None = not representable (sub-voice level or
+// unknown format) — the caller reports it rather than dropping it silently.
+fn access_role(data: &str, op_at: i64, voice_at: i64) -> Option<&'static str> {
+    let d = data.trim();
+    if let Ok(level) = d.parse::<i64>() {
+        return if level >= op_at { Some("op") } else if level >= voice_at { Some("voice") } else { None };
+    }
+    match d.to_ascii_uppercase().as_str() {
+        // XOP tiers: everything op-or-above collapses to op; VOP is voice.
+        "QOP" | "OWNER" | "FOUNDER" | "COFOUNDER" | "SOP" | "AOP" | "HOP" => Some("op"),
+        "VOP" => Some("voice"),
+        _ => {
+            // flags/flags: privilege letters. Owner/protect/op ⇒ op; halfop/voice ⇒ voice.
+            let has = |set: &str| d.chars().any(|c| set.contains(c.to_ascii_lowercase()));
+            if has("qaof") { Some("op") } else if has("hv") { Some("voice") } else { None }
+        }
+    }
+}
+
 // AUTOOP / AUTOVOICE thresholds from a channel's "levels" string ("... AUTOOP 5 ...").
 fn thresholds(levels: &str) -> (i64, i64) {
     let toks: Vec<&str> = levels.split_whitespace().collect();
@@ -268,9 +289,14 @@ pub fn import_anope(anope_path: &str, out_path: &str, node: &str) -> std::io::Re
     // Channel access -> op/voice by the channel's own AUTOOP/AUTOVOICE thresholds.
     for ca in records(&data, "ChanAccess") {
         let (Some(chan), Some(mask)) = (field(ca, "ci"), field(ca, "mask")) else { continue };
-        let level: i64 = field(ca, "data").and_then(|s| s.parse().ok()).unwrap_or(0);
+        let data = field(ca, "data").unwrap_or("");
         let (op_at, voice_at) = chan_levels.get(chan).copied().unwrap_or((5, 3));
-        let role = if level >= op_at { "op" } else if level >= voice_at { "voice" } else { continue };
+        let Some(role) = access_role(data, op_at, voice_at) else {
+            // echo access is op/voice only; a lower tier (or an unknown format)
+            // can't be represented — report it instead of dropping it silently.
+            sum.skipped.push(format!("access {chan} {mask} ({data:?}): below voice tier / unmapped — echo access is op/voice only"));
+            continue;
+        };
         db.migrate_append(Event::ChannelAccessAdd { channel: chan.to_string(), account: mask.to_string(), level: role.to_string() })?;
         sum.access += 1;
     }
@@ -427,5 +453,24 @@ mod tests {
         let mut roles: Vec<_> = chan.access.iter().map(|a| (a.account.as_str(), a.level.as_str())).collect();
         roles.sort();
         assert_eq!(roles, vec![("bob", "op"), ("carol", "voice")], "levels mapped by threshold");
+    }
+
+    // Access maps from every Anope provider format, not just numeric access/access.
+    #[test]
+    fn access_role_covers_numeric_xop_and_flags() {
+        // numeric access/access against thresholds (op>=5, voice>=3)
+        assert_eq!(access_role("5", 5, 3), Some("op"));
+        assert_eq!(access_role("3", 5, 3), Some("voice"));
+        assert_eq!(access_role("2", 5, 3), None, "sub-voice level isn't representable");
+        // XOP words
+        assert_eq!(access_role("AOP", 5, 3), Some("op"));
+        assert_eq!(access_role("sop", 5, 3), Some("op"));
+        assert_eq!(access_role("VOP", 5, 3), Some("voice"));
+        // flags/flags letters
+        assert_eq!(access_role("+o", 5, 3), Some("op"));
+        assert_eq!(access_role("+v", 5, 3), Some("voice"));
+        assert_eq!(access_role("+qao", 5, 3), Some("op"));
+        // unknown format is unmapped (reported, not silently dropped)
+        assert_eq!(access_role("weird", 5, 3), None);
     }
 }
