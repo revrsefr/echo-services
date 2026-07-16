@@ -304,13 +304,20 @@ impl Engine {
                 for key in std::mem::take(&mut ctx.stats) {
                     self.bump(&key);
                 }
-                ctx.actions
+                let feed = if ok {
+                    self.feed("AUTH", format!("\x0303✓\x03 {} identified to \x02{account}\x02 via IDENTIFY", self.who(&uid)))
+                } else {
+                    self.feed("AUTH", format!("\x0304✗\x03 {} — IDENTIFY failed for \x02{name}\x02 (bad password)", self.who(&uid)))
+                };
+                let mut actions = ctx.actions;
+                actions.extend(feed);
+                actions
             }
             AuthThen::Sasl { agent, client, account } => {
                 if ok {
-                    self.sasl_login(&agent, &client, account)
+                    self.sasl_login("SASL PLAIN", &agent, &client, account)
                 } else {
-                    sasl_fail(&agent, &client)
+                    self.sasl_deny("SASL PLAIN", &agent, &client, "bad password")
                 }
             }
         }

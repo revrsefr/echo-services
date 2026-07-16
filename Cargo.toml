@@ -18,6 +18,7 @@ members = [
     "modules/groupserv",
     "modules/chanfix",
     "modules/helpserv",
+    "modules/debugserv",
 ]
 
 [package]
@@ -44,6 +45,7 @@ echo-reportserv = { path = "modules/reportserv" }
 echo-groupserv = { path = "modules/groupserv" }
 echo-chanfix = { path = "modules/chanfix" }
 echo-helpserv = { path = "modules/helpserv" }
+echo-debugserv = { path = "modules/debugserv" }
 tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "time", "sync", "process", "signal"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

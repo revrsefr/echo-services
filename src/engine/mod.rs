@@ -131,6 +131,10 @@ pub struct Engine {
     // Staff audit channel: notable service actions are announced here. None =
     // no audit feed.
     log_channel: Option<String>,
+    // DebugServ's uid, when that module is enabled — the live activity feed
+    // (auth, sessions, lifecycle) speaks as it. Empty = DebugServ isn't running,
+    // and the committed-event feed falls back to a server notice.
+    debugserv_uid: String,
     // Inactivity-expiry thresholds in seconds. None = that kind never expires.
     account_ttl: Option<u64>,
     channel_ttl: Option<u64>,
@@ -244,6 +248,7 @@ impl Engine {
             pending_unbans: Vec::new(),
             votes: HashMap::new(),
             log_channel: None,
+            debugserv_uid: String::new(),
             account_ttl: None,
             channel_ttl: None,
             expire_warn: None,
@@ -325,6 +330,37 @@ impl Engine {
     // The staff channel notable service actions are announced to.
     pub fn set_log_channel(&mut self, channel: Option<String>) {
         self.log_channel = channel;
+    }
+
+    // DebugServ's uid — the live activity feed is sent as PRIVMSGs from it into
+    // the log channel. Set from main.rs when the module is enabled.
+    pub fn set_debugserv_uid(&mut self, uid: impl Into<String>) {
+        self.debugserv_uid = uid.into();
+    }
+
+    // Build a DebugServ feed line for the log channel, or None when DebugServ
+    // isn't running (no uid) / there's no log channel / we're not linked yet.
+    // `cat` is a short category tag (AUTH, SESS, ACCT, CHAN, OPER, NET).
+    fn feed(&self, cat: &str, text: String) -> Option<NetAction> {
+        let channel = self.log_channel.as_deref()?;
+        if self.debugserv_uid.is_empty() || self.sid.is_empty() {
+            return None;
+        }
+        Some(NetAction::Privmsg {
+            from: self.debugserv_uid.clone(),
+            to: channel.to_string(),
+            text: format!("\x02[{cat}]\x02 {text}"),
+        })
+    }
+
+    // "nick (host)" for a live uid, for the feed — the host makes an auth line
+    // actionable (where did this login come from). Falls back gracefully.
+    fn who(&self, uid: &str) -> String {
+        let nick = self.network.nick_of(uid).unwrap_or("?");
+        match self.network.host_of(uid) {
+            Some(host) => format!("\x02{nick}\x02 ({host})"),
+            None => format!("\x02{nick}\x02"),
+        }
     }
 
     // Inactivity-expiry thresholds (seconds); None leaves that kind never
@@ -412,11 +448,23 @@ impl Engine {
     }
 
     // Finish a SASL login, unless the account is suspended.
-    fn sasl_login(&self, agent: &str, client: &str, account: String) -> Vec<NetAction> {
+    fn sasl_login(&self, mech: &str, agent: &str, client: &str, account: String) -> Vec<NetAction> {
         if self.db.is_suspended(&account) {
-            return sasl_fail(agent, client);
+            let mut out = sasl_fail(agent, client);
+            out.extend(self.feed("AUTH", format!("\x0304✗\x03 {} — {mech} rejected for \x02{account}\x02 (account suspended)", self.who(client))));
+            return out;
         }
-        sasl_success(agent, client, account)
+        let mut out = sasl_success(agent, client, account.clone());
+        out.extend(self.feed("AUTH", format!("\x0303✓\x03 {} authenticated as \x02{account}\x02 via {mech}", self.who(client))));
+        out
+    }
+
+    // A SASL rejection plus a DebugServ line naming why — for the credential
+    // failures worth surfacing (bad password, bad/unknown cert, unknown account).
+    fn sasl_deny(&self, mech: &str, agent: &str, client: &str, reason: &str) -> Vec<NetAction> {
+        let mut out = sasl_fail(agent, client);
+        out.extend(self.feed("AUTH", format!("\x0304✗\x03 {} — {mech} failed ({reason})", self.who(client))));
+        out
     }
 
     // The login side-effects — auto-join, vhost, and a waiting-memo notice — for a
@@ -563,6 +611,9 @@ impl Engine {
 
     // Log a single session out of `account`, telling them why (services-sourced).
     fn logout_uid(&mut self, uid: &str, account: &str, reason: &str) {
+        if let Some(action) = self.feed("SESS", format!("{} logged out of \x02{account}\x02 ({reason})", self.who(uid))) {
+            self.emit_irc(action);
+        }
         self.network.clear_account(uid);
         self.emit_irc(NetAction::Metadata { target: uid.to_string(), key: "accountname".to_string(), value: String::new() });
         if let Some(ns) = self.nick_service.clone() {
@@ -748,7 +799,10 @@ impl Engine {
     fn audit(&mut self, text: String) {
         let now = self.now_secs();
         self.network.record_incident(text.clone(), now);
-        if let (Some(channel), false) = (&self.log_channel, self.sid.is_empty()) {
+        // Prefer DebugServ's voice; fall back to a server notice when it's off.
+        if let Some(action) = self.feed("SVC", text.clone()) {
+            self.emit_irc(action);
+        } else if let (Some(channel), false) = (&self.log_channel, self.sid.is_empty()) {
             self.emit_irc(NetAction::Notice { from: self.sid.clone(), to: channel.clone(), text });
         }
     }
@@ -825,6 +879,11 @@ impl Engine {
         // clients in CAP LS (IRCv3 SASL 3.2).
         // Introduce the registered bots too.
         out.extend(self.reconcile_bots());
+        // DebugServ joins the log channel so its live feed lands there — it must be
+        // a member to speak, unlike the server-sourced audit notice.
+        if let (false, Some(chan)) = (self.debugserv_uid.is_empty(), self.log_channel.clone()) {
+            out.push(NetAction::ServiceJoin { uid: self.debugserv_uid.clone(), channel: chan });
+        }
         // Re-assert the network bans over the fresh link, each with its remaining
         // duration so the ircd expires it at the right time (permanent = 0).
         let now = self.now_secs();
@@ -1216,8 +1275,10 @@ impl Engine {
     // configured — announce each to it, sourced from the services server. Private
     // and purely cosmetic events are deliberately not surfaced.
     fn audit_feed(&mut self, mark: usize, nick: &str, account: Option<&str>) -> Vec<NetAction> {
-        let summaries: Vec<String> = self.db.events_since(mark).iter().filter_map(audit_summary).collect();
-        if summaries.is_empty() {
+        let tagged: Vec<(&'static str, String)> = self.db.events_since(mark).iter()
+            .filter_map(|e| audit_summary(e).map(|s| (event_category(e), s)))
+            .collect();
+        if tagged.is_empty() {
             return Vec::new();
         }
         // Name the actor by nick, plus the account they are identified to when it
@@ -1228,11 +1289,15 @@ impl Engine {
         };
         let now = self.now_secs();
         let mut out = Vec::new();
-        for summary in summaries {
+        for (cat, summary) in tagged {
             let line = format!("{actor} {summary}");
             self.network.record_incident(line.clone(), now);
-            if let (Some(channel), false) = (&self.log_channel, self.sid.is_empty()) {
-                out.push(NetAction::Notice { from: self.sid.clone(), to: channel.clone(), text: line });
+            // Prefer DebugServ's voice; fall back to a server notice when it's off.
+            match self.feed(cat, line.clone()) {
+                Some(action) => out.push(action),
+                None => if let (Some(channel), false) = (&self.log_channel, self.sid.is_empty()) {
+                    out.push(NetAction::Notice { from: self.sid.clone(), to: channel.clone(), text: line });
+                },
             }
         }
         out
@@ -1279,6 +1344,26 @@ fn human_duration(secs: u64) -> String {
         s if s >= 3_600 => plural(s / 3_600, "hour"),
         s if s >= 60 => plural(s / 60, "minute"),
         s => plural(s.max(1), "second"),
+    }
+}
+
+// A coarse category tag for the DebugServ feed, sorting committed events into
+// account, channel, or operator/enforcement lanes (the catch-all). Purely
+// cosmetic — a miscategorised line is harmless.
+fn event_category(event: &db::Event) -> &'static str {
+    use db::Event::*;
+    match event {
+        AccountRegistered(_) | AccountDropped { .. } | AccountVerified { .. }
+        | AccountPasswordSet { .. } | AccountEmailSet { .. } | CertAdded { .. }
+        | CertRemoved { .. } | AccountSuspended { .. } | AccountUnsuspended { .. }
+        | NickGrouped { .. } | NickUngrouped { .. } | VhostSet { .. } | VhostDeleted { .. }
+        | AccountOperNoteSet { .. } => "ACCT",
+        ChannelRegistered { .. } | ChannelDropped { .. } | ChannelFounderSet { .. }
+        | ChannelSuccessorSet { .. } | ChannelAccessAdd { .. } | ChannelAccessDel { .. }
+        | ChannelAkickAdd { .. } | ChannelAkickDel { .. } | ChannelSuspended { .. }
+        | ChannelUnsuspended { .. } | ChannelBotAssigned { .. } | ChannelBotUnassigned { .. }
+        | ChannelOperNoteSet { .. } => "CHAN",
+        _ => "OPER",
     }
 }
 

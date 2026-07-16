@@ -131,7 +131,7 @@ impl Engine {
                 }
             }
             // Client acknowledged our server-final ("+"); apply the login.
-            ScramStep::Ack { account } => self.sasl_login(agent, client, account),
+            ScramStep::Ack { account } => self.sasl_login(&format!("SASL {}", hash.mech()), agent, client, account),
         }
     }
 
@@ -144,15 +144,15 @@ impl Engine {
         } else {
             match STANDARD.decode(chunk).ok().and_then(|b| String::from_utf8(b).ok()) {
                 Some(a) => a,
-                None => return sasl_fail(agent, client),
+                None => return self.sasl_deny("SASL EXTERNAL", agent, client, "malformed authzid"),
             }
         };
         match fingerprints.iter().find_map(|fp| self.db.certfp_owner(fp)) {
             Some(account) if authzid.is_empty() || authzid.eq_ignore_ascii_case(account) => {
                 let account = account.to_string();
-                self.sasl_login(agent, client, account)
+                self.sasl_login("SASL EXTERNAL", agent, client, account)
             }
-            _ => sasl_fail(agent, client),
+            _ => self.sasl_deny("SASL EXTERNAL", agent, client, "unknown certificate"),
         }
     }
 }

@@ -1,0 +1,8 @@
+[package]
+name = "echo-debugserv"
+version = "0.0.1"
+edition = "2021"
+description = "DebugServ: stream live services activity (auth, sessions, account/channel/oper events) to the staff log channel."
+
+[dependencies]
+echo-api = { path = "../../api" }

@@ -31,6 +31,7 @@ use echo_helpserv::HelpServ;
 use echo_example::ExampleServ;
 use echo_inspircd::InspIrcd;
 use echo_nickserv::NickServ;
+use echo_debugserv::DebugServ;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -154,6 +155,11 @@ async fn main() -> Result<()> {
             uid: format!("{}AAAAAN", cfg.server.sid),
         }));
     }
+    if enabled("debugserv") {
+        services.push(Box::new(DebugServ {
+            uid: format!("{}AAAAAO", cfg.server.sid),
+        }));
+    }
     if enabled("example") {
         services.push(Box::new(ExampleServ {
             uid: format!("{}AAAAAC", cfg.server.sid),
@@ -182,6 +188,10 @@ async fn main() -> Result<()> {
     let service_host = if cfg.server.service_host.is_empty() { &cfg.server.name } else { &cfg.server.service_host };
     engine.lock().await.set_service_host(service_host);
     engine.lock().await.set_log_channel(cfg.log.as_ref().map(|l| l.channel.clone()));
+    if enabled("debugserv") {
+        // DebugServ speaks the live feed into the log channel; give the engine its uid.
+        engine.lock().await.set_debugserv_uid(format!("{}AAAAAO", cfg.server.sid));
+    }
     if let Some(expire) = &cfg.expire {
         engine.lock().await.set_expiry(expire.account_ttl(), expire.channel_ttl(), expire.warn_ttl());
     }

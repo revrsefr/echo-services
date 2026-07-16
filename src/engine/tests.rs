@@ -43,6 +43,44 @@
         assert!(is_success(&out), "{out:?}");
     }
 
+    // DebugServ streams auth outcomes into the log channel, and stays silent when
+    // it isn't running.
+    #[test]
+    fn debugserv_feeds_auth_events() {
+        let mut e = engine_with("dbgfeed", "foo", "sesame");
+        e.set_sid("42S".into());
+        e.set_log_channel(Some("#services".into()));
+        e.set_debugserv_uid("42SAAAAAO");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into(), ip: "0.0.0.0".into() });
+
+        sasl(&mut e, "S", "PLAIN");
+        let ok = sasl(&mut e, "C", &plain(b"", b"foo", b"sesame"));
+        assert!(is_success(&ok), "login should still work: {ok:?}");
+        assert!(
+            ok.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text }
+                if from == "42SAAAAAO" && to == "#services" && text.contains("[AUTH]") && text.contains("SASL PLAIN"))),
+            "expected an AUTH feed line from DebugServ, got {ok:?}"
+        );
+
+        sasl(&mut e, "S", "PLAIN");
+        let bad = sasl(&mut e, "C", &plain(b"", b"foo", b"wrongpass"));
+        assert!(!is_success(&bad), "wrong password must not log in: {bad:?}");
+        assert!(
+            bad.iter().any(|a| matches!(a, NetAction::Privmsg { from, text, .. }
+                if from == "42SAAAAAO" && text.contains("[AUTH]") && text.contains("bad password"))),
+            "expected an AUTH failure line, got {bad:?}"
+        );
+
+        // Disabled (no uid) -> the feed is silent.
+        e.set_debugserv_uid("");
+        sasl(&mut e, "S", "PLAIN");
+        let quiet = sasl(&mut e, "C", &plain(b"", b"foo", b"sesame"));
+        assert!(
+            !quiet.iter().any(|a| matches!(a, NetAction::Privmsg { to, .. } if to == "#services")),
+            "no feed line when DebugServ is off: {quiet:?}"
+        );
+    }
+
     // A response that is not a multiple of 400 splits into 400 + remainder.
     #[test]
     fn plain_chunked_412() {

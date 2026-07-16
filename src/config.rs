@@ -138,7 +138,7 @@ impl Default for Modules {
 fn default_services() -> Vec<String> {
     [
         "nickserv", "chanserv", "botserv", "hostserv", "memoserv", "operserv", "statserv",
-        "groupserv", "infoserv", "reportserv", "helpserv", "chanfix", "diceserv",
+        "groupserv", "infoserv", "reportserv", "helpserv", "chanfix", "diceserv", "debugserv",
     ]
     .iter()
     .map(|s| s.to_string())
