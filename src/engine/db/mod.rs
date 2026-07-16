@@ -680,11 +680,15 @@ pub struct EventLog {
     versions: HashMap<String, u64>, // per-origin highest seq applied (version vector)
     entries: Vec<LogEntry>,         // full log, kept so peers can pull what they lack
     outbound: Option<broadcast::Sender<LogEntry>>, // push newly committed entries to peers
+    // Operator lockdown (OperServ SET READONLY): while set, locally-authored
+    // writes are refused. Ephemeral — it resets on restart and never persists,
+    // and gossip ingestion is unaffected so a read-only node stays in sync.
+    readonly: bool,
 }
 
 impl EventLog {
     fn open(path: PathBuf, origin: String) -> (Self, Vec<Event>) {
-        let mut log = Self { path, origin, lamport: 0, versions: HashMap::new(), entries: Vec::new(), outbound: None };
+        let mut log = Self { path, origin, lamport: 0, versions: HashMap::new(), entries: Vec::new(), outbound: None, readonly: false };
         if let Ok(data) = std::fs::read_to_string(&log.path) {
             for line in data.lines().filter(|l| !l.trim().is_empty()) {
                 match serde_json::from_str::<LogEntry>(line) {
@@ -719,6 +723,10 @@ impl EventLog {
     // Lamport clock and are pushed to peers; local (channel) events are written
     // for restart but never gossiped and carry no version-vector identity.
     fn append(&mut self, event: Event) -> std::io::Result<()> {
+        // Operator lockdown refuses every locally-authored write at this one seam.
+        if self.readonly {
+            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "services are read-only"));
+        }
         let global = event.scope() == Scope::Global;
         let entry = if global {
             self.lamport += 1;

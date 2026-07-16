@@ -1155,6 +1155,48 @@
         assert!(notice(&e.handle(NetEvent::Privmsg { from: "000AAAAAD".into(), to: "42SAAAAAH".into(), text: "FORBID ADD NICK x y".into() }), "Access denied"), "non-oper refused");
     }
 
+    // OperServ SET READONLY locks out writes: while on, a channel can't be
+    // registered; turning it off restores normal service.
+    #[test]
+    fn operserv_set_readonly_blocks_writes() {
+        use echo_chanserv::ChanServ;
+        use echo_nickserv::NickServ;
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-osreadonly.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "pw", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: true });
+        let os = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: t.into() });
+        let cs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: t.into() });
+        let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        assert!(notice(&os(&mut e, "SET READONLY ON"), "read-only"), "readonly enabled");
+        assert!(e.db.readonly(), "flag set");
+        let out = cs(&mut e, "REGISTER #c");
+        assert!(!notice(&out, "now registered"), "register blocked while read-only: {out:?}");
+        assert!(e.db.channel("#c").is_none(), "no channel written");
+
+        assert!(notice(&os(&mut e, "SET READONLY OFF"), "no longer"), "readonly cleared");
+        assert!(!e.db.readonly(), "flag cleared");
+        assert!(notice(&cs(&mut e, "REGISTER #c"), "now registered"), "register works again");
+        assert!(e.db.channel("#c").is_some(), "channel written");
+    }
+
     // OperServ SHUTDOWN/RESTART (admin) emit a Shutdown action (which the link
     // layer turns into a process exit) and are refused to non-operators.
     #[test]

@@ -200,7 +200,7 @@ impl Engine {
         if self.db.external_accounts() {
             return Some(reg_reply(reply, RegOutcome::External, account));
         }
-        if self.db.registrations_frozen() {
+        if self.db.registrations_frozen() || self.db.readonly() {
             return Some(reg_reply(reply, RegOutcome::Frozen, account));
         }
         if self.db.exists(account) {

@@ -228,6 +228,12 @@ impl Store for Db {
     fn set_defcon(&mut self, level: u8) {
         Db::set_defcon(self, level)
     }
+    fn readonly(&self) -> bool {
+        Db::readonly(self)
+    }
+    fn set_readonly(&mut self, on: bool) {
+        Db::set_readonly(self, on)
+    }
     fn registrations_frozen(&self) -> bool {
         Db::registrations_frozen(self)
     }

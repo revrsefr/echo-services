@@ -973,6 +973,10 @@ pub trait Store {
     // Network defence level (OperServ DEFCON) and its derived registration freezes.
     fn defcon(&self) -> u8;
     fn set_defcon(&mut self, level: u8);
+    // OperServ SET READONLY: operator lockdown that refuses locally-authored
+    // writes. Ephemeral (resets on restart).
+    fn readonly(&self) -> bool;
+    fn set_readonly(&mut self, on: bool);
     fn registrations_frozen(&self) -> bool;
     fn channel_regs_frozen(&self) -> bool;
     // Whether account identity is owned externally (website); when true, IRC

@@ -39,6 +39,8 @@ mod logsearch;
 mod defcon;
 #[path = "shutdown.rs"]
 mod shutdown;
+#[path = "set.rs"]
+mod set;
 
 pub struct OperServ {
     pub uid: String,
@@ -90,6 +92,7 @@ impl Service for OperServ {
             Some(cmd) if cmd.eq_ignore_ascii_case("CHANKILL") => chankill::handle(me, from, args, ctx, net, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("LOGSEARCH") => logsearch::handle(me, from, args, ctx, net),
             Some(cmd) if cmd.eq_ignore_ascii_case("DEFCON") => defcon::handle(me, from, args, ctx, db),
+            Some(cmd) if cmd.eq_ignore_ascii_case("SET") => set::handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("SHUTDOWN") => shutdown::handle(me, from, false, args, ctx),
             Some(cmd) if cmd.eq_ignore_ascii_case("RESTART") => shutdown::handle(me, from, true, args, ctx),
             Some(cmd) if cmd.eq_ignore_ascii_case("HELP") => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
@@ -125,6 +128,7 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "JUPE", summary: "jupe a server name", detail: "Syntax: \x02JUPE <server.name> [reason] | JUPE DEL <server.name> | JUPE LIST\x02\nBlocks a server name from linking." },
     HelpEntry { cmd: "LOGSEARCH", summary: "search the action log", detail: "Syntax: \x02LOGSEARCH [pattern]\x02\nSearches the incident and action log." },
     HelpEntry { cmd: "DEFCON", summary: "network defence level", detail: "Syntax: \x02DEFCON [1-5]\x02\nShows or sets the network defence level (5 = normal, 1 = lockdown)." },
+    HelpEntry { cmd: "SET", summary: "services-wide settings", detail: "Syntax: \x02SET READONLY {ON|OFF}\x02\nToggles read-only lockdown: while on, no registrations or changes are accepted." },
     HelpEntry { cmd: "SHUTDOWN", summary: "stop services", detail: "Syntax: \x02SHUTDOWN [reason]\x02\nStops the services process. It stays down until restarted." },
     HelpEntry { cmd: "RESTART", summary: "restart services", detail: "Syntax: \x02RESTART [reason]\x02\nRestarts the services process (a supervisor respawns it)." },
 ];

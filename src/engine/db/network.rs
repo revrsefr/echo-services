@@ -197,6 +197,17 @@ impl Db {
         self.defcon = level.clamp(1, 5);
     }
 
+    /// Whether the services are in operator read-only lockdown.
+    pub fn readonly(&self) -> bool {
+        self.log.readonly
+    }
+
+    /// Enter or leave read-only lockdown: while on, locally-authored writes are
+    /// refused. Ephemeral (never persisted); gossip ingestion is unaffected.
+    pub fn set_readonly(&mut self, on: bool) {
+        self.log.readonly = on;
+    }
+
     /// Whether new nick/account registrations are frozen (defcon 3 or lower).
     pub fn registrations_frozen(&self) -> bool {
         self.defcon <= 3
