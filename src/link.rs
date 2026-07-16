@@ -122,6 +122,15 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
                                 .await?;
                                 engine.lock().await.complete_password_change(&account, creds, &agent, &uid)
                             }
+                            // Password verify (IDENTIFY / SASL PLAIN): run the ~1s
+                            // PBKDF2 off the reactor, then finish under the lock.
+                            NetAction::DeferAuthenticate { verifier, password, then } => {
+                                let ok = tokio::task::spawn_blocking(move || {
+                                    crate::engine::scram::verify_plain(crate::engine::scram::Hash::Sha256, &verifier, &password)
+                                })
+                                .await?;
+                                engine.lock().await.complete_authenticate(ok, then)
+                            }
                             action => vec![action],
                         };
                         for act in outs {

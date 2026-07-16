@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use tokio::sync::mpsc;
 
-use crate::proto::{NetAction, NetEvent, RegReply};
+use crate::proto::{AuthThen, NetAction, NetEvent, RegReply};
 use db::{Db, LogEntry, RegError};
 use scram::Verifier;
 use echo_api::Privs;
@@ -1110,6 +1110,21 @@ impl Engine {
             NetEvent::Sasl { client, mode, data, .. } => self.sasl(client, mode, data),
             _ => Vec::new(),
         };
+        // In tests there is no link layer to run DeferAuthenticate off-thread, so
+        // resolve it inline (test iteration counts are cheap) — the login finish is
+        // exactly what the link layer produces, and it must happen before
+        // track_accounts so the login is recorded within this handle().
+        #[cfg(test)]
+        let evout: Vec<NetAction> = evout
+            .into_iter()
+            .flat_map(|a| match a {
+                NetAction::DeferAuthenticate { verifier, password, then } => {
+                    let ok = crate::engine::scram::verify_plain(crate::engine::scram::Hash::Sha256, &verifier, &password);
+                    self.complete_authenticate(ok, then)
+                }
+                other => vec![other],
+            })
+            .collect();
         self.track_accounts(&evout);
         out.extend(evout);
         // Give every user-removal a traceable incident id, stamped into its reason
@@ -1415,15 +1430,17 @@ fn ci_hash(text: &str) -> u64 {
     h.finish()
 }
 
-fn login_plain(b64: &str, db: &Db) -> Option<String> {
+// Decode a SASL PLAIN response into (authcid, password). The verify itself is
+// deferred off the lock, so this no longer touches the store.
+fn decode_plain(b64: &str) -> Option<(String, String)> {
     let raw = STANDARD.decode(b64).ok()?;
     let parts: Vec<&[u8]> = raw.split(|&b| b == 0).collect();
     if parts.len() != 3 {
         return None;
     }
-    let authcid = std::str::from_utf8(parts[1]).ok()?;
-    let passwd = std::str::from_utf8(parts[2]).ok()?;
-    db.authenticate(authcid, passwd).map(str::to_string)
+    let authcid = std::str::from_utf8(parts[1]).ok()?.to_string();
+    let passwd = std::str::from_utf8(parts[2]).ok()?.to_string();
+    Some((authcid, passwd))
 }
 
 // Report SASL failure to the ircd (drives 904).

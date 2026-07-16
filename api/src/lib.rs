@@ -122,6 +122,12 @@ pub enum NetAction {
     // Internal only: a password change awaiting the same off-thread derivation.
     // The link layer derives, then calls Engine::complete_password_change.
     DeferPassword { account: String, password: String, agent: String, uid: String },
+    // Internal only: a password VERIFY (IDENTIFY / SASL PLAIN) awaiting the same
+    // off-thread work — the PBKDF2 that verify_plain runs is ~1s at production
+    // iteration counts, so it must never run under the engine lock. The link layer
+    // fetches `verifier` cheaply, runs verify_plain off-thread, then calls
+    // Engine::complete_authenticate with the boolean result and `then`.
+    DeferAuthenticate { verifier: String, password: String, then: AuthThen },
     // Internal only: send an email (plaintext + optional HTML). The link layer
     // pipes it to the configured mail command off-thread; never serialized.
     SendEmail { to: String, subject: String, text: String, html: Option<String> },
@@ -139,6 +145,18 @@ pub enum RegReply {
     Relay { reqid: String, kind: String, origin: String },
     // NickServ REGISTER: NOTICE the requesting user, logging them in on success.
     NickServ { agent: String, uid: String, nick: String },
+}
+
+/// What to do once a deferred password verify (see [`NetAction::DeferAuthenticate`])
+/// completes, given the boolean result. The cheap pre-checks already ran; this is
+/// only the success/failure finish.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthThen {
+    // NickServ IDENTIFY: `uid` logs in, `agent` (NickServ uid) sends the notices,
+    // `name` is what the user typed (for lockout/note_auth), `account` is canonical.
+    Identify { uid: String, agent: String, name: String, account: String },
+    // SASL PLAIN: finish the SASL exchange for `client`, sourced from `agent`.
+    Sasl { agent: String, client: String, account: String },
 }
 
 /// The ircd link layer. The engine only ever sees [`NetEvent`] / [`NetAction`];
@@ -314,6 +332,16 @@ impl ServiceCtx {
             password: password.into(),
             agent: agent.into(),
             uid: uid.into(),
+        });
+    }
+
+    // Hand a password verify (IDENTIFY / SASL PLAIN) to the engine to finish: the
+    // ~1s PBKDF2 runs off the reactor, then the engine completes it via `then`.
+    pub fn defer_authenticate(&mut self, verifier: impl Into<String>, password: impl Into<String>, then: AuthThen) {
+        self.actions.push(NetAction::DeferAuthenticate {
+            verifier: verifier.into(),
+            password: password.into(),
+            then,
         });
     }
 
@@ -926,6 +954,10 @@ pub trait Store {
     fn accounts_by_email(&self, pattern: &str) -> Vec<String>;
     // The canonical account name if the password is correct, else None.
     fn authenticate(&self, name: &str, password: &str) -> Option<&str>;
+    /// The account's canonical name and its SHA-256 verifier (owned), so the
+    /// caller can run the ~1s PBKDF2 verify OFF the engine lock via
+    /// `ctx.defer_authenticate` rather than the blocking `authenticate`.
+    fn scram_verifier(&self, name: &str) -> Option<(String, String)>;
     fn grouped_nicks(&self, account: &str) -> Vec<String>;
     fn certfps(&self, account: &str) -> &[String];
     fn is_verified(&self, account: &str) -> bool;

@@ -56,8 +56,17 @@ impl Engine {
                             self.stash_sasl(client.clone(), SaslSession::Plain { response });
                             return Vec::new(); // more chunks still to come
                         }
-                        match login_plain(&response, &self.db) {
-                            Some(account) => self.sasl_login(&agent, &client, account),
+                        // Decode, then defer the verify off the lock (the login
+                        // finish lands in Engine::complete_authenticate).
+                        match decode_plain(&response) {
+                            Some((authcid, passwd)) => match self.scram_verifier(&authcid) {
+                                Some((account, verifier)) => vec![NetAction::DeferAuthenticate {
+                                    verifier,
+                                    password: passwd,
+                                    then: AuthThen::Sasl { agent: agent.clone(), client: client.clone(), account },
+                                }],
+                                None => mk("D", vec!["F".to_string()]),
+                            },
                             None => mk("D", vec!["F".to_string()]),
                         }
                     }

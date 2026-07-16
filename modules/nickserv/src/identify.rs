@@ -1,4 +1,4 @@
-use echo_api::{human_time, Store};
+use echo_api::{human_time, AuthThen, Store};
 use echo_api::{Sender, ServiceCtx};
 
 // IDENTIFY [account] <password>: log in. The account defaults to the current
@@ -43,36 +43,27 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         ctx.notice(me, from.uid, format!("Too many failed attempts. Please wait {secs}s and try again."));
         return;
     }
-    // Take the result as owned so the account-store borrow ends before note_auth.
-    match db.authenticate(account_name, password).map(str::to_string) {
-        Some(account) => {
-            db.note_auth(account_name, true);
-            // Already identified to this account: don't re-fire the login.
+    // Fetch the verifier cheaply and hand the (~1s) PBKDF2 verify to the engine to
+    // run off the reactor — never verify under the engine lock. The login finish
+    // happens in Engine::complete_authenticate.
+    match db.scram_verifier(account_name) {
+        None => {
+            // Exists but has no verifier (e.g. cert-only) — a password can't match.
+            db.note_auth(account_name, false);
+            ctx.count("nickserv.identify_fail");
+            ctx.notice(me, from.uid, "Invalid password. Please try again.");
+        }
+        Some((account, verifier)) => {
+            // Already identified to this account: skip the (wasted) verify.
             if from.account == Some(account.as_str()) {
                 ctx.notice(me, from.uid, format!("You're already identified as \x02{}\x02.", account));
                 return;
             }
-            ctx.login(from.uid, &account);
-            ctx.count("nickserv.identify");
-            ctx.notice(me, from.uid, format!("You're now identified as \x02{}\x02. Welcome back!", account));
-            // Apply the account's auto-join list (AJOIN).
-            for entry in db.ajoin_list(&account) {
-                ctx.force_join(from.uid, &entry.channel, &entry.key);
-            }
-            // Apply the account's vhost (HostServ), if it has one.
-            if let Some(v) = db.vhost(&account) {
-                ctx.apply_vhost(from.uid, &v.host);
-            }
-            // Let them know about waiting memos.
-            let unread = db.unread_memos(&account);
-            if unread > 0 && db.memo_notify_on(&account) {
-                ctx.notice(me, from.uid, format!("You have \x02{unread}\x02 new memo(s). Read them with \x02/msg MemoServ READ NEW\x02."));
-            }
-        }
-        None => {
-            db.note_auth(account_name, false);
-            ctx.count("nickserv.identify_fail");
-            ctx.notice(me, from.uid, "Invalid password. Please try again.");
+            ctx.defer_authenticate(
+                verifier,
+                password,
+                AuthThen::Identify { uid: from.uid.to_string(), agent: me.to_string(), name: account_name.to_string(), account },
+            );
         }
     }
 }

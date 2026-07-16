@@ -33,6 +33,9 @@ impl Store for Db {
     fn authenticate(&self, name: &str, password: &str) -> Option<&str> {
         Db::authenticate(self, name, password)
     }
+    fn scram_verifier(&self, name: &str) -> Option<(String, String)> {
+        Db::scram_lookup(self, name, "SCRAM-SHA-256").map(|(a, v)| (a.to_string(), v.to_string()))
+    }
     fn grouped_nicks(&self, account: &str) -> Vec<String> {
         Db::grouped_nicks(self, account)
     }

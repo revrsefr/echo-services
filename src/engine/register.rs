@@ -268,4 +268,51 @@ impl Engine {
         };
         vec![NetAction::Notice { from: agent.to_string(), to: uid.to_string(), text }]
     }
+
+    /// Finish a deferred password verify once the off-thread `verify_plain` gave
+    /// `ok`. The cheap pre-checks (exists/suspended/lockout) already ran in the
+    /// caller; this is only the success/failure finish. IDENTIFY reuses the same
+    /// ctx helpers the inline path did, so its login side-effects (login, notice,
+    /// AJOIN, vhost, memo notice) stay identical.
+    pub fn complete_authenticate(&mut self, ok: bool, then: AuthThen) -> Vec<NetAction> {
+        match then {
+            AuthThen::Identify { uid, agent, name, account } => {
+                self.db.note_auth(&name, ok);
+                let mut ctx = ServiceCtx::default();
+                if !ok {
+                    ctx.count("nickserv.identify_fail");
+                    ctx.notice(&agent, &uid, "Invalid password. Please try again.");
+                } else {
+                    ctx.login(&uid, &account);
+                    ctx.count("nickserv.identify");
+                    ctx.notice(&agent, &uid, format!("You're now identified as \x02{account}\x02. Welcome back!"));
+                    for entry in self.db.ajoin_list(&account) {
+                        ctx.force_join(&uid, &entry.channel, &entry.key);
+                    }
+                    let now = self.now_secs();
+                    let vhost = self.db.account(&account).and_then(|a| {
+                        a.vhost.as_ref().filter(|v| v.expires.is_none_or(|e| e > now)).map(|v| v.host.clone())
+                    });
+                    if let Some(host) = vhost {
+                        ctx.apply_vhost(&uid, &host);
+                    }
+                    let unread = self.db.unread_memos(&account);
+                    if unread > 0 && self.db.memo_notify_on(&account) {
+                        ctx.notice(&agent, &uid, format!("You have \x02{unread}\x02 new memo(s). Read them with \x02/msg MemoServ READ NEW\x02."));
+                    }
+                }
+                for key in std::mem::take(&mut ctx.stats) {
+                    self.bump(&key);
+                }
+                ctx.actions
+            }
+            AuthThen::Sasl { agent, client, account } => {
+                if ok {
+                    self.sasl_login(&agent, &client, account)
+                } else {
+                    sasl_fail(&agent, &client)
+                }
+            }
+        }
+    }
 }
