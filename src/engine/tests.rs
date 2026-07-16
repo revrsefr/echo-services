@@ -43,6 +43,22 @@
         assert!(is_success(&out), "{out:?}");
     }
 
+    // A routed WHOIS (mIRC double-click) asks the service's server for its idle
+    // time; we must answer for our own pseudo-clients, and only them.
+    #[test]
+    fn idle_request_is_answered_for_our_clients_only() {
+        let mut e = engine_with("idle", "foo", "sesame");
+        e.set_sid("42S".into());
+        let ours = e.handle(NetEvent::Idle { requester: "000AAAAAB".into(), target: "42SAAAAAA".into() });
+        assert!(
+            ours.iter().any(|a| matches!(a, NetAction::IdleReply { target, requester, idle, .. }
+                if target == "42SAAAAAA" && requester == "000AAAAAB" && *idle == 0)),
+            "expected an IDLE reply for NickServ, got {ours:?}"
+        );
+        let foreign = e.handle(NetEvent::Idle { requester: "000AAAAAB".into(), target: "000AAAAAZ".into() });
+        assert!(!foreign.iter().any(|a| matches!(a, NetAction::IdleReply { .. })), "{foreign:?}");
+    }
+
     // DebugServ streams auth outcomes into the log channel, and stays silent when
     // it isn't running.
     #[test]

@@ -15,6 +15,10 @@ pub enum NetEvent {
     Registered,
     EndBurst,
     Ping { token: String, from: Option<String> },
+    // A remote server asks for one of our pseudo-clients' idle/signon time — the
+    // idle half of a routed WHOIS (`WHOIS x x` / mIRC's double-click). Must be
+    // answered or that WHOIS produces no output at all.
+    Idle { requester: String, target: String },
     Privmsg { from: String, to: String, text: String },
     UserConnect { uid: String, nick: String, host: String, ip: String },
     NickChange { uid: String, nick: String },
@@ -66,6 +70,9 @@ pub enum NetAction {
     Burst,
     EndBurst,
     Pong { token: String, from: Option<String> },
+    // Answer a remote IDLE request for one of our pseudo-clients so a routed
+    // WHOIS completes: `:<target> IDLE <requester> <signon> <idle>`.
+    IdleReply { target: String, requester: String, signon: u64, idle: u64 },
     IntroduceUser { uid: String, nick: String, ident: String, host: String, gecos: String },
     Privmsg { from: String, to: String, text: String },
     Notice { from: String, to: String, text: String },

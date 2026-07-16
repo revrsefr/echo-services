@@ -107,6 +107,7 @@ pub struct Engine {
     enforce_seq: u32,   // counter appended to guest_nick
     pending_enforce: Vec<PendingEnforce>, // registered nicks awaiting identify-or-rename
     bot_uids: HashMap<String, String>, // casefolded bot nick -> live uid (per connection)
+    services_signon: u64, // burst time our pseudo-clients signed on, for WHOIS IDLE replies
     bot_idents: HashMap<String, u64>, // casefolded bot nick -> hash of user/host/gecos (to spot BOT CHANGE)
     next_bot_index: u32,
     bot_channels: std::collections::HashSet<(String, String)>, // (bot nick lc, channel) the bot has joined
@@ -240,6 +241,7 @@ impl Engine {
             enforce_seq: 0,
             pending_enforce: Vec::new(),
             bot_uids: HashMap::new(),
+            services_signon: 0,
             bot_idents: HashMap::new(),
             next_bot_index: 0,
             bot_channels: std::collections::HashSet::new(),
@@ -902,7 +904,15 @@ impl Engine {
     }
 
     // Sent right after the SERVER line: burst, introduce every service, endburst.
+    // Whether `uid` is one of our own pseudo-clients — a service or a bot — so we
+    // answer a WHOIS IDLE request for it (and only it).
+    fn is_own_client(&self, uid: &str) -> bool {
+        self.services.iter().any(|s| s.uid() == uid) || self.bot_uids.values().any(|v| v == uid)
+    }
+
     pub fn startup_actions(&mut self) -> Vec<NetAction> {
+        // Fresh link: our pseudo-clients (re)sign on now — remember it for IDLE.
+        self.services_signon = self.now_secs();
         // Fresh link: forget bot uids minted on any previous connection.
         self.bot_uids.clear();
         self.bot_idents.clear();
@@ -955,6 +965,16 @@ impl Engine {
         let mut out = self.sweep_unbans();
         let evout = match event {
             NetEvent::Ping { token, from } => vec![NetAction::Pong { token, from }],
+            NetEvent::Idle { requester, target } => {
+                // A routed WHOIS (2-param / mIRC double-click) of one of our
+                // pseudo-clients asks us for its idle/signon; answer or that WHOIS
+                // shows nothing at all. Services are always active (idle 0).
+                if self.is_own_client(&target) {
+                    vec![NetAction::IdleReply { target, requester, signon: self.services_signon, idle: 0 }]
+                } else {
+                    Vec::new()
+                }
+            }
             NetEvent::UserConnect { uid, nick, host, ip } => {
                 let arriving_nick = nick.clone();
                 self.network.user_connect(uid.clone(), nick, host, ip.clone());

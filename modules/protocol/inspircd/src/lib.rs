@@ -78,6 +78,17 @@ impl Protocol for InspIrcd {
                     .to_string();
                 vec![NetEvent::Ping { token, from: source }]
             }
+            "IDLE" => {
+                // `:<requester> IDLE <target>` — the idle half of a routed WHOIS.
+                // Multi-param IDLE is a reply (never sent to us); ignore it.
+                let target = tokens.next().unwrap_or("").to_string();
+                match source {
+                    Some(requester) if !target.is_empty() && tokens.next().is_none() => {
+                        vec![NetEvent::Idle { requester, target }]
+                    }
+                    _ => vec![],
+                }
+            }
             "PRIVMSG" => {
                 let to = tokens.next().unwrap_or("").to_string();
                 vec![NetEvent::Privmsg {
@@ -278,6 +289,11 @@ impl Protocol for InspIrcd {
             NetAction::Pong { token, from } => {
                 let dest = from.clone().unwrap_or_else(|| self.sid.clone());
                 vec![self.sourced(format!("PONG {} {}", dest, token))]
+            }
+            // Reply to a routed-WHOIS idle request, sourced from the target client:
+            // `:<target> IDLE <requester> <signon> <idle>` (m_spanningtree/idle.cpp).
+            NetAction::IdleReply { target, requester, signon, idle } => {
+                vec![format!(":{target} IDLE {requester} {signon} {idle}")]
             }
             // insp4 UID: uuid nickts nick realhost disphost realuser dispuser ip signonts +modes :gecos
             // (both a real AND a displayed user field — see m_spanningtree/uid.cpp Builder).
