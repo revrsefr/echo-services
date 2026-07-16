@@ -4198,6 +4198,12 @@
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c DESC a friendly place"), "updated"));
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "INFO #c"), "a friendly place"));
 
+        // URL is stored, shows in INFO, and clears when set empty.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c URL https://example.org/rules"), "updated"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "INFO #c"), "https://example.org/rules"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c URL"), "cleared"));
+        assert!(!notice(&to_cs(&mut e, "000AAAAAB", "INFO #c"), "example.org"), "cleared URL no longer shows");
+
         // Transfer to a non-account is refused.
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c FOUNDER nobody"), "isn't a registered account"));
 

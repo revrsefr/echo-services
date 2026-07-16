@@ -742,6 +742,8 @@ pub struct ChannelView {
     pub akick: Vec<ChanAkickView>,
     pub desc: String,
     pub entrymsg: String,
+    // Channel homepage URL, shown in INFO (empty = none).
+    pub url: String,
     // ChanServ SET options.
     pub signkick: bool,
     pub private: bool,
@@ -1041,6 +1043,7 @@ pub trait Store {
     fn drop_channel(&mut self, name: &str) -> Result<(), ChanError>;
     fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError>;
     fn set_desc(&mut self, channel: &str, desc: &str) -> Result<(), ChanError>;
+    fn set_url(&mut self, channel: &str, url: &str) -> Result<(), ChanError>;
     fn set_channel_setting(&mut self, channel: &str, setting: ChanSetting, on: bool) -> Result<(), ChanError>;
     fn set_kicker(&mut self, channel: &str, kicker: Kicker, on: bool) -> Result<(), ChanError>;
     fn set_caps_kicker(&mut self, channel: &str, caps_min: u16, caps_percent: u16) -> Result<(), ChanError>;

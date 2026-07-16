@@ -1186,7 +1186,7 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         AjoinAdded { .. } | AjoinRemoved { .. } | AccountGreetSet { .. } | AccountAutoOpSet { .. } | AccountKillSet { .. } | AccountHideStatusSet { .. } | VhostRequested { .. }
         | VhostRequestCleared { .. } | MemoSent { .. } | MemoRead { .. } | MemoDeleted { .. }
         | MemoIgnoreAdd { .. } | MemoIgnoreDel { .. } | MemoPrefsSet { .. }
-        | ChannelMlock { .. } | ChannelDescSet { .. } | ChannelEntryMsgSet { .. } | ChannelSettingsSet { .. }
+        | ChannelMlock { .. } | ChannelDescSet { .. } | ChannelEntryMsgSet { .. } | ChannelUrlSet { .. } | ChannelSettingsSet { .. }
         | ChannelKickerSet { .. } | ChannelBadwordsSet { .. } | ChannelTriggersSet { .. }
         | ChannelTopicSet { .. } | AccountSeen { .. } | ChannelUsed { .. }
         | AccountExpiryWarned { .. } | ChannelExpiryWarned { .. } => return None,

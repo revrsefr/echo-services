@@ -11,7 +11,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), successor: None, desc: String::new(), entrymsg: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), successor: None, desc: String::new(), entrymsg: String::new(), url: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
         Ok(())
     }
 
@@ -184,6 +184,18 @@ impl Db {
             .append(Event::ChannelDescSet { channel: channel.to_string(), desc: desc.to_string() })
             .map_err(|_| ChanError::Internal)?;
         self.channels.get_mut(&k).unwrap().desc = desc.to_string();
+        Ok(())
+    }
+
+    pub fn set_url(&mut self, channel: &str, url: &str) -> Result<(), ChanError> {
+        let k = key(channel);
+        if !self.channels.contains_key(&k) {
+            return Err(ChanError::NoChannel);
+        }
+        self.log
+            .append(Event::ChannelUrlSet { channel: channel.to_string(), url: url.to_string() })
+            .map_err(|_| ChanError::Internal)?;
+        self.channels.get_mut(&k).unwrap().url = url.to_string();
         Ok(())
     }
 

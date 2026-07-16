@@ -419,6 +419,9 @@ pub struct ChannelInfo {
     // Message noticed to users as they join.
     #[serde(default)]
     pub entrymsg: String,
+    // Channel homepage URL, shown in INFO (empty = none).
+    #[serde(default)]
+    pub url: String,
     // On/off options set via ChanServ SET.
     #[serde(default)]
     pub settings: ChanSettings,

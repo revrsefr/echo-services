@@ -374,6 +374,9 @@ impl Store for Db {
     fn set_desc(&mut self, channel: &str, desc: &str) -> Result<(), ChanError> {
         Db::set_desc(self, channel, desc)
     }
+    fn set_url(&mut self, channel: &str, url: &str) -> Result<(), ChanError> {
+        Db::set_url(self, channel, url)
+    }
     fn set_channel_setting(&mut self, channel: &str, setting: ChanSetting, on: bool) -> Result<(), ChanError> {
         Db::set_channel_setting(self, channel, setting, on)
     }
@@ -555,6 +558,7 @@ fn channel_view(c: &ChannelInfo) -> ChannelView {
         akick: c.akick.iter().map(|k| ChanAkickView { mask: k.mask.clone(), reason: k.reason.clone() }).collect(),
         desc: c.desc.clone(),
         entrymsg: c.entrymsg.clone(),
+        url: c.url.clone(),
         signkick: c.settings.signkick,
         private: c.settings.private,
         peace: c.settings.peace,
