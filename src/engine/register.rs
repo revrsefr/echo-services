@@ -175,6 +175,9 @@ impl Engine {
                 None => resp("error", "ACCOUNT_UNKNOWN", "No such account."),
                 Some((true, _)) => resp("error", "ALREADY_VERIFIED", "That account is already verified."),
                 Some((false, None)) => resp("error", "NO_EMAIL", "No email address is on file for that account."),
+                Some((false, Some(_))) if self.db.code_issue_wait(&account) > 0 => {
+                    resp("error", "TEMPORARILY_UNAVAILABLE", "A code was just sent — please wait a moment before requesting another.")
+                }
                 Some((false, Some(addr))) => {
                     let code = self.db.issue_code(&account, db::CodeKind::Confirm);
                     let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), &account, &code);

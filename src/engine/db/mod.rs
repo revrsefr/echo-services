@@ -983,6 +983,7 @@ pub struct HostConfig {
 struct PendingCode {
     kind: CodeKind,
     code: String,
+    issued: Instant,
     deadline: Instant,
     tries_left: u8,
 }
@@ -996,6 +997,10 @@ struct AuthThrottle {
 // Wrong-code guesses tolerated before a code is invalidated (defence in depth on
 // top of the code's own entropy).
 const CODE_TRIES: u8 = 5;
+
+// Minimum gap between emailed codes for one account, so RESEND/RESETPASS can't be
+// used to email-bomb an address (or burn the service's sender reputation).
+const CODE_ISSUE_COOLDOWN: Duration = Duration::from_secs(60);
 // Free password attempts before the exponential backoff kicks in, and its cap.
 const AUTH_FREE_TRIES: u32 = 3;
 const AUTH_MAX_BACKOFF_SECS: u64 = 300;

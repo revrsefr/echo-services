@@ -18,6 +18,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 ctx.notice(me, from.uid, "That account has no email on file, so it can't be reset.");
                 return;
             };
+            let wait = db.code_issue_wait(&canonical);
+            if wait > 0 {
+                ctx.notice(me, from.uid, format!("A code was just sent — please wait \x02{wait}\x02s before requesting another."));
+                return;
+            }
             let code = db.issue_code(&canonical, CodeKind::Reset);
             let mail = echo_api::email::reset(db.email_brand(), db.email_accent(), db.email_logo(), &canonical, &code);
             ctx.send_email(email, mail.subject, mail.text, Some(mail.html));

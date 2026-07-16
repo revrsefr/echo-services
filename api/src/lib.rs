@@ -953,6 +953,8 @@ pub trait Store {
     fn vhost_owner(&self, host: &str) -> Option<String>;
     fn request_vhost(&mut self, account: &str, host: &str) -> Result<(), RegError>;
     fn vhost_request_wait(&self, account: &str) -> u64;
+    // Seconds before another emailed code may be issued for this account (0 = now).
+    fn code_issue_wait(&self, account: &str) -> u64;
     fn take_vhost_request(&mut self, account: &str) -> Result<Option<String>, RegError>;
     fn vhost_requests(&self) -> Vec<(String, String)>;
     fn vhost_offer_add(&mut self, host: &str) -> Result<bool, RegError>;

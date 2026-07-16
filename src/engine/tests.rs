@@ -808,6 +808,22 @@
         assert!(to_ns(&mut e, "RESETPASS alice 000000 x").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Invalid or expired"))));
     }
 
+    // RESETPASS is throttled per account so it can't be used to email-bomb the
+    // address on file: a second request inside the cooldown sends no email.
+    #[test]
+    fn resetpass_is_throttled_against_email_bombing() {
+        let mut e = engine_with("nsresetrl", "alice", "sesame");
+        e.db.set_email_enabled(true);
+        e.db.set_email("alice", Some("alice@example.org".into())).unwrap();
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "someone".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        let to_ns = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() });
+
+        assert!(to_ns(&mut e, "RESETPASS alice").iter().any(|a| matches!(a, NetAction::SendEmail { .. })), "first request emails a code");
+        let out = to_ns(&mut e, "RESETPASS alice");
+        assert!(!out.iter().any(|a| matches!(a, NetAction::SendEmail { .. })), "second immediate request sends no email: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("wait"))), "and tells the caller to wait: {out:?}");
+    }
+
     // With email configured, registering with an address creates an unverified
     // account and emails a confirmation code; CONFIRM <code> verifies it.
     #[test]

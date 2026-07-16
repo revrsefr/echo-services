@@ -177,9 +177,18 @@ impl Db {
         let code = gen_code();
         self.codes.insert(
             key(account),
-            PendingCode { kind, code: code.clone(), deadline: Instant::now() + Duration::from_secs(900), tries_left: CODE_TRIES },
+            PendingCode { kind, code: code.clone(), issued: Instant::now(), deadline: Instant::now() + Duration::from_secs(900), tries_left: CODE_TRIES },
         );
         code
+    }
+
+    /// Seconds the caller must wait before another emailed code for `account`
+    /// (0 = allowed now). Throttles RESEND/RESETPASS against email-bombing.
+    pub fn code_issue_wait(&self, account: &str) -> u64 {
+        self.codes.get(&key(account)).map_or(0, |pc| {
+            let ready = pc.issued + CODE_ISSUE_COOLDOWN;
+            ready.checked_duration_since(Instant::now()).map_or(0, |d| d.as_secs() + 1)
+        })
     }
 
     /// Consume a code for `account`: true if the purpose and code match and it

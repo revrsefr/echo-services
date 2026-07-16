@@ -125,6 +125,9 @@ impl Store for Db {
     fn vhost_request_wait(&self, account: &str) -> u64 {
         Db::vhost_request_wait(self, account)
     }
+    fn code_issue_wait(&self, account: &str) -> u64 {
+        Db::code_issue_wait(self, account)
+    }
     fn take_vhost_request(&mut self, account: &str) -> Result<Option<String>, RegError> {
         Db::take_vhost_request(self, account)
     }
