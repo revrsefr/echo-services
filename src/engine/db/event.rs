@@ -249,6 +249,32 @@ fn owns_over(held: &Account, claim: &Account) -> bool {
 
 // Fold one event into the store. Shared by log replay (`open`) and gossip
 // ingest, so both routes reconstruct identical state.
+// Erase every remaining reference to a gone account — its nick aliases, channel
+// access and successorship, and group membership/foundership — so that a later
+// re-registration of the same name can't silently inherit its standing. Channels
+// *founded* by the account are handled separately (transfer to a successor or
+// drop) by the engine's `handle_account_gone`; groups have no successor concept,
+// so a founderless group is dropped here. Shared by the local `drop_account`
+// path and the replay/gossip `apply` path so both converge on the same state.
+pub(crate) fn purge_account_refs(
+    account: &str,
+    channels: &mut HashMap<String, ChannelInfo>,
+    grouped: &mut HashMap<String, String>,
+    groups: &mut Vec<Group>,
+) {
+    grouped.retain(|_, a| !a.eq_ignore_ascii_case(account));
+    for c in channels.values_mut() {
+        c.access.retain(|a| !a.account.eq_ignore_ascii_case(account));
+        if c.successor.as_deref().is_some_and(|s| s.eq_ignore_ascii_case(account)) {
+            c.successor = None;
+        }
+    }
+    for g in groups.iter_mut() {
+        g.members.retain(|m| !m.account.eq_ignore_ascii_case(account));
+    }
+    groups.retain(|g| !g.founder.eq_ignore_ascii_case(account));
+}
+
 pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut HashMap<String, ChannelInfo>, grouped: &mut HashMap<String, String>, bots: &mut HashMap<String, Bot>, host_cfg: &mut HostConfig, net: &mut NetData, event: Event) {
     match event {
         Event::AccountRegistered(a) => {
@@ -306,7 +332,7 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         }
         Event::AccountDropped { account } => {
             accounts.remove(&key(&account));
-            grouped.retain(|_, a| !a.eq_ignore_ascii_case(&account)); // its aliases go too
+            purge_account_refs(&account, channels, grouped, &mut net.groups);
         }
         Event::AccountVerified { account } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {

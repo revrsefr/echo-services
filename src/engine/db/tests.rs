@@ -461,3 +461,46 @@
         assert_eq!(db.channel("#c").unwrap().join_mode("bob"), Some("+v"), "survives reopen");
         assert_eq!(db.channel("#c").unwrap().join_mode("alice"), None, "removal survives reopen");
     }
+
+    // Dropping an account erases every reference to it — channel access and
+    // successorship, group membership and foundership — so a later re-registration
+    // of the same name can't inherit its standing. Holds live and after replay.
+    #[test]
+    fn dropping_an_account_purges_all_its_references() {
+        let p = tmp("droppurge");
+        let mut db = Db::open(&p, "local");
+        db.scram_iterations = 4096;
+        db.register("bob", "pw", None).unwrap();
+        db.register("carol", "pw", None).unwrap();
+        db.register("alice", "pw", None).unwrap();
+        db.register_channel("#foo", "bob").unwrap();
+        db.access_add("#foo", "alice", "op").unwrap();
+        db.register_channel("#bar", "carol").unwrap();
+        db.set_successor("#bar", Some("alice")).unwrap();
+        db.group_register("!alicegrp", "alice").unwrap();
+        db.group_register("!bobgrp", "bob").unwrap();
+        db.group_set_flags("!bobgrp", "alice", "").unwrap();
+
+        // Sanity: every reference is in place.
+        assert_eq!(db.channel("#foo").unwrap().join_mode("alice"), Some("+o"), "alice starts as an op");
+        assert_eq!(db.channel_successor("#bar").as_deref(), Some("alice"));
+        assert!(db.is_group_member("!bobgrp", "alice"));
+        assert!(db.group("!alicegrp").is_some());
+
+        // Dropping alice erases all of them.
+        assert!(db.drop_account("alice").unwrap());
+        assert_eq!(db.channel("#foo").unwrap().join_mode("alice"), None, "access grant purged");
+        assert_eq!(db.channel_successor("#bar"), None, "successorship purged");
+        assert!(!db.is_group_member("!bobgrp", "alice"), "group membership purged");
+        assert!(db.group("!alicegrp").is_none(), "founderless group dropped");
+
+        // Re-registering the name must not inherit the old op access.
+        db.register("alice", "pw2", None).unwrap();
+        assert_eq!(db.channel("#foo").unwrap().join_mode("alice"), None, "re-registration inherits nothing");
+
+        // And the purge survives a reload (the fold matches live state).
+        drop(db);
+        let db = Db::open(&p, "local");
+        assert_eq!(db.channel("#foo").unwrap().join_mode("alice"), None, "purge holds after replay");
+        assert_eq!(db.channel_successor("#bar"), None, "successor purge holds after replay");
+    }

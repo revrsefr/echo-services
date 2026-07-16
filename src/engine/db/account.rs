@@ -500,6 +500,10 @@ impl Db {
         }
         self.log.append(Event::AccountDropped { account: account.to_string() }).map_err(|_| RegError::Internal)?;
         self.accounts.remove(&k);
+        // Keep live state in step with what the AccountDropped fold does on replay:
+        // erase every reference so a re-registration can't inherit the account's
+        // channel access, successorship, or group standing.
+        super::event::purge_account_refs(account, &mut self.channels, &mut self.grouped, &mut self.net.groups);
         Ok(true)
     }
 
