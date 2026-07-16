@@ -387,6 +387,51 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "realnick")), "must log into the current nick's account: {out:?}");
     }
 
+    // Losing a name to a gossiped remote claim releases the local channels that
+    // account founded — and a bot assigned to one must part, not linger, even
+    // though this cleanup runs outside the dispatch path.
+    #[test]
+    fn gossip_takeover_parts_orphaned_channel_bot() {
+        use echo_botserv::BotServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-gossipbot.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "test");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("alice".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.db.register_channel("#hers", "alice").unwrap();
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "BOT ADD Bendy bot serv.host Helper".into() });
+        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "ASSIGN #hers Bendy".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, .. } if channel == "#hers")), "bot joins the channel");
+
+        // An earlier remote claim on alice arrives by gossip and wins the name.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        e.set_irc_out(tx);
+        let winner = db::Account {
+            name: "alice".into(), email: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
+        };
+        e.gossip_ingest(LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)))).unwrap();
+
+        assert!(e.db.channel("#hers").is_none(), "orphaned channel released");
+        let parted = std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|a| matches!(a, NetAction::ServicePart { channel, .. } if channel == "#hers"));
+        assert!(parted, "the assigned bot parts the released channel");
+    }
+
     // Losing a registration conflict logs out the local session on that name and
     // notifies them over the services-initiated outbound path.
     #[test]

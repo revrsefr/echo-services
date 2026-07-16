@@ -458,12 +458,26 @@ impl Engine {
     }
 
     pub fn gossip_ingest(&mut self, entry: LogEntry) -> std::io::Result<()> {
-        // If ingesting a peer's entry removed an account a local session relied on
-        // (lost a conflict, or dropped elsewhere), clean up after it.
-        match self.db.ingest(entry)? {
-            Some(db::AccountChange::TakenOver(a)) => self.handle_account_gone(&a, "collided with another network and no longer belongs to you"),
-            Some(db::AccountChange::Dropped(a)) => self.handle_account_gone(&a, "was dropped"),
-            None => {}
+        // If ingesting a peer's entry removed an account a local session or channel
+        // relied on (lost a conflict, or dropped elsewhere), clean up after it.
+        let gone = match self.db.ingest(entry)? {
+            Some(db::AccountChange::TakenOver(a)) => {
+                self.handle_account_gone(&a, "collided with another network and no longer belongs to you");
+                true
+            }
+            Some(db::AccountChange::Dropped(a)) => {
+                self.handle_account_gone(&a, "was dropped");
+                true
+            }
+            None => false,
+        };
+        // handle_account_gone may have released a channel that had a bot assigned.
+        // This runs outside the dispatch path (which reconciles for local
+        // commands), so reconcile here or the bot lingers in a released channel.
+        if gone {
+            for action in self.reconcile_bots() {
+                self.emit_irc(action);
+            }
         }
         Ok(())
     }
