@@ -446,6 +446,7 @@
         let mut db = Db::open(&path, "test");
         db.scram_iterations = 4096;
         db.register("alice", "sesame", None).unwrap();
+        db.register("bob", "hunter2", None).unwrap();
         db.register_channel("#a", "alice").unwrap();
         let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
         let cs = ChanServ { uid: "42SAAAAAB".into() };
@@ -461,6 +462,13 @@
         assert!(notice(&info, "Information for \x02alice\x02"));
         assert!(notice(&info, "Registered"));
         assert!(notice(&info, "Email"), "owner sees their email line: {info:?}");
+        // alice is identified, so her INFO reports her as online.
+        assert!(notice(&info, "Last seen"), "INFO has a last-seen line: {info:?}");
+        assert!(notice(&info, "online"), "an identified account reads as online: {info:?}");
+        // bob is registered but not connected: last-seen shows a time, not online.
+        let binfo = to_ns(&mut e, "INFO bob");
+        assert!(notice(&binfo, "Last seen"), "offline account still shows last-seen: {binfo:?}");
+        assert!(!notice(&binfo, "online"), "an offline account is not reported online: {binfo:?}");
         assert!(notice(&to_ns(&mut e, "INFO ghost"), "isn't registered"));
         assert!(notice(&to_ns(&mut e, "ALIST"), "#a"));
     }

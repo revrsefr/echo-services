@@ -114,7 +114,7 @@ impl Service for NickServ {
             Some("IDENTIFY") | Some("ID") => identify::handle(me, from, args, ctx, db),
             Some("LOGOUT") | Some("LOGOFF") => logout::handle(me, &self.guest_nick, &mut self.guest_seq, from, ctx),
             Some("CERT") => cert::handle(me, from, args, ctx, db),
-            Some("INFO") => info::handle(me, from, args, ctx, db),
+            Some("INFO") => info::handle(me, from, args, ctx, net, db),
             Some("ALIST") => alist::handle(me, from, ctx, db),
             Some("SET") => set::handle(me, from, args, ctx, db),
             Some("SASET") => saset::handle(me, from, args, ctx, db),

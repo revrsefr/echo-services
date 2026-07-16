@@ -464,6 +464,8 @@ pub struct AccountView {
     // Personal greet shown by a bot when this account joins a greet-enabled
     // channel (empty = none).
     pub greet: String,
+    // Unix time this account was last active (coalesced); never below `ts`.
+    pub last_seen: u64,
 }
 
 // One channel access-list entry (account -> level). `level` is either a legacy

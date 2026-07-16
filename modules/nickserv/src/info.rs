@@ -1,10 +1,10 @@
-use echo_api::{human_time, Priv, Store};
+use echo_api::{human_time, NetView, Priv, Store};
 use echo_api::{Sender, ServiceCtx};
 
 // INFO [account]: show an account's registration details. The email and other
 // private fields are shown to the account's own owner, or to an oper with the
 // auspex privilege.
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &dyn Store) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &dyn Store) {
     let name = args.get(1).copied().unwrap_or(from.nick);
     let Some(acct) = db.account(name) else {
         ctx.notice(me, from.uid, format!("\x02{name}\x02 isn't registered."));
@@ -12,6 +12,13 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     };
     ctx.notice(me, from.uid, format!("Information for \x02{}\x02:", acct.name));
     ctx.notice(me, from.uid, format!("  Registered : {}", human_time(acct.ts)));
+    // Last-seen is public (Anope shows it by default); a live session reads as online.
+    let last_seen = if net.uids_logged_into(&acct.name).is_empty() {
+        human_time(acct.last_seen)
+    } else {
+        "now (online)".to_string()
+    };
+    ctx.notice(me, from.uid, format!("  Last seen  : {last_seen}"));
     // A greet is public — the bot shows it in-channel to everyone anyway.
     if !acct.greet.is_empty() {
         ctx.notice(me, from.uid, format!("  Greet      : {}", acct.greet));

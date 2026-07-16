@@ -11,6 +11,7 @@ impl Store for Db {
             ts: a.ts,
             verified: a.verified,
             greet: a.greet.clone(),
+            last_seen: a.last_seen,
         })
     }
     fn resolve_account(&self, name: &str) -> Option<&str> {
@@ -19,7 +20,7 @@ impl Store for Db {
     fn accounts_matching(&self, pattern: &str) -> Vec<AccountView> {
         self.accounts()
             .filter(|a| super::glob_match(pattern, &a.name))
-            .map(|a| AccountView { name: a.name.clone(), email: a.email.clone(), ts: a.ts, verified: a.verified, greet: a.greet.clone() })
+            .map(|a| AccountView { name: a.name.clone(), email: a.email.clone(), ts: a.ts, verified: a.verified, greet: a.greet.clone(), last_seen: a.last_seen })
             .collect()
     }
     fn accounts_by_email(&self, pattern: &str) -> Vec<String> {
