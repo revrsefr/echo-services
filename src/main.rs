@@ -7,6 +7,7 @@ mod gossip;
 mod grpc;
 mod jsonrpc;
 mod link;
+mod migrate;
 mod proto;
 
 use anyhow::Result;
@@ -39,6 +40,30 @@ async fn main() -> Result<()> {
                 .unwrap_or_else(|_| "echo=debug".into()),
         )
         .init();
+
+    // One-off migration: `echo import <anope.json> <out.log> [node-name]` builds a
+    // fresh event log from an Anope db_json and exits, touching nothing else.
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.get(1).map(String::as_str) == Some("import") {
+        let (Some(src), Some(out)) = (argv.get(2), argv.get(3)) else {
+            eprintln!("usage: echo import <anope.json> <out.log> [node-name]");
+            std::process::exit(2);
+        };
+        let node = argv.get(4).map(String::as_str).unwrap_or("services");
+        let s = migrate::import_anope(src, out, node)?;
+        println!(
+            "imported: {} accounts, {} grouped nicks, {} certs, {} vhosts, {} channels, {} access, {} mlocked, {} bots, {} memos",
+            s.accounts, s.grouped_nicks, s.certs, s.vhosts, s.channels, s.access, s.mlocked, s.bots, s.memos
+        );
+        for note in &s.skipped {
+            println!("  skipped: {note}");
+        }
+        println!(
+            "verified (log replays to): {} accounts, {} channels, {} bots",
+            s.loaded_accounts, s.loaded_channels, s.loaded_bots
+        );
+        return Ok(());
+    }
 
     let path = std::env::args().nth(1).unwrap_or_else(|| "config.toml".to_string());
     let cfg = config::Config::load(&path)?;

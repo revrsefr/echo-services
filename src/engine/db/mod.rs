@@ -1202,6 +1202,13 @@ impl Db {
         Ok(())
     }
 
+    /// Append a pre-built event during a one-off import, bypassing the live-mutation
+    /// methods so original timestamps and ids are preserved verbatim. State is
+    /// rebuilt from the log on the next open; only meant for the `import` tool.
+    pub fn migrate_append(&mut self, event: Event) -> std::io::Result<()> {
+        self.log.append(event)
+    }
+
     /// Whether the log has grown enough past the live state to be worth compacting.
     pub fn should_compact(&self) -> bool {
         self.log.len() > (self.accounts.len() + self.channels.len()) * 3 + 64
