@@ -35,6 +35,26 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
+        Some("HIDE") => {
+            // Anope grammar is SET HIDE <field> {ON|OFF}. The only field that is
+            // public here is the last-seen/online line (STATUS); USERMASK is an
+            // accepted alias for it.
+            match args.get(2).map(|s| s.to_ascii_uppercase()).as_deref() {
+                Some("STATUS") | Some("USERMASK") => {
+                    let Some(on) = args.get(3).and_then(|s| parse_toggle(s)) else {
+                        let state = if db.account_hides_status(account) { "ON" } else { "OFF" };
+                        ctx.notice(me, from.uid, format!("HIDE STATUS is \x02{state}\x02. Syntax: SET HIDE STATUS {{ON|OFF}}"));
+                        return;
+                    };
+                    match db.set_account_hide_status(account, on) {
+                        Ok(()) if on => ctx.notice(me, from.uid, "Your last-seen and online status are now hidden from other users."),
+                        Ok(()) => ctx.notice(me, from.uid, "Your last-seen and online status are visible to everyone again."),
+                        Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+                    }
+                }
+                _ => ctx.notice(me, from.uid, "Syntax: SET HIDE STATUS {ON|OFF}"),
+            }
+        }
         Some("KILL") => {
             // Anope accepts ON/QUICK/IMMED/OFF; grace here is a fixed interval, so
             // the finer variants simply enable protection like ON.
@@ -76,7 +96,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
-        _ => ctx.notice(me, from.uid, "Syntax: SET PASSWORD <newpassword> | SET EMAIL [address] | SET GREET [message] | SET AUTOOP {ON|OFF} | SET KILL {ON|OFF}"),
+        _ => ctx.notice(me, from.uid, "Syntax: SET PASSWORD <newpassword> | SET EMAIL [address] | SET GREET [message] | SET AUTOOP {ON|OFF} | SET KILL {ON|OFF} | SET HIDE STATUS {ON|OFF}"),
     }
 }
 

@@ -10,21 +10,24 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         ctx.notice(me, from.uid, format!("\x02{name}\x02 isn't registered."));
         return;
     };
+    let is_owner = from.account == Some(acct.name.as_str());
+    let privileged = is_owner || from.privs.has(Priv::Auspex);
     ctx.notice(me, from.uid, format!("Information for \x02{}\x02:", acct.name));
     ctx.notice(me, from.uid, format!("  Registered : {}", human_time(acct.ts)));
-    // Last-seen is public (Anope shows it by default); a live session reads as online.
-    let last_seen = if net.uids_logged_into(&acct.name).is_empty() {
-        human_time(acct.last_seen)
-    } else {
-        "now (online)".to_string()
-    };
-    ctx.notice(me, from.uid, format!("  Last seen  : {last_seen}"));
+    // Last-seen is public by default; SET HIDE STATUS keeps it to owner and opers.
+    if privileged || !acct.hide_status {
+        let last_seen = if net.uids_logged_into(&acct.name).is_empty() {
+            human_time(acct.last_seen)
+        } else {
+            "now (online)".to_string()
+        };
+        ctx.notice(me, from.uid, format!("  Last seen  : {last_seen}"));
+    }
     // A greet is public — the bot shows it in-channel to everyone anyway.
     if !acct.greet.is_empty() {
         ctx.notice(me, from.uid, format!("  Greet      : {}", acct.greet));
     }
-    let is_owner = from.account == Some(acct.name.as_str());
-    if is_owner || from.privs.has(Priv::Auspex) {
+    if privileged {
         if let Some(s) = db.suspension(&acct.name) {
             ctx.notice(me, from.uid, format!("  Suspended  : by \x02{}\x02 — {}", s.by, s.reason));
         }

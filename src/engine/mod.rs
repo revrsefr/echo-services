@@ -1183,7 +1183,7 @@ fn audit_summary(event: &db::Event) -> Option<String> {
             format!("{verb} channel \x02{channel}\x02 against expiry")
         }
         // Private, self-service, or cosmetic — not surfaced.
-        AjoinAdded { .. } | AjoinRemoved { .. } | AccountGreetSet { .. } | AccountAutoOpSet { .. } | AccountKillSet { .. } | VhostRequested { .. }
+        AjoinAdded { .. } | AjoinRemoved { .. } | AccountGreetSet { .. } | AccountAutoOpSet { .. } | AccountKillSet { .. } | AccountHideStatusSet { .. } | VhostRequested { .. }
         | VhostRequestCleared { .. } | MemoSent { .. } | MemoRead { .. } | MemoDeleted { .. }
         | MemoIgnoreAdd { .. } | MemoIgnoreDel { .. } | MemoPrefsSet { .. }
         | ChannelMlock { .. } | ChannelDescSet { .. } | ChannelEntryMsgSet { .. } | ChannelSettingsSet { .. }

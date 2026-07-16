@@ -12,6 +12,7 @@ impl Store for Db {
             verified: a.verified,
             greet: a.greet.clone(),
             last_seen: a.last_seen,
+            hide_status: a.hide_status,
         })
     }
     fn resolve_account(&self, name: &str) -> Option<&str> {
@@ -20,7 +21,7 @@ impl Store for Db {
     fn accounts_matching(&self, pattern: &str) -> Vec<AccountView> {
         self.accounts()
             .filter(|a| super::glob_match(pattern, &a.name))
-            .map(|a| AccountView { name: a.name.clone(), email: a.email.clone(), ts: a.ts, verified: a.verified, greet: a.greet.clone(), last_seen: a.last_seen })
+            .map(|a| AccountView { name: a.name.clone(), email: a.email.clone(), ts: a.ts, verified: a.verified, greet: a.greet.clone(), last_seen: a.last_seen, hide_status: a.hide_status })
             .collect()
     }
     fn accounts_by_email(&self, pattern: &str) -> Vec<String> {
@@ -94,6 +95,12 @@ impl Store for Db {
     }
     fn account_wants_protect(&self, account: &str) -> bool {
         Db::account_wants_protect(self, account)
+    }
+    fn set_account_hide_status(&mut self, account: &str, on: bool) -> Result<(), RegError> {
+        Db::set_account_hide_status(self, account, on)
+    }
+    fn account_hides_status(&self, account: &str) -> bool {
+        Db::account_hides_status(self, account)
     }
     fn set_vhost(&mut self, account: &str, host: &str, setter: &str, ttl: Option<u64>) -> Result<(), RegError> {
         Db::set_vhost(self, account, host, setter, ttl)

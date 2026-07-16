@@ -466,6 +466,8 @@ pub struct AccountView {
     pub greet: String,
     // Unix time this account was last active (coalesced); never below `ts`.
     pub last_seen: u64,
+    // Whether the last-seen/online line is hidden from non-owner, non-oper viewers.
+    pub hide_status: bool,
 }
 
 // One channel access-list entry (account -> level). `level` is either a legacy
@@ -922,6 +924,9 @@ pub trait Store {
     // NickServ SET KILL: whether this account's nicks are enforcer-protected.
     fn set_account_kill(&mut self, account: &str, on: bool) -> Result<(), RegError>;
     fn account_wants_protect(&self, account: &str) -> bool;
+    // NickServ SET HIDE STATUS: whether this account hides its last-seen line.
+    fn set_account_hide_status(&mut self, account: &str, on: bool) -> Result<(), RegError>;
+    fn account_hides_status(&self, account: &str) -> bool;
     // HostServ vhosts.
     fn set_vhost(&mut self, account: &str, host: &str, setter: &str, ttl: Option<u64>) -> Result<(), RegError>;
     fn del_vhost(&mut self, account: &str) -> Result<bool, RegError>;

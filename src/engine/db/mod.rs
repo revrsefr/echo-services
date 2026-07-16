@@ -101,6 +101,11 @@ pub struct Account {
     // inverted so the default (protection enabled) is the zero value.
     #[serde(default)]
     pub no_protect: bool,
+    // NickServ SET HIDE STATUS: when set, the last-seen / online line in INFO is
+    // shown only to the account's owner and to opers, not to other users. Default
+    // (visible) is the zero value.
+    #[serde(default)]
+    pub hide_status: bool,
     // Assigned vhost (HostServ), applied to the displayed host on identify.
     #[serde(default)]
     pub vhost: Option<Vhost>,

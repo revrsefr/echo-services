@@ -21,7 +21,7 @@ impl Db {
             ajoin: Vec::new(),
             suspension: None,
             memos: Vec::new(), memo_ignore: Vec::new(), memo_notify: true, memo_limit: None,
-            greet: String::new(), no_autoop: false, no_protect: false,
+            greet: String::new(), no_autoop: false, no_protect: false, hide_status: false,
             vhost: None,
             vhost_request: None,
             last_seen: now(),
@@ -60,7 +60,7 @@ impl Db {
             ajoin: Vec::new(),
             suspension: None,
             memos: Vec::new(), memo_ignore: Vec::new(), memo_notify: true, memo_limit: None,
-            greet: String::new(), no_autoop: false, no_protect: false,
+            greet: String::new(), no_autoop: false, no_protect: false, hide_status: false,
             vhost: None,
             vhost_request: None,
             last_seen: now(),
@@ -448,6 +448,22 @@ impl Db {
     /// Whether `account`'s nicks are protected by the enforcer (default true).
     pub fn account_wants_protect(&self, account: &str) -> bool {
         self.accounts.get(&key(account)).is_none_or(|a| !a.no_protect)
+    }
+
+    /// Set whether `account` hides its last-seen/online line from other users.
+    pub fn set_account_hide_status(&mut self, account: &str, on: bool) -> Result<(), RegError> {
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return Err(RegError::Internal);
+        }
+        self.log.append(Event::AccountHideStatusSet { account: account.to_string(), on }).map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().hide_status = on;
+        Ok(())
+    }
+
+    /// Whether `account` hides its last-seen/online line from others (default false).
+    pub fn account_hides_status(&self, account: &str) -> bool {
+        self.accounts.get(&key(account)).is_some_and(|a| a.hide_status)
     }
 
     /// Replace `account`'s password with freshly derived credentials.

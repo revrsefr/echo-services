@@ -411,7 +411,7 @@
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)));
         e.gossip_ingest(entry).unwrap();
@@ -471,6 +471,39 @@
         assert!(!notice(&binfo, "online"), "an offline account is not reported online: {binfo:?}");
         assert!(notice(&to_ns(&mut e, "INFO ghost"), "isn't registered"));
         assert!(notice(&to_ns(&mut e, "ALIST"), "#a"));
+    }
+
+    // SET HIDE STATUS keeps the last-seen/online line to the owner and opers.
+    #[test]
+    fn nickserv_set_hide_status() {
+        let path = std::env::temp_dir().join("echo-nshide.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "test");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register("bob", "hunter2", None).unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let mut e = Engine::new(vec![Box::new(ns)], db);
+        let send = |e: &mut Engine, uid: &str, text: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: text.into() });
+        let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAA".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        send(&mut e, "000AAAAAA", "IDENTIFY sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        send(&mut e, "000AAAAAB", "IDENTIFY hunter2");
+
+        // Default: a stranger (bob) sees alice's last-seen line.
+        assert!(notice(&send(&mut e, "000AAAAAB", "INFO alice"), "Last seen"), "last-seen public by default");
+
+        // alice hides it: strangers lose the line, owner keeps it.
+        assert!(notice(&send(&mut e, "000AAAAAA", "SET HIDE STATUS ON"), "hidden"), "hide confirmed");
+        let stranger = send(&mut e, "000AAAAAB", "INFO alice");
+        assert!(notice(&stranger, "Registered"), "stranger still sees registration: {stranger:?}");
+        assert!(!notice(&stranger, "Last seen"), "stranger no longer sees last-seen: {stranger:?}");
+        assert!(notice(&send(&mut e, "000AAAAAA", "INFO"), "Last seen"), "owner still sees their own last-seen");
+
+        // Turn it off: public again.
+        assert!(notice(&send(&mut e, "000AAAAAA", "SET HIDE STATUS OFF"), "visible"), "unhide confirmed");
+        assert!(notice(&send(&mut e, "000AAAAAB", "INFO alice"), "Last seen"), "last-seen public again");
     }
 
     // SET EMAIL stores an email; SET PASSWORD defers derivation, and once
