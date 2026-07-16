@@ -185,6 +185,22 @@ impl Protocol for InspIrcd {
                     _ => vec![],
                 }
             }
+            // :<src> METADATA <target> <key> :<value> — the ircd sharing user
+            // state. We care about `accountname` on a uid (e.g. replayed on our
+            // netburst) to restore who is logged in; an empty value is a logout.
+            "METADATA" => {
+                let a: Vec<&str> = tokens.collect();
+                match (source.as_deref(), a.first(), a.get(1)) {
+                    (Some(src), Some(target), Some(key))
+                        if !src.starts_with(self.sid.as_str())
+                            && key.eq_ignore_ascii_case("accountname")
+                            && *target != "*" =>
+                    {
+                        vec![NetEvent::AccountLogin { uid: target.to_string(), account: trailing(rest) }]
+                    }
+                    _ => vec![],
+                }
+            }
             "QUIT" => vec![NetEvent::Quit { uid: source.unwrap_or_default() }],
             // ENCAP <target> <subcmd> …  — we care about relayed SASL and the
             // account-registration relay (the ircd's account module forwards a
@@ -434,6 +450,19 @@ mod tests {
             matches!(ev.as_slice(), [NetEvent::NickChange { uid, nick }] if uid == "0IRAAAAAB" && nick == "newnick"),
             "{ev:?}"
         );
+    }
+
+    // The ircd replaying `accountname` metadata (e.g. on our netburst) restores a
+    // login; an empty value is a logout, and our own echoes and other keys are ignored.
+    #[test]
+    fn parses_accountname_metadata() {
+        let mut p = proto();
+        assert!(matches!(p.parse(":0IR METADATA 0IRAAAAAB accountname :alice").as_slice(),
+            [NetEvent::AccountLogin { uid, account }] if uid == "0IRAAAAAB" && account == "alice"), "login restored");
+        assert!(matches!(p.parse(":0IR METADATA 0IRAAAAAB accountname :").as_slice(),
+            [NetEvent::AccountLogin { uid, account }] if uid == "0IRAAAAAB" && account.is_empty()), "empty value = logout");
+        assert!(p.parse(":42S METADATA 0IRAAAAAB accountname :bob").is_empty(), "our own echo is ignored");
+        assert!(p.parse(":0IR METADATA 0IRAAAAAB ssl_cert :deadbeef").is_empty(), "non-account keys ignored");
     }
 
     // A UID burst introduces the user under their current nick.

@@ -18,6 +18,10 @@ pub enum NetEvent {
     Privmsg { from: String, to: String, text: String },
     UserConnect { uid: String, nick: String, host: String, ip: String },
     NickChange { uid: String, nick: String },
+    // The ircd tells us a user's logged-in account (METADATA accountname), e.g.
+    // replayed on a services netburst so we can restore who was identified. An
+    // empty `account` means they logged out.
+    AccountLogin { uid: String, account: String },
     // A channel was created or bursted (an FJOIN). Subsequent single joins arrive
     // as IJOIN and are not surfaced.
     ChannelCreate { channel: String },

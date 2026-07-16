@@ -432,6 +432,19 @@
         assert!(parted, "the assigned bot parts the released channel");
     }
 
+    // A netburst that replays a user's accountname restores their services login
+    // (so a services restart doesn't silently log everyone out); empty = logout.
+    #[test]
+    fn account_login_event_restores_session() {
+        let mut e = engine_with("acctlogin", "alice", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        assert_eq!(e.network.account_of("000AAAAAB"), None, "not recognised before the metadata");
+        e.handle(NetEvent::AccountLogin { uid: "000AAAAAB".into(), account: "alice".into() });
+        assert_eq!(e.network.account_of("000AAAAAB"), Some("alice"), "login restored from the ircd");
+        e.handle(NetEvent::AccountLogin { uid: "000AAAAAB".into(), account: String::new() });
+        assert_eq!(e.network.account_of("000AAAAAB"), None, "empty account is a logout");
+    }
+
     // A suspension that arrives by gossip must end local sessions on that account,
     // just as a local SUSPEND does — the account and its channels stay put.
     #[test]

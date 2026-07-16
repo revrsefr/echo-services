@@ -850,6 +850,18 @@ impl Engine {
                 }
                 out
             }
+            NetEvent::AccountLogin { uid, account } => {
+                // The ircd told us who a user is logged in as (e.g. replayed on our
+                // netburst). Restore the mapping so services recognise the login;
+                // no side-effects — the burst already put them in their channels.
+                if account.is_empty() {
+                    self.network.clear_account(&uid);
+                } else {
+                    self.network.set_account(&uid, &account);
+                    self.pending_enforce.retain(|p| p.uid != uid);
+                }
+                Vec::new()
+            }
             NetEvent::NickChange { uid, nick } => {
                 let new_nick = nick.clone();
                 self.network.user_nick_change(&uid, nick);
