@@ -468,6 +468,18 @@ impl Store for Db {
     fn memo_is_ignored(&self, account: &str, sender: &str) -> bool {
         Db::memo_is_ignored(self, account, sender)
     }
+    fn set_memo_notify(&mut self, account: &str, on: bool) -> bool {
+        Db::set_memo_notify(self, account, on)
+    }
+    fn set_memo_limit(&mut self, account: &str, limit: Option<u32>) -> bool {
+        Db::set_memo_limit(self, account, limit)
+    }
+    fn memo_notify_on(&self, account: &str) -> bool {
+        Db::memo_notify_on(self, account)
+    }
+    fn memo_limit_of(&self, account: &str) -> Option<u32> {
+        Db::memo_limit_of(self, account)
+    }
     fn memo_check(&self, account: &str, sender: &str) -> Option<(bool, u64)> {
         Db::memo_check(self, account, sender)
     }

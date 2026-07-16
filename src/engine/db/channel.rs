@@ -688,6 +688,36 @@ impl Db {
         self.accounts.get(&key(account)).is_some_and(|a| a.memo_ignore.iter().any(|t| t.eq_ignore_ascii_case(sender)))
     }
 
+    /// Set whether `account` is notified about new memos on login.
+    pub fn set_memo_notify(&mut self, account: &str, on: bool) -> bool {
+        let k = key(account);
+        let Some(a) = self.accounts.get(&k) else { return false };
+        let limit = a.memo_limit;
+        let _ = self.log.append(Event::MemoPrefsSet { account: account.to_string(), notify: on, limit });
+        self.accounts.get_mut(&k).unwrap().memo_notify = on;
+        true
+    }
+
+    /// Set `account`'s mailbox cap (None = the network default).
+    pub fn set_memo_limit(&mut self, account: &str, limit: Option<u32>) -> bool {
+        let k = key(account);
+        let Some(a) = self.accounts.get(&k) else { return false };
+        let notify = a.memo_notify;
+        let _ = self.log.append(Event::MemoPrefsSet { account: account.to_string(), notify, limit });
+        self.accounts.get_mut(&k).unwrap().memo_limit = limit;
+        true
+    }
+
+    /// Whether `account` wants new-memo notifications (default on / unknown = on).
+    pub fn memo_notify_on(&self, account: &str) -> bool {
+        self.accounts.get(&key(account)).is_none_or(|a| a.memo_notify)
+    }
+
+    /// `account`'s configured mailbox cap, if any.
+    pub fn memo_limit_of(&self, account: &str) -> Option<u32> {
+        self.accounts.get(&key(account)).and_then(|a| a.memo_limit)
+    }
+
     /// How many unread memos an account has.
     pub fn unread_memos(&self, account: &str) -> usize {
         self.accounts.get(&key(account)).map_or(0, |a| a.memos.iter().filter(|m| !m.read).count())

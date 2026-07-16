@@ -1171,7 +1171,7 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         // Private, self-service, or cosmetic — not surfaced.
         AjoinAdded { .. } | AjoinRemoved { .. } | AccountGreetSet { .. } | VhostRequested { .. }
         | VhostRequestCleared { .. } | MemoSent { .. } | MemoRead { .. } | MemoDeleted { .. }
-        | MemoIgnoreAdd { .. } | MemoIgnoreDel { .. }
+        | MemoIgnoreAdd { .. } | MemoIgnoreDel { .. } | MemoPrefsSet { .. }
         | ChannelMlock { .. } | ChannelDescSet { .. } | ChannelEntryMsgSet { .. } | ChannelSettingsSet { .. }
         | ChannelKickerSet { .. } | ChannelBadwordsSet { .. } | ChannelTriggersSet { .. }
         | ChannelTopicSet { .. } | AccountSeen { .. } | ChannelUsed { .. }

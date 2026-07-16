@@ -1057,6 +1057,10 @@ pub trait Store {
     fn memo_ignore_del(&mut self, account: &str, target: &str) -> bool;
     fn memo_ignores(&self, account: &str) -> Vec<String>;
     fn memo_is_ignored(&self, account: &str, sender: &str) -> bool;
+    fn set_memo_notify(&mut self, account: &str, on: bool) -> bool;
+    fn set_memo_limit(&mut self, account: &str, limit: Option<u32>) -> bool;
+    fn memo_notify_on(&self, account: &str) -> bool;
+    fn memo_limit_of(&self, account: &str) -> Option<u32>;
     /// Read-status and timestamp of the most recent memo `sender` left for `account`.
     fn memo_check(&self, account: &str, sender: &str) -> Option<(bool, u64)>;
     fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError>;

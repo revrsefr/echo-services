@@ -65,7 +65,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             }
             // Let them know about waiting memos.
             let unread = db.unread_memos(&account);
-            if unread > 0 {
+            if unread > 0 && db.memo_notify_on(&account) {
                 ctx.notice(me, from.uid, format!("You have \x02{unread}\x02 new memo(s). Read them with \x02/msg MemoServ READ NEW\x02."));
             }
         }

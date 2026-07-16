@@ -14,7 +14,8 @@ pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut S
         ctx.notice(me, from.uid, format!("\x02{target}\x02 isn't registered."));
         return;
     };
-    if db.memo_list(&dest).len() >= MAX_MEMOS {
+    let limit = db.memo_limit_of(&dest).unwrap_or(MAX_MEMOS as u32) as usize;
+    if db.memo_list(&dest).len() >= limit {
         ctx.notice(me, from.uid, format!("\x02{target}\x02's mailbox is full — they'll need to clear some memos first."));
         return;
     }

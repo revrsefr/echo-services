@@ -82,6 +82,12 @@ pub struct Account {
     // Accounts this user won't receive memos from (MemoServ IGNORE).
     #[serde(default)]
     pub memo_ignore: Vec<String>,
+    // MemoServ SET NOTIFY: be told about new memos on login (default on).
+    #[serde(default = "verified_default")]
+    pub memo_notify: bool,
+    // MemoServ SET LIMIT: mailbox cap (None = the network default).
+    #[serde(default)]
+    pub memo_limit: Option<u32>,
     // Personal greet a bot shows when this account joins a greet-enabled channel.
     #[serde(default)]
     pub greet: String,
