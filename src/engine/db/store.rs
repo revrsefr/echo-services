@@ -82,6 +82,12 @@ impl Store for Db {
     fn set_greet(&mut self, account: &str, greet: &str) -> Result<(), RegError> {
         Db::set_greet(self, account, greet)
     }
+    fn set_account_autoop(&mut self, account: &str, on: bool) -> Result<(), RegError> {
+        Db::set_account_autoop(self, account, on)
+    }
+    fn account_wants_autoop(&self, account: &str) -> bool {
+        Db::account_wants_autoop(self, account)
+    }
     fn set_vhost(&mut self, account: &str, host: &str, setter: &str, ttl: Option<u64>) -> Result<(), RegError> {
         Db::set_vhost(self, account, host, setter, ttl)
     }

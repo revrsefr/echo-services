@@ -411,7 +411,7 @@
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)));
         e.gossip_ingest(entry).unwrap();
@@ -1374,6 +1374,46 @@
         // Turn AUTOOP off; now a join is not auto-opped.
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "SET #c AUTOOP OFF".into() });
         assert!(!opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false })), "no auto-op when AUTOOP is off");
+    }
+
+    // NickServ SET AUTOOP OFF is a per-account opt-out: the user isn't auto-opped
+    // anywhere, even where the channel allows it.
+    #[test]
+    fn nickserv_set_autoop_off_opts_out_of_status() {
+        use echo_chanserv::ChanServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-nsautoop.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
+        let opped = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+o 000AAAAAB"));
+        let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        // Default: founder is auto-opped (channel AUTOOP on, account AUTOOP on).
+        assert!(opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false })), "auto-op on by default");
+        e.handle(NetEvent::Part { uid: "000AAAAAB".into(), channel: "#c".into() });
+
+        // Account opts out via NickServ; now no auto-op despite channel allowing it.
+        assert!(notice(&ns(&mut e, "SET AUTOOP OFF"), "no longer be auto-opped"), "pref set off");
+        assert!(!e.db.account_wants_autoop("alice"), "preference stored");
+        assert!(!opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false })), "no auto-op with account AUTOOP off");
+
+        // Turn it back on: auto-op resumes.
+        e.handle(NetEvent::Part { uid: "000AAAAAB".into(), channel: "#c".into() });
+        assert!(notice(&ns(&mut e, "SET AUTOOP ON"), "auto-opped where you have"), "pref set on");
+        assert!(opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false })), "auto-op resumes");
     }
 
     // BotServ BOT ADD/LIST is oper-gated (Priv::Admin) and the bot is remembered.

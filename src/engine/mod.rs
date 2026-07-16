@@ -827,8 +827,10 @@ impl Engine {
                         return out;
                     }
                 }
-                // AUTOOP (on by default): whether access members are auto-opped here.
-                let autoop = self.db.channel(&channel).is_none_or(|c| !c.settings.noautoop);
+                // AUTOOP (on by default): the channel must allow it and the user
+                // must want it (NickServ SET AUTOOP) — either can opt out.
+                let autoop = self.db.channel(&channel).is_none_or(|c| !c.settings.noautoop)
+                    && account.as_deref().is_none_or(|a| self.db.account_wants_autoop(a));
                 match mode {
                     // A user with access gets their status mode, plus the entry message.
                     Some(m) => {
@@ -1178,7 +1180,7 @@ fn audit_summary(event: &db::Event) -> Option<String> {
             format!("{verb} channel \x02{channel}\x02 against expiry")
         }
         // Private, self-service, or cosmetic — not surfaced.
-        AjoinAdded { .. } | AjoinRemoved { .. } | AccountGreetSet { .. } | VhostRequested { .. }
+        AjoinAdded { .. } | AjoinRemoved { .. } | AccountGreetSet { .. } | AccountAutoOpSet { .. } | VhostRequested { .. }
         | VhostRequestCleared { .. } | MemoSent { .. } | MemoRead { .. } | MemoDeleted { .. }
         | MemoIgnoreAdd { .. } | MemoIgnoreDel { .. } | MemoPrefsSet { .. }
         | ChannelMlock { .. } | ChannelDescSet { .. } | ChannelEntryMsgSet { .. } | ChannelSettingsSet { .. }

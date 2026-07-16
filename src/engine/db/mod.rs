@@ -91,6 +91,11 @@ pub struct Account {
     // Personal greet a bot shows when this account joins a greet-enabled channel.
     #[serde(default)]
     pub greet: String,
+    // NickServ SET AUTOOP: when off, this user is never auto-opped on join even
+    // where they hold access (they op themselves). Stored inverted so the default
+    // (auto-op enabled) is the zero value.
+    #[serde(default)]
+    pub no_autoop: bool,
     // Assigned vhost (HostServ), applied to the displayed host on identify.
     #[serde(default)]
     pub vhost: Option<Vhost>,

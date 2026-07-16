@@ -914,6 +914,9 @@ pub trait Store {
     fn verify_account(&mut self, account: &str) -> Result<(), RegError>;
     fn set_email(&mut self, account: &str, email: Option<String>) -> Result<(), RegError>;
     fn set_greet(&mut self, account: &str, greet: &str) -> Result<(), RegError>;
+    // NickServ SET AUTOOP: whether this account is auto-opped on join.
+    fn set_account_autoop(&mut self, account: &str, on: bool) -> Result<(), RegError>;
+    fn account_wants_autoop(&self, account: &str) -> bool;
     // HostServ vhosts.
     fn set_vhost(&mut self, account: &str, host: &str, setter: &str, ttl: Option<u64>) -> Result<(), RegError>;
     fn del_vhost(&mut self, account: &str) -> Result<bool, RegError>;
