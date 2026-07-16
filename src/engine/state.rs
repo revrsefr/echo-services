@@ -180,6 +180,12 @@ impl Network {
         self.users.get(uid).map(|u| u.host.as_str())
     }
 
+    // Every known user whose uid carries `sid` as its prefix — i.e. those behind
+    // a server, used to forget them all when it splits (SQUIT).
+    pub fn uids_on_server(&self, sid: &str) -> Vec<String> {
+        self.users.keys().filter(|u| u.starts_with(sid)).cloned().collect()
+    }
+
     pub fn user_nick_change(&mut self, uid: &str, nick: String) {
         if let Some(user) = self.users.get_mut(uid) {
             self.seen.insert(lc(&nick), Seen { nick: nick.clone(), ts: now(), what: format!("changing nick from {}", user.nick) });

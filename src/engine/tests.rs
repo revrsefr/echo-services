@@ -432,6 +432,25 @@
         assert!(parted, "the assigned bot parts the released channel");
     }
 
+    // A server split (SQUIT) forgets exactly the users behind it (uids carrying
+    // that SID), leaving users on other servers untouched.
+    #[test]
+    fn squit_forgets_users_behind_the_split() {
+        let mut e = engine_with("squit", "alice", "sesame");
+        e.db.register("bob", "hunter2", None).unwrap();
+        e.handle(NetEvent::UserConnect { uid: "0IRAAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "0XYAAAAAB".into(), nick: "bob".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "0IRAAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { from: "0XYAAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY hunter2".into() });
+        assert_eq!(e.network.account_of("0IRAAAAAB"), Some("alice"));
+        assert_eq!(e.network.account_of("0XYAAAAAB"), Some("bob"));
+
+        // Server 0IR splits away.
+        e.handle(NetEvent::ServerSplit { server: "0IR".into() });
+        assert!(e.network.account_of("0IRAAAAAB").is_none(), "users behind the split are forgotten");
+        assert_eq!(e.network.account_of("0XYAAAAAB"), Some("bob"), "users on other servers are kept");
+    }
+
     // A netburst that replays a user's accountname restores their services login
     // (so a services restart doesn't silently log everyone out); empty = logout.
     #[test]

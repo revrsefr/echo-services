@@ -208,6 +208,11 @@ impl Protocol for InspIrcd {
                 Some(uid) if !uid.is_empty() => vec![NetEvent::UserKilled { uid: uid.to_string() }],
                 _ => vec![],
             },
+            // :<src> SQUIT <sid> :<reason> — a server split; forget its users.
+            "SQUIT" => match tokens.next() {
+                Some(server) if !server.is_empty() => vec![NetEvent::ServerSplit { server: server.to_string() }],
+                _ => vec![],
+            },
             // ENCAP <target> <subcmd> …  — we care about relayed SASL and the
             // account-registration relay (the ircd's account module forwards a
             // leaf's REGISTER/VERIFY/RESEND/STATUS to us, the authority server).
@@ -476,6 +481,13 @@ mod tests {
     fn parses_kill() {
         let ev = proto().parse(":0IR KILL 0IRAAAAAB :bye now");
         assert!(matches!(ev.as_slice(), [NetEvent::UserKilled { uid }] if uid == "0IRAAAAAB"), "{ev:?}");
+    }
+
+    // A SQUIT surfaces as a ServerSplit carrying the departed server's SID.
+    #[test]
+    fn parses_squit() {
+        let ev = proto().parse(":42S SQUIT 0IR :ping timeout");
+        assert!(matches!(ev.as_slice(), [NetEvent::ServerSplit { server }] if server == "0IR"), "{ev:?}");
     }
 
     // A UID burst introduces the user under their current nick.

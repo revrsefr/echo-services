@@ -46,6 +46,10 @@ pub enum NetEvent {
     // A user was forcibly removed (KILL). Handled like a quit, except a killed
     // services bot is reintroduced rather than forgotten.
     UserKilled { uid: String },
+    // A server split away (SQUIT). `server` is its SID; every user behind it
+    // (whose uid carries that SID prefix) is gone, since a split is signalled once
+    // rather than as a QUIT per user.
+    ServerSplit { server: String },
     // An ircd relaying an IRCv3 account-registration request to us as the authority.
     AccountRequest { reqid: String, origin: String, kind: String, account: String, p2: String, p3: String },
     // An ircd relaying a SASL exchange step to us (the SASL agent). mode = H/S/C/D.

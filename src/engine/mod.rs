@@ -1057,6 +1057,14 @@ impl Engine {
                 self.forget_user(&uid);
                 Vec::new()
             }
+            NetEvent::ServerSplit { server } => {
+                // Every user behind the departed server is gone in one message;
+                // forget them so their sessions, slots and memberships don't linger.
+                for uid in self.network.uids_on_server(&server) {
+                    self.forget_user(&uid);
+                }
+                Vec::new()
+            }
             NetEvent::Privmsg { from, to, text } => self.dispatch(&from, &to, &text),
             NetEvent::AccountRequest { reqid, origin, kind, account, p2, p3 } => {
                 self.account_request(reqid, origin, kind, account, p2, p3)
