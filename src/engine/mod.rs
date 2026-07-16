@@ -1268,6 +1268,8 @@ enum RegOutcome {
     VerifyRequired,
     /// The name is on the OperServ FORBID list.
     Forbidden,
+    /// The supplied email matches an OperServ FORBID EMAIL pattern.
+    ForbiddenEmail,
     Exists,
     RateLimited,
     Frozen,
@@ -1284,6 +1286,7 @@ fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAct
                 RegOutcome::Ok => ("success", "*", "Account registered."),
                 RegOutcome::VerifyRequired => ("verification_required", "VERIFICATION_REQUIRED", "Registered — check your email for a code, then VERIFY."),
                 RegOutcome::Forbidden => ("error", "BAD_ACCOUNT_NAME", "That account name is forbidden by network policy."),
+                RegOutcome::ForbiddenEmail => ("error", "BAD_EMAIL", "That email address is forbidden by network policy."),
                 RegOutcome::Exists => ("error", "ACCOUNT_EXISTS", "That account name is already registered."),
                 RegOutcome::RateLimited => ("error", "TEMPORARILY_UNAVAILABLE", "Too many registrations, please wait a moment."),
                 RegOutcome::Frozen => ("error", "TEMPORARILY_UNAVAILABLE", "Registrations are temporarily frozen by network staff."),
@@ -1311,6 +1314,7 @@ fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAct
                     notice(format!("Your nick \x02{nick}\x02 is now registered and you're logged in. Welcome!")),
                 ],
                 RegOutcome::Forbidden => vec![notice("That nickname is forbidden and can't be registered.".to_string())],
+                RegOutcome::ForbiddenEmail => vec![notice("That email address is forbidden by network policy. Use a different one.".to_string())],
                 RegOutcome::Exists => vec![notice(format!("\x02{nick}\x02 is already registered. If it's yours, use \x02IDENTIFY <password>\x02."))],
                 RegOutcome::RateLimited => vec![notice("Registrations are busy right now. Please try again in a moment.".to_string())],
                 RegOutcome::Frozen => vec![notice("Registrations are temporarily frozen by network staff. Please try again later.".to_string())],

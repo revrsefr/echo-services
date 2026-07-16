@@ -220,6 +220,12 @@ impl Engine {
         let Some(creds) = creds else {
             return reg_reply(&reply, RegOutcome::Internal, account);
         };
+        // A forbidden email pattern (OperServ FORBID EMAIL) blocks registration.
+        if let Some(addr) = &email {
+            if self.db.is_forbidden("EMAIL", addr).is_some() {
+                return reg_reply(&reply, RegOutcome::ForbiddenEmail, account);
+            }
+        }
         let addr = email.clone();
         let outcome = match self.db.register_prepared(account, creds, email) {
             Ok(()) if self.db.is_verified(account) => RegOutcome::Ok,

@@ -1224,6 +1224,18 @@
         assert!(e.pre_register_check("cleanname", &reply).is_none(), "clean nick allowed");
         assert!(e.db.is_forbidden("CHAN", "#warez").is_some(), "channel is forbidden");
 
+        // EMAIL forbids block registration and SET EMAIL.
+        assert!(notice(&os(&mut e, "FORBID ADD EMAIL *@spam.tld disposable"), "Forbade"), "email forbid added");
+        let ereply = || crate::proto::RegReply::NickServ { agent: "42SAAAAAA".into(), uid: "000AAAAAE".into(), nick: "newbie".into() };
+        let out = e.complete_register("newbie", Db::derive_credentials("pw", 4096), Some("evil@spam.tld".into()), ereply());
+        assert!(notice(&out, "email address is forbidden"), "forbidden email blocks registration: {out:?}");
+        assert!(!e.db.exists("newbie"), "no account created with a forbidden email");
+        e.complete_register("newbie", Db::derive_credentials("pw", 4096), Some("ok@good.tld".into()), ereply());
+        assert!(e.db.exists("newbie"), "a clean email registers fine");
+        // boss (identified) can't SET EMAIL to a forbidden address either.
+        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "SET EMAIL nope@spam.tld".into() });
+        assert!(notice(&out, "email address is forbidden"), "SET EMAIL rejects a forbidden address: {out:?}");
+
         assert!(notice(&os(&mut e, "FORBID LIST"), "evil*"), "list shows the nick forbid");
         assert!(notice(&os(&mut e, "FORBID DEL NICK evil*"), "Removed"), "nick forbid removed");
         assert!(e.pre_register_check("evilbob", &reply).is_none(), "no longer forbidden");

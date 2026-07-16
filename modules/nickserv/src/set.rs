@@ -29,6 +29,12 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         Some("EMAIL") => {
             let email = args.get(2).map(|s| s.to_string());
             let cleared = email.is_none();
+            if let Some(addr) = &email {
+                if db.is_forbidden("EMAIL", addr).is_some() {
+                    ctx.notice(me, from.uid, "That email address is forbidden by network policy. Use a different one.");
+                    return;
+                }
+            }
             match db.set_email(account, email) {
                 Ok(()) if cleared => ctx.notice(me, from.uid, format!("Email for \x02{account}\x02 cleared.")),
                 Ok(()) => ctx.notice(me, from.uid, format!("Email for \x02{account}\x02 updated.")),
