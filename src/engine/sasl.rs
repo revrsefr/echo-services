@@ -14,7 +14,12 @@ impl Engine {
             vec![NetAction::Sasl { agent: agent.clone(), client: client.clone(), mode: mode.to_string(), data: d }]
         };
         match mode.as_str() {
-            "H" => Vec::new(), // host info
+            "H" => {
+                // The ircd sends the client's real host + IP before the exchange;
+                // keep it for the auth feed (the client isn't connected yet).
+                self.remember_sasl_source(&client, &data);
+                Vec::new()
+            }
             "S" => {
                 self.sweep_sasl();
                 if self.sasl_sessions.len() >= MAX_SASL_SESSIONS {
@@ -80,7 +85,7 @@ impl Engine {
                                 }],
                                 None => {
                                     let mut out = mk("D", vec!["F".to_string()]);
-                                    out.extend(self.feed("AUTH", format!("\x0304✗\x03 {} — SASL PLAIN failed for \x02{authcid}\x02 (unknown account)", self.who(&client))));
+                                    out.extend(self.auth_report(false, Some(&authcid), "SASL PLAIN", &client, Some("no such account")));
                                     out
                                 }
                             },
@@ -93,6 +98,7 @@ impl Engine {
             }
             "D" => {
                 self.sasl_sessions.remove(&client);
+                self.sasl_source.remove(&client);
                 Vec::new()
             }
             _ => Vec::new(),
@@ -161,7 +167,7 @@ impl Engine {
         } else {
             match STANDARD.decode(chunk).ok().and_then(|b| String::from_utf8(b).ok()) {
                 Some(a) => a,
-                None => return self.sasl_deny("SASL EXTERNAL", agent, client, "malformed authzid"),
+                None => return self.sasl_deny("SASL EXTERNAL", agent, client, None, "malformed authzid"),
             }
         };
         match fingerprints.iter().find_map(|fp| self.db.certfp_owner(fp)) {
@@ -169,7 +175,7 @@ impl Engine {
                 let account = account.to_string();
                 self.sasl_login("SASL EXTERNAL", agent, client, account)
             }
-            _ => self.sasl_deny("SASL EXTERNAL", agent, client, "unknown certificate"),
+            _ => self.sasl_deny("SASL EXTERNAL", agent, client, None, "unknown certificate"),
         }
     }
 }

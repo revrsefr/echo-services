@@ -92,6 +92,7 @@ pub struct Engine {
     network: Network,
     db: Db,
     sasl_sessions: HashMap<String, TimedSession>, // client uid -> in-progress exchange
+    sasl_source: HashMap<String, (Instant, String)>, // client uid -> real host/IP from the SASL H message
     reg_limiter: RegLimiter,
     chan_service: Option<String>, // uid to source channel modes from (ChanServ)
     nick_service: Option<String>, // uid of the account service (NickServ), for its notices
@@ -226,6 +227,7 @@ impl Engine {
             network,
             db,
             sasl_sessions: HashMap::new(),
+            sasl_source: HashMap::new(),
             reg_limiter: RegLimiter::new(),
             chan_service,
             nick_service,
@@ -448,22 +450,52 @@ impl Engine {
     }
 
     // Finish a SASL login, unless the account is suspended.
+    // Where a login attempt came from, for the auth feed: the client's real
+    // host/IP from the SASL H message while mid-SASL (the client isn't a
+    // connected user yet), or the live user's nick@host for a NickServ IDENTIFY.
+    fn auth_source(&self, client: &str) -> String {
+        if let Some((_, src)) = self.sasl_source.get(client) {
+            return safe(src);
+        }
+        match (self.network.nick_of(client), self.network.host_of(client)) {
+            (Some(nick), Some(host)) => format!("{}@{}", safe(nick), safe(host)),
+            (Some(nick), None) => safe(nick),
+            _ => "unknown".to_string(),
+        }
+    }
+
+    // One login attempt -> a clean admin feed line + an on-disk audit record.
+    // Covers every mechanism (SASL PLAIN/SCRAM/EXTERNAL, NickServ IDENTIFY).
+    // `account` is who they authenticated as (or tried to) — it can be attacker-
+    // supplied on a failure, so it is sanitised; no secret is ever included.
+    fn auth_report(&self, ok: bool, account: Option<&str>, mech: &str, client: &str, reason: Option<&str>) -> Option<NetAction> {
+        let source = self.auth_source(client);
+        let acct = safe(account.unwrap_or("*"));
+        tracing::info!(target: "echo::auth", ok, account = %acct, mech, source = %source, reason = reason.unwrap_or("-"), "login attempt");
+        let body = if ok {
+            format!("\x02{acct}\x02 login ok · {mech} · from {source}")
+        } else {
+            format!("\x02{acct}\x02 login \x02FAILED\x02 · {mech} · from {source} · {}", reason.unwrap_or("denied"))
+        };
+        self.feed("AUTH", body)
+    }
+
     fn sasl_login(&self, mech: &str, agent: &str, client: &str, account: String) -> Vec<NetAction> {
         if self.db.is_suspended(&account) {
             let mut out = sasl_fail(agent, client);
-            out.extend(self.feed("AUTH", format!("\x0304✗\x03 {} — {mech} rejected for \x02{account}\x02 (account suspended)", self.who(client))));
+            out.extend(self.auth_report(false, Some(&account), mech, client, Some("account suspended")));
             return out;
         }
         let mut out = sasl_success(agent, client, account.clone());
-        out.extend(self.feed("AUTH", format!("\x0303✓\x03 {} authenticated as \x02{account}\x02 via {mech}", self.who(client))));
+        out.extend(self.auth_report(true, Some(&account), mech, client, None));
         out
     }
 
-    // A SASL rejection plus a DebugServ line naming why — for the credential
+    // A SASL rejection plus an auth-feed line naming why — for the credential
     // failures worth surfacing (bad password, bad/unknown cert, unknown account).
-    fn sasl_deny(&self, mech: &str, agent: &str, client: &str, reason: &str) -> Vec<NetAction> {
+    fn sasl_deny(&self, mech: &str, agent: &str, client: &str, account: Option<&str>, reason: &str) -> Vec<NetAction> {
         let mut out = sasl_fail(agent, client);
-        out.extend(self.feed("AUTH", format!("\x0304✗\x03 {} — {mech} failed ({reason})", self.who(client))));
+        out.extend(self.auth_report(false, account, mech, client, Some(reason)));
         out
     }
 
@@ -849,11 +881,24 @@ impl Engine {
         self.sasl_sessions.insert(client, TimedSession { touched: Instant::now(), session });
     }
 
+    // Remember a client's real host/IP from the SASL H message so the auth feed
+    // can show where the login came from (the client isn't a connected user yet,
+    // so the network map can't resolve it). Host and IP arrive as two fields.
+    fn remember_sasl_source(&mut self, client: &str, data: &[String]) {
+        let src = match (data.first(), data.get(1)) {
+            (Some(host), Some(ip)) if host != ip => format!("{host} [{ip}]"),
+            (Some(only), _) => only.clone(),
+            _ => return,
+        };
+        self.sasl_source.insert(client.to_string(), (Instant::now(), src));
+    }
+
     // Evict exchanges idle past the TTL. Run before starting a new one so a
     // dropped-mid-auth client the ircd never reported cannot pile up.
     fn sweep_sasl(&mut self) {
         let now = Instant::now();
         self.sasl_sessions.retain(|_, t| now.duration_since(t.touched) < SASL_SESSION_TTL);
+        self.sasl_source.retain(|_, (t, _)| now.duration_since(*t) < SASL_SESSION_TTL);
     }
 
     // Sent right after the SERVER line: burst, introduce every service, endburst.
@@ -1538,6 +1583,13 @@ fn decode_plain(b64: &str) -> Option<(String, String)> {
 }
 
 // Report SASL failure to the ircd (drives 904).
+// Strip control codes (colour/bold, CR/LF, NUL) and cap the length before a
+// string goes into a feed line. An account name on a failed attempt is
+// attacker-supplied, so it must never inject into the channel message.
+fn safe(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).take(48).collect()
+}
+
 fn sasl_fail(agent: &str, client: &str) -> Vec<NetAction> {
     vec![NetAction::Sasl { agent: agent.to_string(), client: client.to_string(), mode: "D".to_string(), data: vec!["F".to_string()] }]
 }

@@ -305,9 +305,9 @@ impl Engine {
                     self.bump(&key);
                 }
                 let feed = if ok {
-                    self.feed("AUTH", format!("\x0303✓\x03 {} identified to \x02{account}\x02 via IDENTIFY", self.who(&uid)))
+                    self.auth_report(true, Some(&account), "NickServ IDENTIFY", &uid, None)
                 } else {
-                    self.feed("AUTH", format!("\x0304✗\x03 {} — IDENTIFY failed for \x02{name}\x02 (bad password)", self.who(&uid)))
+                    self.auth_report(false, Some(&name), "NickServ IDENTIFY", &uid, Some("bad password"))
                 };
                 let mut actions = ctx.actions;
                 actions.extend(feed);
@@ -317,7 +317,7 @@ impl Engine {
                 if ok {
                     self.sasl_login("SASL PLAIN", &agent, &client, account)
                 } else {
-                    self.sasl_deny("SASL PLAIN", &agent, &client, "bad password")
+                    self.sasl_deny("SASL PLAIN", &agent, &client, Some(&account), "bad password")
                 }
             }
         }
