@@ -170,11 +170,15 @@ pub fn import_anope(anope_path: &str, out_path: &str, node: &str) -> std::io::Re
             suspension: None,
             memos: Vec::new(),
             memo_ignore: Vec::new(),
-            memo_notify: true,
+            // Anope applies nickserv `defaults` at registration and serializes the
+            // result, so a stored flag IS the account's state and absence means
+            // off. Derive every SET flag echo models the same way — never hardcode,
+            // or accounts that never toggled the flag get the wrong value.
+            memo_notify: flag(nc, "MEMO_SIGNON"),
             memo_limit: match num(nc, "memomax") { 0 => None, n => Some(n as u32) },
             greet: String::new(),
             no_autoop: !flag(nc, "AUTOOP"),
-            no_protect: false,
+            no_protect: !flag(nc, "PROTECT"),
             hide_status: flag(nc, "HIDE_MASK"),
             vhost,
             vhost_request: None,
@@ -224,8 +228,20 @@ pub fn import_anope(anope_path: &str, out_path: &str, node: &str) -> std::io::Re
                 db.migrate_append(Event::ChannelBotAssigned { channel: name.to_string(), bot: bot.to_string() })?;
             }
         }
-        // SET flags (Anope stores each as a present-and-true bool). PERSIST,
-        // SECUREFOUNDER, KEEP_MODES and FANTASY have no Echo equivalent — skipped.
+        // SET flags (Anope stores each as a present-and-true bool). A few have no
+        // echo equivalent (echo has no persist concept, no secure-founder toggle,
+        // no keep-modes, and fantasy is always on) — report each so nothing is
+        // dropped silently.
+        for (anope, note) in [
+            ("PERSIST", "PERSIST (+P) — echo channels persist as records; re-add a +P mlock if the channel must stay physically open"),
+            ("SECUREFOUNDER", "SECUREFOUNDER — echo has no secure-founder toggle"),
+            ("CS_KEEP_MODES", "KEEP_MODES — echo has no keep-modes toggle"),
+            ("BS_FANTASY", "FANTASY off — echo fantasy (!cmds) is always enabled"),
+        ] {
+            if flag(ci, anope) {
+                sum.skipped.push(format!("channel {name}: {note}"));
+            }
+        }
         let any = |names: &[&str]| names.iter().any(|n| flag(ci, n));
         let settings = ChanSettings {
             signkick: any(&["SIGNKICK"]),
@@ -392,6 +408,10 @@ mod tests {
         assert!(acct.scram256.is_none(), "no password migrated (one-way hash)");
         assert!(!acct.no_autoop, "AUTOOP=true keeps auto-op on");
         assert!(acct.hide_status, "HIDE_MASK -> hide status");
+        // No PROTECT / MEMO_SIGNON flag on alice: Anope absence = off, so these
+        // must migrate off — not echo's register defaults (protect on, notify on).
+        assert!(acct.no_protect, "no PROTECT flag -> nick protection off");
+        assert!(!acct.memo_notify, "no MEMO_SIGNON flag -> memo notify off");
         assert_eq!(acct.certfps, vec!["aabbcc".to_string()]);
         assert!(acct.vhost.is_some(), "vhost carried from the nick alias");
         let chan = db.channel("#chan").expect("channel migrated");
@@ -401,8 +421,9 @@ mod tests {
         assert_eq!(chan.lock_params, vec![('f', "5:10".to_string())], "FLOOD param carried");
         assert_eq!(chan.assigned_bot.as_deref(), Some("Botty"));
         assert!(chan.settings.keeptopic && chan.settings.peace, "channel SET flags migrated");
-        assert!(!chan.settings.signkick, "unset flags stay default (PERSIST has no equivalent, ignored)");
+        assert!(!chan.settings.signkick, "unset flags stay default");
         assert!(chan.noexpire, "CS_NO_EXPIRE -> channel noexpire");
+        assert!(s.skipped.iter().any(|n| n.contains("PERSIST")), "PERSIST reported as skipped, not silently dropped");
         let mut roles: Vec<_> = chan.access.iter().map(|a| (a.account.as_str(), a.level.as_str())).collect();
         roles.sort();
         assert_eq!(roles, vec![("bob", "op"), ("carol", "voice")], "levels mapped by threshold");
