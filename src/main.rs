@@ -52,8 +52,8 @@ async fn main() -> Result<()> {
         let node = argv.get(4).map(String::as_str).unwrap_or("services");
         let s = migrate::import_anope(src, out, node)?;
         println!(
-            "imported: {} accounts, {} grouped nicks, {} certs, {} vhosts, {} channels, {} access, {} mlocked, {} bots, {} memos",
-            s.accounts, s.grouped_nicks, s.certs, s.vhosts, s.channels, s.access, s.mlocked, s.bots, s.memos
+            "imported: {} accounts, {} grouped nicks, {} certs, {} vhosts, {} channels ({} with settings), {} access, {} mlocked, {} bots, {} memos",
+            s.accounts, s.grouped_nicks, s.certs, s.vhosts, s.channels, s.settings, s.access, s.mlocked, s.bots, s.memos
         );
         for note in &s.skipped {
             println!("  skipped: {note}");

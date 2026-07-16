@@ -5,7 +5,7 @@
 // that can't become SCRAM verifiers, so migrated accounts authenticate by certfp
 // or an external authority (or must reset their password).
 
-use crate::engine::db::{Account, Bot, Db, Event, Vhost};
+use crate::engine::db::{Account, Bot, ChanSettings, Db, Event, Vhost};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -16,6 +16,7 @@ pub struct Summary {
     pub certs: usize,
     pub vhosts: usize,
     pub channels: usize,
+    pub settings: usize,
     pub access: usize,
     pub mlocked: usize,
     pub bots: usize,
@@ -164,7 +165,7 @@ pub fn import_anope(anope_path: &str, out_path: &str, node: &str) -> std::io::Re
             greet: String::new(),
             no_autoop: !flag(nc, "AUTOOP"),
             no_protect: false,
-            hide_status: false,
+            hide_status: flag(nc, "HIDE_MASK"),
             vhost,
             vhost_request: None,
             last_seen: last_seen_of.get(name).copied().unwrap_or(ts),
@@ -212,6 +213,28 @@ pub fn import_anope(anope_path: &str, out_path: &str, node: &str) -> std::io::Re
             if !SERVICE_NICKS.contains(&bot.to_ascii_lowercase().as_str()) {
                 db.migrate_append(Event::ChannelBotAssigned { channel: name.to_string(), bot: bot.to_string() })?;
             }
+        }
+        // SET flags (Anope stores each as a present-and-true bool). PERSIST,
+        // SECUREFOUNDER, KEEP_MODES and FANTASY have no Echo equivalent — skipped.
+        let any = |names: &[&str]| names.iter().any(|n| flag(ci, n));
+        let settings = ChanSettings {
+            signkick: any(&["SIGNKICK"]),
+            private: any(&["PRIVATE", "CS_PRIVATE"]),
+            peace: any(&["PEACE"]),
+            secureops: any(&["SECUREOPS", "CS_SECUREOPS"]),
+            restricted: any(&["RESTRICTED", "CS_RESTRICTED"]),
+            noautoop: any(&["NOAUTOOP", "CS_NOAUTOOP"]),
+            keeptopic: any(&["KEEPTOPIC"]),
+            topiclock: any(&["TOPICLOCK", "CS_TOPICLOCK"]),
+            bot_greet: any(&["BS_GREET"]),
+            nobot: any(&["BS_NOBOT", "NOBOT"]),
+        };
+        if settings != ChanSettings::default() {
+            db.migrate_append(Event::ChannelSettingsSet { channel: name.to_string(), settings })?;
+            sum.settings += 1;
+        }
+        if flag(ci, "CS_NO_EXPIRE") {
+            db.migrate_append(Event::ChannelNoExpire { channel: name.to_string(), on: true })?;
         }
         sum.channels += 1;
     }
@@ -297,10 +320,10 @@ mod tests {
     #[test]
     fn imports_a_minimal_anope_db() {
         let anope = r##"{"data":{
-            "NickCore":[{"uniqueid":100,"display":"alice","email":"a@x.io","registered":1000,"AUTOOP":true,"memomax":20}],
+            "NickCore":[{"uniqueid":100,"display":"alice","email":"a@x.io","registered":1000,"AUTOOP":true,"memomax":20,"HIDE_MASK":true}],
             "NickAlias":[{"nick":"alice","ncid":100,"last_seen":2000,"vhost_host":"cool.host","vhost_ident":"al","vhost_creator":"alice","vhost_time":1500}],
             "NSCert":[{"fingerprint":"AABBCC","account":100}],
-            "ChannelInfo":[{"name":"#chan","founderid":100,"registered":1100,"description":"a place","levels":"AUTOOP 5 AUTOVOICE 3","bi":"Botty"}],
+            "ChannelInfo":[{"name":"#chan","founderid":100,"registered":1100,"description":"a place","levels":"AUTOOP 5 AUTOVOICE 3","bi":"Botty","KEEPTOPIC":true,"PEACE":true,"CS_NO_EXPIRE":true,"PERSIST":true}],
             "ChanAccess":[{"ci":"#chan","mask":"bob","data":"5"},{"ci":"#chan","mask":"carol","data":"3"}],
             "ModeLock":[{"ci":"#chan","name":"NOEXTERNAL","set":true},{"ci":"#chan","name":"TOPIC","set":true},{"ci":"#chan","name":"FLOOD","set":true,"param":"5:10"}],
             "BotInfo":[{"nick":"Botty","user":"b","host":"h","realname":"Bot"},{"nick":"NickServ","user":"n","host":"h","realname":"svc"}],
@@ -312,7 +335,7 @@ mod tests {
         std::fs::write(&src, anope).unwrap();
 
         let s = import_anope(src.to_str().unwrap(), out.to_str().unwrap(), "n1").unwrap();
-        assert_eq!((s.accounts, s.certs, s.vhosts, s.channels, s.access, s.mlocked, s.bots, s.memos), (1, 1, 1, 1, 2, 1, 1, 1));
+        assert_eq!((s.accounts, s.certs, s.vhosts, s.channels, s.settings, s.access, s.mlocked, s.bots, s.memos), (1, 1, 1, 1, 1, 2, 1, 1, 1));
         assert_eq!((s.loaded_accounts, s.loaded_channels, s.loaded_bots), (1, 1, 1), "produced log replays cleanly");
 
         let db = Db::open(out.to_str().unwrap().to_string(), "n1");
@@ -320,6 +343,7 @@ mod tests {
         assert_eq!(acct.email.as_deref(), Some("a@x.io"));
         assert!(acct.scram256.is_none(), "no password migrated (one-way hash)");
         assert!(!acct.no_autoop, "AUTOOP=true keeps auto-op on");
+        assert!(acct.hide_status, "HIDE_MASK -> hide status");
         assert_eq!(acct.certfps, vec!["aabbcc".to_string()]);
         assert!(acct.vhost.is_some(), "vhost carried from the nick alias");
         let chan = db.channel("#chan").expect("channel migrated");
@@ -327,6 +351,9 @@ mod tests {
         assert_eq!(chan.desc, "a place");
         assert_eq!(chan.lock_on, "nt", "param-less mlocks kept, FLOOD skipped");
         assert_eq!(chan.assigned_bot.as_deref(), Some("Botty"));
+        assert!(chan.settings.keeptopic && chan.settings.peace, "channel SET flags migrated");
+        assert!(!chan.settings.signkick, "unset flags stay default (PERSIST has no equivalent, ignored)");
+        assert!(chan.noexpire, "CS_NO_EXPIRE -> channel noexpire");
         let mut roles: Vec<_> = chan.access.iter().map(|a| (a.account.as_str(), a.level.as_str())).collect();
         roles.sort();
         assert_eq!(roles, vec![("bob", "op"), ("carol", "voice")], "levels mapped by threshold");
