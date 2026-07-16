@@ -213,8 +213,9 @@ impl Engine {
                 (!topics.is_empty()).then(|| (s.nick().to_string(), blurb, topics))
             })
             .collect();
-        // Restore the persisted stat counters so they survive a restart.
+        // Restore persisted stats so they survive a restart.
         network.seed_stats(db.persisted_stats());
+        network.seed_chan_activity(db.persisted_chan_stats());
         Self {
             services,
             network,
@@ -275,10 +276,11 @@ impl Engine {
     // Only the real counters are persisted; the live gauges above are re-derived.
     pub fn persist_stats(&mut self) {
         let counters = self.network.stat_counters().clone();
-        if counters.is_empty() {
+        let chan_stats = self.network.chan_activity_snapshot();
+        if counters.is_empty() && chan_stats.is_empty() {
             return;
         }
-        if let Err(err) = self.db.persist_stats(&counters) {
+        if let Err(err) = self.db.persist_stats(&counters, chan_stats) {
             tracing::warn!(%err, "failed to persist stat counters");
         }
     }

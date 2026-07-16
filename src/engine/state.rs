@@ -23,9 +23,12 @@ pub struct Network {
     // Downstream server tree: SID -> the SID that introduced it. Lets a hub's
     // SQUIT cascade to every server (and user) behind it. Rebuilt each link.
     servers: HashMap<String, String>,
-    // Shared, namespaced stat counters any service contributes to (ephemeral,
-    // ordered for a stable snapshot). Read by StatServ and the gRPC Stats API.
+    // Shared, namespaced stat counters any service contributes to (persisted via
+    // StatsSet). Read by StatServ and the gRPC Stats API.
     stats: BTreeMap<String, u64>,
+    // Per-channel BOTSTATS activity (lines + top talkers), name-keyed and
+    // persisted alongside `stats` so it survives a restart.
+    chan_activity: HashMap<String, ChanActivity>,
     // Live session count per connecting IP, for OperServ session limiting.
     sessions: HashMap<String, u32>,
     // Recent moderation/action incidents (bounded ring), for OperServ LOGSEARCH.
@@ -85,7 +88,13 @@ pub struct Channel {
     pub ops: HashSet<String>,     // uids holding channel-operator status
     pub voices: HashSet<String>,  // uids holding +v
     pub key: Option<String>,
-    // BOTSTATS: lines seen this session, and per-nick counts (top-talkers). Bounded.
+}
+
+// Per-channel BOTSTATS activity: total lines and per-nick counts (top talkers).
+// Held name-keyed (not on the live Channel, which is rebuilt from each burst) and
+// persisted, so a channel's history survives a services restart.
+#[derive(Default, Clone)]
+pub struct ChanActivity {
     pub lines: u64,
     pub talkers: HashMap<String, u64>,
 }
@@ -332,10 +341,10 @@ impl Network {
     // is capped so a busy channel can't grow it without bound.
     pub fn record_line(&mut self, channel: &str, nick: &str) {
         const TALKER_CAP: usize = 512;
-        let c = self.channels.entry(lc(channel)).or_default();
-        c.lines = c.lines.saturating_add(1);
-        if c.talkers.len() < TALKER_CAP || c.talkers.contains_key(nick) {
-            *c.talkers.entry(nick.to_string()).or_insert(0) += 1;
+        let a = self.chan_activity.entry(lc(channel)).or_default();
+        a.lines = a.lines.saturating_add(1);
+        if a.talkers.len() < TALKER_CAP || a.talkers.contains_key(nick) {
+            *a.talkers.entry(nick.to_string()).or_insert(0) += 1;
         }
     }
 
@@ -356,11 +365,34 @@ impl Network {
 
     // BOTSTATS view: (total lines, top talkers by count, descending).
     pub fn channel_activity(&self, channel: &str) -> Option<(u64, Vec<(String, u64)>)> {
-        let c = self.channels.get(&lc(channel))?;
-        let mut top: Vec<(String, u64)> = c.talkers.iter().map(|(n, v)| (n.clone(), *v)).collect();
-        top.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let a = self.chan_activity.get(&lc(channel))?;
+        let mut top: Vec<(String, u64)> = a.talkers.iter().map(|(n, v)| (n.clone(), *v)).collect();
+        top.sort_by(|x, y| y.1.cmp(&x.1).then_with(|| x.0.cmp(&y.0)));
         top.truncate(10);
-        Some((c.lines, top))
+        Some((a.lines, top))
+    }
+
+    // Seed per-channel activity from persisted state at startup.
+    pub fn seed_chan_activity(&mut self, data: crate::engine::db::ChanStats) {
+        self.chan_activity = data
+            .into_iter()
+            .map(|(c, lines, talkers)| (c, ChanActivity { lines, talkers: talkers.into_iter().collect() }))
+            .collect();
+    }
+
+    // Snapshot per-channel activity for persistence: each active channel's line
+    // count and its top talkers (capped, so a busy channel bounds the event).
+    pub fn chan_activity_snapshot(&self) -> crate::engine::db::ChanStats {
+        self.chan_activity
+            .iter()
+            .filter(|(_, a)| a.lines > 0)
+            .map(|(c, a)| {
+                let mut talkers: Vec<(String, u64)> = a.talkers.iter().map(|(n, v)| (n.clone(), *v)).collect();
+                talkers.sort_by(|x, y| y.1.cmp(&x.1).then_with(|| x.0.cmp(&y.0)));
+                talkers.truncate(50);
+                (c.clone(), a.lines, talkers)
+            })
+            .collect()
     }
 
     // Uids currently in `channel`.

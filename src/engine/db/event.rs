@@ -136,9 +136,15 @@ pub enum Event {
     // by minting a fake one on `sid`), so Local scope but still persisted.
     JupeAdded { name: String, sid: String, reason: String },
     JupeRemoved { name: String },
-    // A full snapshot of the shared stat counters (StatServ / gRPC Stats),
-    // written periodically and on shutdown so they survive a restart.
-    StatsSet { counters: Vec<(String, u64)> },
+    // A full snapshot of the stats (StatServ / gRPC Stats), written periodically
+    // and on shutdown so they survive a restart: shared namespaced counters, plus
+    // per-channel activity (channel, line count, top talkers). `channels` defaults
+    // for log entries written before it existed.
+    StatsSet {
+        counters: Vec<(String, u64)>,
+        #[serde(default)]
+        channels: super::ChanStats,
+    },
 }
 
 // Whether an event replicates across the federation. Account identity is Global
@@ -627,9 +633,10 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         Event::JupeRemoved { name } => {
             net.jupes.retain(|j| !j.name.eq_ignore_ascii_case(&name));
         }
-        Event::StatsSet { counters } => {
+        Event::StatsSet { counters, channels } => {
             // A full snapshot: replace, so replaying the newest wins.
             net.stats = counters.into_iter().collect();
+            net.chan_stats = channels;
         }
         Event::AccountExpiryWarned { account } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {

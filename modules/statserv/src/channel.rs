@@ -10,7 +10,7 @@ pub fn handle(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, net: &d
         ctx.notice(me, from.uid, format!("No activity recorded for \x02{chan}\x02 yet."));
         return;
     };
-    ctx.notice(me, from.uid, format!("\x02{chan}\x02 — \x02{lines}\x02 line(s) seen this session."));
+    ctx.notice(me, from.uid, format!("\x02{chan}\x02 — \x02{lines}\x02 line(s) seen."));
     if top.is_empty() {
         return;
     }

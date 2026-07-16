@@ -532,13 +532,15 @@
         let p = tmp("statspersist");
         let counters: std::collections::BTreeMap<String, u64> =
             [("chanserv.register".to_string(), 7u64), ("nickserv.identify".to_string(), 42u64)].into_iter().collect();
+        let chans = vec![("#devs".to_string(), 6u64, vec![("reverse".to_string(), 5u64), ("Keiko".to_string(), 1u64)])];
         {
             let mut db = Db::open(&p, "N1");
-            db.persist_stats(&counters).unwrap();
+            db.persist_stats(&counters, chans.clone()).unwrap();
             assert_eq!(db.persisted_stats(), counters, "stored while live");
         }
         let db = Db::open(&p, "N1");
         assert_eq!(db.persisted_stats(), counters, "counters replay from the log after a restart");
+        assert_eq!(db.persisted_chan_stats(), chans, "per-channel activity replays too");
     }
 
     // Fold parity: the live state after a broad sequence of writes must equal the

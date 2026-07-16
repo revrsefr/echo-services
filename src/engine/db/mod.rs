@@ -282,6 +282,9 @@ pub struct Report {
 // The network-wide lists that aren't accounts/channels/grouped/bots: the network
 // bans and the news items. Bundled so `apply` threads one parameter for them
 // (and stays within its argument budget as more are added).
+// Persisted per-channel BOTSTATS activity: (channel, line count, top talkers).
+pub type ChanStats = Vec<(String, u64, Vec<(String, u64)>)>;
+
 #[derive(Debug, Clone, Default)]
 pub struct NetData {
     pub akills: Vec<Akill>,
@@ -310,6 +313,8 @@ pub struct NetData {
     // Persisted shared stat counters (StatServ / gRPC Stats), snapshotted so they
     // survive a restart (live gauges are re-derived, not stored here).
     pub stats: std::collections::BTreeMap<String, u64>,
+    // Persisted per-channel BOTSTATS activity: (channel, lines, top talkers).
+    pub chan_stats: ChanStats,
 }
 
 // A session-limit exception: an IP-mask glob and the session allowance for IPs
@@ -1168,8 +1173,11 @@ impl Db {
         if self.net.default_bot.is_some() {
             snapshot.push(Event::DefaultBotSet { bot: self.net.default_bot.clone() });
         }
-        if !self.net.stats.is_empty() {
-            snapshot.push(Event::StatsSet { counters: self.net.stats.iter().map(|(k, v)| (k.clone(), *v)).collect() });
+        if !self.net.stats.is_empty() || !self.net.chan_stats.is_empty() {
+            snapshot.push(Event::StatsSet {
+                counters: self.net.stats.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+                channels: self.net.chan_stats.clone(),
+            });
         }
         for host in &self.host_cfg.offers {
             snapshot.push(Event::VhostOfferAdded { host: host.clone() });

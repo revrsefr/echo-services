@@ -250,10 +250,24 @@ impl Db {
         self.net.stats.clone()
     }
 
-    /// Snapshot the live stat counters to the log so they survive a restart.
-    pub fn persist_stats(&mut self, counters: &std::collections::BTreeMap<String, u64>) -> std::io::Result<()> {
-        self.log.append(Event::StatsSet { counters: counters.iter().map(|(k, v)| (k.clone(), *v)).collect() })?;
+    /// The persisted per-channel activity, to seed BOTSTATS on startup.
+    pub fn persisted_chan_stats(&self) -> ChanStats {
+        self.net.chan_stats.clone()
+    }
+
+    /// Snapshot the live stats (shared counters + per-channel activity) to the log
+    /// so they survive a restart.
+    pub fn persist_stats(
+        &mut self,
+        counters: &std::collections::BTreeMap<String, u64>,
+        chan_stats: ChanStats,
+    ) -> std::io::Result<()> {
+        self.log.append(Event::StatsSet {
+            counters: counters.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+            channels: chan_stats.clone(),
+        })?;
         self.net.stats = counters.clone();
+        self.net.chan_stats = chan_stats;
         Ok(())
     }
 
