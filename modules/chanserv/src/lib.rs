@@ -360,6 +360,11 @@ fn peace_blocks(me: &str, from: &Sender, chan: &str, target_uid: &str, ctx: &mut
     if !info.peace {
         return false;
     }
+    // Acting on yourself (e.g. DEOP with no target) isn't acting "against" anyone,
+    // so PEACE never applies — you can always drop your own status.
+    if target_uid == from.uid {
+        return false;
+    }
     if info.access_rank(net.account_of(target_uid)) >= info.access_rank(from.account) {
         ctx.notice(me, from.uid, "\x02PEACE\x02 is set: you can't act against someone with equal or higher access.");
         return true;

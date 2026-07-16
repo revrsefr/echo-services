@@ -1070,6 +1070,35 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't registered"))), "unknown channel refused: {out:?}");
     }
 
+    // DEOP with no target deops yourself; PEACE (no acting against equal-or-higher
+    // access) must NOT block that — you can always drop your own status.
+    #[test]
+    fn chanserv_deop_self_allowed_under_peace() {
+        use echo_chanserv::ChanServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-csdeopself.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: true });
+        let cs = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: text.into() });
+        cs(&mut e, "SET #c PEACE ON");
+        let out = cs(&mut e, "DEOP #c"); // no target = self
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "-o 000AAAAAB")), "self-deop applies -o: {out:?}");
+        assert!(!out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("PEACE"))), "self-deop must not be PEACE-blocked: {out:?}");
+    }
+
     // NickServ LIST is auspex-gated and glob-matches; UPDATE refreshes a session.
     #[test]
     fn nickserv_list_and_update() {
