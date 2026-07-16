@@ -34,6 +34,12 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
             return;
         }
     };
+    // The forbidden list may have grown since the request was filed; a user's
+    // request must still obey it (an operator's own SET is a deliberate override).
+    if db.vhost_is_forbidden(&host) {
+        ctx.notice(me, from.uid, format!("Can't activate: \x02{host}\x02 is on the forbidden list."));
+        return;
+    }
     match db.set_vhost(account, &host, from.nick, None) {
         Ok(()) => {
             for uid in net.uids_logged_into(account) {

@@ -2324,6 +2324,13 @@
         assert!(says(&hs(&mut e, "000AAAAAB", "WAITING"), "No vhost requests"), "no request left after reject");
         // A non-operator can't approve.
         assert!(says(&hs(&mut e, "000AAAAAV", "WAITING"), "Access denied"), "oper-gated");
+
+        // A host forbidden AFTER its request is filed must not slip through ACTIVATE.
+        hs(&mut e, "000AAAAAB", "REQUEST evilcorp.example");
+        hs(&mut e, "000AAAAAB", "FORBID (?i)evilcorp");
+        let out = hs(&mut e, "000AAAAAB", "ACTIVATE boss");
+        assert!(says(&out, "forbidden list"), "activate refused for a now-forbidden host: {out:?}");
+        assert!(!out.iter().any(|a| matches!(a, NetAction::SetHost { .. })), "no vhost applied when forbidden: {out:?}");
     }
 
     // StatServ reports per-channel activity (#channel) and the global registry
