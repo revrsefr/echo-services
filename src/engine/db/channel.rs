@@ -198,6 +198,7 @@ impl Db {
             ChanSetting::Peace => settings.peace = on,
             ChanSetting::SecureOps => settings.secureops = on,
             ChanSetting::Restricted => settings.restricted = on,
+            ChanSetting::AutoOp => settings.noautoop = !on, // stored inverted (default on)
             ChanSetting::KeepTopic => settings.keeptopic = on,
             ChanSetting::TopicLock => settings.topiclock = on,
             ChanSetting::BotGreet => settings.bot_greet = on,

@@ -69,9 +69,10 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         Some("PEACE") => toggle(me, from, ctx, db, chan, ChanSetting::Peace, args.get(3).copied()),
         Some("SECUREOPS") => toggle(me, from, ctx, db, chan, ChanSetting::SecureOps, args.get(3).copied()),
         Some("RESTRICTED") => toggle(me, from, ctx, db, chan, ChanSetting::Restricted, args.get(3).copied()),
+        Some("AUTOOP") => toggle(me, from, ctx, db, chan, ChanSetting::AutoOp, args.get(3).copied()),
         Some("KEEPTOPIC") => toggle(me, from, ctx, db, chan, ChanSetting::KeepTopic, args.get(3).copied()),
         Some("TOPICLOCK") => toggle(me, from, ctx, db, chan, ChanSetting::TopicLock, args.get(3).copied()),
-        _ => ctx.notice(me, from.uid, "Syntax: SET <#channel> FOUNDER <account> | SUCCESSOR <account>|OFF | DESC <text> | SIGNKICK {ON|OFF} | PRIVATE {ON|OFF} | PEACE {ON|OFF} | SECUREOPS {ON|OFF} | RESTRICTED {ON|OFF} | KEEPTOPIC {ON|OFF} | TOPICLOCK {ON|OFF}"),
+        _ => ctx.notice(me, from.uid, "Syntax: SET <#channel> FOUNDER <account> | SUCCESSOR <account>|OFF | DESC <text> | SIGNKICK {ON|OFF} | PRIVATE {ON|OFF} | PEACE {ON|OFF} | SECUREOPS {ON|OFF} | RESTRICTED {ON|OFF} | AUTOOP {ON|OFF} | KEEPTOPIC {ON|OFF} | TOPICLOCK {ON|OFF}"),
     }
 }
 
@@ -83,6 +84,7 @@ fn label(setting: ChanSetting) -> &'static str {
         ChanSetting::Peace => "PEACE",
         ChanSetting::SecureOps => "SECUREOPS",
         ChanSetting::Restricted => "RESTRICTED",
+        ChanSetting::AutoOp => "AUTOOP",
         ChanSetting::KeepTopic => "KEEPTOPIC",
         ChanSetting::TopicLock => "TOPICLOCK",
         ChanSetting::BotGreet => "GREET",

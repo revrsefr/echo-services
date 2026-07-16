@@ -1162,6 +1162,36 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::Kick { uid, channel, .. } if uid == "000AAAAAC" && channel == "#c")), "no-access user kicked: {out:?}");
     }
 
+    // ChanServ SET AUTOOP OFF suppresses auto-op on join (on by default).
+    #[test]
+    fn chanserv_autoop_off_suppresses_status() {
+        use echo_chanserv::ChanServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-autoop.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let opped = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+o 000AAAAAB"));
+
+        // Default: the founder is auto-opped on join.
+        assert!(opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false })), "auto-op on by default");
+        e.handle(NetEvent::Part { uid: "000AAAAAB".into(), channel: "#c".into() });
+        // Turn AUTOOP off; now a join is not auto-opped.
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "SET #c AUTOOP OFF".into() });
+        assert!(!opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false })), "no auto-op when AUTOOP is off");
+    }
+
     // BotServ BOT ADD/LIST is oper-gated (Priv::Admin) and the bot is remembered.
     #[test]
     fn botserv_bot_add_list_is_oper_gated() {

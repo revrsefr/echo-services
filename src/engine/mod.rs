@@ -826,13 +826,17 @@ impl Engine {
                         return out;
                     }
                 }
+                // AUTOOP (on by default): whether access members are auto-opped here.
+                let autoop = self.db.channel(&channel).is_none_or(|c| !c.settings.noautoop);
                 match mode {
                     // A user with access gets their status mode, plus the entry message.
                     Some(m) => {
                         if let Some(msg) = entrymsg {
                             out.push(NetAction::Notice { from: from.clone(), to: uid.clone(), text: msg });
                         }
-                        out.push(NetAction::ChannelMode { from, channel, modes: format!("{m} {uid}") });
+                        if autoop {
+                            out.push(NetAction::ChannelMode { from, channel, modes: format!("{m} {uid}") });
+                        }
                     }
                     // No access: an auto-kick match is banned and kicked, else greeted.
                     None => {

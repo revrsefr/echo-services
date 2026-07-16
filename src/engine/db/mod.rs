@@ -355,6 +355,10 @@ pub struct ChanSettings {
     // Kick anyone without channel access when they join.
     #[serde(default)]
     pub restricted: bool,
+    // Stored inverted so it defaults to auto-op ON: when set, access members are
+    // NOT auto-opped on join (they must UP). SET AUTOOP toggles it.
+    #[serde(default)]
+    pub noautoop: bool,
     // Remember the topic and restore it when the channel is recreated.
     #[serde(default)]
     pub keeptopic: bool,

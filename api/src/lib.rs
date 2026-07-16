@@ -756,6 +756,8 @@ pub enum ChanSetting {
     TopicLock,
     // Kick users without channel access when they join.
     Restricted,
+    // Auto-op/voice access members on join (on by default).
+    AutoOp,
     // BotServ: show members' personal greets on join.
     BotGreet,
     // BotServ: forbid the founder from (un)assigning a bot (admin override only).
