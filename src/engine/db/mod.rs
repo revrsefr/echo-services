@@ -883,14 +883,20 @@ impl EventLog {
     }
 }
 
-// What an ingested entry did to a locally-known account, so the engine can log
-// out sessions that were relying on it.
-pub enum AccountChange {
+// A side-effect an ingested (gossiped) entry needs the engine to carry out on
+// the local ircd — the peer only changed shared state, so anything the ircd must
+// be told (log a session out, add/lift a network ban) is signalled back here.
+pub enum IngestEffect {
     TakenOver(String),
     Dropped(String),
     // A gossiped suspension that is now in force: local sessions must be logged
     // out, but the account (and its channels) stay put.
     Suspended(String),
+    // A gossiped network ban (AKILL/SQLINE/…) that must be pushed to the local
+    // ircd now, not just held for the next netburst. `duration` is the remaining
+    // seconds (0 = permanent).
+    BanAdded { kind: String, mask: String, setter: String, duration: u64, reason: String },
+    BanLifted { kind: String, mask: String },
 }
 
 // A fingerprint is hex (hash digest), optionally colon-separated. Bound the
@@ -1022,7 +1028,7 @@ impl Db {
     /// of the gossip seam. Idempotent (re-delivered entries are dropped). Returns
     /// the account name if this ingest changed its owner (a registration conflict
     /// resolved against the local claim), so the caller can log out stale sessions.
-    pub fn ingest(&mut self, entry: LogEntry) -> std::io::Result<Option<AccountChange>> {
+    pub fn ingest(&mut self, entry: LogEntry) -> std::io::Result<Option<IngestEffect>> {
         // Snapshot the incoming account's local owner before applying, to detect a
         // takeover (home changed) or a remote drop (it disappears).
         let watched: Option<(String, Option<String>)> = match &entry.event {
@@ -1036,21 +1042,36 @@ impl Db {
             Event::AccountSuspended { account, .. } => Some(account.clone()),
             _ => None,
         });
+        // A freshly applied network ban must be pushed to the local ircd now.
+        let ban = applied.as_ref().and_then(|e| match e {
+            Event::AkillAdded { kind, mask, setter, reason, expires, .. } => Some(IngestEffect::BanAdded {
+                kind: kind.clone(),
+                mask: mask.clone(),
+                setter: setter.clone(),
+                duration: (*expires).map(|x| x.saturating_sub(now())).unwrap_or(0),
+                reason: reason.clone(),
+            }),
+            Event::AkillRemoved { kind, mask } => Some(IngestEffect::BanLifted { kind: kind.clone(), mask: mask.clone() }),
+            _ => None,
+        });
         if let Some(event) = applied {
             apply(&mut self.accounts, &mut self.channels, &mut self.grouped, &mut self.bots, &mut self.host_cfg, &mut self.net, event);
         }
         if let Some((name, prev_home)) = watched {
             match (prev_home, self.account(&name).map(|c| c.home.clone())) {
-                (Some(prev), Some(cur)) if cur != prev => return Ok(Some(AccountChange::TakenOver(name))),
-                (Some(_), None) => return Ok(Some(AccountChange::Dropped(name))),
+                (Some(prev), Some(cur)) if cur != prev => return Ok(Some(IngestEffect::TakenOver(name))),
+                (Some(_), None) => return Ok(Some(IngestEffect::Dropped(name))),
                 _ => {}
             }
         }
         if let Some(account) = suspended {
             // Only if the suspension is actually in force (not an already-expired one).
             if self.is_suspended(&account) {
-                return Ok(Some(AccountChange::Suspended(account)));
+                return Ok(Some(IngestEffect::Suspended(account)));
             }
+        }
+        if let Some(effect) = ban {
+            return Ok(Some(effect));
         }
         Ok(None)
     }

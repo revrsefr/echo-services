@@ -461,18 +461,28 @@ impl Engine {
         // If ingesting a peer's entry removed an account a local session or channel
         // relied on (lost a conflict, or dropped elsewhere), clean up after it.
         let gone = match self.db.ingest(entry)? {
-            Some(db::AccountChange::TakenOver(a)) => {
+            Some(db::IngestEffect::TakenOver(a)) => {
                 self.handle_account_gone(&a, "collided with another network and no longer belongs to you");
                 true
             }
-            Some(db::AccountChange::Dropped(a)) => {
+            Some(db::IngestEffect::Dropped(a)) => {
                 self.handle_account_gone(&a, "was dropped");
                 true
             }
-            Some(db::AccountChange::Suspended(a)) => {
+            Some(db::IngestEffect::Suspended(a)) => {
                 // A gossiped suspension keeps the account and its channels, but its
                 // live sessions here must end (a local SUSPEND logs them out too).
                 self.logout_account_sessions(&a, "was suspended");
+                false
+            }
+            Some(db::IngestEffect::BanAdded { kind, mask, setter, duration, reason }) => {
+                // Push the gossiped network ban to our ircd now, rather than only
+                // holding it for the next netburst.
+                self.emit_irc(NetAction::AddLine { kind, mask, setter, duration, reason });
+                false
+            }
+            Some(db::IngestEffect::BanLifted { kind, mask }) => {
+                self.emit_irc(NetAction::DelLine { kind, mask });
                 false
             }
             None => false,

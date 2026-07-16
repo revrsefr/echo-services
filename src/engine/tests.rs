@@ -469,6 +469,37 @@
         assert!(told, "the user is told they were suspended");
     }
 
+    // A network ban that arrives by gossip is pushed to the local ircd right
+    // away, not just held for the next netburst — otherwise a banned user could
+    // hop to a peer network until its next relink.
+    #[test]
+    fn gossiped_network_ban_is_pushed_to_the_ircd() {
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-gossipban.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let db = Db::open(&path, "test");
+        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+        e.set_sid("42S".into());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        e.set_irc_out(tx);
+
+        // A peer sets a permanent G-line; it must be applied to our ircd now.
+        e.gossip_ingest(LogEntry::for_test("peer", 0, 1, db::Event::AkillAdded {
+            kind: "G".into(), mask: "*@evil.example".into(), setter: "peer-oper".into(), reason: "spam".into(), ts: 0, expires: None,
+        })).unwrap();
+        let added = std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|a| matches!(a, NetAction::AddLine { kind, mask, duration, .. } if kind == "G" && mask == "*@evil.example" && duration == 0));
+        assert!(added, "gossiped ban pushed to the ircd immediately");
+
+        // A peer lifts it; the ircd is told to drop the line.
+        e.gossip_ingest(LogEntry::for_test("peer", 1, 2, db::Event::AkillRemoved {
+            kind: "G".into(), mask: "*@evil.example".into(),
+        })).unwrap();
+        let lifted = std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|a| matches!(a, NetAction::DelLine { kind, mask } if kind == "G" && mask == "*@evil.example"));
+        assert!(lifted, "gossiped ban lift removes the line from the ircd");
+    }
+
     // Losing a registration conflict logs out the local session on that name and
     // notifies them over the services-initiated outbound path.
     #[test]
