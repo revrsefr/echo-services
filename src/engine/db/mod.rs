@@ -422,6 +422,9 @@ pub struct ChannelInfo {
     // Channel homepage URL, shown in INFO (empty = none).
     #[serde(default)]
     pub url: String,
+    // Channel contact email, shown in INFO (empty = none).
+    #[serde(default)]
+    pub email: String,
     // On/off options set via ChanServ SET.
     #[serde(default)]
     pub settings: ChanSettings,

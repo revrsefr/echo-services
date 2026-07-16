@@ -377,6 +377,9 @@ impl Store for Db {
     fn set_url(&mut self, channel: &str, url: &str) -> Result<(), ChanError> {
         Db::set_url(self, channel, url)
     }
+    fn set_channel_email(&mut self, channel: &str, email: &str) -> Result<(), ChanError> {
+        Db::set_channel_email(self, channel, email)
+    }
     fn set_channel_setting(&mut self, channel: &str, setting: ChanSetting, on: bool) -> Result<(), ChanError> {
         Db::set_channel_setting(self, channel, setting, on)
     }
@@ -559,6 +562,7 @@ fn channel_view(c: &ChannelInfo) -> ChannelView {
         desc: c.desc.clone(),
         entrymsg: c.entrymsg.clone(),
         url: c.url.clone(),
+        email: c.email.clone(),
         signkick: c.settings.signkick,
         private: c.settings.private,
         peace: c.settings.peace,

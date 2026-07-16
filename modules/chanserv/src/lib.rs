@@ -51,7 +51,7 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "REGISTER", summary: "register a channel", detail: "Syntax: \x02REGISTER <#channel>\x02\nRegisters a channel to you. You must currently hold ops in it." },
     HelpEntry { cmd: "INFO", summary: "show channel information", detail: "Syntax: \x02INFO <#channel>\x02\nShows a channel's registration and settings." },
     HelpEntry { cmd: "LIST", summary: "list registered channels", detail: "Syntax: \x02LIST\x02\nLists registered channels." },
-    HelpEntry { cmd: "SET", summary: "change founder or settings", detail: "Syntax: \x02SET <#channel> FOUNDER <account> | DESC <text> | URL [address] | SUCCESSOR <account>|OFF | SIGNKICK|PRIVATE|PEACE|SECUREOPS|RESTRICTED|AUTOOP|KEEPTOPIC|TOPICLOCK {ON|OFF}\x02\nTransfers the founder or changes a channel setting." },
+    HelpEntry { cmd: "SET", summary: "change founder or settings", detail: "Syntax: \x02SET <#channel> FOUNDER <account> | DESC <text> | URL [address] | EMAIL [address] | SUCCESSOR <account>|OFF | SIGNKICK|PRIVATE|PEACE|SECUREOPS|RESTRICTED|AUTOOP|KEEPTOPIC|TOPICLOCK {ON|OFF}\x02\nTransfers the founder or changes a channel setting." },
     HelpEntry { cmd: "ACCESS", summary: "manage the access list", detail: "Syntax: \x02ACCESS <#channel> LIST | ADD <account> <op|voice> | DEL <account>\x02\nManages the channel access list." },
     HelpEntry { cmd: "FLAGS", summary: "granular per-account flags", detail: "Syntax: \x02FLAGS <#channel> [account [+/-flags]]\x02\nViews or changes granular per-account channel flags." },
     HelpEntry { cmd: "AOP/SOP/VOP", summary: "tiered access shortcuts", detail: "Syntax: \x02AOP|SOP|VOP <#channel> ADD <account> | DEL <account> | LIST\x02\nTiered shortcuts over ACCESS: AOP and SOP grant op, VOP grants voice." },
@@ -159,6 +159,9 @@ impl Service for ChanServ {
                         }
                         if !info.url.is_empty() {
                             ctx.notice(me, from.uid, format!("  URL        : {}", info.url));
+                        }
+                        if !info.email.is_empty() {
+                            ctx.notice(me, from.uid, format!("  Email      : {}", info.email));
                         }
                         ctx.notice(me, from.uid, format!("  Registered : {}", echo_api::human_time(info.ts)));
                         if let Some(s) = db.channel_suspension(chan) {

@@ -49,6 +49,7 @@ pub enum Event {
     ChannelDescSet { channel: String, desc: String },
     ChannelEntryMsgSet { channel: String, msg: String },
     ChannelUrlSet { channel: String, url: String },
+    ChannelEmailSet { channel: String, email: String },
     ChannelSettingsSet { channel: String, settings: ChanSettings },
     ChannelKickerSet { channel: String, kickers: KickerSettings },
     ChannelBadwordsSet { channel: String, badwords: Vec<String> },
@@ -210,6 +211,7 @@ impl Event {
             | Event::ChannelDescSet { .. }
             | Event::ChannelEntryMsgSet { .. }
             | Event::ChannelUrlSet { .. }
+            | Event::ChannelEmailSet { .. }
             | Event::ChannelSettingsSet { .. }
             | Event::ChannelKickerSet { .. }
             | Event::ChannelBadwordsSet { .. }
@@ -395,7 +397,7 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
             grouped.remove(&key(&nick));
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), successor: None, desc: String::new(), entrymsg: String::new(), url: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), successor: None, desc: String::new(), entrymsg: String::new(), url: String::new(), email: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
@@ -446,6 +448,11 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         Event::ChannelUrlSet { channel, url } => {
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.url = url;
+            }
+        }
+        Event::ChannelEmailSet { channel, email } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.email = email;
             }
         }
         Event::ChannelSettingsSet { channel, settings } => {

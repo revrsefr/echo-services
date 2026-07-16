@@ -4204,6 +4204,12 @@
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c URL"), "cleared"));
         assert!(!notice(&to_cs(&mut e, "000AAAAAB", "INFO #c"), "example.org"), "cleared URL no longer shows");
 
+        // Contact email is stored, shows in INFO, and clears when set empty.
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c EMAIL staff@example.org"), "updated"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "INFO #c"), "staff@example.org"));
+        assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c EMAIL"), "cleared"));
+        assert!(!notice(&to_cs(&mut e, "000AAAAAB", "INFO #c"), "staff@example.org"), "cleared email no longer shows");
+
         // Transfer to a non-account is refused.
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c FOUNDER nobody"), "isn't a registered account"));
 
