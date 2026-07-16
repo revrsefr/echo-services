@@ -333,7 +333,9 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         Event::AccountPasswordSet { account, scram256, scram512 } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {
                 a.scram256 = Some(scram256);
-                a.scram512 = Some(scram512);
+                // Empty = not provided (e.g. a verifier-only backfill sets SHA-256
+                // alone); keep this in step with the live provision update.
+                a.scram512 = (!scram512.is_empty()).then_some(scram512);
             }
         }
         Event::AccountDropped { account } => {

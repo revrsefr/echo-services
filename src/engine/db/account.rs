@@ -42,11 +42,27 @@ impl Db {
     /// can't clobber a fully-credentialed account). `scram512` empty =
     /// SCRAM-SHA-512 unavailable for this account (it falls back to 256).
     pub fn provision_account(&mut self, name: &str, scram256: &str, scram512: &str, email: Option<String>) -> Result<(), RegError> {
-        if self.exists(name) {
-            return Err(RegError::Exists);
-        }
         if name.is_empty() || scram256.is_empty() {
             return Err(RegError::Internal);
+        }
+        // The account may already exist without a verifier — an Anope import
+        // creates accounts (channel ownership, vhosts, etc.) but can't carry the
+        // one-way password hash. When the external authority then asserts a
+        // verifier, set it in place rather than refusing, or migrated users could
+        // never log in. Keyed by name, so all imported data stays attached.
+        if self.exists(name) {
+            self.log
+                .append(Event::AccountPasswordSet {
+                    account: name.to_string(),
+                    scram256: scram256.to_string(),
+                    scram512: scram512.to_string(),
+                })
+                .map_err(|_| RegError::Internal)?;
+            if let Some(acct) = self.accounts.get_mut(&key(name)) {
+                acct.scram256 = Some(scram256.to_string());
+                acct.scram512 = (!scram512.is_empty()).then(|| scram512.to_string());
+            }
+            return Ok(());
         }
         let account = Account {
             name: name.to_string(),

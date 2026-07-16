@@ -613,13 +613,15 @@ mod tests {
             .into_inner();
         assert_eq!(prov.status, PbStatus::Ok as i32);
 
-        // Backfill is safe to re-run: an existing account isn't clobbered.
+        // Re-provisioning an existing account SETS its verifier (the migration
+        // case: an imported account with no credential gets one) — and is safe to
+        // re-run with the same verifier.
         let dup = svc
             .provision(authed(ProvisionRequest { name: "heidi".into(), scram256: creds.scram256.clone(), scram512: String::new(), email: String::new() }, "t"))
             .await
             .unwrap()
             .into_inner();
-        assert_eq!(dup.status, PbStatus::AlreadyExists as i32);
+        assert_eq!(dup.status, PbStatus::Ok as i32);
 
         // A missing scram256 is rejected, and a bad bearer never gets in.
         let invalid = svc

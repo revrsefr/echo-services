@@ -382,6 +382,33 @@
         assert!(db.authenticate("ext", "wrong").is_none(), "wrong password rejected");
     }
 
+    // The migration flow: an Anope import creates the account with NO verifier
+    // (one-way hash can't move), then the authority provisions the verifier. That
+    // second provision must SET the credential on the existing account, not be
+    // refused — otherwise every migrated member is locked out of password login.
+    #[test]
+    fn provision_sets_verifier_on_an_imported_account() {
+        let p = tmp("prov-imported");
+        {
+            let mut db = Db::open(&p, "N1");
+            db.migrate_append(Event::AccountRegistered(Box::new(Account {
+                name: "mig".into(), email: Some("m@x".into()), ts: 1, home: "N1".into(),
+                scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![],
+                suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true,
+                memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false,
+                hide_status: false, vhost: None, vhost_request: None, last_seen: 1,
+                noexpire: false, expiry_warned: false, oper_note: None,
+            }))).unwrap();
+        }
+        // Reopen so the imported account is live in memory (as after a restart).
+        let mut db = Db::open(&p, "N1");
+        db.scram_iterations = 4096;
+        assert!(db.authenticate("mig", "hunter2").is_none(), "imported account has no verifier yet");
+        let creds = Db::derive_credentials("hunter2", 4096).unwrap();
+        db.provision_account("mig", &creds.scram256, "", None).unwrap();
+        assert_eq!(db.authenticate("mig", "hunter2"), Some("mig"), "provision set the verifier on the existing account");
+    }
+
     // A peer with an empty log converges from a node that has already compacted.
     #[test]
     fn compacted_node_still_converges() {

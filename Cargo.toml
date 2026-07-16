@@ -24,7 +24,7 @@ members = [
 name = "echo"
 version = "0.0.1"
 edition = "2021"
-description = "Federated IRC services daemon (protocol-agnostic core, InspIRCd link first)"
+description = "Echo the modern IRC Services"
 license = "AGPL-3.0-or-later"
 
 [dependencies]
