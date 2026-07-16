@@ -326,6 +326,29 @@ pub fn import_anope(anope_path: &str, out_path: &str, node: &str) -> std::io::Re
         sum.memos += 1;
     }
 
+    // Transparency: name every Anope record type that echo has no concept of, so
+    // the operator sees exactly what will not carry over rather than finding out
+    // later. These are either ephemeral (activity, network counters, third-party
+    // caches) or a field echo doesn't model — nothing silently vanishes.
+    for m in records(&data, "NSMiscData") {
+        let who = field(m, "nc").unwrap_or("?");
+        let what = field(m, "name").unwrap_or("misc field");
+        sum.skipped.push(format!("account {who}: {what} — echo has no per-account misc field"));
+    }
+    let unmodelled = [
+        ("SeenInfo", "last-seen/activity history (re-accrues live)"),
+        ("Stats", "network max-user counters (ephemeral)"),
+        ("YouTubeCache", "third-party YouTube module cache"),
+        ("YouTubeChanStats", "third-party YouTube module stats"),
+        ("YouTubeUserStats", "third-party YouTube module stats"),
+    ];
+    for (kind, note) in unmodelled {
+        let n = records(&data, kind).len();
+        if n > 0 {
+            sum.skipped.push(format!("{n} {kind} record(s) not migrated: {note}"));
+        }
+    }
+
     // Round-trip check: reopen the produced log and confirm it replays to state
     // (this is exactly what the daemon does on start).
     drop(db);
