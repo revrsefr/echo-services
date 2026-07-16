@@ -21,7 +21,7 @@ impl Db {
             ajoin: Vec::new(),
             suspension: None,
             memos: Vec::new(), memo_ignore: Vec::new(), memo_notify: true, memo_limit: None,
-            greet: String::new(), no_autoop: false,
+            greet: String::new(), no_autoop: false, no_protect: false,
             vhost: None,
             vhost_request: None,
             last_seen: now(),
@@ -60,7 +60,7 @@ impl Db {
             ajoin: Vec::new(),
             suspension: None,
             memos: Vec::new(), memo_ignore: Vec::new(), memo_notify: true, memo_limit: None,
-            greet: String::new(), no_autoop: false,
+            greet: String::new(), no_autoop: false, no_protect: false,
             vhost: None,
             vhost_request: None,
             last_seen: now(),
@@ -432,6 +432,22 @@ impl Db {
     /// Whether `account` wants auto-op on join (default true). Unknown = true.
     pub fn account_wants_autoop(&self, account: &str) -> bool {
         self.accounts.get(&key(account)).is_none_or(|a| !a.no_autoop)
+    }
+
+    /// Set whether `account`'s nicks are protected by the enforcer (SET KILL).
+    pub fn set_account_kill(&mut self, account: &str, on: bool) -> Result<(), RegError> {
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return Err(RegError::Internal);
+        }
+        self.log.append(Event::AccountKillSet { account: account.to_string(), on }).map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().no_protect = !on;
+        Ok(())
+    }
+
+    /// Whether `account`'s nicks are protected by the enforcer (default true).
+    pub fn account_wants_protect(&self, account: &str) -> bool {
+        self.accounts.get(&key(account)).is_none_or(|a| !a.no_protect)
     }
 
     /// Replace `account`'s password with freshly derived credentials.

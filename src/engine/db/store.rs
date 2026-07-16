@@ -88,6 +88,12 @@ impl Store for Db {
     fn account_wants_autoop(&self, account: &str) -> bool {
         Db::account_wants_autoop(self, account)
     }
+    fn set_account_kill(&mut self, account: &str, on: bool) -> Result<(), RegError> {
+        Db::set_account_kill(self, account, on)
+    }
+    fn account_wants_protect(&self, account: &str) -> bool {
+        Db::account_wants_protect(self, account)
+    }
     fn set_vhost(&mut self, account: &str, host: &str, setter: &str, ttl: Option<u64>) -> Result<(), RegError> {
         Db::set_vhost(self, account, host, setter, ttl)
     }

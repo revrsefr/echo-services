@@ -411,7 +411,7 @@
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)));
         e.gossip_ingest(entry).unwrap();
@@ -664,6 +664,43 @@
         let renamed = std::iter::from_fn(|| rx.try_recv().ok())
             .any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAB" && nick.starts_with("Guest")));
         assert!(renamed, "unidentified user on a registered nick is renamed after grace");
+    }
+
+    // NickServ SET KILL OFF opts an account out of nick protection: an
+    // unidentified user on the nick is neither prompted nor renamed.
+    #[test]
+    fn nick_protection_disabled_by_set_kill_off() {
+        let mut e = engine_with("nickkill", "alice", "sesame");
+        e.set_sid("42S".into());
+        e.now_override = Some(1000);
+        e.handle(NetEvent::EndBurst);
+
+        // Owner identifies (holding the nick) and turns protection off.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAA".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "SET KILL OFF".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("off"))), "KILL OFF confirmed: {out:?}");
+        assert!(!e.db.account_wants_protect("alice"), "protection preference stored off");
+        e.handle(NetEvent::Quit { uid: "000AAAAAA".into() });
+
+        // An unidentified intruder takes the nick: no prompt, and no rename at grace.
+        let out = e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        assert!(!out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("registered"))), "no prompt when KILL is off: {out:?}");
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        e.set_irc_out(tx);
+        e.now_override = Some(1000 + ENFORCE_GRACE + 1);
+        e.enforce_sweep();
+        assert!(rx.try_recv().is_err(), "no rename when KILL is off");
+
+        // Turning it back on restores enforcement for the next arrival.
+        e.handle(NetEvent::Quit { uid: "000AAAAAB".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAA".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "SET KILL ON".into() });
+        assert!(e.db.account_wants_protect("alice"), "protection preference stored on");
+        e.handle(NetEvent::Quit { uid: "000AAAAAA".into() });
+        let out = e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("registered"))), "prompt returns when KILL back on: {out:?}");
     }
 
     // Identifying before the grace period cancels the pending rename.

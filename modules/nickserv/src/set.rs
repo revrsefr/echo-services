@@ -35,6 +35,25 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
+        Some("KILL") => {
+            // Anope accepts ON/QUICK/IMMED/OFF; grace here is a fixed interval, so
+            // the finer variants simply enable protection like ON.
+            let on = match args.get(2).map(|s| s.to_ascii_uppercase()) {
+                Some(v) if v == "ON" || v == "QUICK" || v == "IMMED" || v == "IMMEDIATE" => Some(true),
+                Some(v) if v == "OFF" => Some(false),
+                _ => None,
+            };
+            let Some(on) = on else {
+                let state = if db.account_wants_protect(account) { "ON" } else { "OFF" };
+                ctx.notice(me, from.uid, format!("KILL (nick protection) is \x02{state}\x02. Syntax: SET KILL {{ON|OFF}}"));
+                return;
+            };
+            match db.set_account_kill(account, on) {
+                Ok(()) if on => ctx.notice(me, from.uid, "Nick protection is \x02on\x02: someone using your nick without identifying will be renamed."),
+                Ok(()) => ctx.notice(me, from.uid, "Nick protection is \x02off\x02: your registered nicks won't be enforced."),
+                Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+            }
+        }
         Some("AUTOOP") => {
             let Some(on) = args.get(2).and_then(|s| parse_toggle(s)) else {
                 let state = if db.account_wants_autoop(account) { "ON" } else { "OFF" };
@@ -57,7 +76,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
-        _ => ctx.notice(me, from.uid, "Syntax: SET PASSWORD <newpassword> | SET EMAIL [address] | SET GREET [message] | SET AUTOOP {ON|OFF}"),
+        _ => ctx.notice(me, from.uid, "Syntax: SET PASSWORD <newpassword> | SET EMAIL [address] | SET GREET [message] | SET AUTOOP {ON|OFF} | SET KILL {ON|OFF}"),
     }
 }
 

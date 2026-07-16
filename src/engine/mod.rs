@@ -579,6 +579,9 @@ impl Engine {
         if self.network.account_of(uid) == Some(account.as_str()) {
             return Vec::new(); // already identified to it
         }
+        if !self.db.account_wants_protect(&account) {
+            return Vec::new(); // owner turned nick protection off (SET KILL OFF)
+        }
         let Some(ns) = self.nick_service.clone() else { return Vec::new() };
         let deadline = self.now_secs() + ENFORCE_GRACE;
         self.pending_enforce.retain(|p| p.uid != uid);
@@ -1180,7 +1183,7 @@ fn audit_summary(event: &db::Event) -> Option<String> {
             format!("{verb} channel \x02{channel}\x02 against expiry")
         }
         // Private, self-service, or cosmetic — not surfaced.
-        AjoinAdded { .. } | AjoinRemoved { .. } | AccountGreetSet { .. } | AccountAutoOpSet { .. } | VhostRequested { .. }
+        AjoinAdded { .. } | AjoinRemoved { .. } | AccountGreetSet { .. } | AccountAutoOpSet { .. } | AccountKillSet { .. } | VhostRequested { .. }
         | VhostRequestCleared { .. } | MemoSent { .. } | MemoRead { .. } | MemoDeleted { .. }
         | MemoIgnoreAdd { .. } | MemoIgnoreDel { .. } | MemoPrefsSet { .. }
         | ChannelMlock { .. } | ChannelDescSet { .. } | ChannelEntryMsgSet { .. } | ChannelSettingsSet { .. }

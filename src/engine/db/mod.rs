@@ -96,6 +96,11 @@ pub struct Account {
     // (auto-op enabled) is the zero value.
     #[serde(default)]
     pub no_autoop: bool,
+    // NickServ SET KILL: when off, this account's nicks are not protected — an
+    // unidentified user keeping the nick is never renamed to a guest. Stored
+    // inverted so the default (protection enabled) is the zero value.
+    #[serde(default)]
+    pub no_protect: bool,
     // Assigned vhost (HostServ), applied to the displayed host on identify.
     #[serde(default)]
     pub vhost: Option<Vhost>,

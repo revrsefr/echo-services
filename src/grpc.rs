@@ -129,6 +129,7 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::AccountPasswordSet { .. }
         | Event::AccountGreetSet { .. }
         | Event::AccountAutoOpSet { .. }
+        | Event::AccountKillSet { .. }
         | Event::AjoinAdded { .. }
         | Event::AjoinRemoved { .. }
         | Event::VhostSet { .. }
@@ -462,7 +463,7 @@ mod tests {
             memo_ignore: vec![],
             memo_notify: true,
             memo_limit: None,
-            greet: String::new(), no_autoop: false,
+            greet: String::new(), no_autoop: false, no_protect: false,
             vhost: None,
             vhost_request: None,
             last_seen: 111,
