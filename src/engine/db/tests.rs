@@ -480,45 +480,44 @@
     // Fold parity: the live state after a broad sequence of writes must equal the
     // state rebuilt by replaying the same log — every event's manual live mutation
     // has to match its `apply()` arm, or a restart silently changes the data.
-    #[test]
-    fn live_state_matches_replay_after_a_broad_sequence() {
-        let p = tmp("foldparity");
-        let snapshot = |db: &Db| -> String {
-            let mut a: Vec<_> = db.accounts().cloned().collect();
-            a.sort_by(|x, y| x.name.cmp(&y.name));
-            let mut c: Vec<_> = db.channels().cloned().collect();
-            c.sort_by(|x, y| x.name.cmp(&y.name));
-            let mut b: Vec<_> = db.bots().cloned().collect();
-            b.sort_by(|x, y| x.nick.cmp(&y.nick));
-            let mut gn = db.groups();
-            gn.sort();
-            let gv: Vec<_> = gn.iter().filter_map(|n| db.group(n)).collect();
-            let mut ak = db.akills();
-            ak.sort_by(|x, y| x.mask.cmp(&y.mask));
-            let mut fb = db.forbids();
-            fb.sort_by(|x, y| x.mask.cmp(&y.mask));
-            let mut of = db.vhost_offers().to_vec();
-            of.sort();
-            let mut vf = db.vhost_forbidden().to_vec();
-            vf.sort();
-            let mut jp = db.jupes();
-            jp.sort();
-            let mut nw = db.news("logon");
-            nw.extend(db.news("oper"));
-            let rp = db.reports(false);
-            let hp = db.help_tickets(false);
-            let mut se = db.session_exceptions();
-            se.sort();
-            let mut op = db.opers_list();
-            op.sort();
-            let vt = db.vhost_template().map(str::to_string);
-            format!("{a:?}\n{c:?}\n{b:?}\n{gv:?}\n{ak:?}\n{fb:?}\n{of:?}\n{vf:?}\n{jp:?}\n{nw:?}\n{rp:?}\n{hp:?}\n{se:?}\n{op:?}\n{vt:?}")
-        };
+    // A canonical Debug snapshot of every persisted collection, sorted so the
+    // string is order-independent. Shared by the fold-parity and compaction tests.
+    fn broad_snapshot(db: &Db) -> String {
+        let mut a: Vec<_> = db.accounts().cloned().collect();
+        a.sort_by(|x, y| x.name.cmp(&y.name));
+        let mut c: Vec<_> = db.channels().cloned().collect();
+        c.sort_by(|x, y| x.name.cmp(&y.name));
+        let mut b: Vec<_> = db.bots().cloned().collect();
+        b.sort_by(|x, y| x.nick.cmp(&y.nick));
+        let mut gn = db.groups();
+        gn.sort();
+        let gv: Vec<_> = gn.iter().filter_map(|n| db.group(n)).collect();
+        let mut ak = db.akills();
+        ak.sort_by(|x, y| x.mask.cmp(&y.mask));
+        let mut fb = db.forbids();
+        fb.sort_by(|x, y| x.mask.cmp(&y.mask));
+        let mut of = db.vhost_offers().to_vec();
+        of.sort();
+        let mut vf = db.vhost_forbidden().to_vec();
+        vf.sort();
+        let mut jp = db.jupes();
+        jp.sort();
+        let mut nw = db.news("logon");
+        nw.extend(db.news("oper"));
+        let rp = db.reports(false);
+        let hp = db.help_tickets(false);
+        let mut se = db.session_exceptions();
+        se.sort();
+        let mut op = db.opers_list();
+        op.sort();
+        let vt = db.vhost_template().map(str::to_string);
+        format!("{a:?}\n{c:?}\n{b:?}\n{gv:?}\n{ak:?}\n{fb:?}\n{of:?}\n{vf:?}\n{jp:?}\n{nw:?}\n{rp:?}\n{hp:?}\n{se:?}\n{op:?}\n{vt:?}")
+    }
 
-        let live = {
-            let mut db = Db::open(&p, "N1");
-            db.scram_iterations = 4096;
-            db.register("alice", "pw", Some("a@x.io".into())).unwrap();
+    // Exercise ~45 event types, ending with a drop that must purge references.
+    fn build_broad_state(db: &mut Db) {
+        db.scram_iterations = 4096;
+        db.register("alice", "pw", Some("a@x.io".into())).unwrap();
             db.register("bob", "pw", None).unwrap();
             db.register("carol", "pw", None).unwrap();
             db.register_channel("#chan", "bob").unwrap();
@@ -569,15 +568,42 @@
             db.help_take(hid, "bob");
             db.oper_grant("carol", vec!["admin".into()], None);
             db.session_except_add("*@trusted.host", 10, "trusted");
-            db.group_set_founder("!other", "carol").unwrap();
-            // The compound one: dropping alice must purge her access, successorship
-            // and group standing — identically in the live path and on replay.
-            db.drop_account("alice").unwrap();
-            db.drop_channel("#other").unwrap();
-            snapshot(&db)
+        db.group_set_founder("!other", "carol").unwrap();
+        // The compound one: dropping alice must purge her access, successorship
+        // and group standing — identically in the live path and on replay.
+        db.drop_account("alice").unwrap();
+        db.drop_channel("#other").unwrap();
+    }
+
+    // Fold parity: live state after the sequence == state replayed from the log.
+    #[test]
+    fn live_state_matches_replay_after_a_broad_sequence() {
+        let p = tmp("foldparity");
+        let live = {
+            let mut db = Db::open(&p, "N1");
+            build_broad_state(&mut db);
+            broad_snapshot(&db)
         };
-        let replayed = snapshot(&Db::open(&p, "N1"));
+        let replayed = broad_snapshot(&Db::open(&p, "N1"));
         assert_eq!(live, replayed, "live state must equal the state replayed from the log");
+    }
+
+    // Compaction parity: rewriting the log to a snapshot must not lose anything —
+    // the state after compact()+reopen must equal the state before.
+    #[test]
+    fn compaction_preserves_all_state() {
+        let p = tmp("compactparity");
+        {
+            let mut db = Db::open(&p, "N1");
+            build_broad_state(&mut db);
+        }
+        let before = broad_snapshot(&Db::open(&p, "N1"));
+        {
+            let mut db = Db::open(&p, "N1");
+            db.compact().unwrap();
+        }
+        let after = broad_snapshot(&Db::open(&p, "N1"));
+        assert_eq!(before, after, "compaction must preserve every persisted field");
     }
 
     // Dropping an account erases every reference to it — channel access and

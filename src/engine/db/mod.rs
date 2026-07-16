@@ -362,7 +362,7 @@ pub struct AjoinEntry {
 
 // A channel's on/off options (ChanServ SET). Typed, not a bag of string flags,
 // so a new option is one field and the compiler proves every place handles it.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChanSettings {
     // Append "(requested by <nick>)" to ChanServ KICK reasons.
     #[serde(default)]
@@ -1101,7 +1101,19 @@ impl Db {
             if !c.entrymsg.is_empty() {
                 snapshot.push(Event::ChannelEntryMsgSet { channel: c.name.clone(), msg: c.entrymsg.clone() });
             }
-            if c.settings.signkick || c.settings.private || c.settings.peace || c.settings.secureops || c.settings.keeptopic || c.settings.topiclock {
+            if !c.url.is_empty() {
+                snapshot.push(Event::ChannelUrlSet { channel: c.name.clone(), url: c.url.clone() });
+            }
+            if !c.email.is_empty() {
+                snapshot.push(Event::ChannelEmailSet { channel: c.name.clone(), email: c.email.clone() });
+            }
+            if let Some(s) = &c.successor {
+                snapshot.push(Event::ChannelSuccessorSet { channel: c.name.clone(), successor: Some(s.clone()) });
+            }
+            if c.noexpire {
+                snapshot.push(Event::ChannelNoExpire { channel: c.name.clone(), on: true });
+            }
+            if c.settings != ChanSettings::default() {
                 snapshot.push(Event::ChannelSettingsSet { channel: c.name.clone(), settings: c.settings });
             }
             if !c.topic.is_empty() {
@@ -1181,6 +1193,9 @@ impl Db {
         }
         for e in &self.net.sess_exceptions {
             snapshot.push(Event::SessionExceptionAdded { mask: e.mask.clone(), limit: e.limit, reason: e.reason.clone() });
+        }
+        for j in &self.net.jupes {
+            snapshot.push(Event::JupeAdded { name: j.name.clone(), sid: j.sid.clone(), reason: j.reason.clone() });
         }
         self.log.compact(snapshot)?;
         tracing::info!(before, after = self.log.len(), "compacted event log");
