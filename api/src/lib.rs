@@ -128,6 +128,11 @@ pub enum NetAction {
     // fetches `verifier` cheaply, runs verify_plain off-thread, then calls
     // Engine::complete_authenticate with the boolean result and `then`.
     DeferAuthenticate { verifier: String, password: String, then: AuthThen },
+    // Internal only: redeem a website login keycard (`kc_…`) off-thread. The
+    // credential isn't a password, so it can't be SCRAM-verified; the link layer
+    // redeems `token` for `account` against Django's localhost login-token
+    // endpoint, then calls Engine::complete_authenticate with the result + `then`.
+    DeferKeycard { token: String, account: String, then: AuthThen },
     // Internal only: send an email (plaintext + optional HTML). The link layer
     // pipes it to the configured mail command off-thread; never serialized.
     SendEmail { to: String, subject: String, text: String, html: Option<String> },

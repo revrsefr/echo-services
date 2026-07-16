@@ -59,13 +59,30 @@ impl Engine {
                         // Decode, then defer the verify off the lock (the login
                         // finish lands in Engine::complete_authenticate).
                         match decode_plain(&response) {
+                            // A website login keycard (`kc_…`), not a password: it can't be
+                            // SCRAM-verified, so redeem it off-lock (link.rs) against Django.
+                            Some((authcid, passwd)) if passwd.starts_with("kc_") => {
+                                let account = match self.db.resolve_account(&authcid) {
+                                    Some(a) => a.to_string(),
+                                    None => authcid,
+                                };
+                                vec![NetAction::DeferKeycard {
+                                    token: passwd,
+                                    account: account.clone(),
+                                    then: AuthThen::Sasl { agent: agent.clone(), client: client.clone(), account },
+                                }]
+                            }
                             Some((authcid, passwd)) => match self.scram_verifier(&authcid) {
                                 Some((account, verifier)) => vec![NetAction::DeferAuthenticate {
                                     verifier,
                                     password: passwd,
                                     then: AuthThen::Sasl { agent: agent.clone(), client: client.clone(), account },
                                 }],
-                                None => mk("D", vec!["F".to_string()]),
+                                None => {
+                                    let mut out = mk("D", vec!["F".to_string()]);
+                                    out.extend(self.feed("AUTH", format!("\x0304✗\x03 {} — SASL PLAIN failed for \x02{authcid}\x02 (unknown account)", self.who(&client))));
+                                    out
+                                }
                             },
                             None => mk("D", vec!["F".to_string()]),
                         }

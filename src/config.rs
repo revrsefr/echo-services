@@ -41,6 +41,20 @@ pub struct Config {
     // and pushes accounts in; IRC can only authenticate.
     #[serde(default)]
     pub auth: Option<Auth>,
+    // Website single-use keycards (passwordless web login). Absent = keycard
+    // credentials (`kc_…` over SASL) are not honoured.
+    #[serde(default)]
+    pub keycard: Option<Keycard>,
+}
+
+// Redeeming a website login keycard: a member already authenticated on the
+// website connects with a one-time `kc_…` token instead of their password. We
+// hand it to Django's localhost login-token endpoint, which redeems it and
+// confirms the account. `url` is that endpoint; `api_key` matches its X-API-Key.
+#[derive(Debug, Deserialize, Clone)]
+pub struct Keycard {
+    pub url: String,
+    pub api_key: String,
 }
 
 // Account-authority configuration.

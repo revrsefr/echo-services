@@ -71,7 +71,7 @@ fn redact(line: &str) -> Cow<'_, str> {
 // One uplink session: connect, handshake + burst, then translate lines forever.
 // The engine is shared with the gossip layer, so it is locked per operation and
 // never held across the registration key-stretching await.
-pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr: &str, mut irc_rx: mpsc::UnboundedReceiver<NetAction>, email: Option<crate::config::Email>) -> Result<()> {
+pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr: &str, mut irc_rx: mpsc::UnboundedReceiver<NetAction>, email: Option<crate::config::Email>, keycard: Option<crate::config::Keycard>) -> Result<()> {
     let stream = TcpStream::connect(addr).await?;
     let (read, mut write) = stream.into_split();
     let mut lines = BufReader::new(read).lines();
@@ -127,6 +127,18 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
                             NetAction::DeferAuthenticate { verifier, password, then } => {
                                 let ok = tokio::task::spawn_blocking(move || {
                                     crate::engine::scram::verify_plain(crate::engine::scram::Hash::Sha256, &verifier, &password)
+                                })
+                                .await?;
+                                engine.lock().await.complete_authenticate(ok, then)
+                            }
+                            NetAction::DeferKeycard { token, account, then } => {
+                                // Redeem a website login keycard off the reactor (a localhost
+                                // HTTP round-trip), then finish the login under the lock — the
+                                // completion is identical to a password auth once we know the
+                                // outcome.
+                                let kc = keycard.clone();
+                                let ok = tokio::task::spawn_blocking(move || {
+                                    crate::keycard::redeem(kc.as_ref(), &account, &token)
                                 })
                                 .await?;
                                 engine.lock().await.complete_authenticate(ok, then)

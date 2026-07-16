@@ -6,6 +6,7 @@ mod engine;
 mod gossip;
 mod grpc;
 mod jsonrpc;
+mod keycard;
 mod link;
 mod migrate;
 mod proto;
@@ -262,7 +263,7 @@ async fn main() -> Result<()> {
     // just lets systemd stop us without waiting out the kill timeout.
     let shutdown_engine = engine.clone();
     tokio::select! {
-        res = link::run(proto, engine, &addr, irc_rx, cfg.email.clone()) => res,
+        res = link::run(proto, engine, &addr, irc_rx, cfg.email.clone(), cfg.keycard.clone()) => res,
         _ = shutdown_signal() => {
             // Flush stat counters so a clean stop/restart keeps StatServ history.
             shutdown_engine.lock().await.persist_stats();
