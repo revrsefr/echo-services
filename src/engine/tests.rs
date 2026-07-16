@@ -1923,6 +1923,16 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, .. } if channel == "#c")), "reintroduced bot rejoins #c: {out:?}");
     }
 
+    // Killing a service agent (NickServ etc.) reintroduces it — an oper can't
+    // take services off the network with a KILL.
+    #[test]
+    fn killed_service_agent_is_reintroduced() {
+        let mut e = engine_with("killagent", "alice", "sesame");
+        // engine_with wires NickServ at uid 42SAAAAAA.
+        let out = e.handle(NetEvent::UserKilled { uid: "42SAAAAAA".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::IntroduceUser { uid, nick, .. } if uid == "42SAAAAAA" && !nick.is_empty())), "killed agent reintroduced: {out:?}");
+    }
+
     // A channel that expires with an assigned bot parts the bot in the same
     // sweep — it must not linger in a channel it no longer serves.
     #[test]

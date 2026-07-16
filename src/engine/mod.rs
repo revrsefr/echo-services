@@ -1044,6 +1044,17 @@ impl Engine {
                 Vec::new()
             }
             NetEvent::UserKilled { uid } => {
+                // A killed service agent (NickServ, ChanServ, …) has a fixed uid;
+                // bring it straight back so an oper can't KILL it off the network.
+                if let Some(intro) = self.services.iter().find(|s| s.uid() == uid).map(|s| NetAction::IntroduceUser {
+                    uid: s.uid().to_string(),
+                    nick: s.nick().to_string(),
+                    ident: "services".to_string(),
+                    host: s.host().to_string(),
+                    gecos: s.gecos().to_string(),
+                }) {
+                    return vec![intro];
+                }
                 // If the ircd killed one of our bots, forget it so reconcile
                 // reintroduces it (and rejoins its channels); a killed real user is
                 // simply gone.
