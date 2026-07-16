@@ -624,6 +624,45 @@
         assert_eq!(before, after, "compaction must preserve every persisted field");
     }
 
+    // Gossip convergence: a fresh peer that backfills a node's log via the version
+    // vector must arrive at the same GLOBAL state (accounts + network bans + groups).
+    // Channels/jupes are Local and deliberately don't replicate, so they're excluded.
+    #[test]
+    fn gossip_converges_global_state_to_a_peer() {
+        let pa = tmp("gossipA");
+        let mut a = Db::open(&pa, "N1");
+        a.scram_iterations = 4096;
+        a.register("alice", "pw", Some("a@x.io".into())).unwrap();
+        a.register("bob", "pw", None).unwrap();
+        a.set_greet("alice", "hi there").unwrap();
+        a.set_account_kill("alice", false).unwrap();
+        a.suspend_account("bob", "op", "bad", None).unwrap();
+        a.akill_add("G", "*@evil", "op", "spam", None).unwrap();
+        a.forbid_add("NICK", "bad*", "op", "squat").unwrap();
+        a.group_register("!g", "alice").unwrap();
+        a.group_set_flags("!g", "bob", "").unwrap();
+
+        let pb = tmp("gossipB");
+        let mut b = Db::open(&pb, "N2");
+        for entry in a.missing_for(&b.version_vector()) {
+            b.ingest(entry).unwrap();
+        }
+
+        let gsnap = |db: &Db| {
+            let mut ac: Vec<_> = db.accounts().cloned().collect();
+            ac.sort_by(|x, y| x.name.cmp(&y.name));
+            let mut ak = db.akills();
+            ak.sort_by(|x, y| x.mask.cmp(&y.mask));
+            let mut fb = db.forbids();
+            fb.sort_by(|x, y| x.mask.cmp(&y.mask));
+            let mut gn = db.groups();
+            gn.sort();
+            let gv: Vec<_> = gn.iter().filter_map(|n| db.group(n)).collect();
+            format!("{ac:?}\n{ak:?}\n{fb:?}\n{gv:?}")
+        };
+        assert_eq!(gsnap(&a), gsnap(&b), "peer B must converge to A's global state");
+    }
+
     // Dropping an account erases every reference to it — channel access and
     // successorship, group membership and foundership — so a later re-registration
     // of the same name can't inherit its standing. Holds live and after replay.
