@@ -488,6 +488,8 @@
             a.sort_by(|x, y| x.name.cmp(&y.name));
             let mut c: Vec<_> = db.channels().cloned().collect();
             c.sort_by(|x, y| x.name.cmp(&y.name));
+            let mut b: Vec<_> = db.bots().cloned().collect();
+            b.sort_by(|x, y| x.nick.cmp(&y.nick));
             let mut gn = db.groups();
             gn.sort();
             let gv: Vec<_> = gn.iter().filter_map(|n| db.group(n)).collect();
@@ -497,9 +499,20 @@
             fb.sort_by(|x, y| x.mask.cmp(&y.mask));
             let mut of = db.vhost_offers().to_vec();
             of.sort();
+            let mut vf = db.vhost_forbidden().to_vec();
+            vf.sort();
             let mut jp = db.jupes();
             jp.sort();
-            format!("{a:?}\n{c:?}\n{gv:?}\n{ak:?}\n{fb:?}\n{of:?}\n{jp:?}")
+            let mut nw = db.news("logon");
+            nw.extend(db.news("oper"));
+            let rp = db.reports(false);
+            let hp = db.help_tickets(false);
+            let mut se = db.session_exceptions();
+            se.sort();
+            let mut op = db.opers_list();
+            op.sort();
+            let vt = db.vhost_template().map(str::to_string);
+            format!("{a:?}\n{c:?}\n{b:?}\n{gv:?}\n{ak:?}\n{fb:?}\n{of:?}\n{vf:?}\n{jp:?}\n{nw:?}\n{rp:?}\n{hp:?}\n{se:?}\n{op:?}\n{vt:?}")
         };
 
         let live = {
@@ -534,7 +547,29 @@
             db.akill_add("G", "*@evil", "oper", "spam", None).unwrap();
             db.forbid_add("NICK", "bad*", "oper", "squat").unwrap();
             db.vhost_offer_add("cool.vhost").unwrap();
+            db.vhost_forbid_add("(?i)admin").unwrap();
+            db.set_vhost_template(Some("$account.users.example".into())).unwrap();
             db.jupe_add("rogue.server", "abuse");
+            // Bots, entrymsg, noexpire, oper notes, news, reports, help, opers,
+            // session exceptions — the rest of the event surface.
+            db.bot_add("Botty", "bot", "serv.host", "Helper").unwrap();
+            db.assign_bot("#chan", "Botty").unwrap();
+            db.set_default_bot(Some("Botty")).unwrap();
+            db.set_entrymsg("#chan", "welcome").unwrap();
+            db.set_account_noexpire("bob", true).unwrap();
+            db.set_channel_noexpire("#chan", true).unwrap();
+            db.set_account_note("bob", Some("watch this one".into()));
+            db.set_channel_note("#chan", Some("chan note".into()));
+            db.set_email("carol", Some("c@x.io".into())).unwrap();
+            db.news_add("logon", "welcome all", "oper");
+            db.news_add("oper", "staff notice", "oper");
+            let rid = db.report_file("carol", "bob", "spam").unwrap();
+            db.report_close(rid);
+            let hid = db.help_request("carol", "help me").unwrap();
+            db.help_take(hid, "bob");
+            db.oper_grant("carol", vec!["admin".into()], None);
+            db.session_except_add("*@trusted.host", 10, "trusted");
+            db.group_set_founder("!other", "carol").unwrap();
             // The compound one: dropping alice must purge her access, successorship
             // and group standing — identically in the live path and on replay.
             db.drop_account("alice").unwrap();
