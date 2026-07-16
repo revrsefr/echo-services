@@ -349,6 +349,11 @@ impl Network {
         &self.stats
     }
 
+    // Seed the counters from persisted state at startup, so they survive restarts.
+    pub fn seed_stats(&mut self, stats: BTreeMap<String, u64>) {
+        self.stats = stats;
+    }
+
     // BOTSTATS view: (total lines, top talkers by count, descending).
     pub fn channel_activity(&self, channel: &str) -> Option<(u64, Vec<(String, u64)>)> {
         let c = self.channels.get(&lc(channel))?;

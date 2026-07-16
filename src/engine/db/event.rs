@@ -136,6 +136,9 @@ pub enum Event {
     // by minting a fake one on `sid`), so Local scope but still persisted.
     JupeAdded { name: String, sid: String, reason: String },
     JupeRemoved { name: String },
+    // A full snapshot of the shared stat counters (StatServ / gRPC Stats),
+    // written periodically and on shutdown so they survive a restart.
+    StatsSet { counters: Vec<(String, u64)> },
 }
 
 // Whether an event replicates across the federation. Account identity is Global
@@ -238,7 +241,8 @@ impl Event {
             | Event::ChannelExpiryWarned { .. }
             | Event::ChannelOperNoteSet { .. }
             | Event::JupeAdded { .. }
-            | Event::JupeRemoved { .. } => Scope::Local,
+            | Event::JupeRemoved { .. }
+            | Event::StatsSet { .. } => Scope::Local,
         }
     }
 }
@@ -622,6 +626,10 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         }
         Event::JupeRemoved { name } => {
             net.jupes.retain(|j| !j.name.eq_ignore_ascii_case(&name));
+        }
+        Event::StatsSet { counters } => {
+            // A full snapshot: replace, so replaying the newest wins.
+            net.stats = counters.into_iter().collect();
         }
         Event::AccountExpiryWarned { account } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {

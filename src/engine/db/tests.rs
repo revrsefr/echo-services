@@ -525,6 +525,22 @@
         assert_eq!(db.jupes(), vec![("rogue.example".to_string(), sid, "abuse".to_string())], "the jupe replays from the log");
     }
 
+    // StatServ / Stats-API counters are snapshotted to the log, so they survive a
+    // restart instead of resetting to zero.
+    #[test]
+    fn stat_counters_survive_a_restart() {
+        let p = tmp("statspersist");
+        let counters: std::collections::BTreeMap<String, u64> =
+            [("chanserv.register".to_string(), 7u64), ("nickserv.identify".to_string(), 42u64)].into_iter().collect();
+        {
+            let mut db = Db::open(&p, "N1");
+            db.persist_stats(&counters).unwrap();
+            assert_eq!(db.persisted_stats(), counters, "stored while live");
+        }
+        let db = Db::open(&p, "N1");
+        assert_eq!(db.persisted_stats(), counters, "counters replay from the log after a restart");
+    }
+
     // Fold parity: the live state after a broad sequence of writes must equal the
     // state rebuilt by replaying the same log — every event's manual live mutation
     // has to match its `apply()` arm, or a restart silently changes the data.

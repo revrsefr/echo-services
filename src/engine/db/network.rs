@@ -245,6 +245,18 @@ impl Db {
         self.net.jupes.iter().map(|j| (j.name.clone(), j.sid.clone(), j.reason.clone())).collect()
     }
 
+    /// The persisted stat counters, to seed the live registry on startup.
+    pub fn persisted_stats(&self) -> std::collections::BTreeMap<String, u64> {
+        self.net.stats.clone()
+    }
+
+    /// Snapshot the live stat counters to the log so they survive a restart.
+    pub fn persist_stats(&mut self, counters: &std::collections::BTreeMap<String, u64>) -> std::io::Result<()> {
+        self.log.append(Event::StatsSet { counters: counters.iter().map(|(k, v)| (k.clone(), *v)).collect() })?;
+        self.net.stats = counters.clone();
+        Ok(())
+    }
+
     /// File an abuse report, rate-limited per reporter. Returns the new report's
     /// id, or None if the reporter filed one too recently.
     pub fn report_file(&mut self, reporter: &str, target: &str, reason: &str) -> Option<u64> {

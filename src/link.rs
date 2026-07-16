@@ -40,7 +40,7 @@ fn redact(line: &str) -> Cow<'_, str> {
                 let is_set_password = cmd == "set"
                     && words.next().map(|w| w.eq_ignore_ascii_case("password")).unwrap_or(false);
                 if (SECRET_CMDS.contains(&cmd.as_str()) || is_set_password) && argstart < line.len() {
-                    return format!("{} :[REDACTED]", &line[..tstart].trim_end_matches(" :")).into();
+                    return format!("{} :[REDACTED]", line[..tstart].trim_end_matches(" :")).into();
                 }
             }
         }
@@ -130,6 +130,7 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
                                 continue;
                             }
                             if let NetAction::Shutdown { restart, reason } = act {
+                                engine.lock().await.persist_stats();
                                 let _ = write.flush().await;
                                 shutdown(restart, &reason);
                             }
@@ -146,6 +147,7 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
                 if let NetAction::SendEmail { to, subject, text, html } = action {
                     dispatch_email(&email, to, subject, text, html);
                 } else if let NetAction::Shutdown { restart, reason } = action {
+                    engine.lock().await.persist_stats();
                     let _ = write.flush().await;
                     shutdown(restart, &reason);
                 } else {

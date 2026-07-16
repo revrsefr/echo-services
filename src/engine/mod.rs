@@ -213,6 +213,8 @@ impl Engine {
                 (!topics.is_empty()).then(|| (s.nick().to_string(), blurb, topics))
             })
             .collect();
+        // Restore the persisted stat counters so they survive a restart.
+        network.seed_stats(db.persisted_stats());
         Self {
             services,
             network,
@@ -266,6 +268,19 @@ impl Engine {
         m.insert("bots.total".to_string(), self.db.bots().count() as u64);
         m.insert("opers.total".to_string(), self.opers.len() as u64);
         m
+    }
+
+    // Snapshot the accumulated stat counters to the log (periodically and on
+    // shutdown) so StatServ / the Stats API keep their history across a restart.
+    // Only the real counters are persisted; the live gauges above are re-derived.
+    pub fn persist_stats(&mut self) {
+        let counters = self.network.stat_counters().clone();
+        if counters.is_empty() {
+            return;
+        }
+        if let Err(err) = self.db.persist_stats(&counters) {
+            tracing::warn!(%err, "failed to persist stat counters");
+        }
     }
 
     // Wall-clock seconds, overridable in tests so the time-based FLOOD kicker is
@@ -930,13 +945,16 @@ impl Engine {
                 // Computed before the match below moves `channel` into its actions.
                 let greet = self.greet_on_join(&channel, account.as_deref());
                 let mut out = Vec::new();
+                // A services bot assigned here is opped on join and is never subject
+                // to secureops/restricted — it's staff, not a member.
+                let is_bot = self.bot_uids.values().any(|b| b == &uid);
                 // SECUREOPS: a user who arrives opped (FJOIN prefix) but lacks op-level
                 // access loses it, unless we're about to grant it to them anyway.
-                if op && mode != Some("+o") && self.db.channel(&channel).is_some_and(|c| c.settings.secureops) {
+                if op && mode != Some("+o") && !is_bot && self.db.channel(&channel).is_some_and(|c| c.settings.secureops) {
                     out.push(NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: format!("-o {uid}") });
                 }
                 // RESTRICTED: only users with access (or opers) may be in the channel.
-                if mode.is_none() && self.db.channel(&channel).is_some_and(|c| c.settings.restricted) {
+                if mode.is_none() && !is_bot && self.db.channel(&channel).is_some_and(|c| c.settings.restricted) {
                     let is_oper = account.as_deref().is_some_and(|a| self.oper_privs(a).any());
                     if !is_oper {
                         out.push(NetAction::Kick { from, channel, uid, reason: "This channel is restricted to users with access.".to_string() });
@@ -1348,7 +1366,7 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         | ChannelMlock { .. } | ChannelDescSet { .. } | ChannelEntryMsgSet { .. } | ChannelUrlSet { .. } | ChannelEmailSet { .. } | ChannelSettingsSet { .. }
         | ChannelKickerSet { .. } | ChannelBadwordsSet { .. } | ChannelTriggersSet { .. }
         | ChannelTopicSet { .. } | AccountSeen { .. } | ChannelUsed { .. }
-        | AccountExpiryWarned { .. } | ChannelExpiryWarned { .. } => return None,
+        | AccountExpiryWarned { .. } | ChannelExpiryWarned { .. } | StatsSet { .. } => return None,
     };
     Some(s)
 }

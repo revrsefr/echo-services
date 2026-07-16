@@ -307,6 +307,9 @@ pub struct NetData {
     // The bot auto-assigned to newly registered channels (BotServ AUTOASSIGN),
     // if any. Casefolded nick; None disables auto-assignment.
     pub default_bot: Option<String>,
+    // Persisted shared stat counters (StatServ / gRPC Stats), snapshotted so they
+    // survive a restart (live gauges are re-derived, not stored here).
+    pub stats: std::collections::BTreeMap<String, u64>,
 }
 
 // A session-limit exception: an IP-mask glob and the session allowance for IPs
@@ -1164,6 +1167,9 @@ impl Db {
         }
         if self.net.default_bot.is_some() {
             snapshot.push(Event::DefaultBotSet { bot: self.net.default_bot.clone() });
+        }
+        if !self.net.stats.is_empty() {
+            snapshot.push(Event::StatsSet { counters: self.net.stats.iter().map(|(k, v)| (k.clone(), *v)).collect() });
         }
         for host in &self.host_cfg.offers {
             snapshot.push(Event::VhostOfferAdded { host: host.clone() });

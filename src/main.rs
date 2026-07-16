@@ -208,8 +208,9 @@ async fn main() -> Result<()> {
         let engine = engine.clone();
         tokio::spawn(async move {
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(1800)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(300)).await;
                 let mut e = engine.lock().await;
+                e.persist_stats(); // snapshot counters so a crash loses at most ~5 min
                 e.expire_sweep();
                 if let Err(err) = e.maybe_compact() {
                     tracing::warn!(%err, "compaction failed");
@@ -246,9 +247,12 @@ async fn main() -> Result<()> {
     // Run until the uplink loop ends or the process is asked to stop. Every
     // committed change is already fsync'd, so a clean stop loses nothing; this
     // just lets systemd stop us without waiting out the kill timeout.
+    let shutdown_engine = engine.clone();
     tokio::select! {
         res = link::run(proto, engine, &addr, irc_rx, cfg.email.clone()) => res,
         _ = shutdown_signal() => {
+            // Flush stat counters so a clean stop/restart keeps StatServ history.
+            shutdown_engine.lock().await.persist_stats();
             tracing::info!("received shutdown signal, exiting");
             Ok(())
         }

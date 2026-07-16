@@ -317,9 +317,12 @@ impl Protocol for InspIrcd {
             NetAction::QuitUser { uid, reason } => vec![format!(":{} QUIT :{}", uid, reason)],
             NetAction::ServiceJoin { uid, channel } => {
                 // IJOIN needs a membid (`IJOIN <chan> <membid>`); without it the
-                // ircd rejects the whole link with "Insufficient parameters".
+                // ircd rejects the whole link with "Insufficient parameters". The
+                // trailing "1 o" is the 4-param form (ts, status modes): the bot
+                // joins opped, matching Anope's default bot modes (+o). ts 1 keeps
+                // it below the channel TS so the op is always applied.
                 self.membid += 1;
-                vec![format!(":{} IJOIN {} {}", uid, channel, self.membid)]
+                vec![format!(":{} IJOIN {} {} 1 o", uid, channel, self.membid)]
             }
             NetAction::ServicePart { uid, channel } => vec![format!(":{} PART {}", uid, channel)],
             // ENCAP the target's server: CHGHOST <uid> <newhost>, to set a vhost.
@@ -681,9 +684,9 @@ mod tests {
     fn service_join_ijoin_includes_membid() {
         let mut p = proto();
         let a = p.serialize(&NetAction::ServiceJoin { uid: "00DB00000".into(), channel: "#taverne".into() });
-        assert_eq!(a, vec![":00DB00000 IJOIN #taverne 1".to_string()]);
+        assert_eq!(a, vec![":00DB00000 IJOIN #taverne 1 1 o".to_string()], "joins opped with a membid");
         // membid is monotonic across joins
         let b = p.serialize(&NetAction::ServiceJoin { uid: "00DB00000".into(), channel: "#quizz".into() });
-        assert_eq!(b, vec![":00DB00000 IJOIN #quizz 2".to_string()]);
+        assert_eq!(b, vec![":00DB00000 IJOIN #quizz 2 1 o".to_string()]);
     }
 }
