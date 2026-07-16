@@ -3998,6 +3998,9 @@
         let out = to_cs(&mut e, "000AAAAAB", "ENFORCE #c");
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+o 000AAAAAB")), "{out:?}");
         assert!(out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAC")), "{out:?}");
+        // SYNC is an alias for ENFORCE — same re-apply of access modes.
+        let out = to_cs(&mut e, "000AAAAAB", "SYNC #c");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+o 000AAAAAB")), "sync alias: {out:?}");
 
         // GETKEY: reflects a tracked key change.
         e.handle(NetEvent::ChannelKey { channel: "#c".into(), key: Some("s3cret".into()) });

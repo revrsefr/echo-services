@@ -62,7 +62,8 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "KICK", summary: "kick from the channel", detail: "Syntax: \x02KICK <#channel> <nick> [reason]\x02\nKicks a user from the channel." },
     HelpEntry { cmd: "BAN/UNBAN", summary: "ban or unban a user", detail: "Syntax: \x02BAN <#channel> <nick> [reason]\x02, \x02UNBAN <#channel> [nick]\x02\nBans or unbans a user by host." },
     HelpEntry { cmd: "AKICK", summary: "manage the auto-kick list", detail: "Syntax: \x02AKICK <#channel> ADD <mask> [reason] | DEL <mask> | LIST | CLEAR\x02\nManages the auto-kick list; matches are banned and kicked on join. CLEAR empties it." },
-    HelpEntry { cmd: "ENFORCE", summary: "re-apply lock and access", detail: "Syntax: \x02ENFORCE <#channel>\x02\nRe-applies the mode-lock, access, and akick list to everyone present." },
+    HelpEntry { cmd: "ENFORCE", summary: "re-apply lock and access", detail: "Syntax: \x02ENFORCE <#channel>\x02\nRe-applies the mode-lock, access, and akick list to everyone present. \x02SYNC\x02 is an alias." },
+    HelpEntry { cmd: "SYNC", summary: "re-apply access to members", detail: "Syntax: \x02SYNC <#channel>\x02\nRe-applies everyone's access status modes. An alias for \x02ENFORCE\x02." },
     HelpEntry { cmd: "TOPIC", summary: "set the topic", detail: "Syntax: \x02TOPIC <#channel> <text>\x02\nSets the channel topic." },
     HelpEntry { cmd: "ENTRYMSG", summary: "message on join", detail: "Syntax: \x02ENTRYMSG <#channel> [CLEAR | <text>]\x02\nSets a message noticed to users as they join." },
     HelpEntry { cmd: "INVITE", summary: "invite into the channel", detail: "Syntax: \x02INVITE <#channel> [nick]\x02\nInvites you, or a nick, into the channel." },
@@ -281,7 +282,9 @@ impl Service for ChanServ {
             Some("ENTRYMSG") => entrymsg::handle(me, from, args, ctx, db),
             Some("GETKEY") => getkey::handle(me, from, args, ctx, net, db),
             Some("SEEN") => seen::handle(me, from, args, ctx, net),
-            Some("ENFORCE") => enforce::handle(me, from, args, ctx, net, db),
+            // SYNC re-applies access to everyone present; ENFORCE does that plus
+            // the mode lock and akick list, so SYNC is the same handler.
+            Some("ENFORCE") | Some("SYNC") => enforce::handle(me, from, args, ctx, net, db),
             Some("CLONE") => clone::handle(me, from, args, ctx, db),
             Some("AOP") => xop::handle(me, from, "AOP", "op", args, ctx, db),
             Some("SOP") => xop::handle(me, from, "SOP", "op", args, ctx, db),
