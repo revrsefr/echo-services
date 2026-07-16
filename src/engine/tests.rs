@@ -432,6 +432,43 @@
         assert!(parted, "the assigned bot parts the released channel");
     }
 
+    // A suspension that arrives by gossip must end local sessions on that account,
+    // just as a local SUSPEND does — the account and its channels stay put.
+    #[test]
+    fn gossiped_suspension_logs_out_local_sessions() {
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-gossipsusp.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "test");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+        e.set_sid("42S".into());
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        assert_eq!(e.network.account_of("000AAAAAB"), Some("alice"), "logged in first");
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        e.set_irc_out(tx);
+        // A peer suspends alice; the suspension gossips in.
+        let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountSuspended { account: "alice".into(), by: "peer-oper".into(), reason: "spam".into(), ts: 0, expires: None });
+        e.gossip_ingest(entry).unwrap();
+
+        assert!(e.db.is_suspended("alice"), "suspension applied locally");
+        assert!(e.network.account_of("000AAAAAB").is_none(), "the live session is logged out");
+        assert!(e.db.exists("alice"), "the account itself is kept");
+        let (mut cleared, mut told) = (false, false);
+        while let Ok(a) = rx.try_recv() {
+            match a {
+                NetAction::Metadata { target, key, value } if target == "000AAAAAB" && key == "accountname" && value.is_empty() => cleared = true,
+                NetAction::Notice { to, text, .. } if to == "000AAAAAB" && text.contains("suspended") => told = true,
+                _ => {}
+            }
+        }
+        assert!(cleared, "accountname metadata cleared on the ircd");
+        assert!(told, "the user is told they were suspended");
+    }
+
     // Losing a registration conflict logs out the local session on that name and
     // notifies them over the services-initiated outbound path.
     #[test]

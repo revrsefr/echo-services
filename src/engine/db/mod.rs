@@ -888,6 +888,9 @@ impl EventLog {
 pub enum AccountChange {
     TakenOver(String),
     Dropped(String),
+    // A gossiped suspension that is now in force: local sessions must be logged
+    // out, but the account (and its channels) stay put.
+    Suspended(String),
 }
 
 // A fingerprint is hex (hash digest), optionally colon-separated. Bound the
@@ -1027,7 +1030,13 @@ impl Db {
             Event::AccountDropped { account } => Some((account.clone(), self.account(account).map(|c| c.home.clone()))),
             _ => None,
         };
-        if let Some(event) = self.log.ingest(entry)? {
+        let applied = self.log.ingest(entry)?;
+        // A freshly applied suspension may need to terminate local sessions.
+        let suspended = applied.as_ref().and_then(|e| match e {
+            Event::AccountSuspended { account, .. } => Some(account.clone()),
+            _ => None,
+        });
+        if let Some(event) = applied {
             apply(&mut self.accounts, &mut self.channels, &mut self.grouped, &mut self.bots, &mut self.host_cfg, &mut self.net, event);
         }
         if let Some((name, prev_home)) = watched {
@@ -1035,6 +1044,12 @@ impl Db {
                 (Some(prev), Some(cur)) if cur != prev => return Ok(Some(AccountChange::TakenOver(name))),
                 (Some(_), None) => return Ok(Some(AccountChange::Dropped(name))),
                 _ => {}
+            }
+        }
+        if let Some(account) = suspended {
+            // Only if the suspension is actually in force (not an already-expired one).
+            if self.is_suspended(&account) {
+                return Ok(Some(AccountChange::Suspended(account)));
             }
         }
         Ok(None)

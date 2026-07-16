@@ -469,6 +469,12 @@ impl Engine {
                 self.handle_account_gone(&a, "was dropped");
                 true
             }
+            Some(db::AccountChange::Suspended(a)) => {
+                // A gossiped suspension keeps the account and its channels, but its
+                // live sessions here must end (a local SUSPEND logs them out too).
+                self.logout_account_sessions(&a, "was suspended");
+                false
+            }
             None => false,
         };
         // handle_account_gone may have released a channel that had a bot assigned.
@@ -504,15 +510,9 @@ impl Engine {
         }
         // Log out and inform each local session that held the name.
         for uid in victims {
-            self.network.clear_account(&uid);
-            self.emit_irc(NetAction::Metadata { target: uid.clone(), key: "accountname".to_string(), value: String::new() });
-            if let Some(ns) = &ns {
-                self.emit_irc(NetAction::Notice {
-                    from: ns.clone(),
-                    to: uid.clone(),
-                    text: format!("Your account \x02{account}\x02 {reason}. You have been logged out."),
-                });
-                if !orphaned.is_empty() {
+            self.logout_uid(&uid, account, reason);
+            if !orphaned.is_empty() {
+                if let Some(ns) = &ns {
                     self.emit_irc(NetAction::Notice {
                         from: ns.clone(),
                         to: uid,
@@ -520,6 +520,28 @@ impl Engine {
                     });
                 }
             }
+        }
+    }
+
+    // Log a single session out of `account`, telling them why (services-sourced).
+    fn logout_uid(&mut self, uid: &str, account: &str, reason: &str) {
+        self.network.clear_account(uid);
+        self.emit_irc(NetAction::Metadata { target: uid.to_string(), key: "accountname".to_string(), value: String::new() });
+        if let Some(ns) = self.nick_service.clone() {
+            self.emit_irc(NetAction::Notice {
+                from: ns,
+                to: uid.to_string(),
+                text: format!("Your account \x02{account}\x02 {reason}. You have been logged out."),
+            });
+        }
+    }
+
+    // Log out every local session identified to `account` — e.g. after a gossiped
+    // suspension. Unlike `handle_account_gone` the account and its channels stay
+    // put; only the live sessions end.
+    fn logout_account_sessions(&mut self, account: &str, reason: &str) {
+        for uid in self.network.uids_logged_into(account) {
+            self.logout_uid(&uid, account, reason);
         }
     }
 
