@@ -981,6 +981,14 @@ impl Engine {
             NetEvent::Part { uid, channel } => {
                 self.network.channel_part(&channel, &uid);
                 self.forget_chatter(&channel, &uid);
+                // A services bot kicked/parted from a channel it's still assigned
+                // to rejoins — an op can't evict it. Drop the stale membership so
+                // reconcile re-adds it.
+                if let Some(bot_lc) = self.bot_uids.iter().find_map(|(lc, u)| (u == &uid).then(|| lc.clone())) {
+                    if self.bot_channels.remove(&(bot_lc, channel.clone())) {
+                        return self.reconcile_bots();
+                    }
+                }
                 Vec::new()
             }
             NetEvent::ChannelOp { channel, uid, op } => {

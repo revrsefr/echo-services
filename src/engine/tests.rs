@@ -1822,6 +1822,44 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::ServicePart { channel, .. } if channel == "#c")), "parts on unassign: {out:?}");
     }
 
+    // A services bot kicked from a channel it's assigned to rejoins at once — an
+    // op can't evict it.
+    #[test]
+    fn kicked_bot_rejoins_its_channel() {
+        use echo_botserv::BotServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-kickbot.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        ns(&mut e, "IDENTIFY password1");
+        bs(&mut e, "BOT ADD Bendy bot serv.host Helper");
+        let bot_uid = bs(&mut e, "ASSIGN #c Bendy").iter().find_map(|a| match a {
+            NetAction::ServiceJoin { uid, channel } if channel == "#c" => Some(uid.clone()),
+            _ => None,
+        }).expect("bot joined on assign");
+
+        // The bot is kicked out (the ircd relays this as a PART for its uid).
+        let out = e.handle(NetEvent::Part { uid: bot_uid.clone(), channel: "#c".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { uid, channel } if uid == &bot_uid && channel == "#c")), "kicked bot rejoins: {out:?}");
+    }
+
     // A channel that expires with an assigned bot parts the bot in the same
     // sweep — it must not linger in a channel it no longer serves.
     #[test]
