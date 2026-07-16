@@ -1155,6 +1155,45 @@
         assert!(notice(&e.handle(NetEvent::Privmsg { from: "000AAAAAD".into(), to: "42SAAAAAH".into(), text: "FORBID ADD NICK x y".into() }), "Access denied"), "non-oper refused");
     }
 
+    // OperServ SHUTDOWN/RESTART (admin) emit a Shutdown action (which the link
+    // layer turns into a process exit) and are refused to non-operators.
+    #[test]
+    fn operserv_shutdown_and_restart() {
+        use echo_nickserv::NickServ;
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-osshutdown.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "pw", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+
+        // A non-oper is refused and no Shutdown action is produced.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAD".into(), nick: "rando".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        let out = os(&mut e, "000AAAAAD", "SHUTDOWN now");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-oper refused");
+        assert!(!out.iter().any(|a| matches!(a, NetAction::Shutdown { .. })), "no shutdown for non-oper");
+
+        // The admin's SHUTDOWN emits a Shutdown (restart=false) with the reason.
+        let out = os(&mut e, "000AAAAAB", "SHUTDOWN maintenance");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Shutdown { restart, reason } if !*restart && reason.contains("maintenance"))), "shutdown action: {out:?}");
+        // RESTART sets restart=true.
+        let out = os(&mut e, "000AAAAAB", "RESTART");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Shutdown { restart, .. } if *restart)), "restart action: {out:?}");
+    }
+
     // OperServ SVSPART (admin) forces a user out of a channel.
     #[test]
     fn operserv_svspart() {

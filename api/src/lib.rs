@@ -111,6 +111,10 @@ pub enum NetAction {
     // Internal only: send an email (plaintext + optional HTML). The link layer
     // pipes it to the configured mail command off-thread; never serialized.
     SendEmail { to: String, subject: String, text: String, html: Option<String> },
+    // Internal only: stop the services process (OperServ SHUTDOWN/RESTART). The
+    // link layer exits cleanly; `restart` exits non-zero so a supervisor (systemd
+    // Restart=) brings it back. Never serialized.
+    Shutdown { restart: bool, reason: String },
 }
 
 // How to answer a registration once its credentials have been derived.
@@ -279,6 +283,13 @@ impl ServiceCtx {
     // Send an email (the link layer pipes it to the configured mail command).
     pub fn send_email(&mut self, to: impl Into<String>, subject: impl Into<String>, text: impl Into<String>, html: Option<String>) {
         self.actions.push(NetAction::SendEmail { to: to.into(), subject: subject.into(), text: text.into(), html });
+    }
+
+    // Stop the services process (OperServ SHUTDOWN/RESTART). The link layer exits
+    // once this action is reached; `restart` exits non-zero so a supervisor
+    // respawns us.
+    pub fn shutdown(&mut self, restart: bool, reason: impl Into<String>) {
+        self.actions.push(NetAction::Shutdown { restart, reason: reason.into() });
     }
 
     // Hand a password change to the engine to finish: its derivation runs off the

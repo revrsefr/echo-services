@@ -70,6 +70,10 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
                                 dispatch_email(&email, to, subject, text, html);
                                 continue;
                             }
+                            if let NetAction::Shutdown { restart, reason } = act {
+                                let _ = write.flush().await;
+                                shutdown(restart, &reason);
+                            }
                             for out in proto.serialize(&act) {
                                 send(&mut write, &out).await?;
                             }
@@ -82,6 +86,9 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
             Some(action) = irc_rx.recv() => {
                 if let NetAction::SendEmail { to, subject, text, html } = action {
                     dispatch_email(&email, to, subject, text, html);
+                } else if let NetAction::Shutdown { restart, reason } = action {
+                    let _ = write.flush().await;
+                    shutdown(restart, &reason);
                 } else {
                     for out in proto.serialize(&action) {
                         send(&mut write, &out).await?;
@@ -132,6 +139,19 @@ fn dispatch_email(email: &Option<crate::config::Email>, to: String, subject: Str
         }
         let _ = child.wait().await;
     });
+}
+
+// Stop the process on an operator's SHUTDOWN/RESTART. Every committed change is
+// already fsync'd, so exiting loses nothing. A restart exits non-zero so a
+// supervisor configured to restart-on-failure (systemd Restart=on-failure)
+// brings us straight back; a plain shutdown exits cleanly and stays down.
+fn shutdown(restart: bool, reason: &str) -> ! {
+    if restart {
+        tracing::info!(%reason, "operator requested restart, exiting for supervisor to respawn");
+        std::process::exit(2);
+    }
+    tracing::info!(%reason, "operator requested shutdown, exiting");
+    std::process::exit(0);
 }
 
 async fn send(write: &mut (impl AsyncWriteExt + Unpin), line: &str) -> Result<()> {
