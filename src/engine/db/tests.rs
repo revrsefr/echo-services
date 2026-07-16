@@ -219,8 +219,8 @@
             db.scram_iterations = 4096;
             db.register("alice", "password1", None).unwrap();
             assert_eq!(db.unread_memos("alice"), 0);
-            db.memo_send("alice", "bob", "hello there").unwrap();
-            db.memo_send("alice", "carol", "second").unwrap();
+            db.memo_send("alice", "bob", "hello there", false).unwrap();
+            db.memo_send("alice", "carol", "second", false).unwrap();
             assert_eq!(db.unread_memos("alice"), 2);
             let m = db.memo_read("alice", 0).unwrap();
             assert_eq!(m.from, "bob");
@@ -240,8 +240,8 @@
         let mut db = Db::open(tmp("memo-cc"), "N1");
         db.scram_iterations = 4096;
         db.register("alice", "pw", None).unwrap();
-        db.memo_send("alice", "bob", "hi").unwrap();
-        db.memo_send("alice", "bob", "you there?").unwrap();
+        db.memo_send("alice", "bob", "hi", false).unwrap();
+        db.memo_send("alice", "bob", "you there?", false).unwrap();
 
         assert_eq!(db.memo_check("alice", "bob").map(|(read, _)| read), Some(false), "unread so far");
         assert!(db.memo_cancel("alice", "bob"), "recalls the most recent unread");

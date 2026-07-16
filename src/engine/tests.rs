@@ -913,6 +913,42 @@
         assert_eq!(e.db.unread_memos("alice"), 2, "capped at the limit");
     }
 
+    // MemoServ RSEND: when the recipient reads the memo, the sender is memoed back.
+    #[test]
+    fn memoserv_rsend_read_receipt() {
+        use echo_memoserv::MemoServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-msrsend.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "pw", None).unwrap();
+        db.register("bob", "pw", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(MemoServ { uid: "42SAAAAAE".into() }),
+            ],
+            db,
+        );
+        let ms = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAE".into(), text: t.into() });
+        let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+
+        assert!(notice(&ms(&mut e, "000AAAAAC", "RSEND alice testing"), "Memo sent"), "rsend delivered");
+        assert_eq!(e.db.unread_memos("bob"), 0, "bob has no receipt yet");
+        // alice reads it; bob gets a receipt memo.
+        assert!(notice(&ms(&mut e, "000AAAAAB", "READ 1"), "testing"), "alice reads the memo");
+        assert_eq!(e.db.unread_memos("bob"), 1, "bob got a read receipt");
+        assert!(notice(&ms(&mut e, "000AAAAAC", "READ 1"), "has read the memo"), "receipt text delivered");
+        // Reading again does not fire a second receipt.
+        ms(&mut e, "000AAAAAB", "READ 1");
+        assert_eq!(e.db.unread_memos("bob"), 0, "no duplicate receipt on re-read");
+    }
+
     // ChanServ AKICK CLEAR empties the auto-kick list.
     #[test]
     fn chanserv_akick_clear() {

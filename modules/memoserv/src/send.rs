@@ -2,10 +2,12 @@ use echo_api::{Sender, ServiceCtx, Store};
 
 use super::MAX_MEMOS;
 
-// SEND <nick> <text>: leave a memo on a registered account's mailbox.
-pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
+// SEND/RSEND <nick> <text>: leave a memo on a registered account's mailbox.
+// With `receipt`, the sender is told when the recipient reads it (RSEND).
+pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store, receipt: bool) {
+    let cmd = if receipt { "RSEND" } else { "SEND" };
     if args.len() < 3 {
-        ctx.notice(me, from.uid, "Syntax: SEND <nick> <text>");
+        ctx.notice(me, from.uid, format!("Syntax: {cmd} <nick> <text>"));
         return;
     }
     let target = args[1];
@@ -25,7 +27,7 @@ pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut S
         ctx.notice(me, from.uid, format!("Memo sent to \x02{target}\x02."));
         return;
     }
-    match db.memo_send(&dest, account, &text) {
+    match db.memo_send(&dest, account, &text, receipt) {
         Ok(()) => ctx.notice(me, from.uid, format!("Memo sent to \x02{target}\x02.")),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }

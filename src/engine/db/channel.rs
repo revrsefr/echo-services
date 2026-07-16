@@ -587,28 +587,28 @@ impl Db {
     }
 
     /// Append a memo to an account's mailbox.
-    pub fn memo_send(&mut self, account: &str, from: &str, text: &str) -> Result<(), RegError> {
+    pub fn memo_send(&mut self, account: &str, from: &str, text: &str, receipt: bool) -> Result<(), RegError> {
         let k = key(account);
         if !self.accounts.contains_key(&k) {
             return Err(RegError::Internal);
         }
         let ts = now();
-        self.log.append(Event::MemoSent { account: account.to_string(), from: from.to_string(), text: text.to_string(), ts }).map_err(|_| RegError::Internal)?;
-        self.accounts.get_mut(&k).unwrap().memos.push(Memo { from: from.to_string(), text: text.to_string(), ts, read: false });
+        self.log.append(Event::MemoSent { account: account.to_string(), from: from.to_string(), text: text.to_string(), ts, receipt }).map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().memos.push(Memo { from: from.to_string(), text: text.to_string(), ts, read: false, receipt });
         Ok(())
     }
 
     /// An account's memos, oldest first.
     pub fn memo_list(&self, account: &str) -> Vec<MemoView> {
         self.accounts.get(&key(account)).map_or(Vec::new(), |a| {
-            a.memos.iter().map(|m| MemoView { from: m.from.clone(), text: m.text.clone(), ts: m.ts, read: m.read }).collect()
+            a.memos.iter().map(|m| MemoView { from: m.from.clone(), text: m.text.clone(), ts: m.ts, read: m.read, receipt: m.receipt }).collect()
         })
     }
 
     /// Read one memo by index (marks it read), returning its contents.
     pub fn memo_read(&mut self, account: &str, index: usize) -> Option<MemoView> {
         let k = key(account);
-        let view = self.accounts.get(&k).and_then(|a| a.memos.get(index)).map(|m| MemoView { from: m.from.clone(), text: m.text.clone(), ts: m.ts, read: m.read })?;
+        let view = self.accounts.get(&k).and_then(|a| a.memos.get(index)).map(|m| MemoView { from: m.from.clone(), text: m.text.clone(), ts: m.ts, read: m.read, receipt: m.receipt })?;
         if !view.read {
             let _ = self.log.append(Event::MemoRead { account: account.to_string(), index });
             if let Some(m) = self.accounts.get_mut(&k).and_then(|a| a.memos.get_mut(index)) {

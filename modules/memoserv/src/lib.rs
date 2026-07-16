@@ -34,6 +34,7 @@ pub(crate) const MAX_MEMOS: usize = 30;
 
 const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "SEND", summary: "leave a memo for an account", detail: "Syntax: \x02SEND <nick> <text>\x02\nLeaves a memo on a registered account's mailbox." },
+    HelpEntry { cmd: "RSEND", summary: "leave a memo and get a read receipt", detail: "Syntax: \x02RSEND <nick> <text>\x02\nLike SEND, but memos you back when the recipient reads it." },
     HelpEntry { cmd: "LIST", summary: "list your memos", detail: "Syntax: \x02LIST\x02\nLists the memos in your mailbox." },
     HelpEntry { cmd: "READ", summary: "read a memo", detail: "Syntax: \x02READ <num>|NEW|ALL\x02\nReads a memo by number, your unread ones, or all of them." },
     HelpEntry { cmd: "DEL", summary: "delete a memo", detail: "Syntax: \x02DEL <num>|ALL\x02\nDeletes a memo by number, or your whole mailbox." },
@@ -77,7 +78,8 @@ impl Service for MemoServ {
             return;
         };
         match cmd.as_deref() {
-            Some("SEND") => send::handle(me, from, account, args, ctx, db),
+            Some("SEND") => send::handle(me, from, account, args, ctx, db, false),
+            Some("RSEND") => send::handle(me, from, account, args, ctx, db, true),
             Some("LIST") => list::handle(me, from, account, ctx, db),
             Some("READ") => read::handle(me, from, account, args, ctx, db),
             Some("DEL") | Some("DELETE") => del::handle(me, from, account, args, ctx, db),

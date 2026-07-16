@@ -19,6 +19,7 @@ pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut S
             for i in targets {
                 if let Some(m) = db.memo_read(account, i) {
                     show(me, from, i, &m, ctx);
+                    send_receipt(account, &m, db);
                 }
             }
         }
@@ -28,7 +29,10 @@ pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut S
                 return;
             };
             match db.memo_read(account, n - 1) {
-                Some(m) => show(me, from, n - 1, &m, ctx),
+                Some(m) => {
+                    show(me, from, n - 1, &m, ctx);
+                    send_receipt(account, &m, db);
+                }
                 None => ctx.notice(me, from.uid, format!("You have no memo #\x02{n}\x02.")),
             }
         }
@@ -39,4 +43,13 @@ pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut S
 fn show(me: &str, from: &Sender, index: usize, m: &MemoView, ctx: &mut ServiceCtx) {
     ctx.notice(me, from.uid, format!("Memo #\x02{}\x02 from \x02{}\x02 ({}):", index + 1, m.from, human_time(m.ts)));
     ctx.notice(me, from.uid, format!("  {}", m.text));
+}
+
+// If this was an unread RSEND memo, memo the sender that it's now been read.
+// `m.read` is the pre-read state, so we only fire once, on first read.
+fn send_receipt(reader: &str, m: &MemoView, db: &mut dyn Store) {
+    if m.receipt && !m.read {
+        let text = format!("{reader} has read the memo you sent them of {}.", human_time(m.ts));
+        let _ = db.memo_send(&m.from, "MemoServ", &text, false);
+    }
 }

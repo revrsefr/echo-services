@@ -16,7 +16,7 @@ pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut S
     let names: Vec<String> = db.accounts_matching("*").into_iter().map(|a| a.name).collect();
     let mut sent = 0usize;
     for name in &names {
-        if db.memo_send(name, account, &text).is_ok() {
+        if db.memo_send(name, account, &text, false).is_ok() {
             sent += 1;
         }
     }

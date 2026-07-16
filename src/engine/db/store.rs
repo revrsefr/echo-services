@@ -441,8 +441,8 @@ impl Store for Db {
     fn unassign_bot(&mut self, channel: &str) -> Result<bool, ChanError> {
         Db::unassign_bot(self, channel)
     }
-    fn memo_send(&mut self, account: &str, from: &str, text: &str) -> Result<(), RegError> {
-        Db::memo_send(self, account, from, text)
+    fn memo_send(&mut self, account: &str, from: &str, text: &str, receipt: bool) -> Result<(), RegError> {
+        Db::memo_send(self, account, from, text, receipt)
     }
     fn memo_list(&self, account: &str) -> Vec<MemoView> {
         Db::memo_list(self, account)

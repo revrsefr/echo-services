@@ -26,7 +26,7 @@ pub enum Event {
     VhostRequestCleared { account: String },
     AccountSuspended { account: String, by: String, reason: String, ts: u64, expires: Option<u64> },
     AccountUnsuspended { account: String },
-    MemoSent { account: String, from: String, text: String, ts: u64 },
+    MemoSent { account: String, from: String, text: String, ts: u64, #[serde(default)] receipt: bool },
     MemoRead { account: String, index: usize },
     MemoDeleted { account: String, index: usize },
     MemoIgnoreAdd { account: String, target: String },
@@ -327,9 +327,9 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
                 a.suspension = None;
             }
         }
-        Event::MemoSent { account, from, text, ts } => {
+        Event::MemoSent { account, from, text, ts, receipt } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {
-                a.memos.push(Memo { from, text, ts, read: false });
+                a.memos.push(Memo { from, text, ts, read: false, receipt });
             }
         }
         Event::MemoRead { account, index } => {

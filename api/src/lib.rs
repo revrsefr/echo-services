@@ -606,6 +606,8 @@ pub struct MemoView {
     pub text: String,
     pub ts: u64,
     pub read: bool,
+    // The sender asked to be told when this memo is read (RSEND).
+    pub receipt: bool,
 }
 
 // A service bot registered with BotServ.
@@ -1048,7 +1050,7 @@ pub trait Store {
     fn assign_bot(&mut self, channel: &str, bot: &str) -> Result<(), ChanError>;
     fn unassign_bot(&mut self, channel: &str) -> Result<bool, ChanError>;
     // MemoServ: per-account memos (index is a 0-based position in memo_list).
-    fn memo_send(&mut self, account: &str, from: &str, text: &str) -> Result<(), RegError>;
+    fn memo_send(&mut self, account: &str, from: &str, text: &str, receipt: bool) -> Result<(), RegError>;
     fn memo_list(&self, account: &str) -> Vec<MemoView>;
     fn memo_read(&mut self, account: &str, index: usize) -> Option<MemoView>;
     fn memo_del(&mut self, account: &str, index: usize) -> bool;

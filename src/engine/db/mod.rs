@@ -313,6 +313,9 @@ pub struct Memo {
     pub ts: u64,
     #[serde(default)]
     pub read: bool,
+    // The sender asked to be told when it's read (MemoServ RSEND).
+    #[serde(default)]
+    pub receipt: bool,
 }
 
 // A service bot: a pseudo-client BotServ can assign to sit in channels.
