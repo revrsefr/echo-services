@@ -37,7 +37,11 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "echo=debug".into()),
+                // info by default: the link layer debug-logs every raw line, which
+                // includes users' identify/register passwords and SASL payloads.
+                // Opt into debug explicitly (RUST_LOG=echo=debug) only when needed;
+                // even then, credentials are redacted (see link::redact).
+                .unwrap_or_else(|_| "echo=info".into()),
         )
         .init();
 

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -8,6 +9,64 @@ use tokio::sync::{mpsc, Mutex};
 use crate::engine::db::Db;
 use crate::engine::Engine;
 use crate::proto::{NetAction, Protocol};
+
+// NickServ commands whose arguments are a password and must never be logged.
+const SECRET_CMDS: &[&str] = &[
+    "identify", "id", "login", "auth", "register", "regain", "ghost", "release",
+    "recover", "setpass", "spassword", "resetpass", "confirm", "sidentify",
+];
+
+/// Scrub credentials from a raw IRC line before it is debug-logged: NickServ
+/// identify/register/password arguments and SASL payloads. Best-effort and
+/// deliberately over-redacting — a logged line must never carry a secret.
+fn redact(line: &str) -> Cow<'_, str> {
+    // A password carried in a PRIVMSG/NOTICE/SQUERY message trailer.
+    for kw in [" PRIVMSG ", " NOTICE ", " SQUERY "] {
+        if let Some(p) = line.find(kw) {
+            let after = p + kw.len();
+            if let Some(c) = line[after..].find(" :") {
+                let tstart = after + c + 2;
+                let mut words = line[tstart..].split(' ');
+                let first = words.next().unwrap_or("");
+                let mut cmd = first.to_ascii_lowercase();
+                let mut argstart = tstart + first.len();
+                // "NS <cmd> ..." / "NICKSERV <cmd> ..." — unwrap one level.
+                if matches!(cmd.as_str(), "ns" | "nickserv") {
+                    if let Some(w2) = words.next() {
+                        cmd = w2.to_ascii_lowercase();
+                        argstart += 1 + w2.len();
+                    }
+                }
+                let is_set_password = cmd == "set"
+                    && words.next().map(|w| w.eq_ignore_ascii_case("password")).unwrap_or(false);
+                if (SECRET_CMDS.contains(&cmd.as_str()) || is_set_password) && argstart < line.len() {
+                    return format!("{} :[REDACTED]", &line[..tstart].trim_end_matches(" :")).into();
+                }
+            }
+        }
+    }
+    // SASL: "AUTHENTICATE <data>" and server "... SASL <a> <b> C|S <data>". The
+    // payload token is the credential; mechanism/control tokens are harmless.
+    if let Some(p) = line.find("AUTHENTICATE ") {
+        let d = p + "AUTHENTICATE ".len();
+        let tok = line[d..].split(' ').next().unwrap_or("");
+        if !matches!(tok, "+" | "*" | "") && !tok.starts_with("PLAIN") && !tok.starts_with("EXTERNAL") && !tok.starts_with("SCRAM") {
+            return format!("{}[REDACTED]", &line[..d]).into();
+        }
+    }
+    if let Some(p) = line.find(" SASL ") {
+        for mode in [" C ", " S "] {
+            if let Some(m) = line[p..].find(mode) {
+                let d = p + m + mode.len();
+                let tok = line[d..].split(' ').next().unwrap_or("");
+                if !tok.is_empty() && tok != "+" {
+                    return format!("{}[REDACTED]", &line[..d]).into();
+                }
+            }
+        }
+    }
+    Cow::Borrowed(line)
+}
 
 // One uplink session: connect, handshake + burst, then translate lines forever.
 // The engine is shared with the gossip layer, so it is locked per operation and
@@ -32,7 +91,7 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
             // A line from the uplink: translate it and answer.
             line = lines.next_line() => {
                 let Some(line) = line? else { break };
-                tracing::debug!(dir = "<<", %line);
+                tracing::debug!(dir = "<<", line = %redact(&line));
                 for event in proto.parse(&line) {
                     let actions = engine.lock().await.handle(event);
                     for action in actions {
@@ -155,8 +214,43 @@ fn shutdown(restart: bool, reason: &str) -> ! {
 }
 
 async fn send(write: &mut (impl AsyncWriteExt + Unpin), line: &str) -> Result<()> {
-    tracing::debug!(dir = ">>", %line);
+    tracing::debug!(dir = ">>", line = %redact(line));
     write.write_all(line.as_bytes()).await?;
     write.write_all(b"\r\n").await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact;
+
+    #[test]
+    fn redacts_identify_password() {
+        let line = "@time=x;msgid=y :91ZAAAAFQ PRIVMSG 00DAAAAAA :identify reverse hunter2secret!";
+        let out = redact(line);
+        assert!(!out.contains("hunter2secret"), "password leaked: {out}");
+        assert!(!out.contains("reverse"), "account leaked: {out}");
+        assert!(out.contains("PRIVMSG 00DAAAAAA :[REDACTED]"), "{out}");
+    }
+
+    #[test]
+    fn redacts_register_and_ns_prefix_and_set_password() {
+        assert!(!redact(":u PRIVMSG NickServ :register mypass a@b.com").contains("mypass"));
+        assert!(!redact(":u PRIVMSG X :NS identify topsecret").contains("topsecret"));
+        assert!(!redact(":u PRIVMSG NickServ :set password newpw").contains("newpw"));
+    }
+
+    #[test]
+    fn redacts_sasl_payloads() {
+        assert!(!redact("AUTHENTICATE aGVsbG8AdXNlcgBwYXNz").contains("aGVsbG8"));
+        assert!(!redact(":91Z ENCAP 00D SASL 91ZAAAAFQ 00DAAAAAA C cGFzc3dvcmQ=").contains("cGFzc3dvcmQ"));
+    }
+
+    #[test]
+    fn leaves_ordinary_traffic_and_mechanisms_intact() {
+        let chat = ":91ZAAAAFQ PRIVMSG #chan :hello everyone identify yourself";
+        assert_eq!(redact(chat), chat, "ordinary channel chat must not be mangled");
+        assert_eq!(redact("AUTHENTICATE PLAIN"), "AUTHENTICATE PLAIN");
+        assert_eq!(redact("AUTHENTICATE +"), "AUTHENTICATE +");
+    }
 }
