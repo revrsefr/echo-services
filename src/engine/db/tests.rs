@@ -569,6 +569,24 @@
             db.oper_grant("carol", vec!["admin".into()], None);
             db.session_except_add("*@trusted.host", 10, "trusted");
         db.group_set_founder("!other", "carol").unwrap();
+        // Removal / mutation events — where live-vs-apply asymmetries hide.
+        db.set_vhost("bob", "bob.temp", "oper", None).unwrap();
+        db.del_vhost("bob").unwrap();
+        db.suspend_account("carol", "oper", "oops", None).unwrap();
+        db.unsuspend_account("carol").unwrap();
+        db.akill_add("Q", "spam*", "oper", "nick", None).unwrap();
+        db.akill_del("Q", "spam*").unwrap();
+        db.forbid_add("CHAN", "#evil*", "oper", "bad").unwrap();
+        db.forbid_del("CHAN", "#evil*").unwrap();
+        let nid = db.news_add("logon", "temp notice", "oper");
+        db.news_del(nid);
+        db.certfp_add("bob", "1122334455667788990011223344556677889900").unwrap();
+        db.certfp_del("bob", "1122334455667788990011223344556677889900").unwrap();
+        db.access_add("#chan", "carol", "voice").unwrap();
+        db.access_del("#chan", "carol").unwrap();
+        db.group_set_flags("!other", "bob", "").unwrap();
+        db.group_del_member("!other", "bob").unwrap();
+        db.memo_read("carol", 0);
         // The compound one: dropping alice must purge her access, successorship
         // and group standing — identically in the live path and on replay.
         db.drop_account("alice").unwrap();
