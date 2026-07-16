@@ -283,6 +283,7 @@ impl Engine {
 
     // Load the services-operator table (casefolded account -> privileges).
     pub fn set_opers(&mut self, opers: HashMap<String, Privs>) {
+        self.network.set_config_opers(opers.keys().cloned().collect());
         self.opers = opers;
     }
 

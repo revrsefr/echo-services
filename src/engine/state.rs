@@ -34,6 +34,10 @@ pub struct Network {
     // Network-wide help index (service nick, blurb, per-command topics), built by
     // the engine at startup from every service so HelpServ can front it.
     pub help_catalog: Vec<(String, &'static str, &'static [HelpEntry])>,
+    // Account names of the declarative config operators, mirrored from the engine
+    // so services can enumerate staff (MemoServ STAFF). Runtime OPER grants live
+    // in the store; a caller unions the two.
+    config_opers: Vec<String>,
 }
 
 // ChanFix scoring caps and rates.
@@ -104,6 +108,12 @@ impl Network {
             *self.sessions.entry(ip.clone()).or_insert(0) += 1;
         }
         self.users.insert(uid.clone(), User { uid, nick, host, ip });
+    }
+
+    // Mirror the engine's declarative config operators, so services can enumerate
+    // staff. Called whenever the config oper set changes.
+    pub fn set_config_opers(&mut self, accounts: Vec<String>) {
+        self.config_opers = accounts;
     }
 
     // Live sessions from `ip`.
@@ -368,6 +378,9 @@ impl Network {
 // The module-facing network view. Reads forward to Network's own accessors,
 // with the seen record projected into a plain view.
 impl NetView for Network {
+    fn oper_accounts(&self) -> Vec<String> {
+        self.config_opers.clone()
+    }
     fn uid_by_nick(&self, nick: &str) -> Option<&str> {
         Network::uid_by_nick(self, nick)
     }

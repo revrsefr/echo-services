@@ -1082,6 +1082,12 @@ pub trait Store {
 // The live network state a service reads (never mutates directly; changes go out
 // as actions on the ServiceCtx).
 pub trait NetView {
+    // Account names of the network's configured operators (MemoServ STAFF). The
+    // default is empty; the engine's live view overrides it. Runtime OPER grants
+    // are separate (Store::opers_list) — a caller unions the two.
+    fn oper_accounts(&self) -> Vec<String> {
+        Vec::new()
+    }
     fn uid_by_nick(&self, nick: &str) -> Option<&str>;
     fn nick_of(&self, uid: &str) -> Option<&str>;
     fn host_of(&self, uid: &str) -> Option<&str>;

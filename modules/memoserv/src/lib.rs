@@ -22,6 +22,8 @@ mod check;
 mod info;
 #[path = "sendall.rs"]
 mod sendall;
+#[path = "staff.rs"]
+mod staff;
 #[path = "ignore.rs"]
 mod ignore;
 #[path = "set.rs"]
@@ -42,6 +44,7 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "CHECK", summary: "see if a memo was read", detail: "Syntax: \x02CHECK <nick>\x02\nReports whether the last memo you sent them has been read." },
     HelpEntry { cmd: "INFO", summary: "your mailbox summary", detail: "Syntax: \x02INFO\x02\nShows how many memos you have, how many are unread, and your capacity." },
     HelpEntry { cmd: "SENDALL", summary: "memo every account (admin)", detail: "Syntax: \x02SENDALL <text>\x02\nLeaves a memo on every registered account. Requires the admin privilege." },
+    HelpEntry { cmd: "STAFF", summary: "memo every operator (admin)", detail: "Syntax: \x02STAFF <text>\x02\nLeaves a memo on every operator's account. Requires the admin privilege." },
     HelpEntry { cmd: "IGNORE", summary: "block memos from an account", detail: "Syntax: \x02IGNORE ADD <nick> | DEL <nick> | LIST\x02\nMemos from an ignored account are silently dropped." },
     HelpEntry { cmd: "SET", summary: "your memo preferences", detail: "Syntax: \x02SET NOTIFY {ON|OFF}\x02, \x02SET LIMIT <n>|NONE\x02\nControls new-memo notifications and your mailbox size cap." },
 ];
@@ -65,7 +68,7 @@ impl Service for MemoServ {
         (BLURB, TOPICS)
     }
 
-    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, _net: &dyn NetView, db: &mut dyn Store) {
+    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
         let me = self.uid.as_str();
         let cmd = args.first().map(|s| s.to_ascii_uppercase());
         if matches!(cmd.as_deref(), Some("HELP") | None) {
@@ -87,6 +90,7 @@ impl Service for MemoServ {
             Some("CHECK") => check::handle(me, from, account, args, ctx, db),
             Some("INFO") => info::handle(me, from, account, ctx, db),
             Some("SENDALL") => sendall::handle(me, from, account, args, ctx, db),
+            Some("STAFF") => staff::handle(me, from, account, args, ctx, net, db),
             Some("IGNORE") => ignore::handle(me, from, account, args, ctx, db),
             Some("SET") => set::handle(me, from, account, args, ctx, db),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),

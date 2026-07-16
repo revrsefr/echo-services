@@ -837,6 +837,38 @@
         assert_eq!(e.db.unread_memos("bob"), 1);
     }
 
+    // MemoServ STAFF memos every operator (config opers here), and only the
+    // operators — a plain account gets nothing.
+    #[test]
+    fn memoserv_staff_memos_operators() {
+        use echo_memoserv::MemoServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-msstaff.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "pw", None).unwrap();
+        db.register("mod", "pw", None).unwrap();
+        db.register("alice", "pw", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(MemoServ { uid: "42SAAAAAE".into() }),
+            ],
+            db,
+        );
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        opers.insert("mod".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAE".into(), text: "STAFF heads up team".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("2"))), "memoed 2 opers: {out:?}");
+        assert_eq!(e.db.unread_memos("mod"), 1, "the other operator got it");
+        assert_eq!(e.db.unread_memos("alice"), 0, "a non-operator did not");
+    }
+
     // NickServ SASET lets an operator edit another account's settings, and is
     // refused to non-operators.
     #[test]
