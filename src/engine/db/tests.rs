@@ -438,6 +438,27 @@
         assert_eq!(db.channel("#chan").unwrap().lock_modes(), "+rnt-s", "survives reopen");
     }
 
+    // A param mode lock (+f flood) carries its value through render, enforcement,
+    // and a reopen — the Anope FLOOD/JOINFLOOD migration must not lose it.
+    #[test]
+    fn param_mode_lock_carries_its_value() {
+        let p = tmp("mlock_param");
+        let mut db = Db::open(&p, "local");
+        db.register_channel("#chan", "alice").unwrap();
+        db.set_mlock_params("#chan", "ntf", "", vec![('f', "mute:7:8s".to_string())]).unwrap();
+
+        let info = db.channel("#chan").unwrap();
+        assert_eq!(info.lock_modes(), "+rntf mute:7:8s");
+        // Removing the locked param mode re-asserts it with its value.
+        assert_eq!(info.enforce("-f"), Some("+f mute:7:8s".to_string()));
+
+        drop(db);
+        let db = Db::open(&p, "local");
+        let info = db.channel("#chan").unwrap();
+        assert_eq!(info.lock_params, vec![('f', "mute:7:8s".to_string())], "param survives reopen");
+        assert_eq!(info.lock_modes(), "+rntf mute:7:8s");
+    }
+
     // Access list drives join modes, is case-insensitive, and persists.
     #[test]
     fn access_list_grants_join_modes() {

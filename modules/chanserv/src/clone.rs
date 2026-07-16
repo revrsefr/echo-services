@@ -16,7 +16,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         ctx.notice(me, from.uid, "You must be the founder of both channels.");
         return;
     }
-    let _ = db.set_mlock(dest, &sinfo.lock_on, &sinfo.lock_off);
+    let _ = db.set_mlock(dest, &sinfo.lock_on, &sinfo.lock_off, sinfo.lock_params.clone());
     for a in &sinfo.access {
         let _ = db.access_add(dest, &a.account, &a.level);
     }

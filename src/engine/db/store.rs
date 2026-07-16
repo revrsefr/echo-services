@@ -371,8 +371,8 @@ impl Store for Db {
     fn drop_channel(&mut self, name: &str) -> Result<(), ChanError> {
         Db::drop_channel(self, name)
     }
-    fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError> {
-        Db::set_mlock(self, name, on, off)
+    fn set_mlock(&mut self, name: &str, on: &str, off: &str, params: Vec<(char, String)>) -> Result<(), ChanError> {
+        Db::set_mlock_params(self, name, on, off, params)
     }
     fn set_desc(&mut self, channel: &str, desc: &str) -> Result<(), ChanError> {
         Db::set_desc(self, channel, desc)
@@ -560,6 +560,7 @@ fn channel_view(c: &ChannelInfo) -> ChannelView {
         ts: c.ts,
         lock_on: c.lock_on.clone(),
         lock_off: c.lock_off.clone(),
+        lock_params: c.lock_params.clone(),
         access: c.access.iter().map(|a| ChanAccessView { account: a.account.clone(), level: a.level.clone() }).collect(),
         akick: c.akick.iter().map(|k| ChanAkickView { mask: k.mask.clone(), reason: k.reason.clone() }).collect(),
         desc: c.desc.clone(),

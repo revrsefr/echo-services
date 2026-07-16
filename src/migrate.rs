@@ -34,8 +34,8 @@ const SERVICE_NICKS: &[&str] = &[
     "groupserv", "statserv", "infoserv", "global", "chanfix", "diceserv", "reportserv",
 ];
 
-// Anope ModeLock name -> InspIRCd mode char, for the param-less locks we can carry.
-// Param modes (FLOOD/JOINFLOOD) are skipped: Echo's mlock is char-only.
+// Anope ModeLock name -> InspIRCd mode char, for the param-less locks.
+// Param modes (FLOOD/JOINFLOOD) are handled separately by param_mode_char.
 fn mode_char(name: &str) -> Option<char> {
     Some(match name {
         "NOEXTERNAL" => 'n',
@@ -52,6 +52,16 @@ fn mode_char(name: &str) -> Option<char> {
         "PERMANENT" | "PERM" => 'P',
         "NOKICK" => 'Q',
         "STRIPCOLOR" => 'S',
+        _ => return None,
+    })
+}
+
+// Param-carrying mode locks: the ircd mode takes an argument, so the lock keeps
+// the stored value and re-asserts `+<char> <value>`.
+fn param_mode_char(name: &str) -> Option<char> {
+    Some(match name {
+        "FLOOD" => 'f',
+        "JOINFLOOD" => 'j',
         _ => return None,
     })
 }
@@ -249,20 +259,35 @@ pub fn import_anope(anope_path: &str, out_path: &str, node: &str) -> std::io::Re
         sum.access += 1;
     }
 
-    // Mode locks: aggregate the param-less +modes per channel.
-    let mut locks: HashMap<String, String> = HashMap::new();
+    // Mode locks: aggregate the +modes per channel. Param modes (+f flood,
+    // +j joinflood) carry their stored value so the lock re-enforces verbatim.
+    let mut locks: HashMap<String, (String, Vec<(char, String)>)> = HashMap::new();
     for ml in records(&data, "ModeLock") {
         let (Some(chan), Some(name)) = (field(ml, "ci"), field(ml, "name")) else { continue };
         if !flag(ml, "set") {
             continue;
         }
-        match mode_char(name) {
-            Some(ch) => locks.entry(chan.to_string()).or_default().push(ch),
-            None => sum.skipped.push(format!("modelock {chan} {name}: unmapped/param mode")),
+        if let Some(ch) = mode_char(name) {
+            locks.entry(chan.to_string()).or_default().0.push(ch);
+        } else if let Some(ch) = param_mode_char(name) {
+            let Some(param) = field(ml, "param") else {
+                sum.skipped.push(format!("modelock {chan} {name}: param mode with no value"));
+                continue;
+            };
+            let entry = locks.entry(chan.to_string()).or_default();
+            entry.0.push(ch);
+            entry.1.push((ch, param.to_string()));
+        } else {
+            sum.skipped.push(format!("modelock {chan} {name}: unmapped mode"));
         }
     }
-    for (chan, on) in &locks {
-        db.migrate_append(Event::ChannelMlock { name: chan.clone(), on: on.clone(), off: String::new() })?;
+    for (chan, (on, params)) in &locks {
+        db.migrate_append(Event::ChannelMlock {
+            name: chan.clone(),
+            on: on.clone(),
+            off: String::new(),
+            params: params.clone(),
+        })?;
         sum.mlocked += 1;
     }
 
@@ -349,7 +374,8 @@ mod tests {
         let chan = db.channel("#chan").expect("channel migrated");
         assert_eq!(chan.founder, "alice");
         assert_eq!(chan.desc, "a place");
-        assert_eq!(chan.lock_on, "nt", "param-less mlocks kept, FLOOD skipped");
+        assert_eq!(chan.lock_on, "ntf", "param-less and param mlocks both kept");
+        assert_eq!(chan.lock_params, vec![('f', "5:10".to_string())], "FLOOD param carried");
         assert_eq!(chan.assigned_bot.as_deref(), Some("Botty"));
         assert!(chan.settings.keeptopic && chan.settings.peace, "channel SET flags migrated");
         assert!(!chan.settings.signkick, "unset flags stay default (PERSIST has no equivalent, ignored)");

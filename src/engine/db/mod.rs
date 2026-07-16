@@ -408,6 +408,10 @@ pub struct ChannelInfo {
     pub lock_on: String,
     #[serde(default)]
     pub lock_off: String,
+    // Params for locked +modes that take one (e.g. ('f', "mute:7:8s"), ('j', "10:6")).
+    // Each char here is also in `lock_on`; applied and re-asserted with its param.
+    #[serde(default)]
+    pub lock_params: Vec<(char, String)>,
     #[serde(default)]
     pub access: Vec<ChanAccess>,
     #[serde(default)]
@@ -613,6 +617,13 @@ impl ChannelInfo {
             s.push('-');
             s.push_str(&self.lock_off);
         }
+        // Params for locked +modes that take one, in the order they appear in lock_on.
+        for ch in self.lock_on.chars() {
+            if let Some((_, p)) = self.lock_params.iter().find(|(c, _)| *c == ch) {
+                s.push(' ');
+                s.push_str(p);
+            }
+        }
         s
     }
 
@@ -646,6 +657,13 @@ impl ChannelInfo {
         if !reremove.is_empty() {
             s.push('-');
             s.push_str(&reremove);
+        }
+        // A re-asserted param mode (e.g. +f) must carry its locked param.
+        for ch in readd.chars() {
+            if let Some((_, p)) = self.lock_params.iter().find(|(c, _)| *c == ch) {
+                s.push(' ');
+                s.push_str(p);
+            }
         }
         Some(s)
     }
@@ -1087,7 +1105,7 @@ impl Db {
         for c in self.channels.values() {
             snapshot.push(Event::ChannelRegistered { name: c.name.clone(), founder: c.founder.clone(), ts: c.ts });
             if !c.lock_on.is_empty() || !c.lock_off.is_empty() {
-                snapshot.push(Event::ChannelMlock { name: c.name.clone(), on: c.lock_on.clone(), off: c.lock_off.clone() });
+                snapshot.push(Event::ChannelMlock { name: c.name.clone(), on: c.lock_on.clone(), off: c.lock_off.clone(), params: c.lock_params.clone() });
             }
             for a in &c.access {
                 snapshot.push(Event::ChannelAccessAdd { channel: c.name.clone(), account: a.account.clone(), level: a.level.clone() });

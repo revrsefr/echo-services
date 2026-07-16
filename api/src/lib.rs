@@ -752,6 +752,9 @@ pub struct ChannelView {
     // Mode-lock: chars services keep set / unset (besides the implicit +r).
     pub lock_on: String,
     pub lock_off: String,
+    // Param values for locked param-modes (+f flood, +j joinflood), in the order
+    // their mode chars appear in `lock_on`.
+    pub lock_params: Vec<(char, String)>,
     pub access: Vec<ChanAccessView>,
     pub akick: Vec<ChanAkickView>,
     pub desc: String,
@@ -855,6 +858,13 @@ impl ChannelView {
         if !self.lock_off.is_empty() {
             s.push('-');
             s.push_str(&self.lock_off);
+        }
+        // Param modes take their argument as a trailing token, in mode-char order.
+        for ch in self.lock_on.chars() {
+            if let Some((_, param)) = self.lock_params.iter().find(|(c, _)| *c == ch) {
+                s.push(' ');
+                s.push_str(param);
+            }
         }
         s
     }
@@ -1059,7 +1069,7 @@ pub trait Store {
     fn session_exceptions(&self) -> Vec<(String, u32, String)>;
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError>;
     fn drop_channel(&mut self, name: &str) -> Result<(), ChanError>;
-    fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError>;
+    fn set_mlock(&mut self, name: &str, on: &str, off: &str, params: Vec<(char, String)>) -> Result<(), ChanError>;
     fn set_desc(&mut self, channel: &str, desc: &str) -> Result<(), ChanError>;
     fn set_url(&mut self, channel: &str, url: &str) -> Result<(), ChanError>;
     fn set_channel_email(&mut self, channel: &str, email: &str) -> Result<(), ChanError>;

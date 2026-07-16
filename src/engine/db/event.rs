@@ -39,7 +39,7 @@ pub enum Event {
     NickUngrouped { nick: String },
     ChannelRegistered { name: String, founder: String, ts: u64 },
     ChannelDropped { name: String },
-    ChannelMlock { name: String, on: String, off: String },
+    ChannelMlock { name: String, on: String, off: String, #[serde(default)] params: Vec<(char, String)> },
     ChannelAccessAdd { channel: String, account: String, level: String },
     ChannelAccessDel { channel: String, account: String },
     ChannelAkickAdd { channel: String, mask: String, reason: String },
@@ -429,15 +429,16 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
             grouped.remove(&key(&nick));
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), successor: None, desc: String::new(), entrymsg: String::new(), url: String::new(), email: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), lock_params: Vec::new(), access: Vec::new(), akick: Vec::new(), successor: None, desc: String::new(), entrymsg: String::new(), url: String::new(), email: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
         }
-        Event::ChannelMlock { name, on, off } => {
+        Event::ChannelMlock { name, on, off, params } => {
             if let Some(c) = channels.get_mut(&key(&name)) {
                 c.lock_on = on;
                 c.lock_off = off;
+                c.lock_params = params;
             }
         }
         Event::ChannelAccessAdd { channel, account, level } => {

@@ -247,8 +247,8 @@ impl Service for ChanServ {
                 if suspended_block(me, from, chan, ctx, db) {
                     return;
                 }
-                let (on, off) = parse_mlock(&args[2..].concat());
-                match db.set_mlock(chan, &on, &off) {
+                let (on, off, params) = parse_mlock(&args[2..]);
+                match db.set_mlock(chan, &on, &off, params) {
                     Ok(()) => {
                         if let Some(info) = db.channel(chan) {
                             ctx.channel_mode(me, chan, &info.lock_modes()); // apply it now
@@ -369,10 +369,21 @@ fn peace_blocks(me: &str, from: &Sender, chan: &str, target_uid: &str, ctx: &mut
 
 // Parse a mode spec like "+nt-s" into (locked-on, locked-off) mode chars. `r` is
 // implicit for a registered channel and is ignored here.
-fn parse_mlock(spec: &str) -> (String, String) {
+// Locked add-modes that carry a param (+f flood, +j joinflood): a param is
+// consumed from the trailing tokens, IRC MODE order.
+fn is_param_mode(c: char) -> bool {
+    matches!(c, 'f' | 'j')
+}
+
+// Parse `+ntf-s <param...>` into (on, off, params). Tokens after the mode string
+// supply, in order, a value for each added param mode.
+fn parse_mlock(tokens: &[&str]) -> (String, String, Vec<(char, String)>) {
     let (mut on, mut off) = (String::new(), String::new());
+    let mut params: Vec<(char, String)> = Vec::new();
     let mut adding = true;
-    for ch in spec.chars() {
+    let modes = tokens.first().copied().unwrap_or("");
+    let mut rest = tokens.iter().skip(1);
+    for ch in modes.chars() {
         match ch {
             '+' => adding = true,
             '-' => adding = false,
@@ -380,8 +391,17 @@ fn parse_mlock(spec: &str) -> (String, String) {
             m if m.is_ascii_alphabetic() => {
                 on.retain(|c| c != m);
                 off.retain(|c| c != m);
+                params.retain(|(c, _)| *c != m);
                 if adding {
                     on.push(m);
+                    if is_param_mode(m) {
+                        if let Some(&p) = rest.next() {
+                            params.push((m, p.to_string()));
+                        } else {
+                            // No value supplied: drop the mode rather than lock a paramless +f.
+                            on.pop();
+                        }
+                    }
                 } else {
                     off.push(m);
                 }
@@ -389,10 +409,10 @@ fn parse_mlock(spec: &str) -> (String, String) {
             _ => {}
         }
     }
-    (on, off)
+    (on, off, params)
 }
 
-// Render a channel's lock as "+on-off" for display.
+// Render a channel's lock as "+on-off <params>" for display.
 fn show_mlock(info: &ChannelView) -> String {
     let mut s = String::new();
     if !info.lock_on.is_empty() {
@@ -403,6 +423,45 @@ fn show_mlock(info: &ChannelView) -> String {
         s.push('-');
         s.push_str(&info.lock_off);
     }
+    for (_, param) in &info.lock_params {
+        s.push(' ');
+        s.push_str(param);
+    }
     s
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::parse_mlock;
+
+    #[test]
+    fn parses_plain_modes() {
+        let (on, off, params) = parse_mlock(&["+nt-s"]);
+        assert_eq!(on, "nt");
+        assert_eq!(off, "s");
+        assert!(params.is_empty());
+    }
+
+    #[test]
+    fn captures_param_mode_value() {
+        let (on, off, params) = parse_mlock(&["+ntf", "mute:7:8s"]);
+        assert_eq!(on, "ntf");
+        assert_eq!(off, "");
+        assert_eq!(params, vec![('f', "mute:7:8s".to_string())]);
+    }
+
+    #[test]
+    fn two_param_modes_consume_tokens_in_order() {
+        let (on, _off, params) = parse_mlock(&["+fj", "mute:7:8s", "10:6"]);
+        assert_eq!(on, "fj");
+        assert_eq!(params, vec![('f', "mute:7:8s".to_string()), ('j', "10:6".to_string())]);
+    }
+
+    #[test]
+    fn param_mode_without_value_is_dropped() {
+        let (on, _off, params) = parse_mlock(&["+ntf"]);
+        assert_eq!(on, "nt", "paramless +f is not locked");
+        assert!(params.is_empty());
+    }
+}

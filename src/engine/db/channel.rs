@@ -11,7 +11,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), access: Vec::new(), akick: Vec::new(), successor: None, desc: String::new(), entrymsg: String::new(), url: String::new(), email: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), lock_params: Vec::new(), access: Vec::new(), akick: Vec::new(), successor: None, desc: String::new(), entrymsg: String::new(), url: String::new(), email: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
         Ok(())
     }
 
@@ -45,15 +45,21 @@ impl Db {
     }
 
     /// Set the mode-lock (chars to keep set / unset) for a registered channel.
+    #[cfg(test)]
     pub fn set_mlock(&mut self, name: &str, on: &str, off: &str) -> Result<(), ChanError> {
+        self.set_mlock_params(name, on, off, Vec::new())
+    }
+
+    pub fn set_mlock_params(&mut self, name: &str, on: &str, off: &str, params: Vec<(char, String)>) -> Result<(), ChanError> {
         let k = key(name);
         if !self.channels.contains_key(&k) {
             return Err(ChanError::NoChannel);
         }
         self.log
-            .append(Event::ChannelMlock { name: name.to_string(), on: on.to_string(), off: off.to_string() })
+            .append(Event::ChannelMlock { name: name.to_string(), on: on.to_string(), off: off.to_string(), params: params.clone() })
             .map_err(|_| ChanError::Internal)?;
         let c = self.channels.get_mut(&k).unwrap();
+        c.lock_params = params;
         c.lock_on = on.to_string();
         c.lock_off = off.to_string();
         Ok(())
