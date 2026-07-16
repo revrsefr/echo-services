@@ -576,6 +576,13 @@ impl Engine {
                 }
             }
         }
+        // A channel dropped above — expired, or orphaned by an expired founder —
+        // takes its assigned bot with it. Command-driven drops reconcile via the
+        // dispatch path, but this sweep runs outside it, so reconcile here or the
+        // bot lingers in a channel it no longer serves until the next netburst.
+        for action in self.reconcile_bots() {
+            self.emit_irc(action);
+        }
     }
 
     // The news items of `kind` as server-sourced notices to `uid`, each tagged

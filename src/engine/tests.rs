@@ -1696,6 +1696,49 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::ServicePart { channel, .. } if channel == "#c")), "parts on unassign: {out:?}");
     }
 
+    // A channel that expires with an assigned bot parts the bot in the same
+    // sweep — it must not linger in a channel it no longer serves.
+    #[test]
+    fn expired_channel_parts_its_assigned_bot() {
+        use echo_botserv::BotServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-expirebot.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        // boss is an oper so its account is spared — only the channel expires.
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        ns(&mut e, "IDENTIFY password1");
+        bs(&mut e, "BOT ADD Bendy bot serv.host Helper");
+        assert!(bs(&mut e, "ASSIGN #c Bendy").iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, .. } if channel == "#c")), "bot joins on assign");
+
+        // Expire #c; the sweep drops it and must part the bot.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        e.set_irc_out(tx);
+        e.now_override = Some(10_000_000_000);
+        e.set_expiry(Some(100), Some(100), None);
+        e.expire_sweep();
+        assert!(e.db.channel("#c").is_none(), "channel expired");
+        let parted = std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|a| matches!(a, NetAction::ServicePart { channel, .. } if channel == "#c"));
+        assert!(parted, "the assigned bot parts the expired channel");
+    }
+
     // BOT DEL * removes every bot at once, quitting each.
     #[test]
     fn botserv_mass_bot_removal() {
