@@ -291,9 +291,22 @@ impl Accounts for AccountsService {
     async fn authenticate(&self, req: Request<AuthenticateRequest>) -> Result<Response<AuthenticateReply>, Status> {
         authorize(&req, &self.token)?;
         let msg = req.into_inner();
-        match self.engine.lock().await.authority_authenticate(&msg.name, &msg.password) {
-            Some(account) => Ok(Response::new(AuthenticateReply { status: PbStatus::Ok as i32, account })),
-            None => Ok(Response::new(AuthenticateReply { status: PbStatus::Invalid as i32, account: String::new() })),
+        // Fetch the verifier under the lock (cheap), then run the ~1s PBKDF2 on a
+        // blocking thread — never hold the engine lock across it, or every login
+        // freezes the whole daemon (IRC link, gossip, all RPCs).
+        let Some((account, verifier)) = self.engine.lock().await.scram_verifier(&msg.name) else {
+            return Ok(Response::new(AuthenticateReply { status: PbStatus::Invalid as i32, account: String::new() }));
+        };
+        let password = msg.password;
+        let ok = tokio::task::spawn_blocking(move || {
+            crate::engine::scram::verify_plain(crate::engine::scram::Hash::Sha256, &verifier, &password)
+        })
+        .await
+        .unwrap_or(false);
+        if ok {
+            Ok(Response::new(AuthenticateReply { status: PbStatus::Ok as i32, account }))
+        } else {
+            Ok(Response::new(AuthenticateReply { status: PbStatus::Invalid as i32, account: String::new() }))
         }
     }
 

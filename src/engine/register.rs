@@ -47,8 +47,13 @@ impl Engine {
         status
     }
 
-    pub fn authority_authenticate(&self, name: &str, password: &str) -> Option<String> {
-        self.db.authenticate(name, password).map(str::to_string)
+    /// The account's canonical name and its SHA-256 verifier (owned), so a caller
+    /// can run the PBKDF2 verify OFF the engine lock. At production iteration
+    /// counts that derivation is ~1s of CPU — never run it while holding the lock
+    /// (it would freeze the whole daemon); fetch here, then `scram::verify_plain`
+    /// on a blocking thread.
+    pub fn scram_verifier(&self, name: &str) -> Option<(String, String)> {
+        self.db.scram_lookup(name, "SCRAM-SHA-256").map(|(a, v)| (a.to_string(), v.to_string()))
     }
 
     pub fn authority_set_password(&mut self, account: &str, creds: Option<db::Credentials>) -> AuthorityStatus {
