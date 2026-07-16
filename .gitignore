@@ -11,3 +11,9 @@ fedserv.db.jsonl
 /demo-stop.sh
 /test-net
 /test-net-b
+
+# Runtime data/logs
+echo.db.jsonl
+cutover-echo.log
+test-net/echo.db.jsonl
+test-net/*.log

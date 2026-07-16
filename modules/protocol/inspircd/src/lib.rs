@@ -11,11 +11,14 @@ pub struct InspIrcd {
     password: String,
     protocol: u32,
     ts: u64,
+    // Monotonic membership id for our own IJOINs. InspIRCd requires a membid on
+    // IJOIN (`IJOIN <chan> <membid>`); it need only be unique among our members.
+    membid: u64,
 }
 
 impl InspIrcd {
     pub fn new(name: String, description: String, sid: String, password: String, protocol: u32, ts: u64) -> Self {
-        Self { sid, name, description, password, protocol, ts }
+        Self { sid, name, description, password, protocol, ts, membid: 0 }
     }
 
     fn sourced(&self, cmd: String) -> String {
@@ -312,7 +315,12 @@ impl Protocol for InspIrcd {
             // SVSNICK <uid> <newnick> <nickts> — the new nick takes the current
             // time as its TS so it wins any collision resolution.
             NetAction::QuitUser { uid, reason } => vec![format!(":{} QUIT :{}", uid, reason)],
-            NetAction::ServiceJoin { uid, channel } => vec![format!(":{} IJOIN {}", uid, channel)],
+            NetAction::ServiceJoin { uid, channel } => {
+                // IJOIN needs a membid (`IJOIN <chan> <membid>`); without it the
+                // ircd rejects the whole link with "Insufficient parameters".
+                self.membid += 1;
+                vec![format!(":{} IJOIN {} {}", uid, channel, self.membid)]
+            }
             NetAction::ServicePart { uid, channel } => vec![format!(":{} PART {}", uid, channel)],
             // ENCAP the target's server: CHGHOST <uid> <newhost>, to set a vhost.
             NetAction::SetHost { uid, host } => {
@@ -662,7 +670,20 @@ mod tests {
         }).collect();
         assert_eq!(joins, ["0IRAAAAAB", "0IRAAAAAC"]);
 
-        let ev = proto().parse(":0IRAAAAAD IJOIN #chan");
+        // InspIRCd sends IJOIN with a membid (and optionally ts+modes) — tolerate it.
+        let ev = proto().parse(":0IRAAAAAD IJOIN #chan 42");
         assert!(matches!(ev.as_slice(), [NetEvent::Join { uid, channel, op: false }] if uid == "0IRAAAAAD" && channel == "#chan"), "{ev:?}");
+    }
+
+    // Our own IJOIN must carry a membid, or the ircd rejects the link with
+    // "Insufficient parameters" (the cutover crash on a bot-assigned channel).
+    #[test]
+    fn service_join_ijoin_includes_membid() {
+        let mut p = proto();
+        let a = p.serialize(&NetAction::ServiceJoin { uid: "00DB00000".into(), channel: "#taverne".into() });
+        assert_eq!(a, vec![":00DB00000 IJOIN #taverne 1".to_string()]);
+        // membid is monotonic across joins
+        let b = p.serialize(&NetAction::ServiceJoin { uid: "00DB00000".into(), channel: "#quizz".into() });
+        assert_eq!(b, vec![":00DB00000 IJOIN #quizz 2".to_string()]);
     }
 }
