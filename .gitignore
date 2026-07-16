@@ -1,5 +1,7 @@
 /target
 config.toml
+# Local operator notes — may contain real uplink secrets. Never commit.
+*.local.md
 
 fedserv.db.jsonl
 
