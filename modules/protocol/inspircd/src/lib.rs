@@ -53,7 +53,19 @@ impl Protocol for InspIrcd {
             None => return vec![],
         };
         match cmd.to_ascii_uppercase().as_str() {
-            "SERVER" => vec![NetEvent::Registered],
+            // A sourced SERVER ( :<parent> SERVER <name> <sid> [hops] :<desc> ) is a
+            // downstream link — track it for the server tree. The unsourced auth
+            // handshake ( SERVER <name> <pass> <sid> … ) is our uplink registering.
+            "SERVER" => match source {
+                Some(parent) => {
+                    let _name = tokens.next();
+                    match tokens.next() {
+                        Some(sid) if !sid.is_empty() => vec![NetEvent::ServerLink { sid: sid.to_string(), parent }],
+                        _ => vec![],
+                    }
+                }
+                None => vec![NetEvent::Registered],
+            },
             "ENDBURST" => vec![NetEvent::EndBurst],
             "PING" => {
                 let token = tokens
@@ -481,6 +493,16 @@ mod tests {
     fn parses_kill() {
         let ev = proto().parse(":0IR KILL 0IRAAAAAB :bye now");
         assert!(matches!(ev.as_slice(), [NetEvent::UserKilled { uid }] if uid == "0IRAAAAAB"), "{ev:?}");
+    }
+
+    // The unsourced auth handshake registers our uplink; a sourced SERVER is a
+    // downstream link tracked (with its parent) for the server tree.
+    #[test]
+    fn parses_server_link() {
+        let mut p = proto();
+        assert!(matches!(p.parse("SERVER hub.example password 0IR :a hub").as_slice(), [NetEvent::Registered]), "uplink handshake");
+        assert!(matches!(p.parse(":0IR SERVER leaf.example 0XY :a leaf").as_slice(),
+            [NetEvent::ServerLink { sid, parent }] if sid == "0XY" && parent == "0IR"), "downstream link");
     }
 
     // A SQUIT surfaces as a ServerSplit carrying the departed server's SID.

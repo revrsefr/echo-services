@@ -20,6 +20,9 @@ pub struct Network {
     // `users` so a reconnect can clear them wholesale without disturbing the
     // uplink-sourced user map.
     bots: HashMap<String, String>,
+    // Downstream server tree: SID -> the SID that introduced it. Lets a hub's
+    // SQUIT cascade to every server (and user) behind it. Rebuilt each link.
+    servers: HashMap<String, String>,
     // Shared, namespaced stat counters any service contributes to (ephemeral,
     // ordered for a stable snapshot). Read by StatServ and the gRPC Stats API.
     stats: BTreeMap<String, u64>,
@@ -184,6 +187,37 @@ impl Network {
     // a server, used to forget them all when it splits (SQUIT).
     pub fn uids_on_server(&self, sid: &str) -> Vec<String> {
         self.users.keys().filter(|u| u.starts_with(sid)).cloned().collect()
+    }
+
+    // Record a downstream server and the SID that introduced it (its parent).
+    pub fn server_link(&mut self, sid: &str, parent: &str) {
+        self.servers.insert(sid.to_string(), parent.to_string());
+    }
+
+    // Forget the server subtree behind (and including) `sid` — its own SID plus
+    // every server introduced beneath it — and return the whole set so their users
+    // can be forgotten too. A hub's SQUIT arrives once but takes its children with it.
+    pub fn server_split(&mut self, sid: &str) -> Vec<String> {
+        let mut subtree = vec![sid.to_string()];
+        let mut i = 0;
+        while i < subtree.len() {
+            let parent = subtree[i].clone();
+            for (child, up) in &self.servers {
+                if up == &parent && !subtree.contains(child) {
+                    subtree.push(child.clone());
+                }
+            }
+            i += 1;
+        }
+        for s in &subtree {
+            self.servers.remove(s);
+        }
+        subtree
+    }
+
+    // Drop the whole server tree (on a fresh link, before the burst rebuilds it).
+    pub fn clear_servers(&mut self) {
+        self.servers.clear();
     }
 
     pub fn user_nick_change(&mut self, uid: &str, nick: String) {

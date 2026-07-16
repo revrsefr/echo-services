@@ -451,6 +451,30 @@
         assert_eq!(e.network.account_of("0XYAAAAAB"), Some("bob"), "users on other servers are kept");
     }
 
+    // A hub's SQUIT cascades: users behind the hub AND behind every server in its
+    // subtree are forgotten, while unrelated servers' users are kept.
+    #[test]
+    fn squit_cascades_to_the_whole_subtree() {
+        let mut e = engine_with("squitcascade", "alice", "sesame");
+        e.db.register("bob", "hunter2", None).unwrap();
+        e.db.register("carol", "pw", None).unwrap();
+        // 0HB is a hub under our uplink; 0LF is a leaf behind the hub.
+        e.handle(NetEvent::ServerLink { sid: "0HB".into(), parent: "42S".into() });
+        e.handle(NetEvent::ServerLink { sid: "0LF".into(), parent: "0HB".into() });
+        e.handle(NetEvent::UserConnect { uid: "0HBAAAAAA".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "0LFAAAAAA".into(), nick: "bob".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "0OKAAAAAA".into(), nick: "carol".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "0HBAAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { from: "0LFAAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY hunter2".into() });
+        e.handle(NetEvent::Privmsg { from: "0OKAAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+
+        // The hub splits — it and everything behind it are gone.
+        e.handle(NetEvent::ServerSplit { server: "0HB".into() });
+        assert!(e.network.account_of("0HBAAAAAA").is_none(), "hub user forgotten");
+        assert!(e.network.account_of("0LFAAAAAA").is_none(), "user on a leaf behind the hub forgotten");
+        assert_eq!(e.network.account_of("0OKAAAAAA"), Some("carol"), "unrelated server's user kept");
+    }
+
     // A netburst that replays a user's accountname restores their services login
     // (so a services restart doesn't silently log everyone out); empty = logout.
     #[test]

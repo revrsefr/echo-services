@@ -46,8 +46,11 @@ pub enum NetEvent {
     // A user was forcibly removed (KILL). Handled like a quit, except a killed
     // services bot is reintroduced rather than forgotten.
     UserKilled { uid: String },
-    // A server split away (SQUIT). `server` is its SID; every user behind it
-    // (whose uid carries that SID prefix) is gone, since a split is signalled once
+    // A downstream server was introduced (a sourced SERVER). `parent` is the SID
+    // that introduced it, so we can track the tree and cascade a hub's SQUIT.
+    ServerLink { sid: String, parent: String },
+    // A server split away (SQUIT). `server` is its SID; every user behind it — and
+    // behind any server in its subtree — is gone, since a split is signalled once
     // rather than as a QUIT per user.
     ServerSplit { server: String },
     // An ircd relaying an IRCv3 account-registration request to us as the authority.

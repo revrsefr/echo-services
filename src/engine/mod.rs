@@ -783,6 +783,7 @@ impl Engine {
         self.bot_idents.clear();
         self.bot_channels.clear();
         self.network.clear_bots();
+        self.network.clear_servers(); // the burst re-introduces the server tree
         self.next_bot_index = 0;
         let mut out = vec![NetAction::Burst];
         for svc in &self.services {
@@ -1068,11 +1069,17 @@ impl Engine {
                 self.forget_user(&uid);
                 Vec::new()
             }
+            NetEvent::ServerLink { sid, parent } => {
+                self.network.server_link(&sid, &parent);
+                Vec::new()
+            }
             NetEvent::ServerSplit { server } => {
-                // Every user behind the departed server is gone in one message;
-                // forget them so their sessions, slots and memberships don't linger.
-                for uid in self.network.uids_on_server(&server) {
-                    self.forget_user(&uid);
+                // A hub's SQUIT arrives once but takes its whole subtree with it;
+                // forget every user behind the departed server and its descendants.
+                for sid in self.network.server_split(&server) {
+                    for uid in self.network.uids_on_server(&sid) {
+                        self.forget_user(&uid);
+                    }
                 }
                 Vec::new()
             }
