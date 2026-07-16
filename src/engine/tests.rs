@@ -1073,6 +1073,26 @@
         assert!(notice(&ns(&mut e, "000AAAAAB", "GETEMAIL nobody@z.com"), "No accounts"), "no match reported");
     }
 
+    // NickServ RECOVER frees a ghost off your nick and puts you back onto it.
+    #[test]
+    fn nickserv_recover_regains_nick() {
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-recover.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+        // A ghost sits on nick "alice"; the owner is on another nick and identifies.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "owner".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY alice sesame".into() });
+
+        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "RECOVER alice".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAB" && nick.starts_with("Guest"))), "ghost freed: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAC" && nick == "alice")), "caller regained the nick: {out:?}");
+    }
+
     // ChanServ SET RESTRICTED kicks joining users who have no channel access.
     #[test]
     fn chanserv_restricted_kicks_users_without_access() {
