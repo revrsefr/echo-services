@@ -43,6 +43,9 @@ pub enum NetEvent {
     // the source uid; our own changes are filtered out by the protocol layer.
     TopicChange { channel: String, setter: String, topic: String },
     Quit { uid: String },
+    // A user was forcibly removed (KILL). Handled like a quit, except a killed
+    // services bot is reintroduced rather than forgotten.
+    UserKilled { uid: String },
     // An ircd relaying an IRCv3 account-registration request to us as the authority.
     AccountRequest { reqid: String, origin: String, kind: String, account: String, p2: String, p3: String },
     // An ircd relaying a SASL exchange step to us (the SASL agent). mode = H/S/C/D.

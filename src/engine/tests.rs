@@ -1860,6 +1860,50 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { uid, channel } if uid == &bot_uid && channel == "#c")), "kicked bot rejoins: {out:?}");
     }
 
+    // A KILL forgets a real user, but a killed services bot is reintroduced and
+    // rejoins its channels — an oper can't take a bot down for good.
+    #[test]
+    fn kill_forgets_a_user_and_reintroduces_a_bot() {
+        use echo_botserv::BotServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-killbot.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "password1", None).unwrap();
+        db.register_channel("#c", "boss").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        ns(&mut e, "IDENTIFY password1");
+        bs(&mut e, "BOT ADD Bendy bot serv.host Helper");
+        let bot_uid = bs(&mut e, "ASSIGN #c Bendy").iter().find_map(|a| match a {
+            NetAction::ServiceJoin { uid, channel } if channel == "#c" => Some(uid.clone()),
+            _ => None,
+        }).expect("bot joined on assign");
+
+        // Killing a real user forgets their session.
+        assert_eq!(e.network.account_of("000AAAAAB"), Some("boss"), "identified before the kill");
+        e.handle(NetEvent::UserKilled { uid: "000AAAAAB".into() });
+        assert!(e.network.account_of("000AAAAAB").is_none(), "killed user forgotten");
+
+        // Killing the bot brings it right back and rejoins its channel.
+        let out = e.handle(NetEvent::UserKilled { uid: bot_uid });
+        assert!(out.iter().any(|a| matches!(a, NetAction::IntroduceUser { nick, .. } if nick == "Bendy")), "killed bot reintroduced: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, .. } if channel == "#c")), "reintroduced bot rejoins #c: {out:?}");
+    }
+
     // A channel that expires with an assigned bot parts the bot in the same
     // sweep — it must not linger in a channel it no longer serves.
     #[test]

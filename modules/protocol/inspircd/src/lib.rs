@@ -202,6 +202,12 @@ impl Protocol for InspIrcd {
                 }
             }
             "QUIT" => vec![NetEvent::Quit { uid: source.unwrap_or_default() }],
+            // :<src> KILL <uid> :<reason> — a user forcibly removed. We forget
+            // them (or reintroduce, if it was one of our bots).
+            "KILL" => match tokens.next() {
+                Some(uid) if !uid.is_empty() => vec![NetEvent::UserKilled { uid: uid.to_string() }],
+                _ => vec![],
+            },
             // ENCAP <target> <subcmd> …  — we care about relayed SASL and the
             // account-registration relay (the ircd's account module forwards a
             // leaf's REGISTER/VERIFY/RESEND/STATUS to us, the authority server).
@@ -463,6 +469,13 @@ mod tests {
             [NetEvent::AccountLogin { uid, account }] if uid == "0IRAAAAAB" && account.is_empty()), "empty value = logout");
         assert!(p.parse(":42S METADATA 0IRAAAAAB accountname :bob").is_empty(), "our own echo is ignored");
         assert!(p.parse(":0IR METADATA 0IRAAAAAB ssl_cert :deadbeef").is_empty(), "non-account keys ignored");
+    }
+
+    // A KILL surfaces as a UserKilled for the target uid.
+    #[test]
+    fn parses_kill() {
+        let ev = proto().parse(":0IR KILL 0IRAAAAAB :bye now");
+        assert!(matches!(ev.as_slice(), [NetEvent::UserKilled { uid }] if uid == "0IRAAAAAB"), "{ev:?}");
     }
 
     // A UID burst introduces the user under their current nick.

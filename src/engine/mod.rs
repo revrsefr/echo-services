@@ -533,6 +533,15 @@ impl Engine {
         }
     }
 
+    // Forget a user who left the network (QUIT or KILL): drop their membership,
+    // any half-finished SASL exchange, and their pending nick-protection timer.
+    fn forget_user(&mut self, uid: &str) {
+        self.network.user_quit(uid);
+        self.sasl_sessions.remove(uid);
+        self.pending_enforce.retain(|p| p.uid != uid);
+        self.forget_chatter_everywhere(uid);
+    }
+
     // Log a single session out of `account`, telling them why (services-sourced).
     fn logout_uid(&mut self, uid: &str, account: &str, reason: &str) {
         self.network.clear_account(uid);
@@ -1031,10 +1040,21 @@ impl Engine {
                 }
             }
             NetEvent::Quit { uid } => {
-                self.network.user_quit(&uid);
-                self.sasl_sessions.remove(&uid); // drop any half-finished exchange
-                self.pending_enforce.retain(|p| p.uid != uid);
-                self.forget_chatter_everywhere(&uid);
+                self.forget_user(&uid);
+                Vec::new()
+            }
+            NetEvent::UserKilled { uid } => {
+                // If the ircd killed one of our bots, forget it so reconcile
+                // reintroduces it (and rejoins its channels); a killed real user is
+                // simply gone.
+                if let Some(bot_lc) = self.bot_uids.iter().find_map(|(lc, u)| (u == &uid).then(|| lc.clone())) {
+                    self.bot_uids.remove(&bot_lc);
+                    self.bot_idents.remove(&bot_lc);
+                    self.network.bot_forget(&bot_lc);
+                    self.bot_channels.retain(|(b, _)| *b != bot_lc);
+                    return self.reconcile_bots();
+                }
+                self.forget_user(&uid);
                 Vec::new()
             }
             NetEvent::Privmsg { from, to, text } => self.dispatch(&from, &to, &text),
