@@ -976,6 +976,38 @@
         assert!(notice(&e.handle(NetEvent::Privmsg { from: "000AAAAAD".into(), to: "42SAAAAAH".into(), text: "FORBID ADD NICK x y".into() }), "Access denied"), "non-oper refused");
     }
 
+    // OperServ SVSPART (admin) forces a user out of a channel.
+    #[test]
+    fn operserv_svspart() {
+        use echo_nickserv::NickServ;
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-svspart.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "pw", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "victim".into(), host: "h".into(), ip: "0.0.0.0".into() });
+
+        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: "SVSPART victim #trouble go away".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForcePart { uid, channel, .. } if uid == "000AAAAAC" && channel == "#trouble")), "victim parted: {out:?}");
+        // A non-oper can't.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAD".into(), nick: "rando".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAD".into(), to: "42SAAAAAH".into(), text: "SVSPART victim #trouble".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-oper refused: {out:?}");
+    }
+
     // NickServ GETEMAIL (oper) finds accounts by their email glob.
     #[test]
     fn nickserv_getemail() {

@@ -71,6 +71,7 @@ pub enum NetAction {
     // Force a user into a channel (SVSJOIN), e.g. applying an account's auto-join
     // list on identify. `key` is empty for keyless channels.
     ForceJoin { uid: String, channel: String, key: String },
+    ForcePart { uid: String, channel: String, reason: String },
     // Remove one of our pseudo-clients (e.g. a deleted bot) from the network.
     QuitUser { uid: String, reason: String },
     // A services pseudo-client (a bot) joins / parts a channel.
@@ -346,6 +347,15 @@ impl ServiceCtx {
             uid: uid.to_string(),
             channel: channel.to_string(),
             key: key.to_string(),
+        });
+    }
+
+    // Force a user out of a channel (SVSPART).
+    pub fn force_part(&mut self, uid: &str, channel: &str, reason: &str) {
+        self.actions.push(NetAction::ForcePart {
+            uid: uid.to_string(),
+            channel: channel.to_string(),
+            reason: reason.to_string(),
         });
     }
 

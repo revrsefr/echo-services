@@ -290,6 +290,14 @@ impl Protocol for InspIrcd {
             }
             // SVSJOIN <uid> <chan> [key]: force a user into a channel, sourced from
             // the services server. Used to apply an account's auto-join list.
+            // SVSPART <uid> <chan> [:reason]: force a user out of a channel.
+            NetAction::ForcePart { uid, channel, reason } => {
+                if reason.is_empty() {
+                    vec![self.sourced(format!("SVSPART {} {}", uid, channel))]
+                } else {
+                    vec![self.sourced(format!("SVSPART {} {} :{}", uid, channel, reason))]
+                }
+            }
             NetAction::ForceJoin { uid, channel, key } => {
                 if key.is_empty() {
                     vec![self.sourced(format!("SVSJOIN {} {}", uid, channel))]
@@ -481,6 +489,14 @@ mod tests {
         assert_eq!(lines, vec![":42S ENCAP 0IR CHGHOST 0IRAAAAAB cool.example".to_string()]);
         let lines = proto().serialize(&NetAction::SetIdent { uid: "0IRAAAAAB".into(), ident: "cool".into() });
         assert_eq!(lines, vec![":42S ENCAP 0IR CHGIDENT 0IRAAAAAB cool".to_string()]);
+    }
+
+    #[test]
+    fn serializes_svspart() {
+        let lines = proto().serialize(&NetAction::ForcePart { uid: "0IRAAAAAB".into(), channel: "#chan".into(), reason: "bye".into() });
+        assert_eq!(lines, vec![":42S SVSPART 0IRAAAAAB #chan :bye".to_string()]);
+        let lines = proto().serialize(&NetAction::ForcePart { uid: "0IRAAAAAB".into(), channel: "#chan".into(), reason: String::new() });
+        assert_eq!(lines, vec![":42S SVSPART 0IRAAAAAB #chan".to_string()]);
     }
 
     // Free-form text with embedded line breaks must not smuggle a second line
