@@ -400,6 +400,38 @@ impl Engine {
         sasl_success(agent, client, account)
     }
 
+    // The login side-effects — auto-join, vhost, and a waiting-memo notice — for a
+    // user who is already authenticated the instant they connect: they logged in
+    // via SASL during registration, so the NickServ IDENTIFY path (which applies
+    // these itself) never ran for them. Mirrors modules/nickserv/src/identify.rs.
+    fn login_connect_effects(&self, uid: &str, account: &str) -> Vec<NetAction> {
+        let mut out = Vec::new();
+        for entry in self.db.ajoin_list(account) {
+            out.push(NetAction::ForceJoin { uid: uid.to_string(), channel: entry.channel.clone(), key: entry.key.clone() });
+        }
+        if let Some(vhost) = self.db.active_vhost(account) {
+            // apply_vhost semantics: an ident@host spec sets the ident as well.
+            match vhost.split_once('@') {
+                Some((ident, host)) => {
+                    out.push(NetAction::SetIdent { uid: uid.to_string(), ident: ident.to_string() });
+                    out.push(NetAction::SetHost { uid: uid.to_string(), host: host.to_string() });
+                }
+                None => out.push(NetAction::SetHost { uid: uid.to_string(), host: vhost }),
+            }
+        }
+        let unread = self.db.unread_memos(account);
+        if unread > 0 && self.db.memo_notify_on(account) {
+            if let Some(ns) = &self.nick_service {
+                out.push(NetAction::Notice {
+                    from: ns.clone(),
+                    to: uid.to_string(),
+                    text: format!("You have \x02{unread}\x02 new memo(s). Read them with \x02/msg MemoServ READ NEW\x02."),
+                });
+            }
+        }
+        out
+    }
+
     fn emit_irc(&self, action: NetAction) {
         if let Some(tx) = &self.irc_out {
             let _ = tx.send(action); // unbounded: never blocks; only fails if the link is down
@@ -757,6 +789,12 @@ impl Engine {
                 // identified to.
                 let mut out = self.news_notices("logon", "News", &uid);
                 out.extend(self.enforce_registered_nick(&uid, &arriving_nick));
+                // A user already logged in the moment they connect (SASL during
+                // registration) never ran the IDENTIFY path, so give them their
+                // auto-join, vhost, and waiting-memo notice here.
+                if let Some(account) = self.network.account_of(&uid).map(str::to_string) {
+                    out.extend(self.login_connect_effects(&uid, &account));
+                }
                 out
             }
             NetEvent::NickChange { uid, nick } => {

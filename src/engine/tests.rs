@@ -473,6 +473,37 @@
         assert!(notice(&to_ns(&mut e, "ALIST"), "#a"));
     }
 
+    // A user authenticated via SASL during registration never runs the IDENTIFY
+    // path, so the engine applies their auto-join and vhost when they connect.
+    #[test]
+    fn sasl_login_applies_ajoin_and_vhost_on_connect() {
+        let path = std::env::temp_dir().join("echo-saslajoin.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#auto", "alice").unwrap();
+        db.ajoin_add("alice", "#auto", "").unwrap();
+        db.set_vhost("alice", "cool.example", "boss", None).unwrap();
+        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+        e.set_sid("42S".into());
+
+        // SASL PLAIN logs uid 000AAAAAB into alice during registration.
+        e.handle(NetEvent::Sasl { client: "000AAAAAB".into(), agent: "*".into(), mode: "S".into(), data: vec!["PLAIN".into()] });
+        let out = e.handle(NetEvent::Sasl { client: "000AAAAAB".into(), agent: "*".into(), mode: "C".into(), data: vec![plain(b"", b"alice", b"sesame")] });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "alice")), "sasl login set the account: {out:?}");
+
+        // On connect the SASL user is force-joined and their vhost is applied,
+        // exactly as an IDENTIFY would have done.
+        let out = e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForceJoin { uid, channel, .. } if uid == "000AAAAAB" && channel == "#auto")), "auto-join applied on SASL connect: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::SetHost { uid, host } if uid == "000AAAAAB" && host == "cool.example")), "vhost applied on SASL connect: {out:?}");
+
+        // A plain (unauthenticated) connection gets neither.
+        let out = e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        assert!(!out.iter().any(|a| matches!(a, NetAction::ForceJoin { .. } | NetAction::SetHost { .. })), "no effects for an unauthenticated connect: {out:?}");
+    }
+
     // SET HIDE STATUS keeps the last-seen/online line to the owner and opers.
     #[test]
     fn nickserv_set_hide_status() {

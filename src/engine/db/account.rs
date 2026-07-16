@@ -387,6 +387,13 @@ impl Db {
         self.host_cfg.template.as_deref()
     }
 
+    /// `account`'s current (non-expired) vhost host string, if it has one.
+    pub fn active_vhost(&self, account: &str) -> Option<String> {
+        self.accounts
+            .get(&key(account))
+            .and_then(|a| a.vhost.as_ref().filter(|v| v.expires.is_none_or(|e| e > now())).map(|v| v.host.clone()))
+    }
+
     /// The account whose current (non-expired) vhost is `host`, if any — so a
     /// vhost can't be assigned to two accounts and collide on the network.
     pub fn vhost_owner(&self, host: &str) -> Option<String> {
