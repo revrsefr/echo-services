@@ -178,6 +178,9 @@ async fn main() -> Result<()> {
     engine.lock().await.set_opers(cfg.opers());
     engine.lock().await.set_sid(cfg.server.sid.clone());
     engine.lock().await.set_guest_nick(&cfg.server.guest_nick);
+    // Service pseudo-clients wear the configured host, or the server name.
+    let service_host = if cfg.server.service_host.is_empty() { &cfg.server.name } else { &cfg.server.service_host };
+    engine.lock().await.set_service_host(service_host);
     engine.lock().await.set_log_channel(cfg.log.as_ref().map(|l| l.channel.clone()));
     if let Some(expire) = &cfg.expire {
         engine.lock().await.set_expiry(expire.account_ttl(), expire.channel_ttl(), expire.warn_ttl());

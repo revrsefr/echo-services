@@ -102,6 +102,7 @@ pub struct Engine {
     // burst is done, so a relink doesn't enforce every already-online user.
     synced: bool,
     guest_nick: String, // base for the Guest#### rename on enforcement
+    service_host: String, // hostname the service pseudo-clients wear
     enforce_seq: u32,   // counter appended to guest_nick
     pending_enforce: Vec<PendingEnforce>, // registered nicks awaiting identify-or-rename
     bot_uids: HashMap<String, String>, // casefolded bot nick -> live uid (per connection)
@@ -229,6 +230,7 @@ impl Engine {
             sid: String::new(),
             synced: false,
             guest_nick: "Guest".to_string(),
+            service_host: "services.local".to_string(),
             enforce_seq: 0,
             pending_enforce: Vec::new(),
             bot_uids: HashMap::new(),
@@ -677,6 +679,13 @@ impl Engine {
         }
     }
 
+    // The hostname the service pseudo-clients wear (NickServ!services@<host>).
+    pub fn set_service_host(&mut self, host: &str) {
+        if !host.is_empty() {
+            self.service_host = host.to_string();
+        }
+    }
+
     // A user arrived on (or changed to) a registered nick: if they aren't logged
     // into that account, prompt them to IDENTIFY and schedule a rename. Gated on
     // `synced` so a netburst can't enforce every already-online user; a user who
@@ -808,7 +817,7 @@ impl Engine {
                 uid: svc.uid().to_string(),
                 nick: svc.nick().to_string(),
                 ident: "services".to_string(),
-                host: svc.host().to_string(),
+                host: self.service_host.clone(),
                 gecos: svc.gecos().to_string(),
             });
         }

@@ -261,6 +261,11 @@ pub struct Server {
     // ircd rejects a digit-leading SVSNICK and falls back to the raw uuid.
     #[serde(default = "default_guest_nick")]
     pub guest_nick: String,
+    // Hostname the service pseudo-clients wear (NickServ!services@<here>). Empty
+    // falls back to the server name, so NickServ shows as ...@services.tchatou.fr
+    // rather than the generic default.
+    #[serde(default)]
+    pub service_host: String,
 }
 
 fn default_protocol() -> u32 {
