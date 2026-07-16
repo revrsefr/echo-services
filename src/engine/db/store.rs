@@ -456,6 +456,18 @@ impl Store for Db {
     fn memo_cancel(&mut self, account: &str, sender: &str) -> bool {
         Db::memo_cancel(self, account, sender)
     }
+    fn memo_ignore_add(&mut self, account: &str, target: &str) -> bool {
+        Db::memo_ignore_add(self, account, target)
+    }
+    fn memo_ignore_del(&mut self, account: &str, target: &str) -> bool {
+        Db::memo_ignore_del(self, account, target)
+    }
+    fn memo_ignores(&self, account: &str) -> Vec<String> {
+        Db::memo_ignores(self, account)
+    }
+    fn memo_is_ignored(&self, account: &str, sender: &str) -> bool {
+        Db::memo_is_ignored(self, account, sender)
+    }
     fn memo_check(&self, account: &str, sender: &str) -> Option<(bool, u64)> {
         Db::memo_check(self, account, sender)
     }

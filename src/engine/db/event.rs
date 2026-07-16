@@ -29,6 +29,8 @@ pub enum Event {
     MemoSent { account: String, from: String, text: String, ts: u64 },
     MemoRead { account: String, index: usize },
     MemoDeleted { account: String, index: usize },
+    MemoIgnoreAdd { account: String, target: String },
+    MemoIgnoreDel { account: String, target: String },
     NickGrouped { nick: String, account: String },
     NickUngrouped { nick: String },
     ChannelRegistered { name: String, founder: String, ts: u64 },
@@ -156,6 +158,8 @@ impl Event {
             | Event::MemoSent { .. }
             | Event::MemoRead { .. }
             | Event::MemoDeleted { .. }
+            | Event::MemoIgnoreAdd { .. }
+            | Event::MemoIgnoreDel { .. }
             | Event::NickGrouped { .. }
             | Event::NickUngrouped { .. }
             | Event::AccountSeen { .. }
@@ -336,6 +340,18 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
                 if index < a.memos.len() {
                     a.memos.remove(index);
                 }
+            }
+        }
+        Event::MemoIgnoreAdd { account, target } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                if !a.memo_ignore.iter().any(|t| t.eq_ignore_ascii_case(&target)) {
+                    a.memo_ignore.push(target);
+                }
+            }
+        }
+        Event::MemoIgnoreDel { account, target } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.memo_ignore.retain(|t| !t.eq_ignore_ascii_case(&target));
             }
         }
         Event::NickGrouped { nick, account } => {

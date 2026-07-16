@@ -79,6 +79,9 @@ pub struct Account {
     // Memos left for this account (MemoServ), oldest first.
     #[serde(default)]
     pub memos: Vec<Memo>,
+    // Accounts this user won't receive memos from (MemoServ IGNORE).
+    #[serde(default)]
+    pub memo_ignore: Vec<String>,
     // Personal greet a bot shows when this account joins a greet-enabled channel.
     #[serde(default)]
     pub greet: String,

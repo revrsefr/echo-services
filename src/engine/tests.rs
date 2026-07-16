@@ -411,7 +411,7 @@
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], greet: String::new(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)));
         e.gossip_ingest(entry).unwrap();
@@ -835,6 +835,44 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("sent to") && text.contains('3'))), "sent to all 3: {out:?}");
         assert_eq!(e.db.unread_memos("alice"), 1);
         assert_eq!(e.db.unread_memos("bob"), 1);
+    }
+
+    // MemoServ IGNORE: a memo from an ignored sender is silently dropped, and the
+    // sender is still told it was sent (so the ignore isn't revealed).
+    #[test]
+    fn memoserv_ignore_drops_memo() {
+        use echo_memoserv::MemoServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-msignore.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "pw", None).unwrap();
+        db.register("bob", "pw", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(MemoServ { uid: "42SAAAAAE".into() }),
+            ],
+            db,
+        );
+        let ms = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAE".into(), text: t.into() });
+        let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+
+        // alice ignores bob.
+        assert!(notice(&ms(&mut e, "000AAAAAB", "IGNORE ADD bob"), "ignoring"), "ignore added");
+        // bob's memo is accepted-looking but dropped.
+        assert!(notice(&ms(&mut e, "000AAAAAC", "SEND alice hey"), "Memo sent"), "sender told it was sent");
+        assert_eq!(e.db.unread_memos("alice"), 0, "the memo was dropped");
+        // After un-ignoring, delivery resumes.
+        ms(&mut e, "000AAAAAB", "IGNORE DEL bob");
+        ms(&mut e, "000AAAAAC", "SEND alice hey again");
+        assert_eq!(e.db.unread_memos("alice"), 1, "delivered once no longer ignored");
     }
 
     // ChanServ AKICK CLEAR empties the auto-kick list.

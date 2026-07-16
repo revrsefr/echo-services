@@ -654,6 +654,40 @@ impl Db {
         })
     }
 
+    /// Add `target` to `account`'s memo-ignore list. Returns whether it was new.
+    pub fn memo_ignore_add(&mut self, account: &str, target: &str) -> bool {
+        let k = key(account);
+        let Some(a) = self.accounts.get(&k) else { return false };
+        if a.memo_ignore.iter().any(|t| t.eq_ignore_ascii_case(target)) {
+            return false;
+        }
+        let _ = self.log.append(Event::MemoIgnoreAdd { account: account.to_string(), target: target.to_string() });
+        self.accounts.get_mut(&k).unwrap().memo_ignore.push(target.to_string());
+        true
+    }
+
+    /// Remove `target` from `account`'s memo-ignore list. Returns whether it existed.
+    pub fn memo_ignore_del(&mut self, account: &str, target: &str) -> bool {
+        let k = key(account);
+        let Some(a) = self.accounts.get(&k) else { return false };
+        if !a.memo_ignore.iter().any(|t| t.eq_ignore_ascii_case(target)) {
+            return false;
+        }
+        let _ = self.log.append(Event::MemoIgnoreDel { account: account.to_string(), target: target.to_string() });
+        self.accounts.get_mut(&k).unwrap().memo_ignore.retain(|t| !t.eq_ignore_ascii_case(target));
+        true
+    }
+
+    /// `account`'s memo-ignore list.
+    pub fn memo_ignores(&self, account: &str) -> Vec<String> {
+        self.accounts.get(&key(account)).map_or(Vec::new(), |a| a.memo_ignore.clone())
+    }
+
+    /// Whether `account` is ignoring memos from `sender`.
+    pub fn memo_is_ignored(&self, account: &str, sender: &str) -> bool {
+        self.accounts.get(&key(account)).is_some_and(|a| a.memo_ignore.iter().any(|t| t.eq_ignore_ascii_case(sender)))
+    }
+
     /// How many unread memos an account has.
     pub fn unread_memos(&self, account: &str) -> usize {
         self.accounts.get(&key(account)).map_or(0, |a| a.memos.iter().filter(|m| !m.read).count())

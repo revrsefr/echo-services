@@ -20,7 +20,7 @@ impl Db {
             verified,
             ajoin: Vec::new(),
             suspension: None,
-            memos: Vec::new(),
+            memos: Vec::new(), memo_ignore: Vec::new(),
             greet: String::new(),
             vhost: None,
             vhost_request: None,
@@ -59,7 +59,7 @@ impl Db {
             verified: true, // the external authority vouches for it
             ajoin: Vec::new(),
             suspension: None,
-            memos: Vec::new(),
+            memos: Vec::new(), memo_ignore: Vec::new(),
             greet: String::new(),
             vhost: None,
             vhost_request: None,

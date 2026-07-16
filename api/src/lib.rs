@@ -1053,6 +1053,10 @@ pub trait Store {
     fn unread_memos(&self, account: &str) -> usize;
     /// Recall the most recent unread memo `sender` left for `account` (true if one was).
     fn memo_cancel(&mut self, account: &str, sender: &str) -> bool;
+    fn memo_ignore_add(&mut self, account: &str, target: &str) -> bool;
+    fn memo_ignore_del(&mut self, account: &str, target: &str) -> bool;
+    fn memo_ignores(&self, account: &str) -> Vec<String>;
+    fn memo_is_ignored(&self, account: &str, sender: &str) -> bool;
     /// Read-status and timestamp of the most recent memo `sender` left for `account`.
     fn memo_check(&self, account: &str, sender: &str) -> Option<(bool, u64)>;
     fn set_entrymsg(&mut self, channel: &str, msg: &str) -> Result<(), ChanError>;

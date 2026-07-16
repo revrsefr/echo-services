@@ -139,6 +139,8 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::MemoSent { .. }
         | Event::MemoRead { .. }
         | Event::MemoDeleted { .. }
+        | Event::MemoIgnoreAdd { .. }
+        | Event::MemoIgnoreDel { .. }
         | Event::ChannelMlock { .. }
         | Event::ChannelAccessAdd { .. }
         | Event::ChannelAccessDel { .. }
@@ -454,6 +456,7 @@ mod tests {
             ajoin: vec![],
             suspension: None,
             memos: vec![],
+            memo_ignore: vec![],
             greet: String::new(),
             vhost: None,
             vhost_request: None,

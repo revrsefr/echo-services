@@ -18,6 +18,12 @@ pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut S
         ctx.notice(me, from.uid, format!("\x02{target}\x02's mailbox is full — they'll need to clear some memos first."));
         return;
     }
+    // If the recipient is ignoring the sender, drop it silently — the sender is
+    // told it was sent, so the ignore isn't revealed.
+    if db.memo_is_ignored(&dest, account) {
+        ctx.notice(me, from.uid, format!("Memo sent to \x02{target}\x02."));
+        return;
+    }
     match db.memo_send(&dest, account, &text) {
         Ok(()) => ctx.notice(me, from.uid, format!("Memo sent to \x02{target}\x02.")),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),

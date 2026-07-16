@@ -22,6 +22,8 @@ mod check;
 mod info;
 #[path = "sendall.rs"]
 mod sendall;
+#[path = "ignore.rs"]
+mod ignore;
 
 const BLURB: &str = "MemoServ delivers messages to registered users, online or not. You must be identified to use it.";
 
@@ -37,6 +39,7 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "CHECK", summary: "see if a memo was read", detail: "Syntax: \x02CHECK <nick>\x02\nReports whether the last memo you sent them has been read." },
     HelpEntry { cmd: "INFO", summary: "your mailbox summary", detail: "Syntax: \x02INFO\x02\nShows how many memos you have, how many are unread, and your capacity." },
     HelpEntry { cmd: "SENDALL", summary: "memo every account (admin)", detail: "Syntax: \x02SENDALL <text>\x02\nLeaves a memo on every registered account. Requires the admin privilege." },
+    HelpEntry { cmd: "IGNORE", summary: "block memos from an account", detail: "Syntax: \x02IGNORE ADD <nick> | DEL <nick> | LIST\x02\nMemos from an ignored account are silently dropped." },
 ];
 
 pub struct MemoServ {
@@ -79,6 +82,7 @@ impl Service for MemoServ {
             Some("CHECK") => check::handle(me, from, account, args, ctx, db),
             Some("INFO") => info::handle(me, from, account, ctx, db),
             Some("SENDALL") => sendall::handle(me, from, account, args, ctx, db),
+            Some("IGNORE") => ignore::handle(me, from, account, args, ctx, db),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
         }
