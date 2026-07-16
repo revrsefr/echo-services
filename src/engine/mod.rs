@@ -1300,6 +1300,8 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         AkillRemoved { kind, mask } => format!("lifted the {} on \x02{mask}\x02", ban_kind_label(kind)),
         ForbidAdded { kind, mask, reason, .. } => format!("forbade {} \x02{mask}\x02 ({reason})", kind.to_ascii_lowercase()),
         ForbidRemoved { kind, mask } => format!("un-forbade {} \x02{mask}\x02", kind.to_ascii_lowercase()),
+        JupeAdded { name, reason, .. } => format!("juped server \x02{name}\x02 ({reason})"),
+        JupeRemoved { name } => format!("lifted the jupe on \x02{name}\x02"),
         AccountOperNoteSet { account, note } => match note {
             Some(_) => format!("set a staff note on \x02{account}\x02"),
             None => format!("cleared the staff note on \x02{account}\x02"),

@@ -132,6 +132,10 @@ pub enum Event {
     // "NICK", "CHAN", or "EMAIL".
     ForbidAdded { kind: String, mask: String, setter: String, reason: String, ts: u64 },
     ForbidRemoved { kind: String, mask: String },
+    // Server jupes (OperServ JUPE). Node-local (each network holds a rogue server
+    // by minting a fake one on `sid`), so Local scope but still persisted.
+    JupeAdded { name: String, sid: String, reason: String },
+    JupeRemoved { name: String },
 }
 
 // Whether an event replicates across the federation. Account identity is Global
@@ -232,7 +236,9 @@ impl Event {
             | Event::ChannelUsed { .. }
             | Event::ChannelNoExpire { .. }
             | Event::ChannelExpiryWarned { .. }
-            | Event::ChannelOperNoteSet { .. } => Scope::Local,
+            | Event::ChannelOperNoteSet { .. }
+            | Event::JupeAdded { .. }
+            | Event::JupeRemoved { .. } => Scope::Local,
         }
     }
 }
@@ -602,6 +608,17 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         }
         Event::ForbidRemoved { kind, mask } => {
             net.forbids.retain(|f| !(f.kind == kind && f.mask.eq_ignore_ascii_case(&mask)));
+        }
+        Event::JupeAdded { name, sid, reason } => {
+            // Idempotent over a snapshot; keep jupe_seq ahead so a fresh add can't
+            // reuse a sid.
+            if !net.jupes.iter().any(|j| j.name.eq_ignore_ascii_case(&name)) {
+                net.jupes.push(Jupe { name, sid, reason });
+                net.jupe_seq += 1;
+            }
+        }
+        Event::JupeRemoved { name } => {
+            net.jupes.retain(|j| !j.name.eq_ignore_ascii_case(&name));
         }
         Event::AccountExpiryWarned { account } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {

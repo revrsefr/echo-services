@@ -462,6 +462,89 @@
         assert_eq!(db.channel("#c").unwrap().join_mode("alice"), None, "removal survives reopen");
     }
 
+    // A jupe must survive a services restart — otherwise every juped server is
+    // silently un-juped on restart and can relink.
+    #[test]
+    fn jupes_survive_a_restart() {
+        let p = tmp("jupepersist");
+        let sid = {
+            let mut db = Db::open(&p, "N1");
+            let sid = db.jupe_add("rogue.example", "abuse");
+            assert_eq!(db.jupes().len(), 1, "juped while live");
+            sid
+        };
+        let db = Db::open(&p, "N1");
+        assert_eq!(db.jupes(), vec![("rogue.example".to_string(), sid, "abuse".to_string())], "the jupe replays from the log");
+    }
+
+    // Fold parity: the live state after a broad sequence of writes must equal the
+    // state rebuilt by replaying the same log — every event's manual live mutation
+    // has to match its `apply()` arm, or a restart silently changes the data.
+    #[test]
+    fn live_state_matches_replay_after_a_broad_sequence() {
+        let p = tmp("foldparity");
+        let snapshot = |db: &Db| -> String {
+            let mut a: Vec<_> = db.accounts().cloned().collect();
+            a.sort_by(|x, y| x.name.cmp(&y.name));
+            let mut c: Vec<_> = db.channels().cloned().collect();
+            c.sort_by(|x, y| x.name.cmp(&y.name));
+            let mut gn = db.groups();
+            gn.sort();
+            let gv: Vec<_> = gn.iter().filter_map(|n| db.group(n)).collect();
+            let mut ak = db.akills();
+            ak.sort_by(|x, y| x.mask.cmp(&y.mask));
+            let mut fb = db.forbids();
+            fb.sort_by(|x, y| x.mask.cmp(&y.mask));
+            let mut of = db.vhost_offers().to_vec();
+            of.sort();
+            let mut jp = db.jupes();
+            jp.sort();
+            format!("{a:?}\n{c:?}\n{gv:?}\n{ak:?}\n{fb:?}\n{of:?}\n{jp:?}")
+        };
+
+        let live = {
+            let mut db = Db::open(&p, "N1");
+            db.scram_iterations = 4096;
+            db.register("alice", "pw", Some("a@x.io".into())).unwrap();
+            db.register("bob", "pw", None).unwrap();
+            db.register("carol", "pw", None).unwrap();
+            db.register_channel("#chan", "bob").unwrap();
+            db.register_channel("#other", "carol").unwrap();
+            db.access_add("#chan", "alice", "op").unwrap();
+            db.akick_add("#chan", "*!*@bad.host", "spam").unwrap();
+            db.set_desc("#chan", "a place").unwrap();
+            db.set_url("#chan", "https://x.io").unwrap();
+            db.set_channel_email("#chan", "s@x.io").unwrap();
+            db.set_mlock("#chan", "nt", "s").unwrap();
+            db.set_channel_setting("#chan", ChanSetting::Private, true).unwrap();
+            db.set_successor("#other", Some("alice")).unwrap();
+            db.set_greet("alice", "hi there").unwrap();
+            db.set_account_autoop("alice", false).unwrap();
+            db.set_account_kill("alice", false).unwrap();
+            db.set_account_hide_status("alice", true).unwrap();
+            db.ajoin_add("alice", "#chan", "").unwrap();
+            db.set_vhost("alice", "alice.vhost", "oper", None).unwrap();
+            db.certfp_add("alice", "aabbccddeeff00112233445566778899").unwrap();
+            db.suspend_account("bob", "oper", "bad", None).unwrap();
+            db.memo_send("carol", "alice", "hello there", false).unwrap();
+            db.group_register("!grp", "alice").unwrap();
+            db.group_set_flags("!grp", "carol", "").unwrap();
+            db.group_register("!other", "bob").unwrap();
+            db.group_set_flags("!other", "alice", "").unwrap();
+            db.akill_add("G", "*@evil", "oper", "spam", None).unwrap();
+            db.forbid_add("NICK", "bad*", "oper", "squat").unwrap();
+            db.vhost_offer_add("cool.vhost").unwrap();
+            db.jupe_add("rogue.server", "abuse");
+            // The compound one: dropping alice must purge her access, successorship
+            // and group standing — identically in the live path and on replay.
+            db.drop_account("alice").unwrap();
+            db.drop_channel("#other").unwrap();
+            snapshot(&db)
+        };
+        let replayed = snapshot(&Db::open(&p, "N1"));
+        assert_eq!(live, replayed, "live state must equal the state replayed from the log");
+    }
+
     // Dropping an account erases every reference to it — channel access and
     // successorship, group membership and foundership — so a later re-registration
     // of the same name can't inherit its standing. Holds live and after replay.

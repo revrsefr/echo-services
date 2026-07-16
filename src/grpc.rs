@@ -179,6 +179,8 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::AkillRemoved { .. }
         | Event::ForbidAdded { .. }
         | Event::ForbidRemoved { .. }
+        | Event::JupeAdded { .. }
+        | Event::JupeRemoved { .. }
         | Event::AccountExpiryWarned { .. }
         | Event::ChannelExpiryWarned { .. }
         | Event::AccountOperNoteSet { .. }

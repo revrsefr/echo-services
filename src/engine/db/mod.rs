@@ -301,6 +301,9 @@ pub struct NetData {
     pub opers: HashMap<String, OperGrant>,
     // Session-limit exceptions (OperServ SESSION): per-IP-mask allowances.
     pub sess_exceptions: Vec<SessionException>,
+    // Server jupes (OperServ JUPE), and the counter for minting their fake SIDs.
+    pub jupes: Vec<Jupe>,
+    pub jupe_seq: u32,
     // The bot auto-assigned to newly registered channels (BotServ AUTOASSIGN),
     // if any. Casefolded nick; None disables auto-assignment.
     pub default_bot: Option<String>,
@@ -947,10 +950,6 @@ pub struct Db {
     net: NetData,
     // Services ignores (OperServ IGNORE), node-local and in-memory.
     ignores: Vec<Ignore>,
-    // Juped servers (OperServ JUPE), node-local: the introducing node owns them,
-    // so they aren't federated (that would collide SIDs across nodes).
-    jupes: Vec<Jupe>,
-    jupe_seq: u32,
     // Network defence level (OperServ DEFCON), 5 = normal down to 1 = lockdown.
     // Node-local; the derived restrictions are read by the engine and services.
     defcon: u8,
@@ -1026,7 +1025,7 @@ impl Db {
             apply(&mut accounts, &mut channels, &mut grouped, &mut bots, &mut host_cfg, &mut net, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), report_times: HashMap::new(), bots, host_cfg, net, ignores: Vec::new(), jupes: Vec::new(), jupe_seq: 0, defcon: 5, external_accounts: false }
+        Self { accounts, channels, grouped, log, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), report_times: HashMap::new(), bots, host_cfg, net, ignores: Vec::new(), defcon: 5, external_accounts: false }
     }
 
     /// Fold an entry authored by another node into the store — the services-side

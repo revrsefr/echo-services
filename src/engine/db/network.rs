@@ -221,25 +221,28 @@ impl Db {
     /// Jupe a server name: allocate a fake sid, store it, return the sid to
     /// introduce (or the existing sid if the name is already juped).
     pub fn jupe_add(&mut self, name: &str, reason: &str) -> String {
-        if let Some(j) = self.jupes.iter().find(|j| j.name.eq_ignore_ascii_case(name)) {
+        if let Some(j) = self.net.jupes.iter().find(|j| j.name.eq_ignore_ascii_case(name)) {
             return j.sid.clone();
         }
-        let sid = jupe_sid(self.jupe_seq);
-        self.jupe_seq += 1;
-        self.jupes.push(Jupe { name: name.to_string(), sid: sid.clone(), reason: reason.to_string() });
+        let sid = jupe_sid(self.net.jupe_seq);
+        // Persisted (Local scope) so a juped server stays juped across a restart.
+        let _ = self.log.append(Event::JupeAdded { name: name.to_string(), sid: sid.clone(), reason: reason.to_string() });
+        self.net.jupe_seq += 1;
+        self.net.jupes.push(Jupe { name: name.to_string(), sid: sid.clone(), reason: reason.to_string() });
         sid
     }
 
     /// Lift a jupe. Returns the sid to squit if it existed.
     pub fn jupe_del(&mut self, name: &str) -> Option<String> {
-        let sid = self.jupes.iter().find(|j| j.name.eq_ignore_ascii_case(name)).map(|j| j.sid.clone())?;
-        self.jupes.retain(|j| !j.name.eq_ignore_ascii_case(name));
+        let sid = self.net.jupes.iter().find(|j| j.name.eq_ignore_ascii_case(name)).map(|j| j.sid.clone())?;
+        let _ = self.log.append(Event::JupeRemoved { name: name.to_string() });
+        self.net.jupes.retain(|j| !j.name.eq_ignore_ascii_case(name));
         Some(sid)
     }
 
     /// The juped servers, as (name, sid, reason).
     pub fn jupes(&self) -> Vec<(String, String, String)> {
-        self.jupes.iter().map(|j| (j.name.clone(), j.sid.clone(), j.reason.clone())).collect()
+        self.net.jupes.iter().map(|j| (j.name.clone(), j.sid.clone(), j.reason.clone())).collect()
     }
 
     /// File an abuse report, rate-limited per reporter. Returns the new report's
