@@ -837,6 +837,41 @@
         assert_eq!(e.db.unread_memos("bob"), 1);
     }
 
+    // NickServ SASET lets an operator edit another account's settings, and is
+    // refused to non-operators.
+    #[test]
+    fn nickserv_saset_greet_by_operator() {
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-nssaset.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("boss", "pw", None).unwrap();
+        db.register("alice", "pw", None).unwrap();
+        let mut e = Engine::new(
+            vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })],
+            db,
+        );
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        ns(&mut e, "000AAAAAB", "IDENTIFY pw");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        ns(&mut e, "000AAAAAC", "IDENTIFY pw");
+
+        // A non-operator cannot use it.
+        assert!(notice(&ns(&mut e, "000AAAAAC", "SASET boss GREET nope"), "Access denied"), "non-oper refused");
+        // The operator sets alice's greet.
+        assert!(notice(&ns(&mut e, "000AAAAAB", "SASET alice GREET hello there"), "is now"), "oper sets greet");
+        assert_eq!(e.db.account("alice").map(|a| a.greet.clone()), Some("hello there".to_string()), "greet stored");
+        // And clears it.
+        assert!(notice(&ns(&mut e, "000AAAAAB", "SASET alice GREET"), "cleared"), "oper clears greet");
+        assert_eq!(e.db.account("alice").map(|a| a.greet.clone()), Some(String::new()), "greet cleared");
+    }
+
     // MemoServ IGNORE: a memo from an ignored sender is silently dropped, and the
     // sender is still told it was sent (so the ignore isn't revealed).
     #[test]

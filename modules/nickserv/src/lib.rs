@@ -16,6 +16,8 @@ mod info;
 mod alist;
 #[path = "set.rs"]
 mod set;
+#[path = "saset.rs"]
+mod saset;
 #[path = "drop.rs"]
 mod drop;
 #[path = "group.rs"]
@@ -53,6 +55,7 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "INFO", summary: "show account information", detail: "Syntax: \x02INFO [account]\x02\nShows account information. The email is shown only to the owner." },
     HelpEntry { cmd: "ALIST", summary: "list channels you have access on", detail: "Syntax: \x02ALIST\x02\nLists the channels you hold access on." },
     HelpEntry { cmd: "SET", summary: "change password or email", detail: "Syntax: \x02SET PASSWORD <new>\x02 or \x02SET EMAIL <address>\x02\nChanges your account password or email." },
+    HelpEntry { cmd: "SASET", summary: "change another account's settings (operator)", detail: "Syntax: \x02SASET <account> PASSWORD <new>\x02, \x02EMAIL [address]\x02, or \x02GREET [message]\x02\nEdits another account's settings. Operators only." },
     HelpEntry { cmd: "GROUP", summary: "link this nick to an account", detail: "Syntax: \x02GROUP <account> <password>\x02\nLinks your current nick to an account as an alias, so identifying under it logs into that account." },
     HelpEntry { cmd: "GLIST", summary: "list your grouped nicks", detail: "Syntax: \x02GLIST\x02\nLists the nicks grouped to your account." },
     HelpEntry { cmd: "UNGROUP", summary: "remove a grouped nick", detail: "Syntax: \x02UNGROUP [nick]\x02\nRemoves a grouped nick (your current one by default)." },
@@ -114,6 +117,7 @@ impl Service for NickServ {
             Some("INFO") => info::handle(me, from, args, ctx, db),
             Some("ALIST") => alist::handle(me, from, ctx, db),
             Some("SET") => set::handle(me, from, args, ctx, db),
+            Some("SASET") => saset::handle(me, from, args, ctx, db),
             Some("DROP") => drop::handle(me, from, args, ctx, net, db),
             Some("GROUP") => group::handle(me, from, args, ctx, db),
             Some("GLIST") => glist::handle(me, from, ctx, db),
