@@ -160,6 +160,7 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::ChannelBotUnassigned { .. }
         | Event::BotAdded(_)
         | Event::BotRemoved { .. }
+        | Event::DefaultBotSet { .. }
         | Event::VhostOfferAdded { .. }
         | Event::VhostOfferRemoved { .. }
         | Event::VhostForbidAdded { .. }

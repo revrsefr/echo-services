@@ -1049,6 +1049,10 @@ pub trait Store {
     fn bots(&self) -> Vec<BotView>;
     fn assign_bot(&mut self, channel: &str, bot: &str) -> Result<(), ChanError>;
     fn unassign_bot(&mut self, channel: &str) -> Result<bool, ChanError>;
+    // BotServ AUTOASSIGN: the bot auto-assigned to newly registered channels
+    // (its canonical nick if set and still present), and the setter.
+    fn default_bot(&self) -> Option<String>;
+    fn set_default_bot(&mut self, bot: Option<&str>) -> Result<(), ChanError>;
     // MemoServ: per-account memos (index is a 0-based position in memo_list).
     fn memo_send(&mut self, account: &str, from: &str, text: &str, receipt: bool) -> Result<(), RegError>;
     fn memo_list(&self, account: &str) -> Vec<MemoView>;

@@ -1119,6 +1119,10 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         ChannelBotUnassigned { channel } => format!("removed the bot from \x02{channel}\x02"),
         BotAdded(b) => format!("added bot \x02{}\x02", b.nick),
         BotRemoved { nick } => format!("removed bot \x02{nick}\x02"),
+        DefaultBotSet { bot } => match bot {
+            Some(b) => format!("set the auto-assign bot to \x02{b}\x02"),
+            None => "cleared the auto-assign bot".to_string(),
+        },
         VhostOfferAdded { host } => format!("added vhost offer \x02{host}\x02"),
         VhostOfferRemoved { host } => format!("removed vhost offer \x02{host}\x02"),
         VhostForbidAdded { pattern } => format!("forbade vhost pattern \x02{pattern}\x02"),

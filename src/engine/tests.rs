@@ -1329,6 +1329,54 @@
         assert!(notice(&bs(&mut e, "000AAAAAC", "BOT LIST"), "Bendy"));
     }
 
+    // BotServ AUTOASSIGN sets a default bot that new channels get automatically,
+    // and BOTLIST shows assignable bots to anyone.
+    #[test]
+    fn botserv_autoassign_and_botlist() {
+        use echo_botserv::BotServ;
+        use echo_chanserv::ChanServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-bsautoassign.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        bs(&mut e, "000AAAAAC", "BOT ADD Bendy bot serv.host A Helper");
+
+        // BOTLIST shows the bot; setting a nonexistent default is rejected.
+        assert!(notice(&bs(&mut e, "000AAAAAC", "BOTLIST"), "Bendy"), "botlist shows the bot");
+        assert!(notice(&bs(&mut e, "000AAAAAC", "AUTOASSIGN Ghost"), "no bot named"), "unknown default rejected");
+        assert!(notice(&bs(&mut e, "000AAAAAC", "AUTOASSIGN Bendy"), "auto-assigned"), "default set");
+        assert_eq!(e.db.default_bot(), Some("Bendy"), "default bot stored canonically");
+
+        // Registering a new channel auto-assigns the default bot.
+        e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#new".into(), op: true });
+        let out = cs(&mut e, "000AAAAAC", "REGISTER #new");
+        assert!(notice(&out, "Assigned"), "bot auto-assigned on register: {out:?}");
+        assert_eq!(e.db.channel("#new").and_then(|c| c.assigned_bot.clone()), Some("Bendy".to_string()), "assignment recorded");
+
+        // Turning it off stops auto-assignment.
+        assert!(notice(&bs(&mut e, "000AAAAAC", "AUTOASSIGN OFF"), "no longer"), "default cleared");
+        assert_eq!(e.db.default_bot(), None, "default bot cleared");
+    }
+
     // A bot is introduced on the network when added, and quit when deleted.
     #[test]
     fn botserv_introduces_and_quits_bots() {

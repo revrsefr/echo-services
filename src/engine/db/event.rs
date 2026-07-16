@@ -56,6 +56,8 @@ pub enum Event {
     ChannelBotUnassigned { channel: String },
     BotAdded(Bot),
     BotRemoved { nick: String },
+    // The bot auto-assigned to newly registered channels (BotServ AUTOASSIGN).
+    DefaultBotSet { bot: Option<String> },
     VhostOfferAdded { host: String },
     VhostOfferRemoved { host: String },
     VhostForbidAdded { pattern: String },
@@ -211,6 +213,7 @@ impl Event {
             | Event::ChannelBotUnassigned { .. }
             | Event::BotAdded(_)
             | Event::BotRemoved { .. }
+            | Event::DefaultBotSet { .. }
             | Event::VhostOfferAdded { .. }
             | Event::VhostOfferRemoved { .. }
             | Event::VhostForbidAdded { .. }
@@ -469,6 +472,13 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         }
         Event::BotRemoved { nick } => {
             bots.remove(&key(&nick));
+            // A default bot that was just removed can't stay the default.
+            if net.default_bot.as_deref() == Some(key(&nick).as_str()) {
+                net.default_bot = None;
+            }
+        }
+        Event::DefaultBotSet { bot } => {
+            net.default_bot = bot.map(|b| key(&b));
         }
         Event::VhostOfferAdded { host } => {
             if !host_cfg.offers.iter().any(|o| o == &host) {

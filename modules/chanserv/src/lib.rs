@@ -134,6 +134,12 @@ impl Service for ChanServ {
                         ctx.channel_mode(me, chan, "+r"); // mark the channel registered
                         ctx.count("chanserv.register");
                         ctx.notice(me, from.uid, format!("\x02{chan}\x02 is now registered and you are its founder. Enjoy!"));
+                        // Auto-assign the network's default bot, if one is set (BotServ AUTOASSIGN).
+                        if let Some(bot) = db.default_bot() {
+                            if db.assign_bot(chan, &bot).is_ok() {
+                                ctx.notice(me, from.uid, format!("Assigned \x02{bot}\x02 to \x02{chan}\x02. Change it with \x02/msg BotServ ASSIGN\x02."));
+                            }
+                        }
                     }
                     Err(ChanError::Exists) => ctx.notice(me, from.uid, format!("\x02{chan}\x02 is already registered. Try \x02INFO {chan}\x02 to see who owns it.")),
                     Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),

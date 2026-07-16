@@ -562,6 +562,22 @@ impl Db {
         self.bots.values()
     }
 
+    /// The bot auto-assigned to newly registered channels, if one is set and
+    /// still exists (its canonical nick).
+    pub fn default_bot(&self) -> Option<&str> {
+        let k = self.net.default_bot.as_ref()?;
+        self.bots.get(k).map(|b| b.nick.as_str())
+    }
+
+    /// Set (or clear) the auto-assign bot. The caller validates the bot exists;
+    /// the nick is stored casefolded.
+    pub fn set_default_bot(&mut self, bot: Option<&str>) -> Result<(), ChanError> {
+        let stored = bot.map(|b| b.to_string());
+        self.log.append(Event::DefaultBotSet { bot: stored.clone() }).map_err(|_| ChanError::Internal)?;
+        self.net.default_bot = stored.map(|b| key(&b));
+        Ok(())
+    }
+
     /// Assign a bot to a channel.
     pub fn assign_bot(&mut self, channel: &str, bot: &str) -> Result<(), ChanError> {
         let k = key(channel);

@@ -441,6 +441,12 @@ impl Store for Db {
     fn unassign_bot(&mut self, channel: &str) -> Result<bool, ChanError> {
         Db::unassign_bot(self, channel)
     }
+    fn default_bot(&self) -> Option<String> {
+        Db::default_bot(self).map(str::to_string)
+    }
+    fn set_default_bot(&mut self, bot: Option<&str>) -> Result<(), ChanError> {
+        Db::set_default_bot(self, bot)
+    }
     fn memo_send(&mut self, account: &str, from: &str, text: &str, receipt: bool) -> Result<(), RegError> {
         Db::memo_send(self, account, from, text, receipt)
     }

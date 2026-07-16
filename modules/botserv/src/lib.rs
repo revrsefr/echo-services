@@ -6,6 +6,10 @@ use echo_api::{HelpEntry, NetView, Priv, Sender, Service, ServiceCtx, Store};
 
 #[path = "bot.rs"]
 mod bot;
+#[path = "botlist.rs"]
+mod botlist;
+#[path = "autoassign.rs"]
+mod autoassign;
 #[path = "assign.rs"]
 mod assign;
 #[path = "info.rs"]
@@ -50,6 +54,8 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "BADWORDS", summary: "manage badword patterns", detail: "Syntax: \x02BADWORDS <#channel> ADD|DEL|LIST|CLEAR [pattern]\x02\nManages the channel's badword patterns." },
     HelpEntry { cmd: "TRIGGER", summary: "manage auto-responses", detail: "Syntax: \x02TRIGGER <#channel> ADD <regex>|<response>[|<cooldown>] | DEL <num> | LIST | CLEAR\x02\nManages the channel's auto-response triggers." },
     HelpEntry { cmd: "COPY", summary: "clone bot settings", detail: "Syntax: \x02COPY <#source> <#dest>\x02\nClones a channel's bot settings to another channel." },
+    HelpEntry { cmd: "BOTLIST", summary: "list assignable bots", detail: "Syntax: \x02BOTLIST\x02\nLists the service bots you can assign to a channel." },
+    HelpEntry { cmd: "AUTOASSIGN", summary: "default bot for new channels (operator)", detail: "Syntax: \x02AUTOASSIGN <bot> | OFF\x02\nSets the bot auto-assigned to every newly registered channel. Operators only." },
     HelpEntry { cmd: "BOT", summary: "manage the bots (operator)", detail: "Syntax: \x02BOT ADD|CHANGE|DEL|LIST\x02\nCreates and manages the service bots themselves. Operators only." },
 ];
 
@@ -76,6 +82,8 @@ impl Service for BotServ {
         let me = self.uid.as_str();
         match args.first().map(|s| s.to_ascii_uppercase()).as_deref() {
             Some("BOT") => bot::handle(me, from, args, ctx, db),
+            Some("BOTLIST") => botlist::handle(me, from, ctx, db),
+            Some("AUTOASSIGN") => autoassign::handle(me, from, args, ctx, db),
             Some("ASSIGN") => assign::handle(me, from, args, ctx, db, true),
             Some("UNASSIGN") => assign::handle(me, from, args, ctx, db, false),
             Some("INFO") => info::handle(me, from, args, ctx, db),
