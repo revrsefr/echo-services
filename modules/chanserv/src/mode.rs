@@ -28,6 +28,10 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     for mask in ban_masks(&args[2..]) {
         let core = mask.strip_prefix('!').unwrap_or(mask); // extbans may be inverted
         if let echo_api::AkickMask::Ext(eb, _) = echo_api::AkickMask::parse(core) {
+            if !db.extban_offered(eb.name) {
+                ctx.notice(me, from.uid, format!("This network's ircd doesn't offer the \x02{}\x02 extban.", eb.name));
+                return;
+            }
             if !db.extban_enabled(eb.name) {
                 ctx.notice(me, from.uid, format!("The \x02{}\x02 extban isn't enabled on this network.", eb.name));
                 return;

@@ -176,6 +176,17 @@ impl Db {
         self.extban_enabled.as_ref().is_none_or(|set| set.contains(&name.to_ascii_lowercase()))
     }
 
+    /// Record the ircd's live extban set (its CAPAB EXTBANS burst).
+    pub fn set_live_extbans(&mut self, entries: Vec<echo_api::ExtbanCap>) {
+        self.live_extbans = Some(entries);
+    }
+
+    /// Whether this ircd actually offers `name`. True until the ircd tells us its
+    /// set (we don't second-guess before the burst).
+    pub fn extban_offered(&self, name: &str) -> bool {
+        self.live_extbans.as_ref().is_none_or(|set| set.iter().any(|e| e.name.eq_ignore_ascii_case(name)))
+    }
+
     /// Display name used in email templates.
     pub fn email_brand(&self) -> &str {
         &self.email_brand

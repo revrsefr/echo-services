@@ -311,6 +311,20 @@ impl Protocol for InspIrcd {
                     _ => vec![NetEvent::Unknown { line: line.to_string() }],
                 }
             }
+            // CAPAB EXTBANS :matching:account=R acting:mute=m … — the ircd's live
+            // extban set. Other CAPAB subcommands (MODULES, CHANMODES, …) are noise.
+            "CAPAB" => {
+                if tokens.next().is_some_and(|s| s.eq_ignore_ascii_case("EXTBANS")) {
+                    let entries: Vec<_> = trailing(rest).split_whitespace().filter_map(parse_extban_cap).collect();
+                    if entries.is_empty() {
+                        vec![]
+                    } else {
+                        vec![NetEvent::ExtbanRegistry { entries }]
+                    }
+                } else {
+                    vec![]
+                }
+            }
             _ => vec![NetEvent::Unknown { line: line.to_string() }],
         }
     }
@@ -525,6 +539,22 @@ fn scan_status(modes: &str, params: &[&str], want: char) -> Vec<(bool, String)> 
 }
 
 // The IRC "trailing" argument: everything after the first " :", else the last word.
+// Parse one `CAPAB EXTBANS` token — "<matching|acting>:<name>[=<letter>]" — into
+// an ExtbanCap. Anything not shaped like that is skipped.
+fn parse_extban_cap(token: &str) -> Option<echo_api::ExtbanCap> {
+    let (ty, spec) = token.split_once(':')?;
+    let acting = match ty {
+        "acting" => true,
+        "matching" => false,
+        _ => return None,
+    };
+    let (name, letter) = match spec.split_once('=') {
+        Some((n, l)) => (n, l.chars().next()),
+        None => (spec, None),
+    };
+    (!name.is_empty()).then(|| echo_api::ExtbanCap { name: name.to_string(), letter, acting })
+}
+
 fn trailing(rest: &str) -> String {
     match rest.find(" :") {
         Some(i) => rest[i + 2..].to_string(),
@@ -574,6 +604,20 @@ mod tests {
         assert!(matches!(p.parse(":0IR METADATA 0IRAAAAAB ssl_cert :vTrSE unable to get certificate").as_slice(),
             [NetEvent::UserCert { fp, .. }] if fp.is_empty()), "cert error = no fingerprint");
         assert!(p.parse(":42S METADATA 0IRAAAAAB ssl_cert :VTrSe aabbccdd").is_empty(), "our own echo is ignored");
+    }
+
+    // CAPAB EXTBANS surfaces the ircd's live extban set: name, optional letter,
+    // and matching-vs-acting. Malformed tokens are skipped; other CAPAB lines don't.
+    #[test]
+    fn parses_capab_extbans() {
+        let mut p = proto();
+        let ev = p.parse("CAPAB EXTBANS :matching:account=R acting:mute=m matching:noletter garbage");
+        let [NetEvent::ExtbanRegistry { entries }] = ev.as_slice() else { panic!("{ev:?}") };
+        assert_eq!(entries.len(), 3, "garbage token skipped");
+        assert_eq!(entries[0], echo_api::ExtbanCap { name: "account".into(), letter: Some('R'), acting: false });
+        assert_eq!(entries[1], echo_api::ExtbanCap { name: "mute".into(), letter: Some('m'), acting: true });
+        assert_eq!(entries[2], echo_api::ExtbanCap { name: "noletter".into(), letter: None, acting: false });
+        assert!(p.parse("CAPAB CHANMODES :ban=b").is_empty(), "other CAPAB subcommands ignored");
     }
 
     // Both SERVER forms surface a ServerInfo (SID -> name) for the `server` extban:

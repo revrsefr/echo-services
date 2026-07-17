@@ -63,6 +63,9 @@ pub enum NetEvent {
     // A user's TLS client-certificate fingerprint (ircd `ssl_cert` metadata), for
     // the `fingerprint` extban. Empty `fp` means the user has no cert.
     UserCert { uid: String, fp: String },
+    // The ircd's live extban set from its `CAPAB EXTBANS` burst — the authoritative
+    // list AKICK/MODE validate against, replacing echo's static guess.
+    ExtbanRegistry { entries: Vec<ExtbanCap> },
     // A server split away (SQUIT). `server` is its SID; every user behind it — and
     // behind any server in its subtree — is gone, since a split is signalled once
     // rather than as a QUIT per user.
@@ -1098,6 +1101,17 @@ impl ExtBan {
     }
 }
 
+/// One extban the linked ircd actually advertises in its `CAPAB EXTBANS` burst:
+/// its `name`, optional `letter`, and whether it is an acting extban (mute, …)
+/// rather than a matching one. This is the authoritative live set — echo uses it
+/// to accept only the extbans this ircd really offers, instead of a static guess.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtbanCap {
+    pub name: String,
+    pub letter: Option<char>,
+    pub acting: bool,
+}
+
 /// How echo interprets an AKICK mask: a plain `nick!user@host` glob (`Host`), a
 /// recognized extban with its value (`Ext`), or something that is neither
 /// (`Unknown` — rejected at AKICK ADD).
@@ -1539,6 +1553,11 @@ pub trait Store {
     // config). The default is permissive — every extban echo knows; the live Db
     // narrows it to the configured set.
     fn extban_enabled(&self, _name: &str) -> bool {
+        true
+    }
+    // Whether the linked ircd actually offers this extban (its CAPAB EXTBANS set).
+    // Permissive by default; the live Db answers from what the ircd advertised.
+    fn extban_offered(&self, _name: &str) -> bool {
         true
     }
     fn exists(&self, name: &str) -> bool;

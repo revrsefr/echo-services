@@ -965,6 +965,9 @@ pub struct Db {
     log: EventLog,
     // Which extbans AKICK accepts (`[extban] enabled`). None = all echo knows.
     extban_enabled: Option<std::collections::HashSet<String>>,
+    // The ircd's live extban set from its CAPAB EXTBANS burst. None until we link;
+    // once known, it's authoritative for what AKICK/MODE may set.
+    live_extbans: Option<Vec<echo_api::ExtbanCap>>,
     // PBKDF2 cost baked into new SCRAM verifiers; lowered by tests.
     pub(crate) scram_iterations: u32,
     // Whether outbound email is configured, so email features can gate themselves.
@@ -1065,7 +1068,7 @@ impl Db {
             apply(&mut accounts, &mut channels, &mut grouped, &mut bots, &mut host_cfg, &mut net, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, extban_enabled: None, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), report_times: HashMap::new(), bots, host_cfg, net, ignores: Vec::new(), defcon: 5, external_accounts: false }
+        Self { accounts, channels, grouped, log, extban_enabled: None, live_extbans: None, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), report_times: HashMap::new(), bots, host_cfg, net, ignores: Vec::new(), defcon: 5, external_accounts: false }
     }
 
     /// Fold an entry authored by another node into the store — the services-side

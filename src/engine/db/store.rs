@@ -57,6 +57,9 @@ impl Store for Db {
     fn extban_enabled(&self, name: &str) -> bool {
         Db::extban_allowed(self, name)
     }
+    fn extban_offered(&self, name: &str) -> bool {
+        Db::extban_offered(self, name)
+    }
     fn email_enabled(&self) -> bool {
         Db::email_enabled(self)
     }

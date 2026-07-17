@@ -35,6 +35,10 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                     ctx.notice(me, from.uid, format!("\x02{name}\x02 isn't a host mask or a known extban."));
                     return;
                 }
+                echo_api::AkickMask::Ext(eb, _) if !db.extban_offered(eb.name) => {
+                    ctx.notice(me, from.uid, format!("This network's ircd doesn't offer the \x02{}\x02 extban.", eb.name));
+                    return;
+                }
                 echo_api::AkickMask::Ext(eb, _) if !db.extban_enabled(eb.name) => {
                     ctx.notice(me, from.uid, format!("The \x02{}\x02 extban isn't enabled on this network.", eb.name));
                     return;

@@ -1098,6 +1098,12 @@ impl Engine {
                 self.network.set_server_name(&sid, name);
                 Vec::new()
             }
+            NetEvent::ExtbanRegistry { entries } => {
+                let names = entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>().join(" ");
+                tracing::info!(count = entries.len(), extbans = %names, "learned ircd extban set");
+                self.db.set_live_extbans(entries);
+                Vec::new()
+            }
             NetEvent::UserConnect { uid, nick, host, ip } => {
                 let arriving_nick = nick.clone();
                 self.network.user_connect(uid.clone(), nick, host, ip.clone());
