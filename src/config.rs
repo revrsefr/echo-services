@@ -289,6 +289,14 @@ pub struct Server {
     // "is a <this>". Default "Network Service". Empty leaves them non-opers.
     #[serde(default = "default_service_oper_type")]
     pub service_oper_type: String,
+    // Channel every service pseudo-client (NickServ, ChanServ, …) joins at
+    // startup. Default "#services"; empty leaves them out of any channel.
+    #[serde(default = "default_services_channel")]
+    pub services_channel: String,
+}
+
+fn default_services_channel() -> String {
+    "#services".to_string()
 }
 
 fn default_service_modes() -> String {

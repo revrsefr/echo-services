@@ -105,6 +105,7 @@ pub struct Engine {
     guest_nick: String, // base for the Guest#### rename on enforcement
     service_host: String, // hostname the service pseudo-clients wear
     service_oper_type: String, // oper type our services are flagged with (WHOIS "is a <this>"); empty = don't oper
+    services_channel: String, // channel all service pseudo-clients join at startup; empty = none
     enforce_seq: u32,   // counter appended to guest_nick
     pending_enforce: Vec<PendingEnforce>, // registered nicks awaiting identify-or-rename
     bot_uids: HashMap<String, String>, // casefolded bot nick -> live uid (per connection)
@@ -240,6 +241,7 @@ impl Engine {
             guest_nick: "Guest".to_string(),
             service_host: "services.local".to_string(),
             service_oper_type: String::new(),
+            services_channel: String::new(),
             enforce_seq: 0,
             pending_enforce: Vec::new(),
             bot_uids: HashMap::new(),
@@ -778,6 +780,11 @@ impl Engine {
         self.service_oper_type = oper_type.into();
     }
 
+    // Channel all service pseudo-clients join at startup (empty = none).
+    pub fn set_services_channel(&mut self, channel: impl Into<String>) {
+        self.services_channel = channel.into();
+    }
+
     // A user arrived on (or changed to) a registered nick: if they aren't logged
     // into that account, prompt them to IDENTIFY and schedule a rename. Gated on
     // `synced` so a netburst can't enforce every already-online user; a user who
@@ -940,15 +947,21 @@ impl Engine {
             if !self.service_oper_type.is_empty() {
                 out.push(NetAction::OperType { uid: svc.uid().to_string(), oper_type: self.service_oper_type.clone() });
             }
+            // All service pseudo-clients sit in the services channel (configurable).
+            if !self.services_channel.is_empty() {
+                out.push(NetAction::ServiceJoin { uid: svc.uid().to_string(), channel: self.services_channel.clone() });
+            }
         }
         // Advertise our SASL mechanisms so the uplink can offer `sasl=PLAIN` to
         // clients in CAP LS (IRCv3 SASL 3.2).
         // Introduce the registered bots too.
         out.extend(self.reconcile_bots());
-        // DebugServ joins the log channel so its live feed lands there — it must be
-        // a member to speak, unlike the server-sourced audit notice.
+        // DebugServ must be a member of its feed channel to speak there — unless it
+        // already joined it above as the services channel.
         if let (false, Some(chan)) = (self.debugserv_uid.is_empty(), self.log_channel.clone()) {
-            out.push(NetAction::ServiceJoin { uid: self.debugserv_uid.clone(), channel: chan });
+            if !chan.eq_ignore_ascii_case(&self.services_channel) {
+                out.push(NetAction::ServiceJoin { uid: self.debugserv_uid.clone(), channel: chan });
+            }
         }
         // Re-assert the network bans over the fresh link, each with its remaining
         // duration so the ircd expires it at the right time (permanent = 0).
