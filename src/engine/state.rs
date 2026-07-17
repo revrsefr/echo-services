@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 // The read-only network view a module sees; re-exported so the engine keeps
 // naming it locally.
-pub use echo_api::{HelpEntry, IncidentView, NetView, SeenView};
+pub use echo_api::{ChanSeenView, HelpEntry, IncidentView, NetView, SeenView};
 
 // The most recent moderation/action incidents kept for LOGSEARCH.
 const INCIDENT_CAP: usize = 10_000;
@@ -29,6 +29,9 @@ pub struct Network {
     // Per-channel BOTSTATS activity (lines + top talkers), name-keyed and
     // persisted alongside `stats` so it survives a restart.
     chan_activity: HashMap<String, ChanActivity>,
+    // Per-channel per-nick last message + time, for the channel-scoped SEEN.
+    // Ephemeral (built from activity since services started), bounded per channel.
+    chan_seen: HashMap<String, HashMap<String, ChanSeen>>,
     // Live session count per connecting IP, for OperServ session limiting.
     sessions: HashMap<String, u32>,
     // Recent moderation/action incidents (bounded ring), for OperServ LOGSEARCH.
@@ -104,6 +107,13 @@ pub struct Seen {
     pub nick: String,
     pub ts: u64,
     pub what: String,
+}
+
+// A nick's last message in a channel, for the channel-scoped SEEN.
+pub struct ChanSeen {
+    pub nick: String,
+    pub ts: u64,
+    pub msg: String,
 }
 
 fn now() -> u64 {
@@ -339,13 +349,22 @@ impl Network {
 
     // Record a line spoken in `channel` by `nick`, for BOTSTATS. The per-nick map
     // is capped so a busy channel can't grow it without bound.
-    pub fn record_line(&mut self, channel: &str, nick: &str) {
+    pub fn record_line(&mut self, channel: &str, nick: &str, msg: &str) {
         const TALKER_CAP: usize = 512;
         let a = self.chan_activity.entry(lc(channel)).or_default();
         a.lines = a.lines.saturating_add(1);
         if a.talkers.len() < TALKER_CAP || a.talkers.contains_key(nick) {
             *a.talkers.entry(nick.to_string()).or_insert(0) += 1;
         }
+        // Channel-scoped last message (bounded, truncated) for SEEN.
+        let seen = self.chan_seen.entry(lc(channel)).or_default();
+        if seen.len() < TALKER_CAP || seen.contains_key(&lc(nick)) {
+            seen.insert(lc(nick), ChanSeen { nick: nick.to_string(), ts: now(), msg: msg.chars().take(300).collect() });
+        }
+    }
+
+    pub fn channel_seen(&self, channel: &str, nick: &str) -> Option<&ChanSeen> {
+        self.chan_seen.get(&lc(channel))?.get(&lc(nick))
     }
 
     // Increment a shared stat counter.
@@ -487,6 +506,13 @@ impl NetView for Network {
             nick: s.nick.clone(),
             ts: s.ts,
             what: s.what.clone(),
+        })
+    }
+    fn channel_seen(&self, channel: &str, nick: &str) -> Option<ChanSeenView> {
+        Network::channel_seen(self, channel, nick).map(|s| ChanSeenView {
+            nick: s.nick.clone(),
+            ts: s.ts,
+            msg: s.msg.clone(),
         })
     }
     fn channel_activity(&self, channel: &str) -> Option<(u64, Vec<(String, u64)>)> {

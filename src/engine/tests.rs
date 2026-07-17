@@ -530,6 +530,55 @@
         assert_ne!(src, "42SAAAAAB", "not sourced from ChanServ");
     }
 
+    // !seen nick in a bot channel: the bot answers in the channel with the nick's
+    // last message there (fantasy injects the channel).
+    #[test]
+    fn fantasy_seen_reports_channel_last_message() {
+        use echo_botserv::BotServ;
+        use echo_chanserv::ChanServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-seenchan.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "test");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#room", "alice").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+                Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("alice".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAA".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let assign = e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAD".into(), text: "BOT ADD Bendy bot serv.host Helper".into() });
+        let _ = assign;
+        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAD".into(), text: "ASSIGN #room Bendy".into() });
+        let botuid = out.iter().find_map(|a| match a {
+            NetAction::ServiceJoin { uid, channel } if channel == "#room" => Some(uid.clone()),
+            _ => None,
+        }).expect("bot joins #room");
+
+        // bob speaks in the channel, then quits.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "#room".into(), text: "bye bye friends".into() });
+        e.handle(NetEvent::Quit { uid: "000AAAAAB".into() });
+
+        // alice asks !seen bob: the bot answers in the channel with bob's last message.
+        let seen = e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "#room".into(), text: "!seen bob".into() });
+        assert!(
+            seen.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text }
+                if from == &botuid && to == "#room" && text.contains("bye bye friends") && text.contains("bob"))),
+            "bot reports bob's last message in the channel, got {seen:?}"
+        );
+    }
+
     // A server split (SQUIT) forgets exactly the users behind it (uids carrying
     // that SID), leaving users on other servers untouched.
     #[test]

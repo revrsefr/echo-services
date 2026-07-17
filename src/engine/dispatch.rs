@@ -30,7 +30,7 @@ impl Engine {
             }
             // Record activity in bot channels (surfaced by StatServ).
             if self.db.channel(to).is_some_and(|c| c.assigned_bot.is_some()) {
-                self.network.record_line(to, &nick);
+                self.network.record_line(to, &nick, text);
                 self.bump("botserv.messages");
             }
         } else {
@@ -103,9 +103,15 @@ impl Engine {
         let mark = ctx.actions.len();
         let args: Vec<&str> = [cmd, chan].into_iter().chain(words).collect();
         self.route_to(&csuid, sender, &args, ctx);
-        // Make the bot the source of everything ChanServ just emitted.
+        // Fantasy is public: the bot speaks ChanServ's text replies into the channel,
+        // and its actions (modes, kicks) are re-sourced from the bot.
         for a in ctx.actions[mark..].iter_mut() {
-            resource_action(a, &csuid, &botuid);
+            match a {
+                NetAction::Notice { text, .. } => {
+                    *a = NetAction::Privmsg { from: botuid.clone(), to: chan.to_string(), text: std::mem::take(text) };
+                }
+                _ => resource_action(a, &csuid, &botuid),
+            }
         }
     }
 

@@ -926,6 +926,13 @@ pub struct SeenView {
     pub what: String,
 }
 
+// A nick's last message in a channel (channel-scoped SEEN).
+pub struct ChanSeenView {
+    pub nick: String,
+    pub ts: u64,
+    pub msg: String,
+}
+
 #[derive(Debug)]
 pub enum RegError {
     Exists,
@@ -1208,6 +1215,7 @@ pub trait NetView {
     fn channel_members(&self, channel: &str) -> Vec<String>;
     fn channel_key(&self, channel: &str) -> Option<&str>;
     fn last_seen(&self, nick: &str) -> Option<SeenView>;
+    fn channel_seen(&self, channel: &str, nick: &str) -> Option<ChanSeenView>;
     // BOTSTATS: (lines seen this session, top talkers by count desc).
     fn channel_activity(&self, channel: &str) -> Option<(u64, Vec<(String, u64)>)>;
     // The shared stat counters (namespaced key -> count), for StatServ.
