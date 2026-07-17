@@ -9,10 +9,11 @@ impl Db {
         // Unverified only when email confirmation actually applies (email is
         // configured and an address was given); otherwise verified immediately.
         let verified = !(self.email_enabled && email.is_some());
+        let ts = now(); // one timestamp: registered-at == last-seen at creation
         let account = Account {
             name: name.to_string(),
             email,
-            ts: now(),
+            ts,
             home: self.log.origin.clone(),
             scram256: Some(creds.scram256),
             scram512: Some(creds.scram512),
@@ -24,7 +25,7 @@ impl Db {
             greet: String::new(), no_autoop: false, no_protect: false, hide_status: false,
             vhost: None,
             vhost_request: None,
-            last_seen: now(),
+            last_seen: ts,
             noexpire: false,
             expiry_warned: false,
             oper_note: None,
@@ -64,10 +65,11 @@ impl Db {
             }
             return Ok(());
         }
+        let ts = now(); // one timestamp: registered-at == last-seen at creation
         let account = Account {
             name: name.to_string(),
             email,
-            ts: now(),
+            ts,
             home: self.log.origin.clone(),
             scram256: Some(scram256.to_string()),
             scram512: (!scram512.is_empty()).then(|| scram512.to_string()),
@@ -79,7 +81,7 @@ impl Db {
             greet: String::new(), no_autoop: false, no_protect: false, hide_status: false,
             vhost: None,
             vhost_request: None,
-            last_seen: now(),
+            last_seen: ts,
             noexpire: false,
             expiry_warned: false,
             oper_note: None,

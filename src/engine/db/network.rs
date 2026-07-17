@@ -5,13 +5,17 @@ impl Db {
     pub fn akill_add(&mut self, kind: XlineKind, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
         // Storage/gossip keep the ircd's line token; the API is typed.
         let wire = kind.wire();
+        // One timestamp for the logged event AND the in-memory record: two `now()`
+        // calls could straddle a second, so a peer replaying the event would store a
+        // different ts than us and gossip state would never converge.
+        let ts = now();
         let same = |a: &Akill| a.kind == wire && a.mask.eq_ignore_ascii_case(mask);
-        let fresh = !self.net.akills.iter().any(|a| same(a) && a.expires.is_none_or(|e| e > now()));
+        let fresh = !self.net.akills.iter().any(|a| same(a) && a.expires.is_none_or(|e| e > ts));
         self.log
-            .append(Event::AkillAdded { kind: wire.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now(), expires })
+            .append(Event::AkillAdded { kind: wire.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts, expires })
             .map_err(|_| RegError::Internal)?;
         self.net.akills.retain(|a| !same(a));
-        self.net.akills.push(Akill { kind: wire.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now(), expires });
+        self.net.akills.push(Akill { kind: wire.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts, expires });
         Ok(fresh)
     }
 
@@ -46,13 +50,15 @@ impl Db {
     pub fn forbid_add(&mut self, kind: ForbidKind, mask: &str, setter: &str, reason: &str) -> Result<bool, RegError> {
         // The store persists/gossips the wire token; the API is typed.
         let wire = kind.wire();
+        // One timestamp for the event AND the in-memory record (see akill_add).
+        let ts = now();
         let same = |f: &Forbid| f.kind == wire && f.mask.eq_ignore_ascii_case(mask);
         let fresh = !self.net.forbids.iter().any(same);
         self.log
-            .append(Event::ForbidAdded { kind: wire.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now() })
+            .append(Event::ForbidAdded { kind: wire.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts })
             .map_err(|_| RegError::Internal)?;
         self.net.forbids.retain(|f| !same(f));
-        self.net.forbids.push(Forbid { kind: wire.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now() });
+        self.net.forbids.push(Forbid { kind: wire.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts });
         Ok(fresh)
     }
 
