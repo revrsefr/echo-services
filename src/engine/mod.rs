@@ -1090,6 +1090,14 @@ impl Engine {
                 self.network.set_user_attrs(&uid, ident, realhost, gecos);
                 Vec::new()
             }
+            NetEvent::UserCert { uid, fp } => {
+                self.network.set_user_cert(&uid, fp);
+                Vec::new()
+            }
+            NetEvent::ServerInfo { sid, name } => {
+                self.network.set_server_name(&sid, name);
+                Vec::new()
+            }
             NetEvent::UserConnect { uid, nick, host, ip } => {
                 let arriving_nick = nick.clone();
                 self.network.user_connect(uid.clone(), nick, host, ip.clone());

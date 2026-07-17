@@ -63,14 +63,27 @@ impl Protocol for InspIrcd {
             // downstream link — track it for the server tree. The unsourced auth
             // handshake ( SERVER <name> <pass> <sid> … ) is our uplink registering.
             "SERVER" => match source {
+                // Downstream link: :<parent> SERVER <name> <sid> [hops] :<desc>.
                 Some(parent) => {
-                    let _name = tokens.next();
+                    let name = tokens.next().unwrap_or("").to_string();
                     match tokens.next() {
-                        Some(sid) if !sid.is_empty() => vec![NetEvent::ServerLink { sid: sid.to_string(), parent }],
+                        Some(sid) if !sid.is_empty() => vec![
+                            NetEvent::ServerLink { sid: sid.to_string(), parent },
+                            NetEvent::ServerInfo { sid: sid.to_string(), name },
+                        ],
                         _ => vec![],
                     }
                 }
-                None => vec![NetEvent::Registered],
+                // Uplink auth handshake: SERVER <name> <password> <sid> :<desc>.
+                None => {
+                    let name = tokens.next().unwrap_or("").to_string();
+                    let sid = tokens.nth(1).unwrap_or("").to_string(); // skip <password>
+                    let mut out = vec![NetEvent::Registered];
+                    if !sid.is_empty() {
+                        out.push(NetEvent::ServerInfo { sid, name });
+                    }
+                    out
+                }
             },
             "ENDBURST" => vec![NetEvent::EndBurst],
             "PING" => {
@@ -223,17 +236,26 @@ impl Protocol for InspIrcd {
                 }
             }
             // :<src> METADATA <target> <key> :<value> — the ircd sharing user
-            // state. We care about `accountname` on a uid (e.g. replayed on our
-            // netburst) to restore who is logged in; an empty value is a logout.
+            // state. `accountname` (e.g. replayed on our netburst) restores who is
+            // logged in (empty = logout); `ssl_cert` carries the TLS fingerprint for
+            // the `fingerprint` extban.
             "METADATA" => {
                 let a: Vec<&str> = tokens.collect();
                 match (source.as_deref(), a.first(), a.get(1)) {
-                    (Some(src), Some(target), Some(key))
-                        if !src.starts_with(self.sid.as_str())
-                            && key.eq_ignore_ascii_case("accountname")
-                            && *target != "*" =>
-                    {
-                        vec![NetEvent::AccountLogin { uid: target.to_string(), account: trailing(rest) }]
+                    (Some(src), Some(target), Some(key)) if !src.starts_with(self.sid.as_str()) && *target != "*" => {
+                        if key.eq_ignore_ascii_case("accountname") {
+                            vec![NetEvent::AccountLogin { uid: target.to_string(), account: trailing(rest) }]
+                        } else if key.eq_ignore_ascii_case("ssl_cert") {
+                            // Value is "<flags> <fp,fp> <dn> <issuer>", or "<flags> <error>"
+                            // when the flags contain 'E'. Take the first fingerprint.
+                            let value = trailing(rest);
+                            let mut parts = value.split_whitespace();
+                            let flags = parts.next().unwrap_or("");
+                            let fp = if flags.contains('E') { "" } else { parts.next().unwrap_or("").split(',').next().unwrap_or("") };
+                            vec![NetEvent::UserCert { uid: target.to_string(), fp: fp.to_string() }]
+                        } else {
+                            vec![]
+                        }
                     }
                     _ => vec![],
                 }
@@ -539,7 +561,30 @@ mod tests {
         assert!(matches!(p.parse(":0IR METADATA 0IRAAAAAB accountname :").as_slice(),
             [NetEvent::AccountLogin { uid, account }] if uid == "0IRAAAAAB" && account.is_empty()), "empty value = logout");
         assert!(p.parse(":42S METADATA 0IRAAAAAB accountname :bob").is_empty(), "our own echo is ignored");
-        assert!(p.parse(":0IR METADATA 0IRAAAAAB ssl_cert :deadbeef").is_empty(), "non-account keys ignored");
+        assert!(p.parse(":0IR METADATA 0IRAAAAAB swhois :hi").is_empty(), "unhandled keys ignored");
+    }
+
+    // `ssl_cert` metadata surfaces the TLS fingerprint (2nd field) for the extban;
+    // a cert error (flags contain 'E') has no fingerprint.
+    #[test]
+    fn parses_ssl_cert_metadata() {
+        let mut p = proto();
+        assert!(matches!(p.parse(":0IR METADATA 0IRAAAAAB ssl_cert :VTrSe aabbccddeeff /CN=user /CN=CA").as_slice(),
+            [NetEvent::UserCert { uid, fp }] if uid == "0IRAAAAAB" && fp == "aabbccddeeff"), "fingerprint captured");
+        assert!(matches!(p.parse(":0IR METADATA 0IRAAAAAB ssl_cert :vTrSE unable to get certificate").as_slice(),
+            [NetEvent::UserCert { fp, .. }] if fp.is_empty()), "cert error = no fingerprint");
+        assert!(p.parse(":42S METADATA 0IRAAAAAB ssl_cert :VTrSe aabbccdd").is_empty(), "our own echo is ignored");
+    }
+
+    // Both SERVER forms surface a ServerInfo (SID -> name) for the `server` extban:
+    // the uplink handshake (name password sid) and a sourced downstream link (name sid).
+    #[test]
+    fn parses_server_names() {
+        let mut p = proto();
+        assert!(p.parse("SERVER hub.example.net linkpass 0IR :A hub").iter()
+            .any(|e| matches!(e, NetEvent::ServerInfo { sid, name } if sid == "0IR" && name == "hub.example.net")), "uplink name");
+        assert!(p.parse(":0IR SERVER leaf.example.net 0XY :A leaf").iter()
+            .any(|e| matches!(e, NetEvent::ServerInfo { sid, name } if sid == "0XY" && name == "leaf.example.net")), "downstream name");
     }
 
     // A KILL surfaces as a UserKilled for the target uid.
@@ -554,9 +599,10 @@ mod tests {
     #[test]
     fn parses_server_link() {
         let mut p = proto();
-        assert!(matches!(p.parse("SERVER hub.example password 0IR :a hub").as_slice(), [NetEvent::Registered]), "uplink handshake");
+        assert!(matches!(p.parse("SERVER hub.example password 0IR :a hub").as_slice(),
+            [NetEvent::Registered, NetEvent::ServerInfo { .. }]), "uplink handshake");
         assert!(matches!(p.parse(":0IR SERVER leaf.example 0XY :a leaf").as_slice(),
-            [NetEvent::ServerLink { sid, parent }] if sid == "0XY" && parent == "0IR"), "downstream link");
+            [NetEvent::ServerLink { sid, parent }, NetEvent::ServerInfo { .. }] if sid == "0XY" && parent == "0IR"), "downstream link");
     }
 
     // A SQUIT surfaces as a ServerSplit carrying the departed server's SID.

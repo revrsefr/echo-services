@@ -57,6 +57,12 @@ pub enum NetEvent {
     // A downstream server was introduced (a sourced SERVER). `parent` is the SID
     // that introduced it, so we can track the tree and cascade a hub's SQUIT.
     ServerLink { sid: String, parent: String },
+    // A server's SID-to-name mapping (from any SERVER line, uplink or downstream),
+    // so the `server` extban can match a user by the server they're on.
+    ServerInfo { sid: String, name: String },
+    // A user's TLS client-certificate fingerprint (ircd `ssl_cert` metadata), for
+    // the `fingerprint` extban. Empty `fp` means the user has no cert.
+    UserCert { uid: String, fp: String },
     // A server split away (SQUIT). `server` is its SID; every user behind it — and
     // behind any server in its subtree — is gone, since a split is signalled once
     // rather than as a QUIT per user.
@@ -1129,7 +1135,7 @@ pub fn akick_matches(mask: &str, t: &BanTarget) -> bool {
             ExtKind::Unauthed => t.account.is_none() && host_hit(v),
             ExtKind::Realname => glob_match(v, t.gecos),
             ExtKind::Realmask => v.split_once('+').is_some_and(|(h, r)| host_hit(h) && glob_match(r, t.gecos)),
-            ExtKind::Server => glob_match(v, t.server),
+            ExtKind::Server => !t.server.is_empty() && glob_match(v, t.server),
             ExtKind::Fingerprint => t.fingerprint.is_some_and(|f| glob_match(v, f)),
             ExtKind::Channel => t.channels.iter().any(|c| glob_match(v, c)),
             ExtKind::Passive => false, // ircd-enforced; echo has no data to match

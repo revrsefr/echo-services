@@ -23,6 +23,8 @@ pub struct Network {
     // Downstream server tree: SID -> the SID that introduced it. Lets a hub's
     // SQUIT cascade to every server (and user) behind it. Rebuilt each link.
     servers: HashMap<String, String>,
+    // SID -> server name, for the `server` extban. Rebuilt each link.
+    server_names: HashMap<String, String>,
     // Shared, namespaced stat counters any service contributes to (persisted via
     // StatsSet). Read by StatServ and the gRPC Stats API.
     stats: BTreeMap<String, u64>,
@@ -84,7 +86,8 @@ pub struct User {
     pub host: String,     // the displayed host
     pub realhost: String, // the real host, for host bans against it
     pub ip: String,
-    pub gecos: String,    // real name, for realname / realmask extbans
+    pub gecos: String,       // real name, for realname / realmask extbans
+    pub fingerprint: String, // TLS cert fingerprint (ssl_cert metadata); empty = none
 }
 
 // A channel's live membership, ops, and current key (+k), tracked from the burst.
@@ -132,7 +135,7 @@ impl Network {
         if !ip.is_empty() {
             *self.sessions.entry(ip.clone()).or_insert(0) += 1;
         }
-        self.users.insert(uid.clone(), User { uid, nick, ident: String::new(), host, realhost: String::new(), ip, gecos: String::new() });
+        self.users.insert(uid.clone(), User { uid, nick, ident: String::new(), host, realhost: String::new(), ip, gecos: String::new(), fingerprint: String::new() });
     }
 
     // Fill in the rest of a user's identity (ident, real host, real name), which
@@ -143,6 +146,19 @@ impl Network {
             u.realhost = realhost;
             u.gecos = gecos;
         }
+    }
+
+    // Record a user's TLS fingerprint (ssl_cert metadata), for the `fingerprint` extban.
+    pub fn set_user_cert(&mut self, uid: &str, fp: String) {
+        if let Some(u) = self.users.get_mut(uid) {
+            u.fingerprint = fp;
+        }
+    }
+
+    // Record a server's name for its SID, so the `server` extban can resolve which
+    // server a user is on (their uid's SID prefix).
+    pub fn set_server_name(&mut self, sid: &str, name: String) {
+        self.server_names.insert(sid.to_string(), name);
     }
 
     // Mirror the engine's declarative config operators, so services can enumerate
@@ -227,10 +243,9 @@ impl Network {
             ip: &u.ip,
             gecos: &u.gecos,
             account: self.accounts.get(uid).map(String::as_str),
-            // TODO(extban): capture the user's server + TLS fingerprint from the s2s
-            // stream to match the `server`/`fingerprint` extbans.
-            server: "",
-            fingerprint: None,
+            // A uid's first 3 chars are its server's SID; resolve that to the name.
+            server: uid.get(..3).and_then(|sid| self.server_names.get(sid)).map_or("", String::as_str),
+            fingerprint: (!u.fingerprint.is_empty()).then_some(u.fingerprint.as_str()),
             channels: self.channels_of(uid),
         })
     }
@@ -268,6 +283,7 @@ impl Network {
         }
         for s in &subtree {
             self.servers.remove(s);
+            self.server_names.remove(s);
         }
         subtree
     }
@@ -275,6 +291,7 @@ impl Network {
     // Drop the whole server tree (on a fresh link, before the burst rebuilds it).
     pub fn clear_servers(&mut self) {
         self.servers.clear();
+        self.server_names.clear();
     }
 
     pub fn user_nick_change(&mut self, uid: &str, nick: String) {
