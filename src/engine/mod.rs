@@ -444,7 +444,9 @@ impl Engine {
         for (bot_lc, chan) in &desired {
             if !self.bot_channels.contains(&(bot_lc.clone(), chan.clone())) {
                 if let Some(uid) = self.bot_uids.get(bot_lc) {
-                    out.push(NetAction::ServiceJoin { uid: uid.clone(), channel: chan.clone() });
+                    // BotServ bots join as protected admins (+a) so ordinary ops
+                    // can't kick or deop them — the standard bot default.
+                    out.push(NetAction::ServiceJoin { uid: uid.clone(), channel: chan.clone(), modes: "a".into() });
                     self.bot_channels.insert((bot_lc.clone(), chan.clone()));
                 }
             }
@@ -1025,7 +1027,7 @@ impl Engine {
             }
             // All service pseudo-clients sit in the services channel (configurable).
             if !self.services_channel.is_empty() {
-                out.push(NetAction::ServiceJoin { uid: svc.uid().to_string(), channel: self.services_channel.clone() });
+                out.push(NetAction::ServiceJoin { uid: svc.uid().to_string(), channel: self.services_channel.clone(), modes: "o".into() });
             }
         }
         // Advertise our SASL mechanisms so the uplink can offer `sasl=PLAIN` to
@@ -1036,7 +1038,7 @@ impl Engine {
         // already joined it above as the services channel.
         if let (false, Some(chan)) = (self.debugserv_uid.is_empty(), self.log_channel.clone()) {
             if !chan.eq_ignore_ascii_case(&self.services_channel) {
-                out.push(NetAction::ServiceJoin { uid: self.debugserv_uid.clone(), channel: chan });
+                out.push(NetAction::ServiceJoin { uid: self.debugserv_uid.clone(), channel: chan, modes: "o".into() });
             }
         }
         // Re-assert the network bans over the fresh link, each with its remaining

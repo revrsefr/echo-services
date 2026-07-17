@@ -117,8 +117,10 @@ pub enum NetAction {
     ForcePart { uid: String, channel: String, reason: String },
     // Remove one of our pseudo-clients (e.g. a deleted bot) from the network.
     QuitUser { uid: String, reason: String },
-    // A services pseudo-client (a bot) joins / parts a channel.
-    ServiceJoin { uid: String, channel: String },
+    // A services pseudo-client (a bot) joins / parts a channel. `modes` are the
+    // status-mode letters it joins with: "a" (protected admin) for BotServ bots,
+    // "o" for the core service pseudo-clients in the services channel.
+    ServiceJoin { uid: String, channel: String, modes: String },
     ServicePart { uid: String, channel: String },
     // Set channel modes from services, e.g. +r on a registered channel. `from` is
     // the pseudoclient uid to source it from (empty = the services server). The

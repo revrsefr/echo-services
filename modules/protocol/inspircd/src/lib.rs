@@ -350,14 +350,14 @@ impl Protocol for InspIrcd {
             // SVSNICK <uid> <newnick> <nickts> — the new nick takes the current
             // time as its TS so it wins any collision resolution.
             NetAction::QuitUser { uid, reason } => vec![format!(":{} QUIT :{}", uid, reason)],
-            NetAction::ServiceJoin { uid, channel } => {
+            NetAction::ServiceJoin { uid, channel, modes } => {
                 // IJOIN needs a membid (`IJOIN <chan> <membid>`); without it the
                 // ircd rejects the whole link with "Insufficient parameters". The
-                // trailing "1 o" is the 4-param form (ts, status modes): the bot
-                // joins opped, matching Anope's default bot modes (+o). ts 1 keeps
-                // it below the channel TS so the op is always applied.
+                // trailing "1 <modes>" is the 4-param form (ts, status modes) — a
+                // BotServ bot joins "+a" (protected admin), core services "+o". ts 1
+                // keeps it below the channel TS so the status is always applied.
                 self.membid += 1;
-                vec![format!(":{} IJOIN {} {} 1 o", uid, channel, self.membid)]
+                vec![format!(":{} IJOIN {} {} 1 {}", uid, channel, self.membid, modes)]
             }
             NetAction::ServicePart { uid, channel } => vec![format!(":{} PART {}", uid, channel)],
             // ENCAP the target's server: CHGHOST <uid> <newhost>, to set a vhost.
@@ -745,10 +745,10 @@ mod tests {
     #[test]
     fn service_join_ijoin_includes_membid() {
         let mut p = proto();
-        let a = p.serialize(&NetAction::ServiceJoin { uid: "00DB00000".into(), channel: "#taverne".into() });
-        assert_eq!(a, vec![":00DB00000 IJOIN #taverne 1 1 o".to_string()], "joins opped with a membid");
-        // membid is monotonic across joins
-        let b = p.serialize(&NetAction::ServiceJoin { uid: "00DB00000".into(), channel: "#quizz".into() });
+        let a = p.serialize(&NetAction::ServiceJoin { uid: "00DB00000".into(), channel: "#taverne".into(), modes: "a".into() });
+        assert_eq!(a, vec![":00DB00000 IJOIN #taverne 1 1 a".to_string()], "bot joins +a (protected) with a membid");
+        // membid is monotonic across joins; core services join +o
+        let b = p.serialize(&NetAction::ServiceJoin { uid: "00DB00000".into(), channel: "#quizz".into(), modes: "o".into() });
         assert_eq!(b, vec![":00DB00000 IJOIN #quizz 2 1 o".to_string()]);
     }
 }

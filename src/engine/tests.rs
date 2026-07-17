@@ -546,7 +546,7 @@
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "BOT ADD Bendy bot serv.host Helper".into() });
         let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "ASSIGN #room Bendy".into() });
         let botuid = out.iter().find_map(|a| match a {
-            NetAction::ServiceJoin { uid, channel } if channel == "#room" => Some(uid.clone()),
+            NetAction::ServiceJoin { uid, channel, .. } if channel == "#room" => Some(uid.clone()),
             _ => None,
         }).expect("bot joins #room");
 
@@ -591,7 +591,7 @@
         let _ = assign;
         let out = e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAD".into(), text: "ASSIGN #room Bendy".into() });
         let botuid = out.iter().find_map(|a| match a {
-            NetAction::ServiceJoin { uid, channel } if channel == "#room" => Some(uid.clone()),
+            NetAction::ServiceJoin { uid, channel, .. } if channel == "#room" => Some(uid.clone()),
             _ => None,
         }).expect("bot joins #room");
 
@@ -2217,9 +2217,9 @@
         ns(&mut e, "000AAAAAC", "IDENTIFY password1");
         bs(&mut e, "000AAAAAC", "BOT ADD Bendy bot serv.host Helper"); // goes live
 
-        // The founder assigns the bot: it joins the channel.
+        // The founder assigns the bot: it joins the channel as a protected admin (+a).
         let out = bs(&mut e, "000AAAAAB", "ASSIGN #c Bendy");
-        assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, .. } if channel == "#c")), "joins on assign: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, modes, .. } if channel == "#c" && modes == "a")), "joins +a on assign: {out:?}");
         // Unassigning parts it.
         let out = bs(&mut e, "000AAAAAB", "UNASSIGN #c");
         assert!(out.iter().any(|a| matches!(a, NetAction::ServicePart { channel, .. } if channel == "#c")), "parts on unassign: {out:?}");
@@ -2254,13 +2254,13 @@
         ns(&mut e, "IDENTIFY password1");
         bs(&mut e, "BOT ADD Bendy bot serv.host Helper");
         let bot_uid = bs(&mut e, "ASSIGN #c Bendy").iter().find_map(|a| match a {
-            NetAction::ServiceJoin { uid, channel } if channel == "#c" => Some(uid.clone()),
+            NetAction::ServiceJoin { uid, channel, .. } if channel == "#c" => Some(uid.clone()),
             _ => None,
         }).expect("bot joined on assign");
 
         // The bot is kicked out (the ircd relays this as a PART for its uid).
         let out = e.handle(NetEvent::Part { uid: bot_uid.clone(), channel: "#c".into() });
-        assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { uid, channel } if uid == &bot_uid && channel == "#c")), "kicked bot rejoins: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { uid, channel, .. } if uid == &bot_uid && channel == "#c")), "kicked bot rejoins: {out:?}");
     }
 
     // A KILL forgets a real user, but a killed services bot is reintroduced and
@@ -2292,7 +2292,7 @@
         ns(&mut e, "IDENTIFY password1");
         bs(&mut e, "BOT ADD Bendy bot serv.host Helper");
         let bot_uid = bs(&mut e, "ASSIGN #c Bendy").iter().find_map(|a| match a {
-            NetAction::ServiceJoin { uid, channel } if channel == "#c" => Some(uid.clone()),
+            NetAction::ServiceJoin { uid, channel, .. } if channel == "#c" => Some(uid.clone()),
             _ => None,
         }).expect("bot joined on assign");
 
