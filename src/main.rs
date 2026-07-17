@@ -191,6 +191,7 @@ async fn main() -> Result<()> {
     engine.lock().await.set_service_host(service_host);
     engine.lock().await.set_service_oper_type(cfg.server.service_oper_type.clone());
     engine.lock().await.set_services_channel(cfg.server.services_channel.clone());
+    engine.lock().await.set_standard_replies(cfg.server.standard_replies);
     engine.lock().await.set_log_channel(cfg.log.as_ref().map(|l| l.channel.clone()));
     if enabled("debugserv") {
         // DebugServ speaks the live feed into the log channel; give the engine its uid.

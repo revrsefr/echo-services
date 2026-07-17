@@ -106,6 +106,7 @@ pub struct Engine {
     service_host: String, // hostname the service pseudo-clients wear
     service_oper_type: String, // oper type our services are flagged with (WHOIS "is a <this>"); empty = don't oper
     services_channel: String, // channel all service pseudo-clients join at startup; empty = none
+    standard_replies: bool, // emit IRCv3 FAIL/WARN/NOTE for service errors; off = degrade to notices
     enforce_seq: u32,   // counter appended to guest_nick
     pending_enforce: Vec<PendingEnforce>, // registered nicks awaiting identify-or-rename
     bot_uids: HashMap<String, String>, // casefolded bot nick -> live uid (per connection)
@@ -242,6 +243,7 @@ impl Engine {
             service_host: "services.local".to_string(),
             service_oper_type: String::new(),
             services_channel: String::new(),
+            standard_replies: false,
             enforce_seq: 0,
             pending_enforce: Vec::new(),
             bot_uids: HashMap::new(),
@@ -785,6 +787,10 @@ impl Engine {
         self.services_channel = channel.into();
     }
 
+    pub fn set_standard_replies(&mut self, on: bool) {
+        self.standard_replies = on;
+    }
+
     // A user arrived on (or changed to) a registered nick: if they aren't logged
     // into that account, prompt them to IDENTIFY and schedule a rename. Gated on
     // `synced` so a netburst can't enforce every already-online user; a user who
@@ -1287,7 +1293,28 @@ impl Engine {
         // Give every user-removal a traceable incident id, stamped into its reason
         // and recorded in the searchable log (OperServ LOGSEARCH).
         self.stamp_incidents(&mut out);
+        // When standard replies are off (or the ircd module isn't loaded), a
+        // FAIL/WARN/NOTE would be dropped — degrade each to a plain notice so the
+        // user always hears the outcome.
+        if !self.standard_replies {
+            self.degrade_standard_replies(&mut out);
+        }
         out
+    }
+
+    // Rewrite any StandardReply into an equivalent Notice `*** command: text`
+    // (or `*** text` when there's no command), sourced from the same service.
+    fn degrade_standard_replies(&self, actions: &mut [NetAction]) {
+        for a in actions.iter_mut() {
+            if let NetAction::StandardReply { from, to, command, text, .. } = a {
+                let body = if command.is_empty() || command == "*" {
+                    format!("*** {text}")
+                } else {
+                    format!("*** {command}: {text}")
+                };
+                *a = NetAction::Notice { from: std::mem::take(from), to: std::mem::take(to), text: body };
+            }
+        }
     }
 
     // Mint an incident id for each kick/kill in `actions`, append `[#id]` to its

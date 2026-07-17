@@ -281,7 +281,7 @@ impl Engine {
                 let mut ctx = ServiceCtx::default();
                 if !ok {
                     ctx.count("nickserv.identify_fail");
-                    ctx.notice(&agent, &uid, "Invalid password. Please try again.");
+                    ctx.fail(&agent, &uid, "IDENTIFY", "INVALID_CREDENTIALS", "Invalid password. Please try again.");
                 } else {
                     ctx.login(&uid, &account);
                     ctx.count("nickserv.identify");

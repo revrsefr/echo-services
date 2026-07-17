@@ -315,6 +315,17 @@ impl Protocol for InspIrcd {
             NetAction::Notice { from, to, text } => {
                 vec![format!(":{} NOTICE {} :{}", from, to, text)]
             }
+            // Standard reply: encapsulate for the target's server to re-emit locally
+            // (FAIL/WARN/NOTE aren't s2s-routable). ENCAP * so only the server the
+            // target is local to acts. "*" = no source service / no command.
+            NetAction::StandardReply { kind, from, to, command, code, text } => {
+                let src = if from.is_empty() { "*" } else { from.as_str() };
+                let cmd = if command.is_empty() { "*" } else { command.as_str() };
+                vec![self.sourced(format!(
+                    "ENCAP * SWSTDRPL {to} {src} {verb} {cmd} {code} :{text}",
+                    verb = kind.verb()
+                ))]
+            }
             // Answer the origin server: ENCAP <origin> SWACCTRES <reqid> <kind>
             // <account> <status> <code> :<message>
             NetAction::AccountResponse { reqid, origin, kind, account, status, code, message } => {
@@ -621,6 +632,33 @@ mod tests {
         });
         assert_eq!(lines, vec![":42SAAAAAA NOTICE 0IRAAAAAB :hiKILL 0IRAAAAAB :pwned".to_string()]);
         assert!(!lines[0].contains('\n') && !lines[0].contains('\r'));
+    }
+
+    // A standard reply encapsulates as ENCAP * SWSTDRPL <target> <source> <verb>
+    // <command> <code> :<text>, sourced from the services server so the target's
+    // server (m_services_stdrpl) can re-emit it locally.
+    #[test]
+    fn standard_reply_serializes_to_encap() {
+        let lines = proto().serialize(&NetAction::StandardReply {
+            kind: echo_api::ReplyKind::Fail,
+            from: "42SAAAAAB".into(),
+            to: "0IRAAAAAB".into(),
+            command: "IDENTIFY".into(),
+            code: "INVALID_CREDENTIALS".into(),
+            text: "Invalid password. Please try again.".into(),
+        });
+        assert_eq!(lines, vec![":42S ENCAP * SWSTDRPL 0IRAAAAAB 42SAAAAAB FAIL IDENTIFY INVALID_CREDENTIALS :Invalid password. Please try again.".to_string()]);
+
+        // Empty source/command collapse to "*".
+        let lines = proto().serialize(&NetAction::StandardReply {
+            kind: echo_api::ReplyKind::Note,
+            from: String::new(),
+            to: "0IRAAAAAB".into(),
+            command: String::new(),
+            code: "INFO".into(),
+            text: "heads up".into(),
+        });
+        assert_eq!(lines, vec![":42S ENCAP * SWSTDRPL 0IRAAAAAB * NOTE * INFO :heads up".to_string()]);
     }
 
     // Account-registration relay wire format, matching the ircd's account module:

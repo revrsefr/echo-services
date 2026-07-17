@@ -64,6 +64,20 @@ pub enum NetEvent {
     Unknown { line: String },
 }
 
+// The three IRCv3 standard-reply verbs (https://ircv3.net/specs/extensions/standard-replies).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplyKind { Fail, Warn, Note }
+
+impl ReplyKind {
+    pub fn verb(self) -> &'static str {
+        match self {
+            ReplyKind::Fail => "FAIL",
+            ReplyKind::Warn => "WARN",
+            ReplyKind::Note => "NOTE",
+        }
+    }
+}
+
 // Normalized outbound intents the engine wants performed on the network.
 #[derive(Debug, Clone)]
 pub enum NetAction {
@@ -79,6 +93,11 @@ pub enum NetAction {
     IntroduceUser { uid: String, nick: String, ident: String, host: String, gecos: String },
     Privmsg { from: String, to: String, text: String },
     Notice { from: String, to: String, text: String },
+    // An IRCv3 standard reply (FAIL/WARN/NOTE) from a service to a client. Not
+    // routable over s2s directly, so it's encapsulated for the target's server
+    // (m_services_stdrpl) to re-emit locally, cap-gated. `command`/`from` may be
+    // "*" for none/server-sourced. Degrades to a Notice when the feature is off.
+    StandardReply { kind: ReplyKind, from: String, to: String, command: String, code: String, text: String },
     AccountResponse { reqid: String, origin: String, kind: String, account: String, status: String, code: String, message: String },
     // A SASL exchange step back to the ircd, sourced from our SASL agent. mode = C/D.
     Sasl { agent: String, client: String, mode: String, data: Vec<String> },
@@ -296,6 +315,34 @@ impl ServiceCtx {
         self.actions.push(NetAction::Notice {
             from: from.to_string(),
             to: to.to_string(),
+            text: text.into(),
+        });
+    }
+
+    // IRCv3 standard replies from a service (`from` uid) to a client (`to` uid).
+    // FAIL = the command failed; WARN = it worked but mind the caveat; NOTE =
+    // informational. `command` is the command the reply relates to (or "*"),
+    // `code` a machine-readable token (e.g. "ACCESS_DENIED"). Spec-aware clients
+    // render the code + text; the rest get a plain notice (engine/module decide).
+    pub fn fail(&mut self, from: &str, to: &str, command: &str, code: &str, text: impl Into<String>) {
+        self.standard_reply(ReplyKind::Fail, from, to, command, code, text);
+    }
+
+    pub fn warn(&mut self, from: &str, to: &str, command: &str, code: &str, text: impl Into<String>) {
+        self.standard_reply(ReplyKind::Warn, from, to, command, code, text);
+    }
+
+    pub fn note(&mut self, from: &str, to: &str, command: &str, code: &str, text: impl Into<String>) {
+        self.standard_reply(ReplyKind::Note, from, to, command, code, text);
+    }
+
+    fn standard_reply(&mut self, kind: ReplyKind, from: &str, to: &str, command: &str, code: &str, text: impl Into<String>) {
+        self.actions.push(NetAction::StandardReply {
+            kind,
+            from: from.to_string(),
+            to: to.to_string(),
+            command: command.to_string(),
+            code: code.to_string(),
             text: text.into(),
         });
     }

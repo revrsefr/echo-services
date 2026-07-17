@@ -325,6 +325,36 @@
         assert!(matches!(e.db.certfp_add("bar", fp), Err(db::CertError::InUse)), "a fingerprint maps to one account");
     }
 
+    // Standard replies gate: off (default) degrades a service FAIL to a notice so
+    // nothing is lost; on, the structured FAIL survives with command + code.
+    #[test]
+    fn standard_replies_gate_service_failures() {
+        let connect = |e: &mut Engine| {
+            e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        };
+        let identify_unregistered = |e: &mut Engine| e.handle(NetEvent::Privmsg {
+            from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY ghost pw".into(),
+        });
+
+        // Off: no StandardReply reaches the wire; the user still gets a notice.
+        let mut off = engine_with("stdrploff", "foo", "sesame");
+        connect(&mut off);
+        let a = identify_unregistered(&mut off);
+        assert!(a.iter().any(|x| matches!(x, NetAction::Notice { text, .. } if text.contains("isn't registered"))), "{a:?}");
+        assert!(!a.iter().any(|x| matches!(x, NetAction::StandardReply { .. })), "off must degrade: {a:?}");
+
+        // On: the FAIL survives, carrying the command and machine code.
+        let mut on = engine_with("stdrplon", "foo", "sesame");
+        on.set_standard_replies(true);
+        connect(&mut on);
+        let b = identify_unregistered(&mut on);
+        let hit = b.iter().find_map(|x| match x {
+            NetAction::StandardReply { kind, command, code, .. } => Some((kind.verb(), command.clone(), code.clone())),
+            _ => None,
+        });
+        assert_eq!(hit, Some(("FAIL", "IDENTIFY".to_string(), "ACCOUNT_NOT_REGISTERED".to_string())), "{b:?}");
+    }
+
     // IDENTIFY logs in, LOGOUT clears the accountname (ircd emits RPL_LOGGEDOUT).
     #[test]
     fn nickserv_logout_clears_account() {

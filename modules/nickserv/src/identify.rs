@@ -14,7 +14,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     };
     // Distinguish an unregistered account from a wrong password.
     if !db.exists(account_name) {
-        ctx.notice(me, from.uid, format!("\x02{account_name}\x02 isn't registered."));
+        ctx.fail(me, from.uid, "IDENTIFY", "ACCOUNT_NOT_REGISTERED", format!("\x02{account_name}\x02 isn't registered."));
         return;
     }
     // A suspended account can't be logged into (checked before the password so it
@@ -33,14 +33,14 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                     msg.push_str(&format!(" The suspension is due to lift on {}.", human_time(exp)));
                 }
                 msg.push_str(" If you think this is a mistake, please contact the network staff.");
-                ctx.notice(me, from.uid, msg);
+                ctx.fail(me, from.uid, "IDENTIFY", "ACCOUNT_SUSPENDED", msg);
             }
             return;
         }
     }
     // Refuse while throttled, so a password can't be brute-forced.
     if let Some(secs) = db.auth_lockout(account_name) {
-        ctx.notice(me, from.uid, format!("Too many failed attempts. Please wait {secs}s and try again."));
+        ctx.fail(me, from.uid, "IDENTIFY", "RATE_LIMITED", format!("Too many failed attempts. Please wait {secs}s and try again."));
         return;
     }
     // Fetch the verifier cheaply and hand the (~1s) PBKDF2 verify to the engine to
@@ -51,7 +51,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             // Exists but has no verifier (e.g. cert-only) — a password can't match.
             db.note_auth(account_name, false);
             ctx.count("nickserv.identify_fail");
-            ctx.notice(me, from.uid, "Invalid password. Please try again.");
+            ctx.fail(me, from.uid, "IDENTIFY", "INVALID_CREDENTIALS", "Invalid password. Please try again.");
         }
         Some((account, verifier)) => {
             // Already identified to this account: skip the (wasted) verify.

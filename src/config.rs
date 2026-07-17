@@ -293,6 +293,11 @@ pub struct Server {
     // startup. Default "#services"; empty leaves them out of any channel.
     #[serde(default = "default_services_channel")]
     pub services_channel: String,
+    // Emit IRCv3 standard replies (FAIL/WARN/NOTE) for service errors instead of
+    // plain notices. Needs m_services_stdrpl loaded on the ircd; off until then,
+    // otherwise the replies are dropped. Off = today's notice behaviour.
+    #[serde(default)]
+    pub standard_replies: bool,
 }
 
 fn default_services_channel() -> String {
