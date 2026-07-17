@@ -189,6 +189,7 @@ async fn main() -> Result<()> {
     // Service pseudo-clients wear the configured host, or the server name.
     let service_host = if cfg.server.service_host.is_empty() { &cfg.server.name } else { &cfg.server.service_host };
     engine.lock().await.set_service_host(service_host);
+    engine.lock().await.set_service_oper_type(cfg.server.service_oper_type.clone());
     engine.lock().await.set_log_channel(cfg.log.as_ref().map(|l| l.channel.clone()));
     if enabled("debugserv") {
         // DebugServ speaks the live feed into the log channel; give the engine its uid.

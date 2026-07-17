@@ -73,6 +73,9 @@ pub enum NetAction {
     // Answer a remote IDLE request for one of our pseudo-clients so a routed
     // WHOIS completes: `:<target> IDLE <requester> <signon> <idle>`.
     IdleReply { target: String, requester: String, signon: u64, idle: u64 },
+    // Flag one of our pseudo-clients as a services operator so WHOIS labels it a
+    // network service (the oper line): `:<uid> OPERTYPE :<oper_type>`.
+    OperType { uid: String, oper_type: String },
     IntroduceUser { uid: String, nick: String, ident: String, host: String, gecos: String },
     Privmsg { from: String, to: String, text: String },
     Notice { from: String, to: String, text: String },

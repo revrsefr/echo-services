@@ -285,10 +285,18 @@ pub struct Server {
     // services server U-lined), bot, block-CTCP. Set per the ircd's loaded modules.
     #[serde(default = "default_service_modes")]
     pub service_modes: String,
+    // Oper type the service pseudo-clients are flagged with, so WHOIS shows
+    // "is a <this>". Default "Network Service". Empty leaves them non-opers.
+    #[serde(default = "default_service_oper_type")]
+    pub service_oper_type: String,
 }
 
 fn default_service_modes() -> String {
-    "iHkBT".to_string()
+    "ikBT".to_string()
+}
+
+fn default_service_oper_type() -> String {
+    "Network Service".to_string()
 }
 
 fn default_protocol() -> u32 {

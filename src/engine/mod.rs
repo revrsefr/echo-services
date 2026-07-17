@@ -104,6 +104,7 @@ pub struct Engine {
     synced: bool,
     guest_nick: String, // base for the Guest#### rename on enforcement
     service_host: String, // hostname the service pseudo-clients wear
+    service_oper_type: String, // oper type our services are flagged with (WHOIS "is a <this>"); empty = don't oper
     enforce_seq: u32,   // counter appended to guest_nick
     pending_enforce: Vec<PendingEnforce>, // registered nicks awaiting identify-or-rename
     bot_uids: HashMap<String, String>, // casefolded bot nick -> live uid (per connection)
@@ -238,6 +239,7 @@ impl Engine {
             synced: false,
             guest_nick: "Guest".to_string(),
             service_host: "services.local".to_string(),
+            service_oper_type: String::new(),
             enforce_seq: 0,
             pending_enforce: Vec::new(),
             bot_uids: HashMap::new(),
@@ -771,6 +773,11 @@ impl Engine {
         }
     }
 
+    // Oper type our services are flagged with at introduction (empty = don't oper).
+    pub fn set_service_oper_type(&mut self, oper_type: impl Into<String>) {
+        self.service_oper_type = oper_type.into();
+    }
+
     // A user arrived on (or changed to) a registered nick: if they aren't logged
     // into that account, prompt them to IDENTIFY and schedule a rename. Gated on
     // `synced` so a netburst can't enforce every already-online user; a user who
@@ -929,6 +936,10 @@ impl Engine {
                 host: self.service_host.clone(),
                 gecos: svc.gecos().to_string(),
             });
+            // Oper them up so WHOIS labels them a network service (the oper line).
+            if !self.service_oper_type.is_empty() {
+                out.push(NetAction::OperType { uid: svc.uid().to_string(), oper_type: self.service_oper_type.clone() });
+            }
         }
         // Advertise our SASL mechanisms so the uplink can offer `sasl=PLAIN` to
         // clients in CAP LS (IRCv3 SASL 3.2).

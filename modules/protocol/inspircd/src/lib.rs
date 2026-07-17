@@ -298,6 +298,11 @@ impl Protocol for InspIrcd {
             NetAction::IdleReply { target, requester, signon, idle } => {
                 vec![format!(":{target} IDLE {requester} {signon} {idle}")]
             }
+            // Oper up a pseudo-client (legacy form, no privilege tags = full access;
+            // the type name is what WHOIS shows: "is a <oper_type>").
+            NetAction::OperType { uid, oper_type } => {
+                vec![format!(":{uid} OPERTYPE :{oper_type}")]
+            }
             // insp4 UID: uuid nickts nick realhost disphost realuser dispuser ip signonts +modes :gecos
             // (both a real AND a displayed user field — see m_spanningtree/uid.cpp Builder).
             NetAction::IntroduceUser { uid, nick, ident, host, gecos } => vec![self.sourced(format!(
