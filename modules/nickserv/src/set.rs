@@ -1,4 +1,4 @@
-use echo_api::Store;
+use echo_api::{ForbidKind, Store};
 use echo_api::{Sender, ServiceCtx};
 
 // SET PASSWORD <newpassword> | SET EMAIL [address]: change your account settings.
@@ -30,7 +30,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             let email = args.get(2).map(|s| s.to_string());
             let cleared = email.is_none();
             if let Some(addr) = &email {
-                if db.is_forbidden("EMAIL", addr).is_some() {
+                if db.is_forbidden(ForbidKind::Email, addr).is_some() {
                     ctx.notice(me, from.uid, "That email address is forbidden by network policy. Use a different one.");
                     return;
                 }

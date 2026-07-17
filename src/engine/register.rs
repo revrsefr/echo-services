@@ -214,7 +214,7 @@ impl Engine {
         if self.db.exists(account) {
             return Some(reg_reply(reply, RegOutcome::Exists, account));
         }
-        if self.db.is_forbidden("NICK", account).is_some() {
+        if self.db.is_forbidden(echo_api::ForbidKind::Nick, account).is_some() {
             return Some(reg_reply(reply, RegOutcome::Forbidden, account));
         }
         if !self.reg_limiter.allow() {
@@ -230,7 +230,7 @@ impl Engine {
         };
         // A forbidden email pattern (OperServ FORBID EMAIL) blocks registration.
         if let Some(addr) = &email {
-            if self.db.is_forbidden("EMAIL", addr).is_some() {
+            if self.db.is_forbidden(echo_api::ForbidKind::Email, addr).is_some() {
                 return reg_reply(&reply, RegOutcome::ForbiddenEmail, account);
             }
         }

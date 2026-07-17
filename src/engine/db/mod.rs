@@ -40,7 +40,7 @@ pub(crate) use event::{apply, Scope};
 // echo-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use echo_api::{
-    AccountView, AjoinView, AkillView, BotView, Caps, ForbidView, GroupView, HelpView, IgnoreView, MemoView, NewsView, Privs, ReportView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
+    AccountView, AjoinView, AkillView, BotView, Caps, ForbidKind, ForbidView, GroupView, HelpView, IgnoreView, MemoView, NewsView, Privs, ReportView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

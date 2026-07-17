@@ -1740,7 +1740,7 @@
         let reply = crate::proto::RegReply::NickServ { agent: "42SAAAAAA".into(), uid: "000AAAAAC".into(), nick: "evilbob".into() };
         assert!(e.pre_register_check("evilbob", &reply).is_some(), "forbidden nick refused");
         assert!(e.pre_register_check("cleanname", &reply).is_none(), "clean nick allowed");
-        assert!(e.db.is_forbidden("CHAN", "#warez").is_some(), "channel is forbidden");
+        assert!(e.db.is_forbidden(echo_api::ForbidKind::Chan, "#warez").is_some(), "channel is forbidden");
 
         // EMAIL forbids block registration and SET EMAIL.
         assert!(notice(&os(&mut e, "FORBID ADD EMAIL *@spam.tld disposable"), "Forbade"), "email forbid added");

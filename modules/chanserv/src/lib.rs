@@ -1,4 +1,4 @@
-use echo_api::{ChanError, ChannelView, Priv, Store};
+use echo_api::{ChanError, ChannelView, ForbidKind, Priv, Store};
 use echo_api::{HelpEntry, Sender, Service, ServiceCtx};
 use echo_api::NetView;
 
@@ -125,7 +125,7 @@ impl Service for ChanServ {
                     ctx.notice(me, from.uid, format!("You must be a channel operator (\x02@\x02) in \x02{chan}\x02 to register it."));
                     return;
                 }
-                if let Some(reason) = db.is_forbidden("CHAN", chan) {
+                if let Some(reason) = db.is_forbidden(ForbidKind::Chan, chan) {
                     ctx.notice(me, from.uid, format!("\x02{chan}\x02 can't be registered: {reason}"));
                     return;
                 }

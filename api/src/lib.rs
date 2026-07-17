@@ -795,10 +795,41 @@ pub struct AkillView {
     pub expires: Option<u64>,
 }
 
-// A registration ban held by OperServ FORBID (kind = NICK/CHAN/EMAIL).
+// A registration-ban target for OperServ FORBID. The persistence/gossip layer
+// stores the wire token (`wire()`); the Store API is typed so a call site can't
+// pass a mistyped kind like "NCK" (it wouldn't compile).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForbidKind {
+    Nick,
+    Chan,
+    Email,
+}
+
+impl ForbidKind {
+    /// The stored/display token: "NICK" / "CHAN" / "EMAIL".
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Nick => "NICK",
+            Self::Chan => "CHAN",
+            Self::Email => "EMAIL",
+        }
+    }
+
+    /// Parse a FORBID kind argument (case-insensitive, with common aliases).
+    pub fn from_name(s: &str) -> Option<Self> {
+        match s.to_ascii_uppercase().as_str() {
+            "NICK" | "NICKNAME" | "ACCOUNT" => Some(Self::Nick),
+            "CHAN" | "CHANNEL" => Some(Self::Chan),
+            "EMAIL" | "MAIL" => Some(Self::Email),
+            _ => None,
+        }
+    }
+}
+
+// A registration ban held by OperServ FORBID.
 #[derive(Debug, Clone)]
 pub struct ForbidView {
-    pub kind: String,
+    pub kind: ForbidKind,
     pub mask: String,
     pub setter: String,
     pub reason: String,
@@ -1140,10 +1171,10 @@ pub trait Store {
     fn akill_del(&mut self, kind: &str, mask: &str) -> Result<bool, RegError>;
     fn akills(&self) -> Vec<AkillView>;
     // Registration bans (OperServ FORBID).
-    fn forbid_add(&mut self, kind: &str, mask: &str, setter: &str, reason: &str) -> Result<bool, RegError>;
-    fn forbid_del(&mut self, kind: &str, mask: &str) -> Result<bool, RegError>;
+    fn forbid_add(&mut self, kind: ForbidKind, mask: &str, setter: &str, reason: &str) -> Result<bool, RegError>;
+    fn forbid_del(&mut self, kind: ForbidKind, mask: &str) -> Result<bool, RegError>;
     fn forbids(&self) -> Vec<ForbidView>;
-    fn is_forbidden(&self, kind: &str, name: &str) -> Option<String>;
+    fn is_forbidden(&self, kind: ForbidKind, name: &str) -> Option<String>;
     // Services ignores (node-local, oper-only).
     fn ignore_add(&mut self, mask: &str, reason: &str, expires: Option<u64>);
     fn ignore_del(&mut self, mask: &str) -> bool;
@@ -1521,6 +1552,18 @@ mod tests {
         assert_eq!(Priv::from_name("SUSPEND"), Some(Priv::Suspend));
         assert_eq!(Priv::from_name("nope"), None);
         assert_eq!(Priv::valid_names(), "auspex, suspend, admin");
+    }
+
+    #[test]
+    fn forbid_kind_parses_aliases_and_round_trips_its_wire_token() {
+        assert_eq!(ForbidKind::from_name("nickname"), Some(ForbidKind::Nick));
+        assert_eq!(ForbidKind::from_name("ACCOUNT"), Some(ForbidKind::Nick));
+        assert_eq!(ForbidKind::from_name("channel"), Some(ForbidKind::Chan));
+        assert_eq!(ForbidKind::from_name("mail"), Some(ForbidKind::Email));
+        assert_eq!(ForbidKind::from_name("nope"), None);
+        // The wire token is the stable persisted/gossiped form.
+        assert_eq!(ForbidKind::Nick.wire(), "NICK");
+        assert_eq!(ForbidKind::from_name(ForbidKind::Email.wire()), Some(ForbidKind::Email));
     }
 }
 

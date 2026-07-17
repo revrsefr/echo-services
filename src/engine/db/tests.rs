@@ -610,7 +610,7 @@
             db.group_register("!other", "bob").unwrap();
             db.group_set_flags("!other", "alice", "").unwrap();
             db.akill_add("G", "*@evil", "oper", "spam", None).unwrap();
-            db.forbid_add("NICK", "bad*", "oper", "squat").unwrap();
+            db.forbid_add(ForbidKind::Nick, "bad*", "oper", "squat").unwrap();
             db.vhost_offer_add("cool.vhost").unwrap();
             db.vhost_forbid_add("(?i)admin").unwrap();
             db.set_vhost_template(Some("$account.users.example".into())).unwrap();
@@ -642,8 +642,8 @@
         db.unsuspend_account("carol").unwrap();
         db.akill_add("Q", "spam*", "oper", "nick", None).unwrap();
         db.akill_del("Q", "spam*").unwrap();
-        db.forbid_add("CHAN", "#evil*", "oper", "bad").unwrap();
-        db.forbid_del("CHAN", "#evil*").unwrap();
+        db.forbid_add(ForbidKind::Chan, "#evil*", "oper", "bad").unwrap();
+        db.forbid_del(ForbidKind::Chan, "#evil*").unwrap();
         let nid = db.news_add("logon", "temp notice", "oper");
         db.news_del(nid);
         db.certfp_add("bob", "1122334455667788990011223344556677889900").unwrap();
@@ -704,7 +704,7 @@
         a.set_account_kill("alice", false).unwrap();
         a.suspend_account("bob", "op", "bad", None).unwrap();
         a.akill_add("G", "*@evil", "op", "spam", None).unwrap();
-        a.forbid_add("NICK", "bad*", "op", "squat").unwrap();
+        a.forbid_add(ForbidKind::Nick, "bad*", "op", "squat").unwrap();
         a.group_register("!g", "alice").unwrap();
         a.group_set_flags("!g", "bob", "").unwrap();
 
