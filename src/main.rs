@@ -177,8 +177,12 @@ async fn main() -> Result<()> {
     db.set_outbound(gossip_tx.clone());
     db.set_email_enabled(cfg.email.is_some());
     db.set_external_accounts(cfg.auth.as_ref().is_some_and(|a| a.external));
-    if let Some(extban) = &cfg.extban {
-        db.set_extban_enabled(extban.enabled.clone());
+    match cfg.extban.as_ref().map(|e| e.enabled.as_slice()) {
+        Some(list) if !list.is_empty() => {
+            db.set_extban_enabled(list.to_vec());
+            tracing::info!(extbans = %list.join(" "), "extban policy: restricted to the configured set");
+        }
+        _ => tracing::info!("extban policy: all extbans the ircd offers are accepted"),
     }
     if let Some(email) = &cfg.email {
         db.set_email_brand(&email.brand);
