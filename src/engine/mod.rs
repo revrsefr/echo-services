@@ -1049,7 +1049,7 @@ impl Engine {
             // creation and on the uplink burst, so registered channels regain the
             // mode after emptying, and after a services relink.
             NetEvent::ChannelCreate { channel } => {
-                let from = self.chan_service.clone().unwrap_or_default();
+                let from = self.channel_mode_source(&channel);
                 match self.db.channel(&channel) {
                     Some(info) => {
                         let mut out = vec![NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: info.lock_modes() }];
@@ -1064,7 +1064,7 @@ impl Engine {
             }
             // Enforce the mode lock: revert any change that broke it.
             NetEvent::ChannelModeChange { channel, modes } => {
-                let from = self.chan_service.clone().unwrap_or_default();
+                let from = self.channel_mode_source(&channel);
                 match self.db.channel(&channel).and_then(|info| info.enforce(&modes)) {
                     Some(revert) => vec![NetAction::ChannelMode { from, channel, modes: revert }],
                     None => Vec::new(),
@@ -1083,7 +1083,7 @@ impl Engine {
                     return Vec::new();
                 }
                 let account = self.network.account_of(&uid).map(str::to_string);
-                let from = self.chan_service.clone().unwrap_or_default();
+                let from = self.channel_mode_source(&channel);
                 // Group-aware: a member of a group that holds channel access gets
                 // the group's status mode too.
                 let mode = account.as_deref().and_then(|a| self.db.channel_join_mode(&channel, a));
@@ -1382,6 +1382,18 @@ impl Engine {
     // The greet a channel's bot shows when a member logged into `account` joins:
     // only when greets are enabled for the channel, the member holds channel
     // access, and has set a non-empty personal greet.
+    // The uid a channel's own actions are sourced from: its assigned bot if one is
+    // live, else ChanServ — so in-channel actions (auto-op, mode lock, entry
+    // message) front as the bot when the channel has one, like Anope.
+    fn channel_mode_source(&self, channel: &str) -> String {
+        self.db.channel(channel)
+            .and_then(|c| c.assigned_bot.clone())
+            .map(|b| b.to_ascii_lowercase())
+            .and_then(|b| self.bot_uids.get(&b).cloned())
+            .or_else(|| self.chan_service.clone())
+            .unwrap_or_default()
+    }
+
     fn greet_on_join(&self, channel: &str, account: Option<&str>) -> Option<NetAction> {
         let acc = account?;
         let c = self.db.channel(channel)?;
