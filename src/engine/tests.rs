@@ -2217,9 +2217,9 @@
         ns(&mut e, "000AAAAAC", "IDENTIFY password1");
         bs(&mut e, "000AAAAAC", "BOT ADD Bendy bot serv.host Helper"); // goes live
 
-        // The founder assigns the bot: it joins the channel as a protected admin (+a).
+        // The founder assigns the bot: it joins as a protected admin + op (+ao).
         let out = bs(&mut e, "000AAAAAB", "ASSIGN #c Bendy");
-        assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, modes, .. } if channel == "#c" && modes == "a")), "joins +a on assign: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, modes, .. } if channel == "#c" && modes == "ao")), "joins +ao on assign: {out:?}");
         // Unassigning parts it.
         let out = bs(&mut e, "000AAAAAB", "UNASSIGN #c");
         assert!(out.iter().any(|a| matches!(a, NetAction::ServicePart { channel, .. } if channel == "#c")), "parts on unassign: {out:?}");

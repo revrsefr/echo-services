@@ -444,9 +444,10 @@ impl Engine {
         for (bot_lc, chan) in &desired {
             if !self.bot_channels.contains(&(bot_lc.clone(), chan.clone())) {
                 if let Some(uid) = self.bot_uids.get(bot_lc) {
-                    // BotServ bots join as protected admins (+a) so ordinary ops
-                    // can't kick or deop them — the standard bot default.
-                    out.push(NetAction::ServiceJoin { uid: uid.clone(), channel: chan.clone(), modes: "a".into() });
+                    // BotServ bots join as protected admins + op (+ao) so they hold
+                    // op and ordinary ops still can't kick or deop them — the
+                    // standard bot default.
+                    out.push(NetAction::ServiceJoin { uid: uid.clone(), channel: chan.clone(), modes: "ao".into() });
                     self.bot_channels.insert((bot_lc.clone(), chan.clone()));
                 }
             }

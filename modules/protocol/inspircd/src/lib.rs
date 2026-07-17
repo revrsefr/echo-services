@@ -354,8 +354,8 @@ impl Protocol for InspIrcd {
                 // IJOIN needs a membid (`IJOIN <chan> <membid>`); without it the
                 // ircd rejects the whole link with "Insufficient parameters". The
                 // trailing "1 <modes>" is the 4-param form (ts, status modes) — a
-                // BotServ bot joins "+a" (protected admin), core services "+o". ts 1
-                // keeps it below the channel TS so the status is always applied.
+                // BotServ bot joins "+ao" (protected admin + op), core services "+o".
+                // ts 1 keeps it below the channel TS so the status is always applied.
                 self.membid += 1;
                 vec![format!(":{} IJOIN {} {} 1 {}", uid, channel, self.membid, modes)]
             }
@@ -745,8 +745,8 @@ mod tests {
     #[test]
     fn service_join_ijoin_includes_membid() {
         let mut p = proto();
-        let a = p.serialize(&NetAction::ServiceJoin { uid: "00DB00000".into(), channel: "#taverne".into(), modes: "a".into() });
-        assert_eq!(a, vec![":00DB00000 IJOIN #taverne 1 1 a".to_string()], "bot joins +a (protected) with a membid");
+        let a = p.serialize(&NetAction::ServiceJoin { uid: "00DB00000".into(), channel: "#taverne".into(), modes: "ao".into() });
+        assert_eq!(a, vec![":00DB00000 IJOIN #taverne 1 1 ao".to_string()], "bot joins +ao (protected admin + op) with a membid");
         // membid is monotonic across joins; core services join +o
         let b = p.serialize(&NetAction::ServiceJoin { uid: "00DB00000".into(), channel: "#quizz".into(), modes: "o".into() });
         assert_eq!(b, vec![":00DB00000 IJOIN #quizz 2 1 o".to_string()]);
