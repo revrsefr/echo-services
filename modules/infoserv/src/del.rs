@@ -1,7 +1,7 @@
-use echo_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::{NewsKind, Priv, Sender, ServiceCtx, Store};
 
 // DEL/ODEL <number>: remove a bulletin by its listed position. Admin only.
-pub fn handle(me: &str, from: &Sender, kind: &str, num: Option<&str>, ctx: &mut ServiceCtx, db: &mut dyn Store) {
+pub fn handle(me: &str, from: &Sender, kind: NewsKind, num: Option<&str>, ctx: &mut ServiceCtx, db: &mut dyn Store) {
     if !from.privs.has(Priv::Admin) {
         ctx.notice(me, from.uid, "Access denied — that command is for services operators.");
         return;

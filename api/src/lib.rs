@@ -844,6 +844,22 @@ impl XlineKind {
     }
 }
 
+// The two InfoServ news feeds. Stored as the string token; the API is typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NewsKind {
+    Logon, // shown to everyone on connect
+    Oper,  // staff news, shown to opers on login
+}
+
+impl NewsKind {
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Logon => "logon",
+            Self::Oper => "oper",
+        }
+    }
+}
+
 // A registration-ban target for OperServ FORBID. The persistence/gossip layer
 // stores the wire token (`wire()`); the Store API is typed so a call site can't
 // pass a mistyped kind like "NCK" (it wouldn't compile).
@@ -1251,9 +1267,9 @@ pub trait Store {
     fn set_channel_note(&mut self, channel: &str, note: Option<String>) -> bool;
     fn channel_note(&self, channel: &str) -> Option<String>;
     // News items shown on connect (logon) / login (oper), oper-only to manage.
-    fn news_add(&mut self, kind: &str, text: &str, setter: &str) -> u64;
+    fn news_add(&mut self, kind: NewsKind, text: &str, setter: &str) -> u64;
     fn news_del(&mut self, id: u64) -> bool;
-    fn news(&self, kind: &str) -> Vec<NewsView>;
+    fn news(&self, kind: NewsKind) -> Vec<NewsView>;
     // Abuse reports (ReportServ). `report_file` is rate-limited (None = too soon).
     fn report_file(&mut self, reporter: &str, target: &str, reason: &str) -> Option<u64>;
     fn report_close(&mut self, id: u64) -> bool;

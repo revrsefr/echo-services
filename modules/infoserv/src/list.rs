@@ -1,7 +1,7 @@
-use echo_api::{Sender, ServiceCtx, Store};
+use echo_api::{NewsKind, Sender, ServiceCtx, Store};
 
 // LIST/OLIST: show the bulletins of a kind. Public is open; oper is oper-only.
-pub fn handle(me: &str, from: &Sender, kind: &str, oper_only: bool, ctx: &mut ServiceCtx, db: &mut dyn Store) {
+pub fn handle(me: &str, from: &Sender, kind: NewsKind, oper_only: bool, ctx: &mut ServiceCtx, db: &mut dyn Store) {
     if oper_only && !from.privs.any() {
         ctx.notice(me, from.uid, "Access denied — oper bulletins are for services operators.");
         return;

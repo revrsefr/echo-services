@@ -160,13 +160,14 @@ impl Db {
             .map(|g| Privs::from_names(&g.privs))
     }
 
-    /// Add a news item of `kind` ("logon"/"oper"). Returns its stable id.
-    pub fn news_add(&mut self, kind: &str, text: &str, setter: &str) -> u64 {
+    /// Add a news item of `kind`. Returns its stable id.
+    pub fn news_add(&mut self, kind: NewsKind, text: &str, setter: &str) -> u64 {
         let id = self.net.news_seq;
         let ts = now();
-        let _ = self.log.append(Event::NewsAdded { id, kind: kind.to_string(), text: text.to_string(), setter: setter.to_string(), ts });
+        let wire = kind.wire();
+        let _ = self.log.append(Event::NewsAdded { id, kind: wire.to_string(), text: text.to_string(), setter: setter.to_string(), ts });
         self.net.news_seq = id + 1;
-        self.net.news.push(News { id, kind: kind.to_string(), text: text.to_string(), setter: setter.to_string(), ts });
+        self.net.news.push(News { id, kind: wire.to_string(), text: text.to_string(), setter: setter.to_string(), ts });
         id
     }
 
@@ -181,11 +182,12 @@ impl Db {
     }
 
     /// The news items of `kind`, oldest first.
-    pub fn news(&self, kind: &str) -> Vec<NewsView> {
+    pub fn news(&self, kind: NewsKind) -> Vec<NewsView> {
+        let wire = kind.wire();
         self.net
             .news
             .iter()
-            .filter(|n| n.kind == kind)
+            .filter(|n| n.kind == wire)
             .map(|n| NewsView { id: n.id, text: n.text.clone(), setter: n.setter.clone(), ts: n.ts })
             .collect()
     }

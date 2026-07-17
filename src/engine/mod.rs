@@ -10,7 +10,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use tokio::sync::mpsc;
 
 use crate::proto::{AuthThen, NetAction, NetEvent, RegReply};
-use db::{Db, LogEntry, RegError};
+use db::{Db, LogEntry, NewsKind, RegError};
 use scram::Verifier;
 use echo_api::Privs;
 use service::{Sender, Service, ServiceCtx};
@@ -754,7 +754,7 @@ impl Engine {
 
     // The news items of `kind` as server-sourced notices to `uid`, each tagged
     // with `label` so it reads as an announcement. Empty if we have no SID yet.
-    fn news_notices(&self, kind: &str, label: &str, uid: &str) -> Vec<NetAction> {
+    fn news_notices(&self, kind: NewsKind, label: &str, uid: &str) -> Vec<NetAction> {
         if self.sid.is_empty() {
             return Vec::new();
         }
@@ -1100,7 +1100,7 @@ impl Engine {
                 // Greet with the logon news, and — separately — prompt-then-
                 // enforce if they arrived on a registered nick they aren't
                 // identified to.
-                let mut out = self.news_notices("logon", "News", &uid);
+                let mut out = self.news_notices(NewsKind::Logon, "News", &uid);
                 out.extend(self.enforce_registered_nick(&uid, &arriving_nick));
                 // A user already logged in the moment they connect (SASL during
                 // registration) never ran the IDENTIFY path, so give them their
@@ -1446,7 +1446,7 @@ impl Engine {
                         self.db.mark_account_seen(value, self.now_secs());
                         // An operator logging in is shown the staff (oper) news.
                         if self.oper_privs(value).any() {
-                            for note in self.news_notices("oper", "Staff News", target) {
+                            for note in self.news_notices(NewsKind::Oper, "Staff News", target) {
                                 self.emit_irc(note);
                             }
                         }

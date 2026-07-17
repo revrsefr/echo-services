@@ -5160,10 +5160,10 @@ fn infoserv_posts_a_bulletin_admin_only() {
     svc_login(&mut e, "alice");
     // Not an oper yet: refused.
     assert!(svc_ask(&mut e, "42SAAAAAJ", "POST scheduled maintenance tonight").iter().any(|l| l.contains("Access denied")));
-    assert_eq!(e.db.news("logon").len(), 0);
+    assert_eq!(e.db.news(NewsKind::Logon).len(), 0);
     svc_oper(&mut e, "alice");
     svc_ask(&mut e, "42SAAAAAJ", "POST scheduled maintenance tonight");
-    assert_eq!(e.db.news("logon").len(), 1, "bulletin posted");
+    assert_eq!(e.db.news(NewsKind::Logon).len(), 1, "bulletin posted");
 }
 
 #[test]

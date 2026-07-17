@@ -281,13 +281,13 @@ impl Store for Db {
     fn channel_note(&self, channel: &str) -> Option<String> {
         Db::channel_note(self, channel)
     }
-    fn news_add(&mut self, kind: &str, text: &str, setter: &str) -> u64 {
+    fn news_add(&mut self, kind: NewsKind, text: &str, setter: &str) -> u64 {
         Db::news_add(self, kind, text, setter)
     }
     fn news_del(&mut self, id: u64) -> bool {
         Db::news_del(self, id)
     }
-    fn news(&self, kind: &str) -> Vec<NewsView> {
+    fn news(&self, kind: NewsKind) -> Vec<NewsView> {
         Db::news(self, kind)
     }
     fn report_file(&mut self, reporter: &str, target: &str, reason: &str) -> Option<u64> {

@@ -568,8 +568,8 @@
         vf.sort();
         let mut jp = db.jupes();
         jp.sort();
-        let mut nw = db.news("logon");
-        nw.extend(db.news("oper"));
+        let mut nw = db.news(NewsKind::Logon);
+        nw.extend(db.news(NewsKind::Oper));
         let rp = db.reports(false);
         let hp = db.help_tickets(false);
         let mut se = db.session_exceptions();
@@ -626,8 +626,8 @@
             db.set_account_note("bob", Some("watch this one".into()));
             db.set_channel_note("#chan", Some("chan note".into()));
             db.set_email("carol", Some("c@x.io".into())).unwrap();
-            db.news_add("logon", "welcome all", "oper");
-            db.news_add("oper", "staff notice", "oper");
+            db.news_add(NewsKind::Logon, "welcome all", "oper");
+            db.news_add(NewsKind::Oper, "staff notice", "oper");
             let rid = db.report_file("carol", "bob", "spam").unwrap();
             db.report_close(rid);
             let hid = db.help_request("carol", "help me").unwrap();
@@ -644,7 +644,7 @@
         db.akill_del(XlineKind::Qline, "spam*").unwrap();
         db.forbid_add(ForbidKind::Chan, "#evil*", "oper", "bad").unwrap();
         db.forbid_del(ForbidKind::Chan, "#evil*").unwrap();
-        let nid = db.news_add("logon", "temp notice", "oper");
+        let nid = db.news_add(NewsKind::Logon, "temp notice", "oper");
         db.news_del(nid);
         db.certfp_add("bob", "1122334455667788990011223344556677889900").unwrap();
         db.certfp_del("bob", "1122334455667788990011223344556677889900").unwrap();

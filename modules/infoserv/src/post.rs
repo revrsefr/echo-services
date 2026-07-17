@@ -1,7 +1,7 @@
-use echo_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::{NewsKind, Priv, Sender, ServiceCtx, Store};
 
 // POST/OPOST <message>: add a bulletin (public or oper). Admin only.
-pub fn handle(me: &str, from: &Sender, kind: &str, rest: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
+pub fn handle(me: &str, from: &Sender, kind: NewsKind, rest: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
     if !from.privs.has(Priv::Admin) {
         ctx.notice(me, from.uid, "Access denied — posting bulletins is for services operators.");
         return;

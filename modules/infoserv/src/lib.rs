@@ -9,7 +9,7 @@
 //! and any operator may OLIST. `lib.rs` holds the dispatcher; each command
 //! (parameterised by bulletin kind) lives in its own file.
 
-use echo_api::{HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{HelpEntry, NetView, NewsKind, Sender, Service, ServiceCtx, Store};
 
 #[path = "post.rs"]
 mod post;
@@ -19,8 +19,8 @@ mod del;
 mod list;
 
 // The two bulletin kinds in the shared news store.
-const PUBLIC: &str = "logon";
-const OPER: &str = "oper";
+const PUBLIC: NewsKind = NewsKind::Logon;
+const OPER: NewsKind = NewsKind::Oper;
 
 const BLURB: &str = "InfoServ holds the network's information bulletins: public ones show on connect, oper ones on login.";
 
