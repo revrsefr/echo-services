@@ -27,14 +27,22 @@ fn add(me: &str, from: &Sender, account: Option<&str>, privs: Option<&str>, dur:
         ctx.notice(me, from.uid, format!("\x02{account}\x02 isn't registered."));
         return;
     };
-    // Keep only recognised privilege names.
-    let names: Vec<String> = privs
-        .split(',')
-        .map(|p| p.trim().to_ascii_lowercase())
-        .filter(|p| matches!(p.as_str(), "auspex" | "suspend" | "admin"))
-        .collect();
+    // Parse the privilege names, rejecting the whole grant on a typo rather than
+    // silently dropping it (which would grant less than the oper intended).
+    let mut names = Vec::new();
+    let mut unknown = Vec::new();
+    for p in privs.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+        match Priv::from_name(p) {
+            Some(pr) => names.push(pr.name().to_string()),
+            None => unknown.push(p.to_string()),
+        }
+    }
+    if !unknown.is_empty() {
+        ctx.notice(me, from.uid, format!("Unknown privilege(s): \x02{}\x02 (valid: {}).", unknown.join(", "), Priv::valid_names()));
+        return;
+    }
     if names.is_empty() {
-        ctx.notice(me, from.uid, "No valid privileges given (auspex, suspend, admin).");
+        ctx.notice(me, from.uid, format!("No privileges given (valid: {}).", Priv::valid_names()));
         return;
     }
     let expires = dur.and_then(|d| d.strip_prefix('+')).and_then(parse_duration).map(|secs| now() + secs);
