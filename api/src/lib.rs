@@ -169,6 +169,11 @@ pub enum NetAction {
     // link layer exits cleanly; `restart` exits non-zero so a supervisor (systemd
     // Restart=) brings it back. Never serialized.
     Shutdown { restart: bool, reason: String },
+    // Internal only: re-read config.toml and apply the reloadable settings to the
+    // running engine (OperServ REHASH). The link layer resolves it against the
+    // engine and sends the outcome back to `requester` from `agent`. Never
+    // serialized as-is.
+    Rehash { requester: String, agent: String },
 }
 
 // How to answer a registration once its credentials have been derived.
@@ -384,6 +389,13 @@ impl ServiceCtx {
     // respawns us.
     pub fn shutdown(&mut self, restart: bool, reason: impl Into<String>) {
         self.actions.push(NetAction::Shutdown { restart, reason: reason.into() });
+    }
+
+    // Re-read config.toml and apply the reloadable settings live (OperServ REHASH).
+    // The engine resolves this off the command path and notices `requester` from
+    // `agent` with the outcome.
+    pub fn rehash(&mut self, agent: &str, requester: &str) {
+        self.actions.push(NetAction::Rehash { requester: requester.to_string(), agent: agent.to_string() });
     }
 
     // Hand a password change to the engine to finish: its derivation runs off the

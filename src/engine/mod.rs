@@ -107,6 +107,7 @@ pub struct Engine {
     service_oper_type: String, // oper type our services are flagged with (WHOIS "is a <this>"); empty = don't oper
     services_channel: String, // channel all service pseudo-clients join at startup; empty = none
     standard_replies: bool, // emit IRCv3 FAIL/WARN/NOTE for service errors; off = degrade to notices
+    config_path: String, // path to config.toml, so OperServ REHASH can re-read it live
     enforce_seq: u32,   // counter appended to guest_nick
     pending_enforce: Vec<PendingEnforce>, // registered nicks awaiting identify-or-rename
     bot_uids: HashMap<String, String>, // casefolded bot nick -> live uid (per connection)
@@ -244,6 +245,7 @@ impl Engine {
             service_oper_type: String::new(),
             services_channel: String::new(),
             standard_replies: false,
+            config_path: String::new(),
             enforce_seq: 0,
             pending_enforce: Vec::new(),
             bot_uids: HashMap::new(),
@@ -789,6 +791,54 @@ impl Engine {
 
     pub fn set_standard_replies(&mut self, on: bool) {
         self.standard_replies = on;
+    }
+
+    pub fn set_config_path(&mut self, path: impl Into<String>) {
+        self.config_path = path.into();
+    }
+
+    // Re-read config.toml and apply the settings that are safe to change while
+    // linked, reporting the outcome to the oper who ran REHASH. A parse error
+    // keeps the running configuration untouched (validate-or-keep, like an ircd
+    // rehash). Server identity (name/sid/protocol/uplink), service umodes and the
+    // keycard endpoint are NOT reloadable — they need a restart.
+    pub fn rehash(&mut self, requester: &str, agent: &str) -> Vec<NetAction> {
+        let path = self.config_path.clone();
+        let cfg = match crate::config::Config::load(&path) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                return vec![NetAction::Notice {
+                    from: agent.to_string(),
+                    to: requester.to_string(),
+                    text: format!("REHASH failed: {e}. The running configuration is unchanged."),
+                }];
+            }
+        };
+        let opers = cfg.opers();
+        let oper_count = opers.len();
+        self.set_opers(opers);
+        self.set_service_oper_type(cfg.server.service_oper_type.clone());
+        self.set_services_channel(cfg.server.services_channel.clone());
+        self.set_standard_replies(cfg.server.standard_replies);
+        self.set_log_channel(cfg.log.as_ref().map(|l| l.channel.clone()));
+        self.set_guest_nick(&cfg.server.guest_nick);
+        if let Some(expire) = &cfg.expire {
+            self.set_expiry(expire.account_ttl(), expire.channel_ttl(), expire.warn_ttl());
+        }
+        if let Some(session) = &cfg.session {
+            self.set_session_limit(session.limit());
+        }
+        let notice = |text: String| NetAction::Notice { from: agent.to_string(), to: requester.to_string(), text };
+        vec![
+            notice(format!("Configuration reloaded from \x02{path}\x02.")),
+            notice(format!(
+                "Applied: \x02{oper_count}\x02 oper(s), standard-replies \x02{}\x02, services channel \x02{}\x02, service oper-type \x02{}\x02.",
+                if self.standard_replies { "on" } else { "off" },
+                if self.services_channel.is_empty() { "(none)" } else { &self.services_channel },
+                if self.service_oper_type.is_empty() { "(none)" } else { &self.service_oper_type },
+            )),
+            notice("Not reloadable (need a RESTART): server name/SID/protocol, uplink, service umodes, keycard.".to_string()),
+        ]
     }
 
     // A user arrived on (or changed to) a registered nick: if they aren't logged

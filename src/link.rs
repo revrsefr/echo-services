@@ -143,6 +143,11 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
                                 .await?;
                                 engine.lock().await.complete_authenticate(ok, then)
                             }
+                            // OperServ REHASH: re-read config.toml and apply the
+                            // reloadable settings live, reporting back to the oper.
+                            NetAction::Rehash { requester, agent } => {
+                                engine.lock().await.rehash(&requester, &agent)
+                            }
                             action => vec![action],
                         };
                         for act in outs {

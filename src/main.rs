@@ -184,6 +184,7 @@ async fn main() -> Result<()> {
     let (irc_tx, irc_rx) = tokio::sync::mpsc::unbounded_channel();
     engine.lock().await.set_irc_out(irc_tx);
     engine.lock().await.set_opers(cfg.opers());
+    engine.lock().await.set_config_path(path.clone());
     engine.lock().await.set_sid(cfg.server.sid.clone());
     engine.lock().await.set_guest_nick(&cfg.server.guest_nick);
     // Service pseudo-clients wear the configured host, or the server name.

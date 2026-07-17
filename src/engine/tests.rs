@@ -673,6 +673,44 @@
         assert_eq!(e.network.account_of("000AAAAAB"), None, "empty account is a logout");
     }
 
+    // OperServ REHASH is admin-only and hands the reload to the engine (resolved
+    // in the link layer) addressed back to the oper who ran it.
+    #[test]
+    fn operserv_rehash_is_admin_only() {
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-opsrehash.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "test");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register("bob", "sesame", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("alice".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        opers.insert("bob".to_string(), Privs::default().with(echo_api::Priv::Auspex));
+        e.set_opers(opers);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+
+        // Admin: hands off the reload, addressed back to the requesting oper.
+        let a = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: "REHASH".into() });
+        assert!(a.iter().any(|x| matches!(x, NetAction::Rehash { requester, agent } if requester == "000AAAAAB" && agent == "42SAAAAAH")), "{a:?}");
+
+        // Oper without admin: denied, no reload handed off.
+        let b = e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAH".into(), text: "REHASH".into() });
+        assert!(!b.iter().any(|x| matches!(x, NetAction::Rehash { .. })), "non-admin must not rehash: {b:?}");
+        assert!(b.iter().any(|x| matches!(x, NetAction::Notice { text, .. } if text.contains("admin"))), "{b:?}");
+    }
+
     // A login that finishes off the handle() path (the link layer's deferred
     // password/keycard verify) must still make echo's OWN account map authoritative.
     // Otherwise re-identifying an already-logged-in user after a services relink —

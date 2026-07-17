@@ -39,6 +39,8 @@ mod logsearch;
 mod defcon;
 #[path = "shutdown.rs"]
 mod shutdown;
+#[path = "rehash.rs"]
+mod rehash;
 #[path = "set.rs"]
 mod set;
 
@@ -95,6 +97,7 @@ impl Service for OperServ {
             Some(cmd) if cmd.eq_ignore_ascii_case("SET") => set::handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("SHUTDOWN") => shutdown::handle(me, from, false, args, ctx),
             Some(cmd) if cmd.eq_ignore_ascii_case("RESTART") => shutdown::handle(me, from, true, args, ctx),
+            Some(cmd) if cmd.eq_ignore_ascii_case("REHASH") => rehash::handle(me, from, ctx),
             Some(cmd) if cmd.eq_ignore_ascii_case("HELP") => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
             None => echo_api::help(me, from, ctx, BLURB, TOPICS, None),
             Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02HELP\x02.")),
@@ -131,4 +134,5 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "SET", summary: "services-wide settings", detail: "Syntax: \x02SET READONLY {ON|OFF}\x02\nToggles read-only lockdown: while on, no registrations or changes are accepted." },
     HelpEntry { cmd: "SHUTDOWN", summary: "stop services", detail: "Syntax: \x02SHUTDOWN [reason]\x02\nStops the services process. It stays down until restarted." },
     HelpEntry { cmd: "RESTART", summary: "restart services", detail: "Syntax: \x02RESTART [reason]\x02\nRestarts the services process (a supervisor respawns it)." },
+    HelpEntry { cmd: "REHASH", summary: "reload the configuration", detail: "Syntax: \x02REHASH\x02\nRe-reads config.toml and applies the settings that are safe to change while linked (opers, standard-replies, services channel, service oper-type, expiry, session limits) without a restart — no relink, no user disruption. Server identity, service umodes and the keycard endpoint still need a RESTART." },
 ];
