@@ -187,6 +187,17 @@ impl Db {
         self.live_extbans.as_ref().is_none_or(|set| set.iter().any(|e| e.name.eq_ignore_ascii_case(name)))
     }
 
+    /// Resolve an extban token (name, case-insensitive; or single letter, case-
+    /// sensitive) against the ircd's live set. For extbans echo's static table lacks.
+    pub fn extban_lookup(&self, token: &str) -> Option<echo_api::ExtbanCap> {
+        let live = self.live_extbans.as_ref()?;
+        let mut chars = token.chars();
+        match (chars.next(), chars.next()) {
+            (Some(c), None) => live.iter().find(|e| e.letter == Some(c)).cloned(),
+            _ => live.iter().find(|e| e.name.eq_ignore_ascii_case(token)).cloned(),
+        }
+    }
+
     /// Display name used in email templates.
     pub fn email_brand(&self) -> &str {
         &self.email_brand

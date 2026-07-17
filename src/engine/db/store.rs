@@ -60,6 +60,9 @@ impl Store for Db {
     fn extban_offered(&self, name: &str) -> bool {
         Db::extban_offered(self, name)
     }
+    fn extban_lookup(&self, token: &str) -> Option<echo_api::ExtbanCap> {
+        Db::extban_lookup(self, token)
+    }
     fn email_enabled(&self) -> bool {
         Db::email_enabled(self)
     }

@@ -28,22 +28,38 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 ctx.notice(me, from.uid, "Syntax: AKICK <#channel> ADD <mask> [reason]");
                 return;
             };
-            // Reject something that's neither a host mask nor a known extban, and
-            // any extban the network's `[extban] enabled` config has turned off.
+            // Validate the mask: a host mask always passes; an extban must be one
+            // this ircd offers, be a matching (not acting) kind, and be allowed by
+            // the `[extban] enabled` config. Extbans echo's own table doesn't know
+            // are resolved against the ircd's live set so a new matching extban
+            // still works (the ircd enforces it).
             match echo_api::AkickMask::parse(mask) {
-                echo_api::AkickMask::Unknown(name) => {
-                    ctx.notice(me, from.uid, format!("\x02{name}\x02 isn't a host mask or a known extban."));
-                    return;
+                echo_api::AkickMask::Host(_) => {}
+                echo_api::AkickMask::Ext(eb, _) => {
+                    if !db.extban_offered(eb.name) {
+                        ctx.notice(me, from.uid, format!("This network's ircd doesn't offer the \x02{}\x02 extban.", eb.name));
+                        return;
+                    }
+                    if !db.extban_enabled(eb.name) {
+                        ctx.notice(me, from.uid, format!("The \x02{}\x02 extban isn't enabled on this network.", eb.name));
+                        return;
+                    }
                 }
-                echo_api::AkickMask::Ext(eb, _) if !db.extban_offered(eb.name) => {
-                    ctx.notice(me, from.uid, format!("This network's ircd doesn't offer the \x02{}\x02 extban.", eb.name));
-                    return;
-                }
-                echo_api::AkickMask::Ext(eb, _) if !db.extban_enabled(eb.name) => {
-                    ctx.notice(me, from.uid, format!("The \x02{}\x02 extban isn't enabled on this network.", eb.name));
-                    return;
-                }
-                _ => {}
+                echo_api::AkickMask::Unknown(token) => match db.extban_lookup(token) {
+                    None => {
+                        ctx.notice(me, from.uid, format!("\x02{token}\x02 isn't a host mask or an extban this network offers."));
+                        return;
+                    }
+                    Some(cap) if cap.acting => {
+                        ctx.notice(me, from.uid, format!("\x02{}\x02 is an acting extban; auto-kick needs a matching extban or a host mask.", cap.name));
+                        return;
+                    }
+                    Some(cap) if !db.extban_enabled(&cap.name) => {
+                        ctx.notice(me, from.uid, format!("The \x02{}\x02 extban isn't enabled on this network.", cap.name));
+                        return;
+                    }
+                    Some(_) => {}
+                },
             }
             if !super::require_op(me, from, chan, ctx, db) {
                 return;
@@ -51,10 +67,10 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             let reason = if args.len() > 4 { args[4..].join(" ") } else { "Auto-kicked".to_string() };
             match db.akick_add(chan, mask, &reason) {
                 Ok(()) => {
-                    // Extbans echo can't evaluate itself (country, asn, …) are pushed
-                    // to the channel as a ban so the ircd enforces them; the ones echo
-                    // matches are applied on join / ENFORCE and need no standing mode.
-                    if matches!(echo_api::AkickMask::parse(mask), echo_api::AkickMask::Ext(eb, _) if !eb.matchable()) {
+                    // Extbans echo can't evaluate itself are pushed to the channel as
+                    // a ban so the ircd enforces them; the ones echo matches are applied
+                    // on join / ENFORCE and need no standing mode.
+                    if echo_api::ircd_enforced(mask) {
                         ctx.channel_mode(me, chan, &format!("+b {mask}"));
                     }
                     ctx.notice(me, from.uid, format!("Added \x02{mask}\x02 to \x02{chan}\x02's auto-kick list."));
@@ -73,7 +89,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             match db.akick_del(chan, mask) {
                 Ok(true) => {
                     // Lift the standing ban we set for an ircd-enforced extban.
-                    if matches!(echo_api::AkickMask::parse(mask), echo_api::AkickMask::Ext(eb, _) if !eb.matchable()) {
+                    if echo_api::ircd_enforced(mask) {
                         ctx.channel_mode(me, chan, &format!("-b {mask}"));
                     }
                     ctx.notice(me, from.uid, format!("Removed \x02{mask}\x02 from \x02{chan}\x02's auto-kick list."));
@@ -90,7 +106,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             let masks: Vec<String> = db.channel(chan).map_or_else(Vec::new, |info| info.akick.iter().map(|k| k.mask.clone()).collect());
             for mask in &masks {
                 let _ = db.akick_del(chan, mask);
-                if matches!(echo_api::AkickMask::parse(mask), echo_api::AkickMask::Ext(eb, _) if !eb.matchable()) {
+                if echo_api::ircd_enforced(mask) {
                     ctx.channel_mode(me, chan, &format!("-b {mask}"));
                 }
             }

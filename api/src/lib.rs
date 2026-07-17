@@ -1136,6 +1136,18 @@ impl<'a> AkickMask<'a> {
     }
 }
 
+/// Whether echo leans on the ircd to enforce an akick with this `mask` (by setting
+/// a channel `+b`) because it can't evaluate the mask itself: a passive extban, or
+/// a matching extban the ircd offers but echo's static table doesn't know. Host
+/// masks and echo's own matchable extbans return false — echo kicks those on join.
+pub fn ircd_enforced(mask: &str) -> bool {
+    match AkickMask::parse(mask) {
+        AkickMask::Host(_) => false,
+        AkickMask::Ext(eb, _) => !eb.matchable(),
+        AkickMask::Unknown(_) => true,
+    }
+}
+
 /// Whether an AKICK `mask` matches a live user `t` — a plain hostmask (globbed
 /// against the displayed-host, real-host and IP forms, as InspIRCd's CheckBan
 /// does) or a matching-extban echo has the data for. Passive/unknown never match.
@@ -1559,6 +1571,11 @@ pub trait Store {
     // Permissive by default; the live Db answers from what the ircd advertised.
     fn extban_offered(&self, _name: &str) -> bool {
         true
+    }
+    // Resolve an extban token (name or single letter) the ircd advertised but echo's
+    // static table doesn't know, to its live-registry entry. None if not offered.
+    fn extban_lookup(&self, _token: &str) -> Option<ExtbanCap> {
+        None
     }
     fn exists(&self, name: &str) -> bool;
     fn account(&self, name: &str) -> Option<AccountView>;
@@ -2035,6 +2052,13 @@ mod tests {
         let anon = BanTarget { account: None, ..t };
         assert!(akick_matches("unauthed:*!*@h.com", &anon), "not logged in + host matches");
         assert!(!akick_matches("account:bad", &anon), "no account -> account extban can't match");
+
+        // ircd_enforced: host masks and echo's matchable extbans are echo's job;
+        // passive extbans and ones echo's table doesn't know are the ircd's (a +b).
+        assert!(!ircd_enforced("*!*@host"), "host mask: echo kicks");
+        assert!(!ircd_enforced("account:bad"), "matchable extban: echo kicks");
+        assert!(ircd_enforced("country:US"), "passive extban: ircd enforces");
+        assert!(ircd_enforced("mute:*!*@x"), "extban echo's table lacks: ircd enforces");
     }
 
     #[test]
