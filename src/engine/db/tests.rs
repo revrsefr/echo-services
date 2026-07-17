@@ -496,7 +496,7 @@
         db.access_add("#c", "bob", "voice").unwrap();
 
         let info = db.channel("#c").unwrap();
-        assert_eq!(info.join_mode("boss"), Some("+o"));  // founder
+        assert_eq!(info.join_mode("boss"), Some("+qo")); // founder: owner + op
         assert_eq!(info.join_mode("ALICE"), Some("+o")); // op, case-insensitive
         assert_eq!(info.join_mode("bob"), Some("+v"));   // voice
         assert_eq!(info.join_mode("nobody"), None);

@@ -1336,15 +1336,15 @@
 
         let cs = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: text.into() });
         let out = cs(&mut e, "UP #c");
-        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+o 000AAAAAB")), "UP applies the founder's +o: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+qo 000AAAAAB 000AAAAAB")), "UP applies the founder's +qo: {out:?}");
         let out = cs(&mut e, "DOWN #c");
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes.starts_with("-qaohv"))), "DOWN strips status: {out:?}");
         let out = cs(&mut e, "UP #nope");
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't registered"))), "unknown channel refused: {out:?}");
     }
 
-    // A SOP is opped (+o, the @ prefix) on join like any op tier, and secureops
-    // never strips it — op access is a capability, not the literal "+o".
+    // A SOP auto-gets op + protect (+ao, so it shows @ and outranks AOP) on join,
+    // and secureops never strips it — op access is a capability, not literal "+o".
     #[test]
     fn sop_join_gets_protect_and_op_and_survives_secureops() {
         use echo_chanserv::ChanServ;
@@ -1371,11 +1371,11 @@
         e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAB".into(), text: "SOP #c ADD mik".into() });
         e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAB".into(), text: "SET #c SECUREOPS ON".into() });
 
-        // On join mik (a SOP) is opped like any op tier.
+        // On join mik is granted op + protect (+ao, the nick once per mode).
         let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false });
         assert!(
-            out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+o 000AAAAAB")),
-            "SOP is opped: {out:?}"
+            out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+ao 000AAAAAB 000AAAAAB")),
+            "SOP auto-gets op + protect: {out:?}"
         );
         // Arriving already opped, secureops must NOT strip a SOP's op.
         let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: true });
@@ -2016,7 +2016,7 @@
         );
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        let opped = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+o 000AAAAAB"));
+        let opped = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+qo 000AAAAAB 000AAAAAB"));
 
         // Default: the founder is auto-opped on join.
         assert!(opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false })), "auto-op on by default");
@@ -2048,7 +2048,7 @@
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
-        let opped = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+o 000AAAAAB"));
+        let opped = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+qo 000AAAAAB 000AAAAAB"));
         let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
 
         // Default: founder is auto-opped (channel AUTOOP on, account AUTOOP on).
@@ -4883,7 +4883,7 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#c" && modes == "+b *!*@bad.host")), "{out:?}");
         assert!(out.iter().any(|a| matches!(a, NetAction::Kick { channel, uid, reason, .. } if channel == "#c" && uid == "000AAAAAC" && reason.starts_with("begone"))), "{out:?}");
 
-        // The founder joining is never auto-kicked (they get +o instead).
+        // The founder joining is never auto-kicked (they get +qo instead).
         let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false });
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes.contains('o'))), "{out:?}");
     }
@@ -4968,15 +4968,15 @@
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "AOP #c ADD carol"), "Added"));
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "AOP #c LIST"), "carol"));
 
-        // ENFORCE: alice (founder) present gets +o, the akick-matching guest is kicked.
+        // ENFORCE: alice (founder) present gets +qo, the akick-matching guest is kicked.
         e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false });
         to_cs(&mut e, "000AAAAAB", "AKICK #c ADD *!*@h2 out");
         let out = to_cs(&mut e, "000AAAAAB", "ENFORCE #c");
-        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+o 000AAAAAB")), "{out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+qo 000AAAAAB 000AAAAAB")), "{out:?}");
         assert!(out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAC")), "{out:?}");
         // SYNC is an alias for ENFORCE — same re-apply of access modes.
         let out = to_cs(&mut e, "000AAAAAB", "SYNC #c");
-        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+o 000AAAAAB")), "sync alias: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+qo 000AAAAAB 000AAAAAB")), "sync alias: {out:?}");
 
         // GETKEY: reflects a tracked key change.
         e.handle(NetEvent::ChannelKey { channel: "#c".into(), key: Some("s3cret".into()) });
@@ -5049,7 +5049,7 @@
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 
         let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#x".into(), op: false });
-        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#x" && modes == "+o 000AAAAAB")), "founder opped: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#x" && modes == "+qo 000AAAAAB 000AAAAAB")), "founder opped: {out:?}");
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
         assert!(e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#x".into(), op: false }).is_empty(), "non-founder not opped");
