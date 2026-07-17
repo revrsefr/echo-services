@@ -676,8 +676,10 @@ pub fn level_caps(level: &str) -> Caps {
         "voice" => Caps { auto: Some("+v"), rank: Rank::Voice, ..Caps::default() },
         flags => {
             let has = |c: char| flags.contains(c);
+            // Auto-op plus access-list management is the SOP tier — it auto-gets
+            // protect + op (+ao), so a flag entry "oa" matches the "sop" preset.
             let auto = if has('o') {
-                Some("+o")
+                if has('a') { Some("+ao") } else { Some("+o") }
             } else if has('h') {
                 Some("+h")
             } else if has('v') {
@@ -1725,6 +1727,15 @@ mod tests {
         // and founder (+qo) over everything.
         assert_eq!(level_caps("sop").union(level_caps("voice")).auto, Some("+ao"));
         assert_eq!(level_caps("founder").union(level_caps("sop")).auto, Some("+qo"));
+
+        // The FLAGS display maps presets to flag letters that round-trip: the flag
+        // string resolves to the very same caps (op+access "oa" = the SOP tier,
+        // auto +ao), so FLAGS-editing a preset entry can't corrupt it.
+        for (preset, flags) in [("sop", "otia"), ("op", "oti"), ("halfop", "h"), ("voice", "v")] {
+            assert_eq!(level_caps(flags).auto, level_caps(preset).auto, "{preset} auto");
+            assert_eq!(level_caps(flags).rank, level_caps(preset).rank, "{preset} rank");
+        }
+        assert_eq!(level_caps("oa").auto, Some("+ao"), "op + access = protected admin");
     }
 
     #[test]

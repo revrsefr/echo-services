@@ -1459,6 +1459,38 @@
         assert!(kicked(&out) && !blocked(&out), "SOP can kick an AOP: {out:?}");
     }
 
+    // Regression: FLAGS-editing a HOP/SOP entry must not corrupt it. Adding +v to a
+    // halfop once escalated them to founder — the preset name "halfop" got reparsed
+    // as flags (f,o,h,a — 'f' = founder). It must stay in the halfop tier.
+    #[test]
+    fn flags_edit_of_a_preset_entry_does_not_escalate() {
+        use echo_chanserv::ChanServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-flagsesc.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register("bob", "sesame", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        db.access_add("#c", "bob", "halfop").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "FLAGS #c bob +v".into() });
+
+        let ci = e.db.channel("#c").unwrap();
+        assert!(!ci.is_op("bob"), "halfop + voice must not gain op or founder");
+        let lvl = ci.access.iter().find(|a| a.account == "bob").unwrap().level.clone();
+        assert!(!lvl.contains('f'), "must not acquire the founder flag: got {lvl:?}");
+    }
+
     // NickServ LIST is auspex-gated and glob-matches; UPDATE refreshes a session.
     #[test]
     fn nickserv_list_and_update() {

@@ -69,12 +69,17 @@ pub fn handle(me: &str, from: &Sender, chan: &str, args: &[&str], ctx: &mut Serv
     }
 }
 
-// Show a stored level as flag letters (mapping the legacy presets).
+// Show a stored level as flag letters, mapping the tier presets to their
+// equivalent flags so FLAGS can round-trip and edit them. Each mapping resolves
+// to the same capabilities as the preset (see `level_caps`): sop = op + topic +
+// invite + access (auto +ao), op = op + topic + invite, halfop = auto +h.
 fn display_flags(level: &str) -> String {
     match level {
-        "op" => "oti".to_string(),
-        "voice" => "v".to_string(),
         "founder" => "f".to_string(),
+        "sop" => "otia".to_string(),
+        "op" => "oti".to_string(),
+        "halfop" => "h".to_string(),
+        "voice" => "v".to_string(),
         flags => flags.to_string(),
     }
 }
