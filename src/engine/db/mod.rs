@@ -601,16 +601,28 @@ impl KickerSettings {
 }
 
 impl ChannelInfo {
-    /// The status mode to give `account` on join, if any: +o for the founder and
-    /// access-list ops, +v for voices.
+    /// The status mode to give `account` on join, if any: +qo for the founder,
+    /// +ao/+o for access-list ops, +v for voices.
     pub fn join_mode(&self, account: &str) -> Option<&'static str> {
         if self.founder.eq_ignore_ascii_case(account) {
-            return Some("+o");
+            return echo_api::level_caps("founder").auto;
         }
         self.access
             .iter()
             .find(|a| a.account.eq_ignore_ascii_case(account))
             .and_then(|a| echo_api::level_caps(&a.level).auto)
+    }
+
+    /// Whether `account` holds op-level (moderation) access — the founder, or an
+    /// access entry whose level resolves to op. A capability check, so it stays
+    /// right for SOP, whose join mode is "+ao" rather than literally "+o".
+    pub fn is_op(&self, account: &str) -> bool {
+        self.founder.eq_ignore_ascii_case(account)
+            || self
+                .access
+                .iter()
+                .find(|a| a.account.eq_ignore_ascii_case(account))
+                .is_some_and(|a| echo_api::level_caps(&a.level).op)
     }
 
     /// The matching auto-kick entry for `hostmask` (nick!user@host), if any.

@@ -1,4 +1,4 @@
-use echo_api::{NetView, Sender, ServiceCtx, Store};
+use echo_api::{status_mode, NetView, Sender, ServiceCtx, Store};
 
 // UP <#channel>: (re)apply the status mode your access entitles you to.
 // DOWN <#channel>: drop your channel status modes. `up` selects which.
@@ -22,14 +22,14 @@ pub fn handle(me: &str, from: &Sender, up: bool, args: &[&str], ctx: &mut Servic
     if up {
         match info.join_mode(account) {
             Some(mode) => {
-                ctx.channel_mode(me, chan, &format!("{mode} {}", from.uid));
+                ctx.channel_mode(me, chan, &status_mode(mode, from.uid));
                 ctx.notice(me, from.uid, format!("Your status in \x02{chan}\x02 has been applied."));
             }
             None => ctx.notice(me, from.uid, format!("You have no status access in \x02{chan}\x02.")),
         }
     } else {
-        // Strip op and voice; the ircd ignores any mode you don't currently hold.
-        ctx.channel_mode(me, chan, &format!("-ov {} {}", from.uid, from.uid));
+        // Strip owner, admin, op, halfop and voice; the ircd ignores any you don't hold.
+        ctx.channel_mode(me, chan, &status_mode("-qaohv", from.uid));
         ctx.notice(me, from.uid, format!("Your status in \x02{chan}\x02 has been removed."));
     }
 }

@@ -632,7 +632,7 @@ pub const ACCESS_FLAGS: &str = "foOhvtiasg";
 // The capabilities an access `level` confers (founder is layered on by callers).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Caps {
-    pub auto: Option<&'static str>, // auto status mode on join: +o / +h / +v
+    pub auto: Option<&'static str>, // auto status mode on join: +qo / +ao / +o / +h / +v
     pub op: bool,                   // moderation: kick / ban / op / mode / akick
     pub topic: bool,
     pub invite: bool,
@@ -647,10 +647,12 @@ pub struct Caps {
 // entries and new flag entries coexist.
 pub fn level_caps(level: &str) -> Caps {
     match level {
-        "founder" => Caps { auto: Some("+o"), op: true, topic: true, invite: true, access: true, set: true, greet: true, rank: 3 },
-        // SOP = op plus access-list management; AOP = op; HOP = halfop; VOP = voice.
-        // These are the tiers the XOP shortcuts store; ordered high to low.
-        "sop" => Caps { auto: Some("+o"), op: true, topic: true, invite: true, access: true, rank: 2, ..Caps::default() },
+        "founder" => Caps { auto: Some("+qo"), op: true, topic: true, invite: true, access: true, set: true, greet: true, rank: 3 },
+        // The XOP tiers, ordered high to low. Each op-and-above tier carries op
+        // (+o, the @ prefix) plus its rank marker: founder owner (+q, ~), sop
+        // protect (+a, &). So AOP and above all show @, while sop outranks aop and
+        // founder outranks sop. SOP additionally holds access-list management.
+        "sop" => Caps { auto: Some("+ao"), op: true, topic: true, invite: true, access: true, rank: 2, ..Caps::default() },
         "op" => Caps { auto: Some("+o"), op: true, topic: true, invite: true, rank: 2, ..Caps::default() },
         "halfop" => Caps { auto: Some("+h"), rank: 1, ..Caps::default() },
         "voice" => Caps { auto: Some("+v"), rank: 1, ..Caps::default() },
@@ -749,6 +751,20 @@ pub fn access_role(level: &str) -> AccessRole {
     }
 }
 
+/// Build the argument for a channel MODE that applies the prefix modes in
+/// `modes` (e.g. "+ao", "-aohv") to `target`. Every prefix mode takes the target
+/// as its parameter, so the target is repeated once per mode letter — a single
+/// "+o" gives "+o nick", "+ao" gives "+ao nick nick".
+pub fn status_mode(modes: &str, target: &str) -> String {
+    let letters = modes.chars().filter(|c| c.is_ascii_alphabetic()).count();
+    let mut out = String::from(modes);
+    for _ in 0..letters {
+        out.push(' ');
+        out.push_str(target);
+    }
+    out
+}
+
 // The granular group-membership flags (GroupServ), same primitive, different
 // letters: F founder, f modify the member/flags list, i invite members, s set
 // group options, c the group may be granted channel access, m group memos.
@@ -758,11 +774,24 @@ impl Caps {
     // Combine two capability sets (a direct access entry and a group's), taking
     // the union of privileges, the higher rank, and the strongest auto-mode.
     pub fn union(self, other: Caps) -> Caps {
-        let rank_of = |m: Option<&'static str>| match m {
-            Some("+o") => 3,
-            Some("+h") => 2,
-            Some("+v") => 1,
-            _ => 0,
+        // Strength of an auto status mode, owner > protect > op > halfop > voice,
+        // robust to letter order and to combined modes like "+qo" / "+ao".
+        let rank_of = |m: Option<&'static str>| {
+            m.map_or(0, |s| {
+                if s.contains('q') {
+                    5
+                } else if s.contains('a') {
+                    4
+                } else if s.contains('o') {
+                    3
+                } else if s.contains('h') {
+                    2
+                } else if s.contains('v') {
+                    1
+                } else {
+                    0
+                }
+            })
         };
         let auto = if rank_of(self.auto) >= rank_of(other.auto) { self.auto } else { other.auto };
         Caps {
@@ -1660,11 +1689,27 @@ mod tests {
         assert!(t.topic && !t.op && t.auto.is_none());
         assert!(level_caps("a").access && level_caps("f").set);
 
-        // The four XOP tiers are distinct: SOP is AOP plus access-list rights,
-        // HOP is its own halfop tier.
+        // Each op-and-above tier carries op (+o) plus its rank marker, so all show
+        // @: founder +qo (~@), SOP +ao (&@), AOP +o (@), HOP +h.
         assert!(level_caps("sop").op && level_caps("sop").access);
+        assert_eq!(level_caps("founder").auto, Some("+qo"));
+        assert_eq!(level_caps("sop").auto, Some("+ao"), "SOP is op + protect");
+        assert_eq!(level_caps("op").auto, Some("+o"));
         assert!(level_caps("op").op && !level_caps("op").access);
         assert_eq!(level_caps("halfop").auto, Some("+h"));
+
+        // Combined, the stronger auto mode wins: SOP (+ao) over a voice group (+v),
+        // and founder (+qo) over everything.
+        assert_eq!(level_caps("sop").union(level_caps("voice")).auto, Some("+ao"));
+        assert_eq!(level_caps("founder").union(level_caps("sop")).auto, Some("+qo"));
+    }
+
+    #[test]
+    fn status_mode_repeats_the_target_per_letter() {
+        assert_eq!(status_mode("+o", "X"), "+o X");
+        assert_eq!(status_mode("+ao", "X"), "+ao X X", "protect + op each take the nick");
+        // DOWN strips the whole ladder, so the target repeats once per letter.
+        assert_eq!(status_mode("-qaohv", "X"), "-qaohv X X X X X");
     }
 
     #[test]

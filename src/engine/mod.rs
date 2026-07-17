@@ -1176,6 +1176,9 @@ impl Engine {
                 // Group-aware: a member of a group that holds channel access gets
                 // the group's status mode too.
                 let mode = account.as_deref().and_then(|a| self.db.channel_join_mode(&channel, a));
+                // Op-level access is a capability, not a specific mode string — a
+                // SOP auto-gets "+ao", so never compare the mode against "+o".
+                let has_op_access = account.as_deref().is_some_and(|a| self.db.channel(&channel).is_some_and(|c| c.is_op(a)));
                 let entrymsg = self.db.channel(&channel).map(|c| c.entrymsg.clone()).filter(|m| !m.is_empty());
                 // Computed before the match below moves `channel` into its actions.
                 let greet = self.greet_on_join(&channel, account.as_deref());
@@ -1185,7 +1188,7 @@ impl Engine {
                 let is_bot = self.bot_uids.values().any(|b| b == &uid);
                 // SECUREOPS: a user who arrives opped (FJOIN prefix) but lacks op-level
                 // access loses it, unless we're about to grant it to them anyway.
-                if op && mode != Some("+o") && !is_bot && self.db.channel(&channel).is_some_and(|c| c.settings.secureops) {
+                if op && !has_op_access && !is_bot && self.db.channel(&channel).is_some_and(|c| c.settings.secureops) {
                     out.push(NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: format!("-o {uid}") });
                 }
                 // RESTRICTED: only users with access (or opers) may be in the channel.
@@ -1207,7 +1210,7 @@ impl Engine {
                             out.push(NetAction::Notice { from: from.clone(), to: uid.clone(), text: msg });
                         }
                         if autoop {
-                            out.push(NetAction::ChannelMode { from, channel, modes: format!("{m} {uid}") });
+                            out.push(NetAction::ChannelMode { from, channel, modes: echo_api::status_mode(m, &uid) });
                         }
                     }
                     // No access: an auto-kick match is banned and kicked, else greeted.
@@ -1259,7 +1262,7 @@ impl Engine {
                 // SECUREOPS: a user who gains +o without op-level access loses it.
                 if op {
                     if let Some(c) = self.db.channel(&channel) {
-                        if c.settings.secureops && !self.network.account_of(&uid).is_some_and(|a| c.join_mode(a) == Some("+o")) {
+                        if c.settings.secureops && !self.network.account_of(&uid).is_some_and(|a| c.is_op(a)) {
                             let from = self.chan_service.clone().unwrap_or_default();
                             return vec![NetAction::ChannelMode { from, channel, modes: format!("-o {uid}") }];
                         }
@@ -1278,7 +1281,7 @@ impl Engine {
             NetEvent::TopicChange { channel, setter, topic } => {
                 let info = self.db.channel(&channel).map(|c| (c.settings.keeptopic, c.settings.topiclock, c.topic.clone()));
                 // The setter may change a locked topic only with op-level access.
-                let authorized = self.network.account_of(&setter).and_then(|a| self.db.channel(&channel).map(|c| c.join_mode(a) == Some("+o"))).unwrap_or(false);
+                let authorized = self.network.account_of(&setter).and_then(|a| self.db.channel(&channel).map(|c| c.is_op(a))).unwrap_or(false);
                 match info {
                     // TOPICLOCK + unauthorised: put the kept topic back.
                     Some((_, true, stored)) if !authorized => {

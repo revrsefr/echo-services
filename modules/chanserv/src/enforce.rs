@@ -1,5 +1,5 @@
 use echo_api::Store;
-use echo_api::{Sender, ServiceCtx};
+use echo_api::{status_mode, Sender, ServiceCtx};
 use echo_api::NetView;
 
 // ENFORCE <#channel>: re-apply the channel's settings to everyone present —
@@ -19,7 +19,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
     let members: Vec<String> = net.channel_members(chan);
     for uid in members {
         match net.account_of(&uid).and_then(|a| info.join_mode(a)) {
-            Some(m) => ctx.channel_mode(me, chan, &format!("{m} {uid}")),
+            Some(m) => ctx.channel_mode(me, chan, &status_mode(m, &uid)),
             None => {
                 let nick = net.nick_of(&uid).unwrap_or("*");
                 let host = net.host_of(&uid).unwrap_or("*");
