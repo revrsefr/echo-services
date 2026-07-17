@@ -85,6 +85,12 @@ fn account<'a>(me: &str, from: &'a Sender, ctx: &mut ServiceCtx) -> Option<&'a s
 
 // Whether `who` may manage `group` (founder, or holds the F/f flag).
 fn can_manage(group: &echo_api::GroupView, who: &str) -> bool {
+    use echo_api::{GroupFlag, GroupFlags};
     group.founder.eq_ignore_ascii_case(who)
-        || group.members.iter().any(|m| m.account.eq_ignore_ascii_case(who) && (m.flags.contains('F') || m.flags.contains('f')))
+        || group.members.iter().any(|m| {
+            m.account.eq_ignore_ascii_case(who) && {
+                let f = GroupFlags::parse(&m.flags);
+                f.has(GroupFlag::Founder) || f.has(GroupFlag::Manage)
+            }
+        })
 }

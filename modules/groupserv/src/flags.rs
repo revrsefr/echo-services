@@ -1,4 +1,4 @@
-use echo_api::{apply_flags, Sender, ServiceCtx, Store, GROUP_FLAGS};
+use echo_api::{GroupFlags, Sender, ServiceCtx, Store, GROUP_FLAGS};
 
 // FLAGS <!group> [account [+/-flags]]: list, show, or change group-access flags.
 // Listing/showing is open; changing needs the founder or the `f` flag.
@@ -39,15 +39,16 @@ pub fn handle(me: &str, from: &Sender, name: Option<&str>, target: Option<&str>,
         ctx.notice(me, from.uid, format!("\x02{target}\x02 isn't registered."));
         return;
     };
-    let updated = match apply_flags(current.as_deref().unwrap_or(""), delta, GROUP_FLAGS) {
+    let updated = match GroupFlags::parse(current.as_deref().unwrap_or("")).apply_delta(delta) {
         Ok(f) => f,
         Err(bad) => {
             ctx.notice(me, from.uid, format!("\x02{bad}\x02 isn't a valid group flag. Valid: \x02{GROUP_FLAGS}\x02."));
             return;
         }
     };
-    match db.group_set_flags(name, &canonical, &updated) {
-        Ok(()) => ctx.notice(me, from.uid, format!("\x02{canonical}\x02 in \x02{name}\x02 now holds \x02{}\x02.", if updated.is_empty() { "(member)" } else { &updated })),
+    let letters = updated.to_letters();
+    match db.group_set_flags(name, &canonical, &letters) {
+        Ok(()) => ctx.notice(me, from.uid, format!("\x02{canonical}\x02 in \x02{name}\x02 now holds \x02{}\x02.", if letters.is_empty() { "(member)" } else { &letters })),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
 }

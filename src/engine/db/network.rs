@@ -500,7 +500,9 @@ impl Db {
         let k = key(name);
         self.net.groups.iter().find(|g| key(&g.name) == k).is_some_and(|g| {
             g.founder.eq_ignore_ascii_case(account)
-                || g.members.iter().any(|m| m.account.eq_ignore_ascii_case(account) && m.flags.contains('c'))
+                || g.members.iter().any(|m| {
+                    m.account.eq_ignore_ascii_case(account) && echo_api::GroupFlags::parse(&m.flags).has(echo_api::GroupFlag::Channel)
+                })
         })
     }
 

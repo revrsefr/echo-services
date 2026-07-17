@@ -660,6 +660,58 @@ pub struct Caps {
     pub rank: Rank, // ordered tier for PEACE comparisons (see `Rank`)
 }
 
+/// Generate a Copy bitset newtype over a letter-mapped flag enum — one that
+/// provides `ALL: [Self; N]`, `letter(self) -> char` and `from_letter`. The
+/// single source of the letter-based flag-set mechanics shared by [`Flags`]
+/// (channel access) and [`GroupFlags`] (group membership).
+macro_rules! flag_set {
+    ($(#[$doc:meta])* $set:ident : $flag:ty = $int:ty) => {
+        $(#[$doc])*
+        #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+        pub struct $set($int);
+
+        impl $set {
+            /// Add a flag (builder style).
+            pub fn with(self, f: $flag) -> Self { $set(self.0 | (1 << f as u8)) }
+            /// Remove a flag.
+            pub fn without(self, f: $flag) -> Self { $set(self.0 & !(1 << f as u8)) }
+            /// Whether this set holds `f`.
+            pub fn has(self, f: $flag) -> bool { self.0 & (1 << f as u8) != 0 }
+            /// No flags held.
+            pub fn is_empty(self) -> bool { self.0 == 0 }
+
+            /// Parse a letter string, silently skipping unknown letters — lenient,
+            /// for reading stored state. Use [`Self::apply_delta`] for user input.
+            pub fn parse(s: &str) -> Self {
+                s.chars().filter_map(<$flag>::from_letter).fold(Self::default(), Self::with)
+            }
+
+            /// Apply a `+ab-c`-style delta (bare letters grant). `Err(letter)` on the
+            /// first character that isn't `+`, `-`, or a known flag.
+            pub fn apply_delta(self, delta: &str) -> Result<Self, char> {
+                let mut set = self;
+                let mut adding = true;
+                for c in delta.chars() {
+                    match c {
+                        '+' => adding = true,
+                        '-' => adding = false,
+                        _ => match <$flag>::from_letter(c) {
+                            Some(f) => set = if adding { set.with(f) } else { set.without(f) },
+                            None => return Err(c),
+                        },
+                    }
+                }
+                Ok(set)
+            }
+
+            /// The canonical letter string, in `ALL` order — the stored/displayed form.
+            pub fn to_letters(self) -> String {
+                <$flag>::ALL.into_iter().filter(|f| self.has(*f)).map(<$flag>::letter).collect()
+            }
+        }
+    };
+}
+
 /// A single channel-access flag — typed rather than a bare char, so the compiler
 /// checks every use and there's one source of truth for the letter and what it
 /// grants. Stored (wire / access list) as its letter; the set is a [`Flags`].
@@ -705,32 +757,13 @@ impl Flag {
     }
 }
 
-/// The set of access flags an entry holds — a Copy bitset, the same pattern as
-/// [`Privs`]. The typed form of a stored flag string like "otia".
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Flags(u16);
+flag_set!(
+    /// The set of channel-access flags an entry holds — the typed form of a stored
+    /// flag string like "otia". Same bitset primitive as [`Privs`] / [`GroupFlags`].
+    Flags: Flag = u16
+);
 
 impl Flags {
-    pub fn with(self, f: Flag) -> Self {
-        Flags(self.0 | (1 << f as u8))
-    }
-    pub fn without(self, f: Flag) -> Self {
-        Flags(self.0 & !(1 << f as u8))
-    }
-    pub fn has(self, f: Flag) -> bool {
-        self.0 & (1 << f as u8) != 0
-    }
-    pub fn is_empty(self) -> bool {
-        self.0 == 0
-    }
-
-    /// Parse a flag-letter string (e.g. "otia"), silently skipping any letter that
-    /// isn't a flag — for reading a stored level. Use [`Flags::apply_delta`] for
-    /// user input, which reports a bad letter instead.
-    pub fn parse(s: &str) -> Flags {
-        s.chars().filter_map(Flag::from_letter).fold(Flags::default(), Flags::with)
-    }
-
     /// The flags a stored `level` resolves to: the tier presets map to equivalent
     /// flags, anything else is parsed as a flag string. (The `founder` preset —
     /// the channel owner — is handled in `level_caps`, not here.)
@@ -744,30 +777,6 @@ impl Flags {
             "founder" => base.with(Flag::Founder),
             flags => Flags::parse(flags),
         }
-    }
-
-    /// Apply a `+ov-h`-style delta (bare letters grant). `Err(letter)` on the first
-    /// character that isn't `+`, `-`, or a known flag.
-    pub fn apply_delta(self, delta: &str) -> Result<Flags, char> {
-        let mut set = self;
-        let mut adding = true;
-        for c in delta.chars() {
-            match c {
-                '+' => adding = true,
-                '-' => adding = false,
-                _ => match Flag::from_letter(c) {
-                    Some(f) => set = if adding { set.with(f) } else { set.without(f) },
-                    None => return Err(c),
-                },
-            }
-        }
-        Ok(set)
-    }
-
-    /// The canonical flag-letter string, in `Flag::ALL` order — the form stored and
-    /// shown by FLAGS.
-    pub fn to_letters(self) -> String {
-        Flag::ALL.into_iter().filter(|f| self.has(*f)).map(Flag::letter).collect()
     }
 
     /// The capabilities these flags confer.
@@ -898,9 +907,48 @@ pub fn status_mode(modes: &str, target: &str) -> String {
 }
 
 // The granular group-membership flags (GroupServ), same primitive, different
-// letters: F founder, f modify the member/flags list, i invite members, s set
-// group options, c the group may be granted channel access, m group memos.
+// letters (see `GroupFlag`).
 pub const GROUP_FLAGS: &str = "Fficsm";
+
+/// A single group-membership flag (GroupServ) — the same primitive as [`Flag`]
+/// with a different letter set. Stored as its letter; the set is a [`GroupFlags`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupFlag {
+    Founder, // F — founder-level management
+    Manage,  // f — modify the member / flags list
+    Invite,  // i — invite members
+    Channel, // c — inherit the group's channel access
+    Set,     // s — set group options
+    Memo,    // m — group memos
+}
+
+impl GroupFlag {
+    /// Every flag, in canonical (display / GROUP_FLAGS) order.
+    pub const ALL: [GroupFlag; 6] = [GroupFlag::Founder, GroupFlag::Manage, GroupFlag::Invite, GroupFlag::Channel, GroupFlag::Set, GroupFlag::Memo];
+
+    /// The flag's letter. Exhaustive, so a new variant forces choosing its letter.
+    pub fn letter(self) -> char {
+        match self {
+            GroupFlag::Founder => 'F',
+            GroupFlag::Manage => 'f',
+            GroupFlag::Invite => 'i',
+            GroupFlag::Channel => 'c',
+            GroupFlag::Set => 's',
+            GroupFlag::Memo => 'm',
+        }
+    }
+
+    /// Parse a flag letter; `None` if it isn't a recognised group flag.
+    pub fn from_letter(c: char) -> Option<GroupFlag> {
+        Self::ALL.into_iter().find(|f| f.letter() == c)
+    }
+}
+
+flag_set!(
+    /// The set of group-membership flags a member holds — the typed form of a
+    /// stored flag string like "Fc". Same bitset primitive as [`Flags`] / [`Privs`].
+    GroupFlags: GroupFlag = u8
+);
 
 impl Caps {
     // Combine two capability sets (a direct access entry and a group's), taking
@@ -951,28 +999,6 @@ pub struct GroupView {
     pub name: String,
     pub founder: String,
     pub members: Vec<GroupMemberView>,
-}
-
-// Apply a `+ov-h`-style delta to a flag string against a `valid` letter set,
-// returning the new deduplicated flag string ordered by `valid`. A bare "ov"
-// (no sign) grants. Returns Err with the first letter not in `valid`.
-pub fn apply_flags(current: &str, delta: &str, valid: &str) -> Result<String, char> {
-    let mut set: Vec<char> = current.chars().filter(|c| valid.contains(*c)).collect();
-    let mut adding = true;
-    for c in delta.chars() {
-        match c {
-            '+' => adding = true,
-            '-' => adding = false,
-            f if valid.contains(f) => {
-                set.retain(|&x| x != f);
-                if adding {
-                    set.push(f);
-                }
-            }
-            other => return Err(other),
-        }
-    }
-    Ok(valid.chars().filter(|c| set.contains(c)).collect())
 }
 
 // One auto-kick entry (a hostmask and the reason shown on kick).
@@ -1817,17 +1843,18 @@ mod tests {
         assert_eq!(Flags::from_level("sop").caps().rank, Rank::Admin);
         assert_eq!(Flags::from_level("halfop").to_letters(), "h");
         assert_eq!(Flags::from_level("oa").caps().auto, Some("+ao"), "op+access = protected admin");
+
+        // Group flags are the same primitive (the macro-generated bitset); GROUP_FLAGS
+        // stays in sync with the enum and deltas apply the same way.
+        assert_eq!(GROUP_FLAGS, GroupFlag::ALL.iter().map(|f| f.letter()).collect::<String>());
+        assert_eq!(GroupFlags::parse("cF").to_letters(), "Fc", "canonical order");
+        assert!(GroupFlags::parse("Fc").has(GroupFlag::Channel));
+        assert_eq!(GroupFlags::default().apply_delta("+cm").unwrap().to_letters(), "cm");
+        assert_eq!(GroupFlags::default().apply_delta("+cz"), Err('z'));
     }
 
     #[test]
     fn access_flags_apply_and_resolve() {
-        // +/- deltas, dedup, stable order, invalid flag rejected.
-        assert_eq!(apply_flags("", "+ov", ACCESS_FLAGS).unwrap(), "ov");
-        assert_eq!(apply_flags("ov", "-o", ACCESS_FLAGS).unwrap(), "v");
-        assert_eq!(apply_flags("v", "+tv", ACCESS_FLAGS).unwrap(), "vt"); // ACCESS_FLAGS order, no dup
-        assert_eq!(apply_flags("", "ai", ACCESS_FLAGS).unwrap(), "ia"); // bare letters grant
-        assert_eq!(apply_flags("", "+ox", ACCESS_FLAGS), Err('x'));
-
         // Legacy presets and flag strings both resolve to capabilities.
         assert_eq!(level_caps("op").auto, Some("+o"));
         assert!(level_caps("op").op && level_caps("op").topic);
