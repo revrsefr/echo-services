@@ -69,26 +69,42 @@ pub fn confirm(brand: &str, accent: &str, logo: &str, account: &str, code: &str)
     }
 }
 
+/// What an inactivity-expiry warning is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpiryTarget {
+    Account,
+    Channel,
+}
+
+impl ExpiryTarget {
+    fn word(self) -> &'static str {
+        match self {
+            Self::Account => "account",
+            Self::Channel => "channel",
+        }
+    }
+}
+
 // Warn the owner of an account or channel that inactivity will soon expire it.
-// `kind` is "account" or "channel", `remaining` a human span ("7 days"). The
-// remaining span takes the prominent code slot.
-pub fn expiry_warning(brand: &str, accent: &str, logo: &str, kind: &str, name: &str, remaining: &str) -> Mail {
-    let keep = if kind == "channel" {
+// `remaining` is a human span ("7 days") and takes the prominent code slot.
+pub fn expiry_warning(brand: &str, accent: &str, logo: &str, kind: ExpiryTarget, name: &str, remaining: &str) -> Mail {
+    let word = kind.word();
+    let keep = if kind == ExpiryTarget::Channel {
         "To keep it, have a member join the channel before then. Otherwise it will be removed."
     } else {
         "To keep it, just identify to it before then. Otherwise it will be removed."
     };
     Mail {
-        subject: format!("Your {kind} {name} is about to expire"),
+        subject: format!("Your {word} {name} is about to expire"),
         text: format!(
-            "Your {kind} {name} has been inactive and will expire in {remaining}.\n{keep}\n"
+            "Your {word} {name} has been inactive and will expire in {remaining}.\n{keep}\n"
         ),
         html: render(
             brand,
             accent,
             logo,
             "About to expire",
-            &format!("Your {kind} {name} has been inactive and will expire in {remaining}."),
+            &format!("Your {word} {name} has been inactive and will expire in {remaining}."),
             remaining,
             keep,
         ),

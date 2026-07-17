@@ -289,11 +289,10 @@ pub fn terminal(g: &Game) -> Option<Outcome> {
             }
             full_or_ongoing(b)
         }
-        Board::Chess(st) => match chess::over(st).as_str() {
-            "w" => Some(Outcome::Win(Side::A)),
-            "b" => Some(Outcome::Win(Side::B)),
-            "draw" => Some(Outcome::Draw),
-            _ => None,
+        Board::Chess(st) => match chess::over(st) {
+            None => None,
+            Some(chess::Ending::Draw) => Some(Outcome::Draw),
+            Some(chess::Ending::Checkmate(c)) => Some(Outcome::Win(if c == b'w' { Side::A } else { Side::B })),
         },
     }
 }

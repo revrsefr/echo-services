@@ -703,14 +703,14 @@ impl Engine {
         if let Some(lead) = self.expire_warn.filter(|_| self.db.email_enabled()) {
             if let Some(ttl) = self.account_ttl {
                 for (account, email, left) in self.db.accounts_to_warn(now, ttl, lead) {
-                    let mail = echo_api::email::expiry_warning(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), "account", &account, &human_duration(left));
+                    let mail = echo_api::email::expiry_warning(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), echo_api::email::ExpiryTarget::Account, &account, &human_duration(left));
                     self.emit_irc(NetAction::SendEmail { to: email, subject: mail.subject, text: mail.text, html: Some(mail.html) });
                     self.db.mark_account_warned(&account);
                 }
             }
             if let Some(ttl) = self.channel_ttl {
                 for (channel, email, left) in self.db.channels_to_warn(now, ttl, lead) {
-                    let mail = echo_api::email::expiry_warning(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), "channel", &channel, &human_duration(left));
+                    let mail = echo_api::email::expiry_warning(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), echo_api::email::ExpiryTarget::Channel, &channel, &human_duration(left));
                     self.emit_irc(NetAction::SendEmail { to: email, subject: mail.subject, text: mail.text, html: Some(mail.html) });
                     self.db.mark_channel_warned(&channel);
                 }

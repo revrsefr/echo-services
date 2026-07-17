@@ -476,16 +476,24 @@ pub fn legal(st: &State) -> Vec<Move> {
         .collect()
 }
 
-/// `""` ongoing; `"draw"` for stalemate; or the winning side (`"w"`/`"b"`) on
-/// checkmate.
-pub fn over(st: &State) -> String {
+/// How a position has ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ending {
+    Draw,
+    Checkmate(u8), // the winning colour byte: b'w' or b'b'
+}
+
+/// `None` while the side to move still has a legal move; else the ending
+/// (stalemate → `Draw`, checkmate → `Checkmate(winner)`).
+pub fn over(st: &State) -> Option<Ending> {
     if !legal(st).is_empty() {
-        return String::new();
+        return None;
     }
     if in_check(st, st.turn) {
-        return if st.turn == b'w' { "b" } else { "w" }.to_string();
+        Some(Ending::Checkmate(if st.turn == b'w' { b'b' } else { b'w' }))
+    } else {
+        Some(Ending::Draw)
     }
-    "draw".to_string()
 }
 
 fn name_sq(s: i32) -> String {
