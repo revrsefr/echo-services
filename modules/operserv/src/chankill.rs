@@ -1,4 +1,4 @@
-use echo_api::{NetView, Priv, Sender, ServiceCtx, Store};
+use echo_api::{NetView, Priv, Sender, ServiceCtx, Store, XlineKind};
 use std::collections::HashSet;
 
 // CHANKILL <#channel> [reason]: AKILL every user in a channel by host, clearing
@@ -29,8 +29,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         let Some(host) = net.host_of(uid) else { continue };
         if seen.insert(host.to_string()) {
             let mask = format!("*@{host}");
-            let _ = db.akill_add("G", &mask, setter, &reason, None);
-            ctx.add_line("G", &mask, from.nick, 0, &reason);
+            let _ = db.akill_add(XlineKind::Gline, &mask, setter, &reason, None);
+            ctx.add_line(XlineKind::Gline, &mask, from.nick, 0, &reason);
             banned += 1;
         }
     }

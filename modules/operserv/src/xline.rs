@@ -1,11 +1,11 @@
-use echo_api::{parse_duration, Sender, ServiceCtx, Store};
+use echo_api::{parse_duration, Sender, ServiceCtx, Store, XlineKind};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // A network-ban command family (AKILL, SQLINE, …): the ircd X-line `kind`, the
 // user-facing command `name`, and the mask shape it accepts. One implementation
 // drives ADD / DEL / LIST for every kind so they stay consistent.
 pub struct Xline {
-    pub kind: &'static str,
+    pub kind: XlineKind,
     pub name: &'static str,
     pub target: &'static str, // e.g. "user@host" or "nick" — shown in syntax
     pub normalize: fn(&str) -> Option<String>,
@@ -114,22 +114,22 @@ impl Xline {
 }
 
 // AKILL: a user@host G-line. Strips any nick! prefix, lowercases both sides.
-pub const AKILL: Xline = Xline { kind: "G", name: "AKILL", target: "user@host", normalize: norm_userhost };
+pub const AKILL: Xline = Xline { kind: XlineKind::Gline, name: "AKILL", target: "user@host", normalize: norm_userhost };
 
 // SQLINE: a nick Q-line. The mask is a nick glob (no '@'); wildcards allowed.
-pub const SQLINE: Xline = Xline { kind: "Q", name: "SQLINE", target: "nick", normalize: norm_nick };
+pub const SQLINE: Xline = Xline { kind: XlineKind::Qline, name: "SQLINE", target: "nick", normalize: norm_nick };
 
 // SNLINE: a realname R-line. The mask is a regex the ircd matches against a
 // connecting user's realname (use `.` for spaces, e.g. `.*free.money.*`).
-pub const SNLINE: Xline = Xline { kind: "R", name: "SNLINE", target: "realname-regex", normalize: norm_realname };
+pub const SNLINE: Xline = Xline { kind: XlineKind::Rline, name: "SNLINE", target: "realname-regex", normalize: norm_realname };
 
 // SHUN: a user@host shun. A matching user stays connected but the ircd silently
 // drops their commands — a quieter alternative to an AKILL.
-pub const SHUN: Xline = Xline { kind: "SHUN", name: "SHUN", target: "user@host", normalize: norm_userhost };
+pub const SHUN: Xline = Xline { kind: XlineKind::Shun, name: "SHUN", target: "user@host", normalize: norm_userhost };
 
 // CBAN: a channel-name ban. Users can't join (or create) a channel matching the
 // mask, which is a channel glob like `#warez*`.
-pub const CBAN: Xline = Xline { kind: "CBAN", name: "CBAN", target: "#channel", normalize: norm_channel };
+pub const CBAN: Xline = Xline { kind: XlineKind::Cban, name: "CBAN", target: "#channel", normalize: norm_channel };
 
 fn norm_userhost(input: &str) -> Option<String> {
     let body = input.rsplit('!').next().unwrap_or(input);

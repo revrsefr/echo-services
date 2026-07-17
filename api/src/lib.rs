@@ -551,9 +551,9 @@ impl ServiceCtx {
     }
 
     // Set a network ban (X-line) at the ircd. `duration` seconds, 0 = permanent.
-    pub fn add_line(&mut self, kind: &str, mask: &str, setter: &str, duration: u64, reason: &str) {
+    pub fn add_line(&mut self, kind: XlineKind, mask: &str, setter: &str, duration: u64, reason: &str) {
         self.actions.push(NetAction::AddLine {
-            kind: kind.to_string(),
+            kind: kind.wire().to_string(),
             mask: mask.to_string(),
             setter: setter.to_string(),
             duration,
@@ -562,8 +562,8 @@ impl ServiceCtx {
     }
 
     // Lift a network ban previously set with `add_line`.
-    pub fn del_line(&mut self, kind: &str, mask: &str) {
-        self.actions.push(NetAction::DelLine { kind: kind.to_string(), mask: mask.to_string() });
+    pub fn del_line(&mut self, kind: XlineKind, mask: &str) {
+        self.actions.push(NetAction::DelLine { kind: kind.wire().to_string(), mask: mask.to_string() });
     }
 
     // Disconnect a user, sourced from pseudoclient `from`.
@@ -787,12 +787,61 @@ pub struct VhostView {
 // A network ban held by OperServ. `kind` is the ircd X-line type ("G", "Q", …).
 #[derive(Debug, Clone)]
 pub struct AkillView {
-    pub kind: String,
+    pub kind: XlineKind,
     pub mask: String,
     pub setter: String,
     pub reason: String,
     pub ts: u64,
     pub expires: Option<u64>,
+}
+
+// A network-ban type OperServ manages, identified by the ircd's X-line token.
+// The wire (`NetAction::AddLine`), storage, and gossip stay the string token
+// (a transparent passthrough — the ircd knows more line types than we model);
+// this types OperServ's own command surface so a kind can't be mistyped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum XlineKind {
+    Gline, // "G"    — user@host ban (AKILL)
+    Qline, // "Q"    — nick ban (SQLINE)
+    Rline, // "R"    — realname ban (SNLINE)
+    Shun,  // "SHUN"
+    Cban,  // "CBAN" — channel-name ban
+}
+
+impl XlineKind {
+    /// The ircd X-line token, as stored/gossiped and sent on the wire.
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Gline => "G",
+            Self::Qline => "Q",
+            Self::Rline => "R",
+            Self::Shun => "SHUN",
+            Self::Cban => "CBAN",
+        }
+    }
+
+    /// Parse a stored/wire token; `None` for a kind we don't model.
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "G" => Some(Self::Gline),
+            "Q" => Some(Self::Qline),
+            "R" => Some(Self::Rline),
+            "SHUN" => Some(Self::Shun),
+            "CBAN" => Some(Self::Cban),
+            _ => None,
+        }
+    }
+
+    /// A human label for notices/audit lines.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Gline => "network ban",
+            Self::Qline => "nick ban",
+            Self::Rline => "realname ban",
+            Self::Shun => "shun",
+            Self::Cban => "channel ban",
+        }
+    }
 }
 
 // A registration-ban target for OperServ FORBID. The persistence/gossip layer
@@ -1167,8 +1216,8 @@ pub trait Store {
     // Network bans (AKILL / G-lines, oper-only). `akill_add` returns whether the
     // mask was newly added (false = an existing entry was refreshed); `akills`
     // lists only entries that haven't lazily expired, oldest first.
-    fn akill_add(&mut self, kind: &str, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError>;
-    fn akill_del(&mut self, kind: &str, mask: &str) -> Result<bool, RegError>;
+    fn akill_add(&mut self, kind: XlineKind, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError>;
+    fn akill_del(&mut self, kind: XlineKind, mask: &str) -> Result<bool, RegError>;
     fn akills(&self) -> Vec<AkillView>;
     // Registration bans (OperServ FORBID).
     fn forbid_add(&mut self, kind: ForbidKind, mask: &str, setter: &str, reason: &str) -> Result<bool, RegError>;

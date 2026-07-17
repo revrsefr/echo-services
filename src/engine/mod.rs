@@ -1044,7 +1044,7 @@ impl Engine {
         let now = self.now_secs();
         for a in self.db.akills() {
             let duration = a.expires.map(|e| e.saturating_sub(now)).unwrap_or(0);
-            out.push(NetAction::AddLine { kind: a.kind, mask: a.mask, setter: a.setter, duration, reason: a.reason });
+            out.push(NetAction::AddLine { kind: a.kind.wire().to_string(), mask: a.mask, setter: a.setter, duration, reason: a.reason });
         }
         // Re-introduce our juped servers over the fresh link.
         for (name, sid, reason) in self.db.jupes() {
@@ -1524,14 +1524,10 @@ impl Engine {
 }
 
 // A human label for a network-ban X-line kind, for the audit feed.
+// The audit feed labels the ban kind from the persisted (string) event token; an
+// unmodelled/peer kind falls back to the generic label.
 fn ban_kind_label(kind: &str) -> &'static str {
-    match kind {
-        "Q" => "nick ban",
-        "R" => "realname ban",
-        "SHUN" => "shun",
-        "CBAN" => "channel ban",
-        _ => "network ban",
-    }
+    echo_api::XlineKind::from_wire(kind).map(|k| k.label()).unwrap_or("network ban")
 }
 
 // A rough human span for an expiry deadline in an email ("7 days", "12 hours").

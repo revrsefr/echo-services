@@ -209,10 +209,10 @@ impl Store for Db {
     fn set_channel_noexpire(&mut self, channel: &str, on: bool) -> Result<bool, ChanError> {
         Db::set_channel_noexpire(self, channel, on)
     }
-    fn akill_add(&mut self, kind: &str, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
+    fn akill_add(&mut self, kind: XlineKind, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
         Db::akill_add(self, kind, mask, setter, reason, expires)
     }
-    fn akill_del(&mut self, kind: &str, mask: &str) -> Result<bool, RegError> {
+    fn akill_del(&mut self, kind: XlineKind, mask: &str) -> Result<bool, RegError> {
         Db::akill_del(self, kind, mask)
     }
     fn akills(&self) -> Vec<AkillView> {

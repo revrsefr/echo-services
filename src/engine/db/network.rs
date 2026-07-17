@@ -2,36 +2,42 @@ use super::*;
 
 impl Db {
     /// Add (or refresh) a `kind` network ban. Returns whether it was newly added.
-    pub fn akill_add(&mut self, kind: &str, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
-        let same = |a: &Akill| a.kind == kind && a.mask.eq_ignore_ascii_case(mask);
+    pub fn akill_add(&mut self, kind: XlineKind, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
+        // Storage/gossip keep the ircd's line token; the API is typed.
+        let wire = kind.wire();
+        let same = |a: &Akill| a.kind == wire && a.mask.eq_ignore_ascii_case(mask);
         let fresh = !self.net.akills.iter().any(|a| same(a) && a.expires.is_none_or(|e| e > now()));
         self.log
-            .append(Event::AkillAdded { kind: kind.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now(), expires })
+            .append(Event::AkillAdded { kind: wire.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now(), expires })
             .map_err(|_| RegError::Internal)?;
         self.net.akills.retain(|a| !same(a));
-        self.net.akills.push(Akill { kind: kind.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now(), expires });
+        self.net.akills.push(Akill { kind: wire.to_string(), mask: mask.to_string(), setter: setter.to_string(), reason: reason.to_string(), ts: now(), expires });
         Ok(fresh)
     }
 
     /// Lift a `kind` network ban. Returns whether a live one was removed.
-    pub fn akill_del(&mut self, kind: &str, mask: &str) -> Result<bool, RegError> {
-        let same = |a: &Akill| a.kind == kind && a.mask.eq_ignore_ascii_case(mask);
+    pub fn akill_del(&mut self, kind: XlineKind, mask: &str) -> Result<bool, RegError> {
+        let wire = kind.wire();
+        let same = |a: &Akill| a.kind == wire && a.mask.eq_ignore_ascii_case(mask);
         let existed = self.net.akills.iter().any(|a| same(a) && a.expires.is_none_or(|e| e > now()));
         if !existed {
             return Ok(false);
         }
-        self.log.append(Event::AkillRemoved { kind: kind.to_string(), mask: mask.to_string() }).map_err(|_| RegError::Internal)?;
+        self.log.append(Event::AkillRemoved { kind: wire.to_string(), mask: mask.to_string() }).map_err(|_| RegError::Internal)?;
         self.net.akills.retain(|a| !same(a));
         Ok(true)
     }
 
-    /// The live network bans (expired ones hidden lazily), oldest first.
+    /// The live network bans (expired ones hidden lazily), oldest first. A stored
+    /// kind we don't model (peer-gossiped) is skipped from the typed view.
     pub fn akills(&self) -> Vec<AkillView> {
         let now = now();
         self.net.akills
             .iter()
             .filter(|a| a.expires.is_none_or(|e| e > now))
-            .map(|a| AkillView { kind: a.kind.clone(), mask: a.mask.clone(), setter: a.setter.clone(), reason: a.reason.clone(), ts: a.ts, expires: a.expires })
+            .filter_map(|a| {
+                XlineKind::from_wire(&a.kind).map(|kind| AkillView { kind, mask: a.mask.clone(), setter: a.setter.clone(), reason: a.reason.clone(), ts: a.ts, expires: a.expires })
+            })
             .collect()
     }
 

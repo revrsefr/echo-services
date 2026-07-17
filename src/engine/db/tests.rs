@@ -609,7 +609,7 @@
             db.group_set_flags("!grp", "carol", "").unwrap();
             db.group_register("!other", "bob").unwrap();
             db.group_set_flags("!other", "alice", "").unwrap();
-            db.akill_add("G", "*@evil", "oper", "spam", None).unwrap();
+            db.akill_add(XlineKind::Gline, "*@evil", "oper", "spam", None).unwrap();
             db.forbid_add(ForbidKind::Nick, "bad*", "oper", "squat").unwrap();
             db.vhost_offer_add("cool.vhost").unwrap();
             db.vhost_forbid_add("(?i)admin").unwrap();
@@ -640,8 +640,8 @@
         db.del_vhost("bob").unwrap();
         db.suspend_account("carol", "oper", "oops", None).unwrap();
         db.unsuspend_account("carol").unwrap();
-        db.akill_add("Q", "spam*", "oper", "nick", None).unwrap();
-        db.akill_del("Q", "spam*").unwrap();
+        db.akill_add(XlineKind::Qline, "spam*", "oper", "nick", None).unwrap();
+        db.akill_del(XlineKind::Qline, "spam*").unwrap();
         db.forbid_add(ForbidKind::Chan, "#evil*", "oper", "bad").unwrap();
         db.forbid_del(ForbidKind::Chan, "#evil*").unwrap();
         let nid = db.news_add("logon", "temp notice", "oper");
@@ -703,7 +703,7 @@
         a.set_greet("alice", "hi there").unwrap();
         a.set_account_kill("alice", false).unwrap();
         a.suspend_account("bob", "op", "bad", None).unwrap();
-        a.akill_add("G", "*@evil", "op", "spam", None).unwrap();
+        a.akill_add(XlineKind::Gline, "*@evil", "op", "spam", None).unwrap();
         a.forbid_add(ForbidKind::Nick, "bad*", "op", "squat").unwrap();
         a.group_register("!g", "alice").unwrap();
         a.group_set_flags("!g", "bob", "").unwrap();
