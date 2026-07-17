@@ -569,7 +569,9 @@ pub fn encode(st: &State) -> String {
 }
 
 /// Inverse of [`encode`]. On malformed input (fewer than 4 comma parts) returns
-/// [`initial`].
+/// [`initial`]. The referee keeps a live `State`, so this is only exercised by the
+/// roundtrip test today — kept as part of the complete, perft-verified engine.
+#[allow(dead_code)]
 pub fn decode(enc: &str) -> State {
     let mut st = State {
         board: [EMPTY; 64],

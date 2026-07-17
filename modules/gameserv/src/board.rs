@@ -1,219 +1,314 @@
-//! The referee: game state and the per-game rules for tic-tac-toe, Connect Four
-//! and chess. GameServ validates every move here and decides the winner, so a
-//! client can never cheat (the board never leaves the server except as a signed
-//! state line the web client only renders). Chess lives in `chess.rs`.
+//! The referee: strongly-typed game state and rules for tic-tac-toe, Connect Four
+//! and chess. Where the C++ original modelled everything as strings ("ttt", "X",
+//! "pending", a 9-char board), this uses enums so illegal states are
+//! unrepresentable, the per-game dispatch is exhaustively checked by the compiler
+//! (no silent fallthrough), sides/status flow as `Copy` with no allocation, and a
+//! grid move mutates a fixed array in place instead of cloning a String. Chess
+//! lives in `chess.rs`.
 
 use crate::chess;
+
+pub const C4_W: usize = 7;
+pub const C4_H: usize = 6;
+const C4_CELLS: usize = C4_W * C4_H;
+const EMPTY: u8 = b' ';
 
 const TTT_LINES: [[usize; 3]; 8] = [
     [0, 1, 2], [3, 4, 5], [6, 7, 8],
     [0, 3, 6], [1, 4, 7], [2, 5, 8],
     [0, 4, 8], [2, 4, 6],
 ];
-pub const C4_W: usize = 7;
-pub const C4_H: usize = 6;
 
-// One live game. `acc_*` is the ranked identity (account name, or the nick for a
-// guest); `side_*` is the piece/colour each side plays. A = challenger, moves first.
+/// Which game. `Copy`, so it flows without clones or string compares.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GameType {
+    Ttt,
+    C4,
+    Chess,
+}
+
+impl GameType {
+    pub fn from_arg(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "ttt" => Some(Self::Ttt),
+            "c4" => Some(Self::C4),
+            "chess" => Some(Self::Chess),
+            _ => None,
+        }
+    }
+
+    /// Wire/config token: the GS# `g=` field, the counter-key segment, the TOP arg.
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Ttt => "ttt",
+            Self::C4 => "c4",
+            Self::Chess => "chess",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ttt => "Morpion",
+            Self::C4 => "Puissance 4",
+            Self::Chess => "Échecs",
+        }
+    }
+
+    /// The piece/colour glyph a side plays; the challenger (A) moves first.
+    fn glyph(self, side: Side) -> u8 {
+        let (a, b) = match self {
+            Self::Ttt => (b'X', b'O'),
+            Self::C4 => (b'R', b'Y'),
+            Self::Chess => (b'w', b'b'),
+        };
+        match side {
+            Side::A => a,
+            Side::B => b,
+        }
+    }
+
+    fn side_of_glyph(self, glyph: u8) -> Side {
+        if glyph == self.glyph(Side::A) {
+            Side::A
+        } else {
+            Side::B
+        }
+    }
+}
+
+/// The two players. A is the challenger and always moves first.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Side {
+    A,
+    B,
+}
+
+impl Side {
+    pub fn other(self) -> Self {
+        match self {
+            Self::A => Self::B,
+            Self::B => Self::A,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Status {
+    Pending,
+    Active,
+    Over,
+}
+
+impl Status {
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Active => "active",
+            Self::Over => "over",
+        }
+    }
+}
+
+/// How a finished game ended.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Outcome {
+    Draw,
+    Win(Side),
+}
+
+/// The board — also the single source of truth for the game kind. Grid games are
+/// fixed byte arrays (`EMPTY` = free), so a move mutates in place with no alloc.
+pub enum Board {
+    Ttt([u8; 9]),
+    C4([u8; C4_CELLS]),
+    Chess(chess::State),
+}
+
+impl Board {
+    fn new(gt: GameType) -> Self {
+        match gt {
+            GameType::Ttt => Self::Ttt([EMPTY; 9]),
+            GameType::C4 => Self::C4([EMPTY; C4_CELLS]),
+            GameType::Chess => Self::Chess(chess::initial()),
+        }
+    }
+
+    pub fn gtype(&self) -> GameType {
+        match self {
+            Self::Ttt(_) => GameType::Ttt,
+            Self::C4(_) => GameType::C4,
+            Self::Chess(_) => GameType::Chess,
+        }
+    }
+
+    fn grid(&self) -> Option<&[u8]> {
+        match self {
+            Self::Ttt(c) => Some(c),
+            Self::C4(c) => Some(c),
+            Self::Chess(_) => None,
+        }
+    }
+
+    /// Space-free wire form: grid empty cells become '.', chess a comma-FEN.
+    fn encode(&self) -> String {
+        match self {
+            Self::Chess(st) => chess::encode(st),
+            _ => self
+                .grid()
+                .unwrap()
+                .iter()
+                .map(|&b| if b == EMPTY { '.' } else { b as char })
+                .collect(),
+        }
+    }
+}
+
+/// One live game. `acc_*`/`nick_*` are the ranked identity and current nick of
+/// each side; A is the challenger. The board carries the game kind, so `gtype()`
+/// derives from it — no separate field to keep consistent.
 pub struct Game {
     pub id: u64,
-    pub gtype: String,        // "ttt" | "c4" | "chess"
     pub acc_a: String,
     pub acc_b: String,
     pub nick_a: String,
     pub nick_b: String,
     pub a_reg: bool,
     pub b_reg: bool,
-    pub side_a: String,
-    pub side_b: String,
-    pub board: String,
-    pub turn: String,         // side to move
-    pub status: String,       // "pending" | "active" | "over"
-    pub result: String,       // "" | "<winner account>" | "draw"
+    pub board: Board,
+    pub turn: Side,
+    pub status: Status,
+    pub result: Option<Outcome>,
 }
 
-// One (account, game type) ladder row, materialised from the shared stat counters
-// (`game.<type>.<w|l|d>.<account>`) that StatServ already persists. A player can be
-// Gold at chess and Bronze at Connect Four, so each type keeps its own record.
-#[derive(Default, Clone)]
-pub struct Stats {
-    pub wins: u32,
-    pub losses: u32,
-    pub draws: u32,
-}
-
-impl Stats {
-    // Points are DERIVED from the win/loss counts (draws don't score), floored at
-    // 0: win +10, loss -8. Deriving keeps the ladder to monotonic w/l/d counters,
-    // so it rides StatServ's existing counter persistence with nothing to sync.
-    pub fn points(&self) -> i32 {
-        (10 * self.wins as i32 - 8 * self.losses as i32).max(0)
-    }
-
-    pub fn rank(&self) -> &'static str {
-        let p = self.points();
-        if p >= 800 {
-            "Master"
-        } else if p >= 400 {
-            "Gold"
-        } else if p >= 150 {
-            "Silver"
-        } else {
-            "Bronze"
+impl Game {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(id: u64, gt: GameType, acc_a: String, a_reg: bool, acc_b: String, b_reg: bool, nick_a: String, nick_b: String) -> Self {
+        Self {
+            id,
+            acc_a,
+            acc_b,
+            nick_a,
+            nick_b,
+            a_reg,
+            b_reg,
+            board: Board::new(gt),
+            turn: Side::A,
+            status: Status::Pending,
+            result: None,
         }
     }
 
-    pub fn any(&self) -> bool {
-        self.wins > 0 || self.losses > 0 || self.draws > 0
+    pub fn gtype(&self) -> GameType {
+        self.board.gtype()
+    }
+
+    /// Space-free board for the wire.
+    pub fn encode(&self) -> String {
+        self.board.encode()
+    }
+
+    /// The glyph the given side plays (GS# `t=`/`me=`).
+    pub fn glyph(&self, side: Side) -> char {
+        self.gtype().glyph(side) as char
     }
 }
 
-pub fn valid_type(t: &str) -> bool {
-    matches!(t, "ttt" | "c4" | "chess")
-}
-
-pub fn type_label(t: &str) -> &'static str {
-    match t {
-        "chess" => "Échecs",
-        "c4" => "Puissance 4",
-        "ttt" => "Morpion",
-        _ => "?",
-    }
-}
-
-// The two sides for a game type; the challenger takes the first, moves first.
-pub fn sides(gtype: &str) -> (&'static str, &'static str) {
-    match gtype {
-        "ttt" => ("X", "O"),
-        "c4" => ("R", "Y"),
-        _ => ("w", "b"),
-    }
-}
-
-pub fn init_board(gtype: &str) -> String {
-    match gtype {
-        "ttt" => " ".repeat(9),
-        "c4" => " ".repeat(C4_W * C4_H),
-        "chess" => chess::encode(&chess::initial()),
-        _ => String::new(),
-    }
-}
-
-// Apply `mv` for `side`; returns true iff it was legal and applied (mutating the
-// board and flipping the turn). Rejects out-of-turn and illegal moves.
-pub fn apply_move(g: &mut Game, side: &str, mv: &str) -> bool {
+/// Apply `mv` for `side`; returns true iff it was legal and applied (mutating the
+/// board and advancing the turn). Rejects out-of-turn and illegal moves.
+pub fn apply_move(g: &mut Game, side: Side, mv: &str) -> bool {
     if g.turn != side {
         return false;
     }
-    let other = if side == g.side_a { g.side_b.clone() } else { g.side_a.clone() };
-    match g.gtype.as_str() {
-        "ttt" => {
-            let c: i32 = mv.parse().unwrap_or(-1);
-            let mut b = g.board.clone().into_bytes();
-            if !(0..=8).contains(&c) || b[c as usize] != b' ' {
+    let glyph = g.gtype().glyph(side);
+    match &mut g.board {
+        Board::Ttt(cells) => {
+            let Ok(c) = mv.parse::<usize>() else { return false };
+            if c >= cells.len() || cells[c] != EMPTY {
                 return false;
             }
-            b[c as usize] = side.as_bytes()[0];
-            g.board = String::from_utf8(b).unwrap_or_default();
-            g.turn = other;
-            true
+            cells[c] = glyph;
         }
-        "c4" => {
-            let col: i32 = mv.parse().unwrap_or(-1);
-            if col < 0 || col as usize >= C4_W {
+        Board::C4(cells) => {
+            let Ok(col) = mv.parse::<usize>() else { return false };
+            if col >= C4_W {
                 return false;
             }
-            let col = col as usize;
-            let mut b = g.board.clone().into_bytes();
-            for r in 0..C4_H {
-                // row 0 = bottom; the piece drops to the lowest empty cell.
-                let i = r * C4_W + col;
-                if b[i] == b' ' {
-                    b[i] = side.as_bytes()[0];
-                    g.board = String::from_utf8(b).unwrap_or_default();
-                    g.turn = other;
-                    return true;
-                }
-            }
-            false // column full
-        }
-        "chess" => {
-            let st = chess::decode(&g.board);
-            match chess::parse(&st, mv) {
-                Some(m) => {
-                    let ns = chess::apply(&st, &m);
-                    g.board = chess::encode(&ns);
-                    g.turn = (ns.turn as char).to_string();
-                    true
-                }
-                None => false,
+            // row 0 = bottom; the piece drops to the lowest empty cell.
+            match (0..C4_H).map(|r| r * C4_W + col).find(|&i| cells[i] == EMPTY) {
+                Some(i) => cells[i] = glyph,
+                None => return false, // column full
             }
         }
-        _ => false,
+        Board::Chess(st) => {
+            let Some(m) = chess::parse(st, mv) else { return false };
+            *st = chess::apply(st, &m);
+            // Chess owns the side to move; keep the game turn in step with it.
+            g.turn = if st.turn == b'w' { Side::A } else { Side::B };
+            return true;
+        }
     }
+    g.turn = side.other();
+    true
 }
 
-// "" = ongoing, "draw", or the winning side string.
-pub fn terminal(g: &Game) -> String {
-    match g.gtype.as_str() {
-        "ttt" => {
-            let b = g.board.as_bytes();
+/// `None` while the game is ongoing, else how it ended.
+pub fn terminal(g: &Game) -> Option<Outcome> {
+    match &g.board {
+        Board::Ttt(b) => {
             for ln in TTT_LINES {
                 let a = b[ln[0]];
-                if a != b' ' && a == b[ln[1]] && a == b[ln[2]] {
-                    return (a as char).to_string();
+                if a != EMPTY && a == b[ln[1]] && a == b[ln[2]] {
+                    return Some(Outcome::Win(GameType::Ttt.side_of_glyph(a)));
                 }
             }
-            if g.board.contains(' ') { String::new() } else { "draw".into() }
+            full_or_ongoing(b)
         }
-        "c4" => {
-            let b = g.board.as_bytes();
+        Board::C4(b) => {
             let dirs: [(i32, i32); 4] = [(1, 0), (0, 1), (1, 1), (1, -1)];
             for c in 0..C4_W as i32 {
                 for r in 0..C4_H as i32 {
                     let p = b[r as usize * C4_W + c as usize];
-                    if p == b' ' {
+                    if p == EMPTY {
                         continue;
                     }
                     for (dc, dr) in dirs {
                         let (mut cc, mut rr) = (c, r);
-                        let mut ok = true;
-                        for _ in 0..4 {
-                            if cc < 0 || cc >= C4_W as i32 || rr < 0 || rr >= C4_H as i32
-                                || b[rr as usize * C4_W + cc as usize] != p
-                            {
-                                ok = false;
-                                break;
-                            }
+                        let run = (0..4).all(|_| {
+                            let ok = (0..C4_W as i32).contains(&cc)
+                                && (0..C4_H as i32).contains(&rr)
+                                && b[rr as usize * C4_W + cc as usize] == p;
                             cc += dc;
                             rr += dr;
-                        }
-                        if ok {
-                            return (p as char).to_string();
+                            ok
+                        });
+                        if run {
+                            return Some(Outcome::Win(GameType::C4.side_of_glyph(p)));
                         }
                     }
                 }
             }
-            if g.board.contains(' ') { String::new() } else { "draw".into() }
+            full_or_ongoing(b)
         }
-        "chess" => chess::over(&chess::decode(&g.board)),
-        _ => String::new(),
+        Board::Chess(st) => match chess::over(st).as_str() {
+            "w" => Some(Outcome::Win(Side::A)),
+            "b" => Some(Outcome::Win(Side::B)),
+            "draw" => Some(Outcome::Draw),
+            _ => None,
+        },
     }
 }
 
-// The board rendered space-free for the wire: chess is already a comma-FEN;
-// ttt/c4 map empty cells ' ' -> '.'.
-pub fn encode_board(g: &Game) -> String {
-    if g.gtype == "chess" {
-        g.board.clone()
+fn full_or_ongoing(cells: &[u8]) -> Option<Outcome> {
+    if cells.iter().all(|&c| c != EMPTY) {
+        Some(Outcome::Draw)
     } else {
-        g.board.replace(' ', ".")
+        None
     }
 }
 
-// IRCv3 message-tag value escaping. We build the state TAGMSG as a raw line, and
-// the serializer only strips CR/LF/NUL — so a space or ';' in the value would
-// corrupt the s2s line (it once caused a netsplit under Anope). Escape here.
+// IRCv3 message-tag value escaping. The state TAGMSG is built as a raw line and
+// the serializer only strips CR/LF/NUL, so a space or ';' in the value would
+// corrupt the s2s line (it once netsplit services under Anope). Escape it here.
 pub fn escape_tag(v: &str) -> String {
     let mut out = String::with_capacity(v.len());
     for c in v.chars() {
@@ -233,63 +328,53 @@ pub fn escape_tag(v: &str) -> String {
 mod tests {
     use super::*;
 
-    fn game(gtype: &str) -> Game {
-        let (sa, sb) = sides(gtype);
-        Game {
-            id: 1, gtype: gtype.into(), acc_a: "a".into(), acc_b: "b".into(),
-            nick_a: "a".into(), nick_b: "b".into(), a_reg: true, b_reg: true,
-            side_a: sa.into(), side_b: sb.into(), board: init_board(gtype),
-            turn: sa.into(), status: "active".into(), result: String::new(),
-        }
+    fn game(gt: GameType) -> Game {
+        Game::new(1, gt, "a".into(), true, "b".into(), true, "a".into(), "b".into())
     }
 
     #[test]
     fn ttt_rejects_out_of_turn_and_occupied_and_detects_a_win() {
-        let mut g = game("ttt");
-        // O can't move first (X's turn); an out-of-range/occupied cell is rejected.
-        assert!(!apply_move(&mut g, "O", "0"), "not O's turn");
-        assert!(apply_move(&mut g, "X", "0"));
-        assert!(!apply_move(&mut g, "X", "0"), "cell taken");
-        assert!(!apply_move(&mut g, "O", "9"), "off board");
-        // X top row: 0,1,2 with O elsewhere.
-        apply_move(&mut g, "O", "3");
-        apply_move(&mut g, "X", "1");
-        apply_move(&mut g, "O", "4");
-        assert_eq!(terminal(&g), "");
-        assert!(apply_move(&mut g, "X", "2"));
-        assert_eq!(terminal(&g), "X", "top row wins");
+        let mut g = game(GameType::Ttt);
+        assert!(!apply_move(&mut g, Side::B, "0"), "not B's turn");
+        assert!(apply_move(&mut g, Side::A, "0"));
+        assert!(!apply_move(&mut g, Side::A, "0"), "cell taken");
+        assert!(!apply_move(&mut g, Side::B, "9"), "off board");
+        apply_move(&mut g, Side::B, "3");
+        apply_move(&mut g, Side::A, "1");
+        apply_move(&mut g, Side::B, "4");
+        assert_eq!(terminal(&g), None);
+        assert!(apply_move(&mut g, Side::A, "2"));
+        assert_eq!(terminal(&g), Some(Outcome::Win(Side::A)), "top row wins for A (X)");
     }
 
     #[test]
     fn c4_drops_to_bottom_and_detects_vertical_win() {
-        let mut g = game("c4");
-        // R stacks column 3; Y answers in column 4. Four R vertically wins.
+        let mut g = game(GameType::C4);
         for _ in 0..3 {
-            assert!(apply_move(&mut g, "R", "3"));
-            assert_eq!(terminal(&g), "");
-            assert!(apply_move(&mut g, "Y", "4"));
+            assert!(apply_move(&mut g, Side::A, "3"));
+            assert_eq!(terminal(&g), None);
+            assert!(apply_move(&mut g, Side::B, "4"));
         }
-        assert!(apply_move(&mut g, "R", "3"));
-        assert_eq!(terminal(&g), "R", "four in a column wins");
-        // The pieces fell to the bottom of column 3 (rows 0..3).
-        assert_eq!(&g.board[3..4], "R");
+        assert!(apply_move(&mut g, Side::A, "3"));
+        assert_eq!(terminal(&g), Some(Outcome::Win(Side::A)), "four in a column wins");
+        assert_eq!(&g.encode()[3..4], "R", "the pieces fell to the bottom of column 3");
     }
 
     #[test]
     fn chess_plays_a_legal_move_and_rejects_an_illegal_one() {
-        let mut g = game("chess");
-        assert!(!apply_move(&mut g, "b", "e7e5"), "white to move");
-        assert!(apply_move(&mut g, "w", "e2e4"));
-        assert_eq!(g.turn, "b");
-        assert!(!apply_move(&mut g, "b", "e7e9"), "off board / illegal");
-        assert!(apply_move(&mut g, "b", "e7e5"));
-        assert_eq!(terminal(&g), "", "game ongoing");
+        let mut g = game(GameType::Chess);
+        assert!(!apply_move(&mut g, Side::B, "e7e5"), "white (A) to move");
+        assert!(apply_move(&mut g, Side::A, "e2e4"));
+        assert_eq!(g.turn, Side::B);
+        assert!(!apply_move(&mut g, Side::B, "e7e9"), "off board / illegal");
+        assert!(apply_move(&mut g, Side::B, "e7e5"));
+        assert_eq!(terminal(&g), None, "game ongoing");
     }
 
     #[test]
-    fn encode_board_is_space_free() {
-        let g = game("ttt");
-        assert!(!encode_board(&g).contains(' '), "ttt empty cells become dots");
+    fn encode_is_space_free_and_tags_escape() {
+        let g = game(GameType::Ttt);
+        assert!(!g.encode().contains(' '), "ttt empty cells become dots");
         assert_eq!(escape_tag("GS# 1 g=ttt"), "GS#\\s1\\sg=ttt");
     }
 }
