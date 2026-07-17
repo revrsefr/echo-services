@@ -15,7 +15,39 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, net: &dyn NetView, 
         ctx.notice(me, from.uid, "  (no activity counters yet)");
         return;
     }
-    for (key, value) in counters {
+    // The generic service counters. GameServ's ranked-ladder counters
+    // (`game.<type>.<w|l|d>.<account>`) live in the same registry but would flood
+    // this list, so they are summarised in the GAMES section instead.
+    for (key, value) in &counters {
+        if key.starts_with("game.") {
+            continue;
+        }
         ctx.notice(me, from.uid, format!("  {key}: {value}"));
+    }
+    // GAMES: per game type, ranked games played and distinct players.
+    let mut header = false;
+    for ty in ["chess", "c4", "ttt"] {
+        let prefix = format!("game.{ty}.");
+        let (mut wins, mut draws) = (0u64, 0u64);
+        let mut players = std::collections::BTreeSet::new();
+        for (key, value) in &counters {
+            let Some(rest) = key.strip_prefix(&prefix) else { continue };
+            let Some((kind, account)) = rest.split_once('.') else { continue };
+            players.insert(account);
+            match kind {
+                "w" => wins += value,
+                "d" => draws += value,
+                _ => {}
+            }
+        }
+        // Each decisive game records one win; each draw records `d` for both sides.
+        let games = wins + draws / 2;
+        if games > 0 {
+            if !header {
+                ctx.notice(me, from.uid, "  games:");
+                header = true;
+            }
+            ctx.notice(me, from.uid, format!("    {ty}: {games} games, {} players", players.len()));
+        }
     }
 }

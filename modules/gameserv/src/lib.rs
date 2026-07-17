@@ -37,40 +37,36 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "TOP", summary: "show the leaderboard", detail: "Syntax: \x02TOP [ttt|c4|chess]\x02\nShows the top ranked players for a game type (chess by default)." },
 ];
 
-// account key (lowercased) -> that player's ladder across game types.
-type Ladder = HashMap<String, PlayerLadder>;
+// The ladder lives in the shared stat counters (StatServ's persistence), keyed
+// `game.<type>.<w|l|d>.<account>`. Nothing is stored in GameServ itself.
+fn counter_key(gtype: &str, kind: char, account: &str) -> String {
+    format!("game.{gtype}.{kind}.{account}")
+}
 
-#[derive(Default)]
-struct PlayerLadder {
-    display: String,
-    by_type: HashMap<String, Stats>,
+// Materialise a player's record for one game type from a counter snapshot.
+fn read_stats(counters: &[(String, u64)], gtype: &str, account: &str) -> Stats {
+    let get = |kind: char| {
+        let key = counter_key(gtype, kind, account);
+        counters.iter().find(|(k, _)| *k == key).map(|(_, v)| *v as u32).unwrap_or(0)
+    };
+    Stats { wins: get('w'), losses: get('l'), draws: get('d') }
 }
 
 pub struct GameServ {
     pub uid: String,
     games: HashMap<u64, Game>,
-    ladder: Ladder,
     nextid: u64,
 }
 
 impl GameServ {
     pub fn new(uid: String) -> Self {
-        Self { uid, games: HashMap::new(), ladder: Ladder::new(), nextid: 1 }
+        Self { uid, games: HashMap::new(), nextid: 1 }
     }
 
     // A player's ranked identity: their account if registered, else their nick
     // (guests play casually under their nick; ranked points need an account).
     fn ident<'a>(from: &'a Sender) -> &'a str {
         from.account.unwrap_or(from.nick)
-    }
-
-    // Get (creating if needed) a mutable ladder row, remembering the display name.
-    fn stat(&mut self, account: &str, gtype: &str) -> &mut Stats {
-        let pl = self.ladder.entry(account.to_lowercase()).or_default();
-        if pl.display.is_empty() {
-            pl.display = account.to_string();
-        }
-        pl.by_type.entry(gtype.to_string()).or_default()
     }
 
     fn do_challenge(&mut self, me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView) {
@@ -230,26 +226,44 @@ impl GameServ {
         } else {
             g.acc_b.clone()
         };
-        if g.a_reg && g.b_reg {
+        // Ranked only when both sides are registered accounts (casual guest games
+        // leave the ladder untouched). Record the outcome as monotonic counters —
+        // StatServ persists them; points are derived on read.
+        let ranked = g.a_reg && g.b_reg;
+        if ranked {
             if winner_side == "draw" {
-                self.stat(&g.acc_a, &g.gtype).draws += 1;
-                self.stat(&g.acc_b, &g.gtype).draws += 1;
+                ctx.count(counter_key(&g.gtype, 'd', &g.acc_a));
+                ctx.count(counter_key(&g.gtype, 'd', &g.acc_b));
             } else {
-                let (wacc, lacc) = if a_won { (g.acc_a.clone(), g.acc_b.clone()) } else { (g.acc_b.clone(), g.acc_a.clone()) };
-                let w = self.stat(&wacc, &g.gtype);
-                w.wins += 1;
-                w.points += 10;
-                let l = self.stat(&lacc, &g.gtype);
-                l.losses += 1;
-                l.points = (l.points - 8).max(0);
+                let (wacc, lacc) = if a_won { (&g.acc_a, &g.acc_b) } else { (&g.acc_b, &g.acc_a) };
+                ctx.count(counter_key(&g.gtype, 'w', wacc));
+                ctx.count(counter_key(&g.gtype, 'l', lacc));
             }
         }
+        // The counter bumps land AFTER this command, so a snapshot here is pre-game;
+        // fold in this game's delta so the pushed rank already reflects the result.
+        let counters = net.stat_counters();
+        let with_delta = |account: &str, is_a: bool| -> Stats {
+            let mut s = read_stats(&counters, &g.gtype, account);
+            if ranked {
+                if winner_side == "draw" {
+                    s.draws += 1;
+                } else if a_won == is_a {
+                    s.wins += 1;
+                } else {
+                    s.losses += 1;
+                }
+            }
+            s
+        };
         push_state(&g, me, net, ctx);
         if g.a_reg {
-            push_stats(&self.ladder, &g.acc_a, &g.nick_a, me, net, ctx);
+            let s = with_delta(&g.acc_a, true);
+            push_stats(&counters, &g.acc_a, &g.nick_a, me, net, ctx, Some((&g.gtype, &s)));
         }
         if g.b_reg {
-            push_stats(&self.ladder, &g.acc_b, &g.nick_b, me, net, ctx);
+            let s = with_delta(&g.acc_b, false);
+            push_stats(&counters, &g.acc_b, &g.nick_b, me, net, ctx, Some((&g.gtype, &s)));
         }
     }
 
@@ -277,16 +291,17 @@ impl GameServ {
             ctx.notice(me, from.uid, "Log in or specify a nick.");
             return;
         };
-        push_stats(&self.ladder, &who, from.nick, me, net, ctx); // machine lines for the UI
+        let counters = net.stat_counters();
+        push_stats(&counters, &who, from.nick, me, net, ctx, None); // machine lines for the UI
         ctx.notice(me, from.uid, format!("\x02{who}\x02 — classement Jeux"));
         let mut any = false;
-        let pl = self.ladder.get(&who.to_lowercase());
         for ty in TYPES {
-            if let Some(s) = pl.and_then(|p| p.by_type.get(ty)) {
+            let s = read_stats(&counters, ty, &who);
+            if s.any() {
                 any = true;
                 ctx.notice(me, from.uid, format!(
                     "  \x02{}\x02  \x02{}\x02 — {} pts ({}V {}D {}N)",
-                    board::type_label(ty), s.rank(), s.points, s.wins, s.losses, s.draws
+                    board::type_label(ty), s.rank(), s.points(), s.wins, s.losses, s.draws
                 ));
             }
         }
@@ -301,10 +316,23 @@ impl GameServ {
             ctx.notice(me, from.uid, "Unknown game. Use \x02TOP ttt|c4|chess\x02.");
             return;
         }
-        let mut all: Vec<(&str, &Stats)> = self.ladder.values()
-            .filter_map(|pl| pl.by_type.get(&ty).filter(|s| s.points > 0).map(|s| (pl.display.as_str(), s)))
-            .collect();
-        all.sort_by_key(|&(_, s)| std::cmp::Reverse(s.points));
+        // Aggregate the per-account w/l/d counters for this game type.
+        let counters = net.stat_counters();
+        let prefix = format!("game.{ty}.");
+        let mut map: HashMap<String, Stats> = HashMap::new();
+        for (k, v) in &counters {
+            let Some(rest) = k.strip_prefix(&prefix) else { continue };
+            let Some((kind, acct)) = rest.split_once('.') else { continue };
+            let e = map.entry(acct.to_string()).or_default();
+            match kind {
+                "w" => e.wins = *v as u32,
+                "l" => e.losses = *v as u32,
+                "d" => e.draws = *v as u32,
+                _ => {}
+            }
+        }
+        let mut all: Vec<(String, Stats)> = map.into_iter().filter(|(_, s)| s.points() > 0).collect();
+        all.sort_by_key(|(_, s)| std::cmp::Reverse(s.points()));
         push_tag(me, net, from.nick, &format!("GS$TOPSTART {ty}"), ctx);
         if all.is_empty() {
             ctx.notice(me, from.uid, format!("Classement \x02{}\x02 vide. Sois le premier à gagner !", board::type_label(&ty)));
@@ -313,8 +341,8 @@ impl GameServ {
         ctx.notice(me, from.uid, format!("\x02Classement {} :\x02", board::type_label(&ty)));
         for (rank, (acc, s)) in all.iter().take(10).enumerate() {
             let rank = rank + 1;
-            ctx.notice(me, from.uid, format!("{rank:2}. {acc:<16} {}  {} pts", s.rank(), s.points));
-            push_tag(me, net, from.nick, &format!("GS$TOPROW {ty} {rank} {acc} {} {}", s.rank(), s.points), ctx);
+            ctx.notice(me, from.uid, format!("{rank:2}. {acc:<16} {}  {} pts", s.rank(), s.points()));
+            push_tag(me, net, from.nick, &format!("GS$TOPROW {ty} {rank} {acc} {} {}", s.rank(), s.points()), ctx);
         }
     }
 }
@@ -354,12 +382,16 @@ fn push_state(g: &Game, me: &str, net: &dyn NetView, ctx: &mut ServiceCtx) {
     push_one(g, 1, "", me, net, ctx);
 }
 
-// One GS$ stats line per game type (for the client's rank strip / profile badge).
-fn push_stats(ladder: &Ladder, account: &str, to_nick: &str, me: &str, net: &dyn NetView, ctx: &mut ServiceCtx) {
-    let pl = ladder.get(&account.to_lowercase());
+// One GS$ stats line per game type (for the client's rank strip / profile badge),
+// read from the shared counter snapshot. `override_ty` lets a just-finished game
+// show its post-game record even though the counter bump hasn't landed yet.
+fn push_stats(counters: &[(String, u64)], account: &str, to_nick: &str, me: &str, net: &dyn NetView, ctx: &mut ServiceCtx, override_ty: Option<(&str, &Stats)>) {
     for ty in TYPES {
-        let s = pl.and_then(|p| p.by_type.get(ty)).cloned().unwrap_or_default();
-        let payload = format!("GS$ {} {} r={} p={} w={} l={} d={}", account, ty, s.rank(), s.points, s.wins, s.losses, s.draws);
+        let s = match override_ty {
+            Some((oty, os)) if oty == ty => os.clone(),
+            _ => read_stats(counters, ty, account),
+        };
+        let payload = format!("GS$ {} {} r={} p={} w={} l={} d={}", account, ty, s.rank(), s.points(), s.wins, s.losses, s.draws);
         push_tag(me, net, to_nick, &payload, ctx);
     }
 }
@@ -395,5 +427,34 @@ impl Service for GameServ {
             Some("HELP") | None => echo_api::help(&me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
             Some(other) => ctx.notice(&me, from.uid, format!("I don't know \x02{other}\x02. Try \x02HELP\x02.")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The ladder is materialised from the shared counters; points derive from w/l.
+    #[test]
+    fn ladder_reads_counters_and_derives_points() {
+        let counters = vec![
+            ("game.chess.w.Reverse".to_string(), 5u64),
+            ("game.chess.l.Reverse".to_string(), 2u64),
+            ("game.chess.d.Reverse".to_string(), 1u64),
+        ];
+        let s = read_stats(&counters, "chess", "Reverse");
+        assert_eq!((s.wins, s.losses, s.draws), (5, 2, 1));
+        assert_eq!(s.points(), 34, "10*5 - 8*2");
+        assert_eq!(s.rank(), "Bronze");
+
+        // A different game type is a separate ladder (empty here).
+        let c4 = read_stats(&counters, "c4", "Reverse");
+        assert!(!c4.any());
+
+        // Losses alone floor points at 0.
+        let loser = read_stats(&[("game.ttt.l.Sad".to_string(), 9)], "ttt", "Sad");
+        assert_eq!(loser.points(), 0);
+
+        assert_eq!(counter_key("c4", 'w', "Bob"), "game.c4.w.Bob");
     }
 }

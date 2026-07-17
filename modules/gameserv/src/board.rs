@@ -32,27 +32,39 @@ pub struct Game {
     pub result: String,       // "" | "<winner account>" | "draw"
 }
 
-// One (account, game type) ladder row. A player can be Gold at chess and Bronze
-// at Connect Four, so each type keeps its own record.
+// One (account, game type) ladder row, materialised from the shared stat counters
+// (`game.<type>.<w|l|d>.<account>`) that StatServ already persists. A player can be
+// Gold at chess and Bronze at Connect Four, so each type keeps its own record.
 #[derive(Default, Clone)]
 pub struct Stats {
     pub wins: u32,
     pub losses: u32,
     pub draws: u32,
-    pub points: i32,
 }
 
 impl Stats {
+    // Points are DERIVED from the win/loss counts (draws don't score), floored at
+    // 0: win +10, loss -8. Deriving keeps the ladder to monotonic w/l/d counters,
+    // so it rides StatServ's existing counter persistence with nothing to sync.
+    pub fn points(&self) -> i32 {
+        (10 * self.wins as i32 - 8 * self.losses as i32).max(0)
+    }
+
     pub fn rank(&self) -> &'static str {
-        if self.points >= 800 {
+        let p = self.points();
+        if p >= 800 {
             "Master"
-        } else if self.points >= 400 {
+        } else if p >= 400 {
             "Gold"
-        } else if self.points >= 150 {
+        } else if p >= 150 {
             "Silver"
         } else {
             "Bronze"
         }
+    }
+
+    pub fn any(&self) -> bool {
+        self.wins > 0 || self.losses > 0 || self.draws > 0
     }
 }
 
