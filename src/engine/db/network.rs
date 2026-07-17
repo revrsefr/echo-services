@@ -478,9 +478,15 @@ impl Db {
     }
 
     /// Whether an account is in a group (its founder or a member).
-    pub fn is_group_member(&self, name: &str, account: &str) -> bool {
+    // Whether `account` inherits a group's channel access (when the group is on a
+    // channel's access list): the group's founder, or a member holding the 'c'
+    // (channel-access) flag. Plain membership is not enough — the flag gates it.
+    fn group_grants_channel_access(&self, name: &str, account: &str) -> bool {
         let k = key(name);
-        self.net.groups.iter().find(|g| key(&g.name) == k).is_some_and(|g| g.founder.eq_ignore_ascii_case(account) || g.members.iter().any(|m| m.account.eq_ignore_ascii_case(account)))
+        self.net.groups.iter().find(|g| key(&g.name) == k).is_some_and(|g| {
+            g.founder.eq_ignore_ascii_case(account)
+                || g.members.iter().any(|m| m.account.eq_ignore_ascii_case(account) && m.flags.contains('c'))
+        })
     }
 
     /// An account's effective channel capabilities, combining its direct access
@@ -494,7 +500,7 @@ impl Db {
         let mut caps = Caps::default();
         for a in &c.access {
             let applies = match a.account.strip_prefix('!') {
-                Some(g) => self.is_group_member(&format!("!{g}"), account),
+                Some(g) => self.group_grants_channel_access(&format!("!{g}"), account),
                 None => a.account.eq_ignore_ascii_case(account),
             };
             if applies {

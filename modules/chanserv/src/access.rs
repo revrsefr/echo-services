@@ -4,7 +4,7 @@ use echo_api::{Sender, ServiceCtx};
 // ACCESS <#channel> LIST | ADD <account> <op|voice> | DEL <account>
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
     let Some(&chan) = args.get(1) else {
-        ctx.notice(me, from.uid, "Syntax: ACCESS <#channel> LIST | ADD <account> <op|voice> | DEL <account>");
+        ctx.notice(me, from.uid, "Syntax: ACCESS <#channel> LIST | ADD <account|!group> <op|voice> | DEL <account|!group>");
         return;
     };
     match args.get(2).map(|s| s.to_ascii_uppercase()).as_deref() {
@@ -50,7 +50,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
-        _ => ctx.notice(me, from.uid, "Syntax: ACCESS <#channel> LIST | ADD <account> <op|voice> | DEL <account>"),
+        _ => ctx.notice(me, from.uid, "Syntax: ACCESS <#channel> LIST | ADD <account|!group> <op|voice> | DEL <account|!group>"),
     }
 }
 

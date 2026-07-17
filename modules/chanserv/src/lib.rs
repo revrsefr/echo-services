@@ -52,7 +52,7 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "INFO", summary: "show channel information", detail: "Syntax: \x02INFO <#channel>\x02\nShows a channel's registration and settings." },
     HelpEntry { cmd: "LIST", summary: "list registered channels", detail: "Syntax: \x02LIST\x02\nLists registered channels." },
     HelpEntry { cmd: "SET", summary: "change founder or settings", detail: "Syntax: \x02SET <#channel> FOUNDER <account> | DESC <text> | URL [address] | EMAIL [address] | SUCCESSOR <account>|OFF | SIGNKICK|PRIVATE|PEACE|SECUREOPS|RESTRICTED|AUTOOP|KEEPTOPIC|TOPICLOCK {ON|OFF}\x02\nTransfers the founder or changes a channel setting." },
-    HelpEntry { cmd: "ACCESS", summary: "manage the access list", detail: "Syntax: \x02ACCESS <#channel> LIST | ADD <account> <op|voice> | DEL <account>\x02\nManages the channel access list." },
+    HelpEntry { cmd: "ACCESS", summary: "manage the access list", detail: "Syntax: \x02ACCESS <#channel> LIST | ADD <account|!group> <op|voice> | DEL <account|!group>\x02\nManages the channel access list. The target may be a GroupServ \x02!group\x02; each of its members holding the group's \x02c\x02 flag then inherits the access." },
     HelpEntry { cmd: "FLAGS", summary: "granular per-account flags", detail: "Syntax: \x02FLAGS <#channel> [account [+/-flags]]\x02\nViews or changes granular per-account channel flags." },
     HelpEntry { cmd: "AOP/SOP/VOP", summary: "tiered access shortcuts", detail: "Syntax: \x02AOP|SOP|VOP <#channel> ADD <account> | DEL <account> | LIST\x02\nTiered shortcuts over ACCESS: AOP and SOP grant op, VOP grants voice." },
     HelpEntry { cmd: "STATUS", summary: "show a user's access", detail: "Syntax: \x02STATUS <#channel> [nick]\x02\nShows a user's access level on a channel." },

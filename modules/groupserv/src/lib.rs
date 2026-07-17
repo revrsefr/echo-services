@@ -25,16 +25,16 @@ mod del;
 #[path = "flags.rs"]
 mod flags;
 
-const BLURB: &str = "GroupServ manages user groups: a \x02!name\x02 owning member accounts. A channel can grant access to a group, and every member then inherits it.";
+const BLURB: &str = "GroupServ manages user groups: a \x02!name\x02 owning member accounts. Add a group to a channel's access (\x02/msg ChanServ ACCESS #chan ADD !name op\x02) and each member holding the group's \x02c\x02 flag inherits it.";
 
 const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "REGISTER", summary: "create a group you found", detail: "Syntax: \x02REGISTER <!group>\x02\nCreates a group with you as founder. A group name starts with '!', e.g. !staff." },
     HelpEntry { cmd: "DROP", summary: "delete a group you founded", detail: "Syntax: \x02DROP <!group>\x02\nDeletes a group. Founder only." },
     HelpEntry { cmd: "INFO", summary: "show a group's founder and size", detail: "Syntax: \x02INFO <!group>\x02\nShows a group's founder and member count." },
     HelpEntry { cmd: "LIST", summary: "list groups you belong to", detail: "Syntax: \x02LIST\x02\nLists the groups you belong to. Operators see every group." },
-    HelpEntry { cmd: "ADD", summary: "add a member", detail: "Syntax: \x02ADD <!group> <account>\x02\nAdds a plain member. Needs the founder or the 'f' flag." },
+    HelpEntry { cmd: "ADD", summary: "add a member", detail: "Syntax: \x02ADD <!group> <account>\x02\nAdds a plain member (no flags). To let them inherit the group's channel access, give them the \x02c\x02 flag with FLAGS. Needs the founder or the 'f' flag." },
     HelpEntry { cmd: "DEL", summary: "remove a member", detail: "Syntax: \x02DEL <!group> <account>\x02\nRemoves a member. Needs the founder or the 'f' flag." },
-    HelpEntry { cmd: "FLAGS", summary: "view or change group flags", detail: "Syntax: \x02FLAGS <!group> [account [+/-flags]]\x02\nLists, shows, or changes group-access flags (F founder, f manage, i invite, c channel-access, s set, m memo). Changing needs the founder or the 'f' flag." },
+    HelpEntry { cmd: "FLAGS", summary: "view or change group flags", detail: "Syntax: \x02FLAGS <!group> [account [+/-flags]]\x02\nLists, shows, or changes group-access flags (F founder, f manage, i invite, c inherit the group's channel access, s set, m memo). Changing needs the founder or the 'f' flag." },
 ];
 
 pub struct GroupServ {

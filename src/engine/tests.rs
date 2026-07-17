@@ -4438,7 +4438,7 @@
     }
 
     // GroupServ interconnection: a channel grants access to a !group, and every
-    // group member inherits that channel access (auto-op on join).
+    // group member holding the c (channel-access) flag inherits it (auto-op on join).
     #[test]
     fn groupserv_grants_channel_access() {
         use echo_chanserv::ChanServ;
@@ -4474,8 +4474,11 @@
         assert!(has(&gs(&mut e, "000AAAAAA", "ADD !team bob"), "Added"), "bob added");
         assert!(has(&cs(&mut e, "000AAAAAA", "FLAGS #room !team +o"), "now holds"), "group granted channel op");
 
-        // bob, a group member, is auto-opped on join; carol (not in the group) isn't.
-        assert!(opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: false }), "000AAAAAB"), "group member auto-opped");
+        // A member without the c (channel-access) flag does NOT inherit; +c makes
+        // bob auto-opped on join. carol (not in the group) never is.
+        assert!(!opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: false }), "000AAAAAB"), "no c flag, no access");
+        gs(&mut e, "000AAAAAA", "FLAGS !team bob +c");
+        assert!(opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: false }), "000AAAAAB"), "c flag -> auto-opped");
         assert!(!opped(&e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#room".into(), op: false }), "000AAAAAC"), "non-member not opped");
 
         // Removing bob from the group revokes his inherited channel access.

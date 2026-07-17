@@ -751,14 +751,14 @@
         // Sanity: every reference is in place.
         assert_eq!(db.channel("#foo").unwrap().join_mode("alice"), Some("+o"), "alice starts as an op");
         assert_eq!(db.channel_successor("#bar").as_deref(), Some("alice"));
-        assert!(db.is_group_member("!bobgrp", "alice"));
+        assert!(db.group("!bobgrp").unwrap().members.iter().any(|m| m.account.eq_ignore_ascii_case("alice")));
         assert!(db.group("!alicegrp").is_some());
 
         // Dropping alice erases all of them.
         assert!(db.drop_account("alice").unwrap());
         assert_eq!(db.channel("#foo").unwrap().join_mode("alice"), None, "access grant purged");
         assert_eq!(db.channel_successor("#bar"), None, "successorship purged");
-        assert!(!db.is_group_member("!bobgrp", "alice"), "group membership purged");
+        assert!(!db.group("!bobgrp").unwrap().members.iter().any(|m| m.account.eq_ignore_ascii_case("alice")), "group membership purged");
         assert!(db.group("!alicegrp").is_none(), "founderless group dropped");
 
         // Re-registering the name must not inherit the old op access.
