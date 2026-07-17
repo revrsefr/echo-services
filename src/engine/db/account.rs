@@ -163,6 +163,19 @@ impl Db {
         self.email_enabled = on;
     }
 
+    /// Restrict which extbans AKICK accepts to the configured set (`[extban]
+    /// enabled`). An empty list leaves the default (all extbans echo knows).
+    pub fn set_extban_enabled(&mut self, names: Vec<String>) {
+        if !names.is_empty() {
+            self.extban_enabled = Some(names.into_iter().map(|n| n.to_ascii_lowercase()).collect());
+        }
+    }
+
+    /// Whether `name` is an enabled extban (all, unless narrowed by config).
+    pub fn extban_allowed(&self, name: &str) -> bool {
+        self.extban_enabled.as_ref().is_none_or(|set| set.contains(&name.to_ascii_lowercase()))
+    }
+
     /// Display name used in email templates.
     pub fn email_brand(&self) -> &str {
         &self.email_brand

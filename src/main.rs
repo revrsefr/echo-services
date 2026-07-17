@@ -177,6 +177,9 @@ async fn main() -> Result<()> {
     db.set_outbound(gossip_tx.clone());
     db.set_email_enabled(cfg.email.is_some());
     db.set_external_accounts(cfg.auth.as_ref().is_some_and(|a| a.external));
+    if let Some(extban) = &cfg.extban {
+        db.set_extban_enabled(extban.enabled.clone());
+    }
     if let Some(email) = &cfg.email {
         db.set_email_brand(&email.brand);
         db.set_email_accent(&email.accent);

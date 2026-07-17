@@ -1022,70 +1022,119 @@ pub struct BanTarget<'a> {
     pub ip: &'a str,
     pub gecos: &'a str,    // real name
     pub account: Option<&'a str>,
+    pub server: &'a str,               // the user's server name (for the server extban)
+    pub fingerprint: Option<&'a str>,  // TLS client-cert fingerprint (for the fingerprint extban)
+    pub channels: Vec<String>,         // channels the user is in (for the channel extban)
 }
 
-/// How echo interprets an AKICK mask. A plain `nick!user@host` glob is `Host`;
-/// the rest are the InspIRCd matching-extbans echo has the s2s data to match (by
-/// name `account:`… or by letter `R:`…). `Realmask` is the `nick!user@host+realname`
-/// form (letter `a`). `Other` is any extban echo has no per-user data for (country,
-/// class, …) — rejected at AKICK ADD.
+/// How echo can match a user against an extban — or `Passive` when the ircd
+/// advertises the extban but the s2s protocol gives echo no per-user data for it
+/// (country, class, …). Passive extbans are still known and settable; the ircd
+/// enforces the resulting `+b`, echo just can't proactively kick for them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtKind {
+    Account,     // R — the user's services account
+    Unauthed,    // U — not logged in, and the hostmask matches
+    Realname,    // r — the real name (gecos)
+    Realmask,    // a — <hostmask>+<realname>
+    Server,      // s — the user's server name
+    Fingerprint, // z — the TLS client-cert fingerprint
+    Channel,     // j — the user is in a matching channel
+    Passive,
+}
+
+/// One InspIRCd matching-extban echo knows about, keyed by its `name` (stable) and
+/// `letter` (network-configured). The full set matches this ircd's `EXTBAN=`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExtBan {
+    pub name: &'static str,
+    pub letter: char,
+    pub kind: ExtKind,
+}
+
+/// Every InspIRCd matching-extban, name + letter + how echo matches it. The
+/// admin's `[extban] enabled` list picks which of these AKICK accepts.
+pub const EXTBANS: &[ExtBan] = &[
+    ExtBan { name: "account", letter: 'R', kind: ExtKind::Account },
+    ExtBan { name: "unauthed", letter: 'U', kind: ExtKind::Unauthed },
+    ExtBan { name: "realname", letter: 'r', kind: ExtKind::Realname },
+    ExtBan { name: "realmask", letter: 'a', kind: ExtKind::Realmask },
+    ExtBan { name: "server", letter: 's', kind: ExtKind::Server },
+    ExtBan { name: "fingerprint", letter: 'z', kind: ExtKind::Fingerprint },
+    ExtBan { name: "channel", letter: 'j', kind: ExtKind::Channel },
+    // Recognized but data-less over s2s — settable, ircd-enforced (see ExtKind).
+    ExtBan { name: "country", letter: 'G', kind: ExtKind::Passive },
+    ExtBan { name: "asn", letter: 'b', kind: ExtKind::Passive },
+    ExtBan { name: "class", letter: 'n', kind: ExtKind::Passive },
+    ExtBan { name: "gateway", letter: 'w', kind: ExtKind::Passive },
+    ExtBan { name: "bot", letter: 'B', kind: ExtKind::Passive },
+    ExtBan { name: "oper", letter: 'o', kind: ExtKind::Passive },
+    ExtBan { name: "opertype", letter: 'O', kind: ExtKind::Passive },
+    ExtBan { name: "securitygroup", letter: 'g', kind: ExtKind::Passive },
+    ExtBan { name: "score", letter: 'y', kind: ExtKind::Passive },
+    ExtBan { name: "team", letter: 't', kind: ExtKind::Passive },
+    ExtBan { name: "redirect", letter: 'd', kind: ExtKind::Passive },
+];
+
+impl ExtBan {
+    /// Find an extban by its name (case-insensitive) or single letter (case-
+    /// sensitive: R=account, r=realname, a=realmask, s=server, …).
+    pub fn lookup(token: &str) -> Option<&'static ExtBan> {
+        let mut chars = token.chars();
+        match (chars.next(), chars.next()) {
+            (Some(c), None) => EXTBANS.iter().find(|e| e.letter == c),
+            _ => EXTBANS.iter().find(|e| e.name.eq_ignore_ascii_case(token)),
+        }
+    }
+    /// Whether echo can match a live user against this extban (has the s2s data).
+    pub fn matchable(&self) -> bool {
+        !matches!(self.kind, ExtKind::Passive)
+    }
+}
+
+/// How echo interprets an AKICK mask: a plain `nick!user@host` glob (`Host`), a
+/// recognized extban with its value (`Ext`), or something that is neither
+/// (`Unknown` — rejected at AKICK ADD).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AkickMask<'a> {
     Host(&'a str),
-    Account(&'a str),
-    Unauthed(&'a str),
-    Realname(&'a str),
-    Realmask(&'a str, &'a str), // (hostmask, realname-glob)
-    Other(&'a str),
+    Ext(&'static ExtBan, &'a str),
+    Unknown(&'a str),
 }
 
 impl<'a> AkickMask<'a> {
-    /// Parse a stored/entered AKICK mask. Extbans are `[name|letter]:value` whose
-    /// name holds no `!`/`@` (so an IPv6 host in a normal mask isn't mistaken for
-    /// one). Letters are case-sensitive (R = account, r = realname, a = realmask).
+    /// Parse a mask. An extban is `[name|letter]:value` whose name holds no `!`/`@`
+    /// (so an IPv6 host in a normal mask isn't mistaken for one).
     pub fn parse(mask: &'a str) -> AkickMask<'a> {
         let Some((name, value)) = mask.split_once(':').filter(|(n, _)| !n.is_empty() && !n.contains(['!', '@'])) else {
             return AkickMask::Host(mask);
         };
-        let letter = if name.len() == 1 {
-            name.chars().next().unwrap()
-        } else {
-            match name.to_ascii_lowercase().as_str() {
-                "account" => 'R',
-                "unauthed" => 'U',
-                "realname" => 'r',
-                "realmask" => 'a',
-                _ => return AkickMask::Other(name),
-            }
-        };
-        match letter {
-            'R' => AkickMask::Account(value),
-            'U' => AkickMask::Unauthed(value),
-            'r' => AkickMask::Realname(value),
-            // realmask value is `<hostmask>+<realname>` (m_realnameban).
-            'a' => match value.split_once('+') {
-                Some((hm, real)) => AkickMask::Realmask(hm, real),
-                None => AkickMask::Other(name),
-            },
-            _ => AkickMask::Other(name),
+        match ExtBan::lookup(name) {
+            Some(eb) => AkickMask::Ext(eb, value),
+            None => AkickMask::Unknown(name),
         }
     }
 }
 
 /// Whether an AKICK `mask` matches a live user `t` — a plain hostmask (globbed
 /// against the displayed-host, real-host and IP forms, as InspIRCd's CheckBan
-/// does) or one of the matching-extbans echo has the data for. An `Other` extban
-/// (no per-user data) never matches.
+/// does) or a matching-extban echo has the data for. Passive/unknown never match.
 pub fn akick_matches(mask: &str, t: &BanTarget) -> bool {
     let hm = |host: &str| format!("{}!{}@{}", t.nick, t.ident, host);
     let host_hit = |g: &str| glob_match(g, &hm(t.host)) || glob_match(g, &hm(t.realhost)) || glob_match(g, &hm(t.ip));
     match AkickMask::parse(mask) {
         AkickMask::Host(g) => host_hit(g),
-        AkickMask::Account(g) => t.account.is_some_and(|a| glob_match(g, a)),
-        AkickMask::Unauthed(g) => t.account.is_none() && host_hit(g),
-        AkickMask::Realname(g) => glob_match(g, t.gecos),
-        AkickMask::Realmask(hmask, real) => host_hit(hmask) && glob_match(real, t.gecos),
-        AkickMask::Other(_) => false,
+        AkickMask::Ext(eb, v) => match eb.kind {
+            ExtKind::Account => t.account.is_some_and(|a| glob_match(v, a)),
+            ExtKind::Unauthed => t.account.is_none() && host_hit(v),
+            ExtKind::Realname => glob_match(v, t.gecos),
+            ExtKind::Realmask => v.split_once('+').is_some_and(|(h, r)| host_hit(h) && glob_match(r, t.gecos)),
+            ExtKind::Server => glob_match(v, t.server),
+            ExtKind::Fingerprint => t.fingerprint.is_some_and(|f| glob_match(v, f)),
+            ExtKind::Channel => t.channels.iter().any(|c| glob_match(v, c)),
+            ExtKind::Passive => false, // ircd-enforced; echo has no data to match
+        },
+        AkickMask::Unknown(_) => false,
     }
 }
 
@@ -1480,6 +1529,12 @@ pub enum CodeKind {
 // service `&mut dyn Store`; the concrete implementation keeps its log, gossip
 // and credentials to itself.
 pub trait Store {
+    // Whether an extban of this name may be used in AKICK (the `[extban] enabled`
+    // config). The default is permissive — every extban echo knows; the live Db
+    // narrows it to the configured set.
+    fn extban_enabled(&self, _name: &str) -> bool {
+        true
+    }
     fn exists(&self, name: &str) -> bool;
     fn account(&self, name: &str) -> Option<AccountView>;
     // Canonical account name for a nick (following a grouping), if registered.
@@ -1916,13 +1971,27 @@ mod tests {
         // split, and an extban echo has no data for.
         assert_eq!(AkickMask::parse("*!*@host"), AkickMask::Host("*!*@host"));
         assert_eq!(AkickMask::parse("*!*@2001:db8::1"), AkickMask::Host("*!*@2001:db8::1"), "ipv6 host isn't an extban");
-        assert_eq!(AkickMask::parse("account:bad"), AkickMask::Account("bad"));
-        assert_eq!(AkickMask::parse("R:bad"), AkickMask::Account("bad"), "letter form");
-        assert_eq!(AkickMask::parse("realname:*spam*"), AkickMask::Realname("*spam*"));
-        assert_eq!(AkickMask::parse("realmask:*!*@h+*bot*"), AkickMask::Realmask("*!*@h", "*bot*"));
-        assert!(matches!(AkickMask::parse("country:US"), AkickMask::Other("country")));
+        assert!(matches!(AkickMask::parse("account:bad"), AkickMask::Ext(eb, "bad") if eb.name == "account"));
+        assert!(matches!(AkickMask::parse("R:bad"), AkickMask::Ext(eb, "bad") if eb.name == "account"), "letter form");
+        assert!(matches!(AkickMask::parse("realname:*spam*"), AkickMask::Ext(eb, "*spam*") if eb.name == "realname"));
+        assert!(matches!(AkickMask::parse("realmask:*!*@h+*bot*"), AkickMask::Ext(eb, "*!*@h+*bot*") if eb.name == "realmask"));
+        // A passive extban (echo has no per-user data for it) still parses as a
+        // known extban — it just never matches.
+        assert!(matches!(AkickMask::parse("country:US"), AkickMask::Ext(eb, "US") if eb.name == "country"));
+        assert!(matches!(AkickMask::parse("nonsense:x"), AkickMask::Unknown("nonsense")));
 
-        let t = BanTarget { nick: "n", ident: "u", host: "h.com", realhost: "real.h", ip: "1.2.3.4", gecos: "a spammer", account: Some("bad") };
+        let t = BanTarget {
+            nick: "n",
+            ident: "u",
+            host: "h.com",
+            realhost: "real.h",
+            ip: "1.2.3.4",
+            gecos: "a spammer",
+            account: Some("bad"),
+            server: "irc.test",
+            fingerprint: Some("deadbeef"),
+            channels: vec!["#spam".to_string()],
+        };
         assert!(akick_matches("*!*@h.com", &t), "displayed host");
         assert!(akick_matches("*!*@real.h", &t), "real host too");
         assert!(akick_matches("*!*@1.2.3.4", &t), "ip too");
@@ -1932,7 +2001,11 @@ mod tests {
         assert!(akick_matches("realmask:*!*@h.com+*spammer*", &t), "host + realname");
         assert!(!akick_matches("realmask:*!*@nope+*spammer*", &t), "host part must also match");
         assert!(!akick_matches("unauthed:*!*@h.com", &t), "logged-in user isn't unauthed");
-        assert!(!akick_matches("country:US", &t), "no data -> never matches");
+        assert!(akick_matches("server:irc.test", &t), "server name");
+        assert!(akick_matches("fingerprint:deadbeef", &t), "tls fingerprint");
+        assert!(akick_matches("channel:#spam", &t), "shares a banned channel");
+        assert!(!akick_matches("channel:#clean", &t));
+        assert!(!akick_matches("country:US", &t), "passive extban never matches");
 
         let anon = BanTarget { account: None, ..t };
         assert!(akick_matches("unauthed:*!*@h.com", &anon), "not logged in + host matches");

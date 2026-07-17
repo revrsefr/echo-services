@@ -78,14 +78,25 @@
 
     #[test]
     fn akick_add_del_and_match() {
-        let mut db = Db::open(&tmp("akick"), "N1");
+        let mut db = Db::open(tmp("akick"), "N1");
         db.register_channel("#c", "founder").unwrap();
         db.akick_add("#c", "*!*@bad.host", "spam").unwrap();
         // Also an account extban (the evasion-proof kind) and a realname extban.
         db.akick_add("#c", "account:baddie", "gone").unwrap();
         db.akick_add("#c", "realname:*viagra*", "spam").unwrap();
         let info = db.channel("#c").unwrap();
-        let t = |nick, ident, host, gecos, account| echo_api::BanTarget { nick, ident, host, realhost: host, ip: "0.0.0.0", gecos, account };
+        let t = |nick, ident, host, gecos, account| echo_api::BanTarget {
+            nick,
+            ident,
+            host,
+            realhost: host,
+            ip: "0.0.0.0",
+            gecos,
+            account,
+            server: "irc.test",
+            fingerprint: None,
+            channels: Vec::new(),
+        };
         assert!(info.akick_match(&t("evil", "~e", "bad.host", "", None)).is_some(), "host mask");
         assert!(info.akick_match(&t("good", "~g", "ok.host", "", None)).is_none());
         assert!(info.akick_match(&t("x", "y", "ok.host", "", Some("baddie"))).is_some(), "account extban");
@@ -141,7 +152,7 @@
     #[test]
     fn access_rank_orders_all_tiers() {
         use echo_api::Rank;
-        let mut db = Db::open(&tmp("rank"), "N1");
+        let mut db = Db::open(tmp("rank"), "N1");
         db.register_channel("#c", "boss").unwrap();
         db.access_add("#c", "sop1", "sop").unwrap();
         db.access_add("#c", "op1", "op").unwrap();
@@ -277,7 +288,7 @@
     // be ground down online even though it is short.
     #[test]
     fn code_burns_after_too_many_wrong_guesses() {
-        let mut db = Db::open(&tmp("code"), "N1");
+        let mut db = Db::open(tmp("code"), "N1");
         db.scram_iterations = 4096;
         db.register("alice", "password", None).unwrap();
         let code = db.issue_code("alice", CodeKind::Reset);
@@ -290,7 +301,7 @@
     // Password auth backs off after a few failures and the throttle clears on success.
     #[test]
     fn auth_throttle_locks_then_clears() {
-        let mut db = Db::open(&tmp("throttle"), "N1");
+        let mut db = Db::open(tmp("throttle"), "N1");
         for _ in 0..=AUTH_FREE_TRIES {
             db.note_auth("mallory", false);
         }

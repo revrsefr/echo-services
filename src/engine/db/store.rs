@@ -54,6 +54,9 @@ impl Store for Db {
     fn channels_owned_by(&self, account: &str) -> Vec<String> {
         Db::channels_owned_by(self, account)
     }
+    fn extban_enabled(&self, name: &str) -> bool {
+        Db::extban_allowed(self, name)
+    }
     fn email_enabled(&self) -> bool {
         Db::email_enabled(self)
     }

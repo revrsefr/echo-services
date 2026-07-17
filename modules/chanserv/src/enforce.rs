@@ -16,6 +16,12 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         return;
     };
     ctx.channel_mode(me, chan, &info.lock_modes());
+    // Re-assert the bans for extbans the ircd enforces (echo can't match them itself).
+    for k in &info.akick {
+        if matches!(echo_api::AkickMask::parse(&k.mask), echo_api::AkickMask::Ext(eb, _) if !eb.matchable()) {
+            ctx.channel_mode(me, chan, &format!("+b {}", k.mask));
+        }
+    }
     let members: Vec<String> = net.channel_members(chan);
     for uid in members {
         match net.account_of(&uid).and_then(|a| info.join_mode(a)) {

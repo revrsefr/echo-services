@@ -45,6 +45,18 @@ pub struct Config {
     // credentials (`kc_…` over SASL) are not honoured.
     #[serde(default)]
     pub keycard: Option<Keycard>,
+    // Which InspIRCd matching-extbans AKICK may use. Absent = every extban echo
+    // knows (full compatibility). List `enabled` to restrict it — e.g. drop the
+    // ones your ircd doesn't provide.
+    #[serde(default)]
+    pub extban: Option<Extban>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Extban {
+    // Enabled extban names ("account", "realname", "country", …). Empty = all.
+    #[serde(default)]
+    pub enabled: Vec<String>,
 }
 
 // Redeeming a website login keycard: a member already authenticated on the

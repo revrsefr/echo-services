@@ -227,7 +227,17 @@ impl Network {
             ip: &u.ip,
             gecos: &u.gecos,
             account: self.accounts.get(uid).map(String::as_str),
+            // TODO(extban): capture the user's server + TLS fingerprint from the s2s
+            // stream to match the `server`/`fingerprint` extbans.
+            server: "",
+            fingerprint: None,
+            channels: self.channels_of(uid),
         })
+    }
+
+    /// The channels `uid` is currently in (for the `channel` extban).
+    pub fn channels_of(&self, uid: &str) -> Vec<String> {
+        self.channels.iter().filter(|(_, c)| c.members.contains(uid)).map(|(k, _)| k.clone()).collect()
     }
 
     // Every known user whose uid carries `sid` as its prefix — i.e. those behind
