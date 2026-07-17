@@ -660,60 +660,167 @@ pub struct Caps {
     pub rank: Rank, // ordered tier for PEACE comparisons (see `Rank`)
 }
 
-// Resolve an access `level` string to its capabilities. Recognises the legacy
-// presets, then falls back to treating it as flag letters, so old op/voice
-// entries and new flag entries coexist.
-pub fn level_caps(level: &str) -> Caps {
-    match level {
-        "founder" => Caps { auto: Some("+qo"), op: true, topic: true, invite: true, access: true, set: true, greet: true, rank: Rank::Founder },
-        // The XOP tiers, ordered high to low. Each op-and-above tier carries op
-        // (+o, the @ prefix) plus its rank marker: founder owner (+q, ~), sop
-        // protect (+a, &). So AOP and above all show @, while sop outranks aop and
-        // founder outranks sop. SOP additionally holds access-list management.
-        "sop" => Caps { auto: Some("+ao"), op: true, topic: true, invite: true, access: true, rank: Rank::Admin, ..Caps::default() },
-        "op" => Caps { auto: Some("+o"), op: true, topic: true, invite: true, rank: Rank::Op, ..Caps::default() },
-        "halfop" => Caps { auto: Some("+h"), rank: Rank::Halfop, ..Caps::default() },
-        "voice" => Caps { auto: Some("+v"), rank: Rank::Voice, ..Caps::default() },
-        flags => {
-            let has = |c: char| flags.contains(c);
-            // Auto-op plus access-list management is the SOP tier — it auto-gets
-            // protect + op (+ao), so a flag entry "oa" matches the "sop" preset.
-            let auto = if has('o') {
-                if has('a') { Some("+ao") } else { Some("+o") }
-            } else if has('h') {
-                Some("+h")
-            } else if has('v') {
-                Some("+v")
-            } else {
-                None
-            };
-            let founderish = has('f');
-            let op = has('o') || has('O');
-            let rank = if founderish {
-                Rank::Founder
-            } else if op && has('a') {
-                Rank::Admin // op plus access-list management = the SOP tier
-            } else if op {
-                Rank::Op
-            } else if has('h') {
-                Rank::Halfop
-            } else if !flags.is_empty() {
-                Rank::Voice // voice, or any other privilege without a higher status mode
-            } else {
-                Rank::None
-            };
-            Caps {
-                auto,
-                op: founderish || op,
-                topic: founderish || has('t'),
-                invite: founderish || has('i'),
-                access: founderish || has('a'),
-                set: founderish || has('s'),
-                greet: founderish || has('g'),
-                rank,
-            }
+/// A single channel-access flag — typed rather than a bare char, so the compiler
+/// checks every use and there's one source of truth for the letter and what it
+/// grants. Stored (wire / access list) as its letter; the set is a [`Flags`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Flag {
+    Founder, // f — full access (founder-equivalent)
+    AutoOp,  // o — auto-op on join, plus op moderation
+    Op,      // O — op moderation without auto-op
+    Halfop,  // h — auto-halfop
+    Voice,   // v — auto-voice
+    Topic,   // t — change the topic
+    Invite,  // i — invite
+    Access,  // a — manage the access / flags / akick lists
+    Set,     // s — change channel settings
+    Greet,   // g — greeting shown on join
+}
+
+impl Flag {
+    /// Every flag, in canonical (display / ACCESS_FLAGS) order.
+    pub const ALL: [Flag; 10] = [
+        Flag::Founder, Flag::AutoOp, Flag::Op, Flag::Halfop, Flag::Voice, Flag::Topic, Flag::Invite, Flag::Access, Flag::Set, Flag::Greet,
+    ];
+
+    /// The flag's letter. Exhaustive, so a new variant forces choosing its letter.
+    pub fn letter(self) -> char {
+        match self {
+            Flag::Founder => 'f',
+            Flag::AutoOp => 'o',
+            Flag::Op => 'O',
+            Flag::Halfop => 'h',
+            Flag::Voice => 'v',
+            Flag::Topic => 't',
+            Flag::Invite => 'i',
+            Flag::Access => 'a',
+            Flag::Set => 's',
+            Flag::Greet => 'g',
         }
     }
+
+    /// Parse a flag letter; `None` if it isn't a recognised flag.
+    pub fn from_letter(c: char) -> Option<Flag> {
+        Self::ALL.into_iter().find(|f| f.letter() == c)
+    }
+}
+
+/// The set of access flags an entry holds — a Copy bitset, the same pattern as
+/// [`Privs`]. The typed form of a stored flag string like "otia".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Flags(u16);
+
+impl Flags {
+    pub fn with(self, f: Flag) -> Self {
+        Flags(self.0 | (1 << f as u8))
+    }
+    pub fn without(self, f: Flag) -> Self {
+        Flags(self.0 & !(1 << f as u8))
+    }
+    pub fn has(self, f: Flag) -> bool {
+        self.0 & (1 << f as u8) != 0
+    }
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Parse a flag-letter string (e.g. "otia"), silently skipping any letter that
+    /// isn't a flag — for reading a stored level. Use [`Flags::apply_delta`] for
+    /// user input, which reports a bad letter instead.
+    pub fn parse(s: &str) -> Flags {
+        s.chars().filter_map(Flag::from_letter).fold(Flags::default(), Flags::with)
+    }
+
+    /// The flags a stored `level` resolves to: the tier presets map to equivalent
+    /// flags, anything else is parsed as a flag string. (The `founder` preset —
+    /// the channel owner — is handled in `level_caps`, not here.)
+    pub fn from_level(level: &str) -> Flags {
+        let base = Flags::default();
+        match level {
+            "sop" => base.with(Flag::AutoOp).with(Flag::Topic).with(Flag::Invite).with(Flag::Access),
+            "op" => base.with(Flag::AutoOp).with(Flag::Topic).with(Flag::Invite),
+            "halfop" => base.with(Flag::Halfop),
+            "voice" => base.with(Flag::Voice),
+            "founder" => base.with(Flag::Founder),
+            flags => Flags::parse(flags),
+        }
+    }
+
+    /// Apply a `+ov-h`-style delta (bare letters grant). `Err(letter)` on the first
+    /// character that isn't `+`, `-`, or a known flag.
+    pub fn apply_delta(self, delta: &str) -> Result<Flags, char> {
+        let mut set = self;
+        let mut adding = true;
+        for c in delta.chars() {
+            match c {
+                '+' => adding = true,
+                '-' => adding = false,
+                _ => match Flag::from_letter(c) {
+                    Some(f) => set = if adding { set.with(f) } else { set.without(f) },
+                    None => return Err(c),
+                },
+            }
+        }
+        Ok(set)
+    }
+
+    /// The canonical flag-letter string, in `Flag::ALL` order — the form stored and
+    /// shown by FLAGS.
+    pub fn to_letters(self) -> String {
+        Flag::ALL.into_iter().filter(|f| self.has(*f)).map(Flag::letter).collect()
+    }
+
+    /// The capabilities these flags confer.
+    pub fn caps(self) -> Caps {
+        let founderish = self.has(Flag::Founder);
+        let autoop = self.has(Flag::AutoOp);
+        let op = autoop || self.has(Flag::Op);
+        let access = self.has(Flag::Access);
+        // Auto-op plus access-list management is the SOP tier: auto protect + op.
+        let auto = if autoop {
+            if access { Some("+ao") } else { Some("+o") }
+        } else if self.has(Flag::Halfop) {
+            Some("+h")
+        } else if self.has(Flag::Voice) {
+            Some("+v")
+        } else {
+            None
+        };
+        let rank = if founderish {
+            Rank::Founder
+        } else if op && access {
+            Rank::Admin
+        } else if op {
+            Rank::Op
+        } else if self.has(Flag::Halfop) {
+            Rank::Halfop
+        } else if !self.is_empty() {
+            Rank::Voice // voice, or any other privilege without a higher status mode
+        } else {
+            Rank::None
+        };
+        Caps {
+            auto,
+            op: founderish || op,
+            topic: founderish || self.has(Flag::Topic),
+            invite: founderish || self.has(Flag::Invite),
+            access: founderish || access,
+            set: founderish || self.has(Flag::Set),
+            greet: founderish || self.has(Flag::Greet),
+            rank,
+        }
+    }
+}
+
+// Resolve an access `level` string to its capabilities. The founder (channel
+// owner) is the one level flags can't express (no owner flag), so it's explicit;
+// every other level — the tier presets and raw flag strings alike — resolves
+// through its `Flags` set.
+pub fn level_caps(level: &str) -> Caps {
+    if level == "founder" {
+        return Caps { auto: Some("+qo"), op: true, topic: true, invite: true, access: true, set: true, greet: true, rank: Rank::Founder };
+    }
+    Flags::from_level(level).caps()
 }
 
 /// The tiered "XOP" role a stored access level resolves to. The four shortcut
@@ -1693,6 +1800,24 @@ pub fn human_time(ts: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flags_bitset_parses_applies_and_matches_presets() {
+        // ACCESS_FLAGS is exactly the flag letters in order — one source of truth.
+        assert_eq!(ACCESS_FLAGS, Flag::ALL.iter().map(|f| f.letter()).collect::<String>());
+        // Letters parse (unknown skipped) and re-emit in canonical order.
+        assert_eq!(Flags::parse("aiot").to_letters(), "otia");
+        assert_eq!(Flags::parse("oxz").to_letters(), "o", "unknown letters skipped");
+        // Deltas: bare grants, +/- toggle, unknown letter is an error (not silent).
+        assert_eq!(Flags::default().apply_delta("+ov").unwrap().to_letters(), "ov");
+        assert_eq!(Flags::parse("ov").apply_delta("-o").unwrap().to_letters(), "v");
+        assert_eq!(Flags::default().apply_delta("+ox"), Err('x'));
+        // A preset and its flag form are interchangeable (round-trip, same caps).
+        assert_eq!(Flags::from_level("sop").to_letters(), "otia");
+        assert_eq!(Flags::from_level("sop").caps().rank, Rank::Admin);
+        assert_eq!(Flags::from_level("halfop").to_letters(), "h");
+        assert_eq!(Flags::from_level("oa").caps().auto, Some("+ao"), "op+access = protected admin");
+    }
 
     #[test]
     fn access_flags_apply_and_resolve() {
