@@ -11,14 +11,17 @@ pub struct InspIrcd {
     password: String,
     protocol: u32,
     ts: u64,
+    // User modes our pseudo-clients (services + bots) are introduced with, e.g.
+    // "iHkBT" — invisible, hideoper, servprotect (U-line only), bot, block-CTCP.
+    service_modes: String,
     // Monotonic membership id for our own IJOINs. InspIRCd requires a membid on
     // IJOIN (`IJOIN <chan> <membid>`); it need only be unique among our members.
     membid: u64,
 }
 
 impl InspIrcd {
-    pub fn new(name: String, description: String, sid: String, password: String, protocol: u32, ts: u64) -> Self {
-        Self { sid, name, description, password, protocol, ts, membid: 0 }
+    pub fn new(name: String, description: String, sid: String, password: String, protocol: u32, ts: u64, service_modes: String) -> Self {
+        Self { sid, name, description, password, protocol, ts, service_modes, membid: 0 }
     }
 
     fn sourced(&self, cmd: String) -> String {
@@ -298,8 +301,8 @@ impl Protocol for InspIrcd {
             // insp4 UID: uuid nickts nick realhost disphost realuser dispuser ip signonts +modes :gecos
             // (both a real AND a displayed user field — see m_spanningtree/uid.cpp Builder).
             NetAction::IntroduceUser { uid, nick, ident, host, gecos } => vec![self.sourced(format!(
-                "UID {uid} {ts} {nick} {host} {host} {ident} {ident} 0.0.0.0 {ts} +i :{gecos}",
-                uid = uid, ts = self.ts, nick = nick, host = host, ident = ident, gecos = gecos
+                "UID {uid} {ts} {nick} {host} {host} {ident} {ident} 0.0.0.0 {ts} +{modes} :{gecos}",
+                uid = uid, ts = self.ts, nick = nick, host = host, ident = ident, modes = self.service_modes, gecos = gecos
             ))],
             NetAction::Privmsg { from, to, text } => {
                 vec![format!(":{} PRIVMSG {} :{}", from, to, text)]
@@ -488,7 +491,7 @@ mod tests {
     use super::*;
 
     fn proto() -> InspIrcd {
-        InspIrcd::new("services.test".into(), "Federated Services".into(), "42S".into(), "pw".into(), 1206, 1)
+        InspIrcd::new("services.test".into(), "Federated Services".into(), "42S".into(), "pw".into(), 1206, 1, "iHkBT".into())
     }
 
     // A remote nick change must surface as a NickChange for the source uid, or

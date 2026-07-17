@@ -82,6 +82,7 @@ async fn main() -> Result<()> {
         cfg.uplink.password.clone(),
         cfg.server.protocol,
         ts,
+        cfg.server.service_modes.clone(),
     ));
 
     // Bring up the service modules named in [modules] (default: the full

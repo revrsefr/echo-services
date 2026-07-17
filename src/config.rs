@@ -280,6 +280,15 @@ pub struct Server {
     // rather than the generic default.
     #[serde(default)]
     pub service_host: String,
+    // User modes the service pseudo-clients (services + bots) are introduced with.
+    // Default "iHkBT": invisible, hideoper, servprotect (unkillable — needs the
+    // services server U-lined), bot, block-CTCP. Set per the ircd's loaded modules.
+    #[serde(default = "default_service_modes")]
+    pub service_modes: String,
+}
+
+fn default_service_modes() -> String {
+    "iHkBT".to_string()
 }
 
 fn default_protocol() -> u32 {
