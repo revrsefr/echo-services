@@ -648,7 +648,11 @@ pub struct Caps {
 pub fn level_caps(level: &str) -> Caps {
     match level {
         "founder" => Caps { auto: Some("+o"), op: true, topic: true, invite: true, access: true, set: true, greet: true, rank: 3 },
+        // SOP = op plus access-list management; AOP = op; HOP = halfop; VOP = voice.
+        // These are the tiers the XOP shortcuts store; ordered high to low.
+        "sop" => Caps { auto: Some("+o"), op: true, topic: true, invite: true, access: true, rank: 2, ..Caps::default() },
         "op" => Caps { auto: Some("+o"), op: true, topic: true, invite: true, rank: 2, ..Caps::default() },
+        "halfop" => Caps { auto: Some("+h"), rank: 1, ..Caps::default() },
         "voice" => Caps { auto: Some("+v"), rank: 1, ..Caps::default() },
         flags => {
             let has = |c: char| flags.contains(c);
@@ -682,6 +686,66 @@ pub fn level_caps(level: &str) -> Caps {
                 rank,
             }
         }
+    }
+}
+
+/// The tiered "XOP" role a stored access level resolves to. The four shortcut
+/// tiers rank VOP < HOP < AOP < SOP (SOP is AOP plus access-list management);
+/// the channel owner is `Founder`, and a granular FLAGS entry that lines up with
+/// no tier is `Custom`. Classifying by resolved capability rather than the raw
+/// level string means XOP- and FLAGS-set entries agree on which tier they are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessRole {
+    Founder,
+    Sop,
+    Aop,
+    Hop,
+    Vop,
+    Custom,
+}
+
+impl AccessRole {
+    /// How the role reads in ALIST / STATUS output.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Founder => "founder",
+            Self::Sop => "sop",
+            Self::Aop => "op",
+            Self::Hop => "halfop",
+            Self::Vop => "voice",
+            Self::Custom => "access",
+        }
+    }
+
+    /// The XOP command word this role is the exact tier of, if any. Founder and
+    /// Custom entries belong to no XOP list.
+    pub fn xop_word(self) -> Option<&'static str> {
+        Some(match self {
+            Self::Sop => "SOP",
+            Self::Aop => "AOP",
+            Self::Hop => "HOP",
+            Self::Vop => "VOP",
+            _ => return None,
+        })
+    }
+}
+
+/// Classify a stored access `level` into its tiered role by resolved capability,
+/// so a FLAGS entry lands in the same tier a XOP ADD would have given it.
+pub fn access_role(level: &str) -> AccessRole {
+    let c = level_caps(level);
+    if c.set && c.access && c.op {
+        AccessRole::Founder
+    } else if c.op && c.access {
+        AccessRole::Sop
+    } else if c.op {
+        AccessRole::Aop
+    } else if c.auto == Some("+h") {
+        AccessRole::Hop
+    } else if c.auto == Some("+v") {
+        AccessRole::Vop
+    } else {
+        AccessRole::Custom
     }
 }
 
@@ -1595,6 +1659,30 @@ mod tests {
         let t = level_caps("t"); // topic-only: can topic, not op
         assert!(t.topic && !t.op && t.auto.is_none());
         assert!(level_caps("a").access && level_caps("f").set);
+
+        // The four XOP tiers are distinct: SOP is AOP plus access-list rights,
+        // HOP is its own halfop tier.
+        assert!(level_caps("sop").op && level_caps("sop").access);
+        assert!(level_caps("op").op && !level_caps("op").access);
+        assert_eq!(level_caps("halfop").auto, Some("+h"));
+    }
+
+    #[test]
+    fn access_role_classifies_each_tier_by_capability() {
+        // Presets round-trip to their own tier...
+        assert_eq!(access_role("sop"), AccessRole::Sop);
+        assert_eq!(access_role("op"), AccessRole::Aop);
+        assert_eq!(access_role("halfop"), AccessRole::Hop);
+        assert_eq!(access_role("voice"), AccessRole::Vop);
+        assert_eq!(access_role("founder"), AccessRole::Founder);
+        // ...and a granular FLAGS entry lands in the matching tier, so it lists
+        // under the same XOP shortcut a tier ADD would have used.
+        assert_eq!(access_role("otia"), AccessRole::Sop, "op + access = SOP");
+        assert_eq!(access_role("oti"), AccessRole::Aop, "op without access = AOP");
+        assert_eq!(access_role("v"), AccessRole::Vop);
+        assert_eq!(access_role("ti"), AccessRole::Custom, "no status mode = no XOP tier");
+        assert_eq!(access_role("sop").xop_word(), Some("SOP"));
+        assert_eq!(access_role("founder").xop_word(), None);
     }
 
     #[test]

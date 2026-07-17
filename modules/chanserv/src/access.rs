@@ -1,10 +1,14 @@
 use echo_api::Store;
 use echo_api::{Sender, ServiceCtx};
 
-// ACCESS <#channel> LIST | ADD <account> <op|voice> | DEL <account>
+// The named tiers ACCESS ADD accepts, high to low; the granular FLAGS command
+// covers anything finer. Kept in step with the XOP presets in `level_caps`.
+const TIERS: [&str; 4] = ["sop", "op", "halfop", "voice"];
+
+// ACCESS <#channel> LIST | ADD <account> <sop|op|halfop|voice> | DEL <account>
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
     let Some(&chan) = args.get(1) else {
-        ctx.notice(me, from.uid, "Syntax: ACCESS <#channel> LIST | ADD <account|!group> <op|voice> | DEL <account|!group>");
+        ctx.notice(me, from.uid, "Syntax: ACCESS <#channel> LIST | ADD <account|!group> <sop|op|halfop|voice> | DEL <account|!group>");
         return;
     };
     match args.get(2).map(|s| s.to_ascii_uppercase()).as_deref() {
@@ -20,12 +24,12 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         },
         Some("ADD") => {
             let (Some(&account), Some(&level)) = (args.get(3), args.get(4)) else {
-                ctx.notice(me, from.uid, "Syntax: ACCESS <#channel> ADD <account> <op|voice>");
+                ctx.notice(me, from.uid, "Syntax: ACCESS <#channel> ADD <account> <sop|op|halfop|voice>");
                 return;
             };
             let level = level.to_ascii_lowercase();
-            if level != "op" && level != "voice" {
-                ctx.notice(me, from.uid, "Level must be \x02op\x02 or \x02voice\x02.");
+            if !TIERS.contains(&level.as_str()) {
+                ctx.notice(me, from.uid, "Level must be \x02sop\x02, \x02op\x02, \x02halfop\x02 or \x02voice\x02.");
                 return;
             }
             if !is_founder(me, from, chan, ctx, db) {
@@ -50,7 +54,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
-        _ => ctx.notice(me, from.uid, "Syntax: ACCESS <#channel> LIST | ADD <account|!group> <op|voice> | DEL <account|!group>"),
+        _ => ctx.notice(me, from.uid, "Syntax: ACCESS <#channel> LIST | ADD <account|!group> <sop|op|halfop|voice> | DEL <account|!group>"),
     }
 }
 

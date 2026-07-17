@@ -1,8 +1,8 @@
-use echo_api::{level_caps, Sender, ServiceCtx, Store};
+use echo_api::{access_role, Sender, ServiceCtx, Store};
 
-// AOP/SOP/VOP <#channel> ADD <account> | DEL <account> | LIST — tiered
-// shortcuts over the access list. `level` is the access level they map to
-// ("op" for AOP/SOP, "voice" for VOP); `word` is what the user typed.
+// SOP/AOP/HOP/VOP <#channel> ADD <account> | DEL <account> | LIST — tiered
+// shortcuts over the access list. `level` is the tier they map to ("sop", "op",
+// "halfop", "voice"); `word` is the tier the user typed ("SOP".."VOP").
 pub fn handle(me: &str, from: &Sender, word: &str, level: &str, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
     let Some(&chan) = args.get(1) else {
         ctx.notice(me, from.uid, format!("Syntax: {word} <#channel> ADD <account> | DEL <account> | LIST"));
@@ -13,14 +13,9 @@ pub fn handle(me: &str, from: &Sender, word: &str, level: &str, args: &[&str], c
             None => ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered.")),
             Some(info) => {
                 ctx.notice(me, from.uid, format!("{word} list for \x02{}\x02:", info.name));
-                // Match by capability, not the raw level string, so entries set via
-                // granular FLAGS still list under the right tier (VOP = voice-only,
-                // AOP/SOP = op).
-                let want_op = level_caps(level).op;
-                for a in info.access.iter().filter(|a| {
-                    let c = level_caps(&a.level);
-                    if want_op { c.op } else { c.auto == Some("+v") && !c.op }
-                }) {
+                // List by resolved tier, not the raw level string, so an entry set
+                // via granular FLAGS appears under the same tier a XOP ADD would.
+                for a in info.access.iter().filter(|a| access_role(&a.level).xop_word() == Some(word)) {
                     ctx.notice(me, from.uid, format!("  \x02{}\x02", a.account));
                 }
             }
