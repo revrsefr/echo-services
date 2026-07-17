@@ -245,6 +245,31 @@ pub enum Priv {
     Admin,
 }
 
+impl Priv {
+    /// Every privilege, for iteration and validation.
+    pub const ALL: [Priv; 3] = [Priv::Auspex, Priv::Suspend, Priv::Admin];
+
+    /// This privilege's canonical name — the `[[oper]]` config token. Exhaustive,
+    /// so adding a variant forces adding its name (no silent gap).
+    pub fn name(self) -> &'static str {
+        match self {
+            Priv::Auspex => "auspex",
+            Priv::Suspend => "suspend",
+            Priv::Admin => "admin",
+        }
+    }
+
+    /// Parse a privilege name (case-insensitive); `None` if unrecognised.
+    pub fn from_name(s: &str) -> Option<Priv> {
+        Self::ALL.into_iter().find(|p| s.eq_ignore_ascii_case(p.name()))
+    }
+
+    /// The recognised names as a comma list, for "valid: …" error messages.
+    pub fn valid_names() -> String {
+        Self::ALL.iter().map(|p| p.name()).collect::<Vec<_>>().join(", ")
+    }
+}
+
 // The set of privileges a sender holds. A plain Copy bitset — empty means "not
 // an oper". Built from the [[oper]] config and carried on every Sender.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -269,28 +294,30 @@ impl Privs {
         Privs(self.0 | other.0)
     }
 
-    // Build a set from privilege names ("auspex"/"suspend"/"admin"), ignoring any
-    // that aren't recognised. Shared by the config loader and runtime OPER grants.
-    pub fn from_names<S: AsRef<str>>(names: &[S]) -> Self {
+    // Build a set from privilege names, returning the parsed set AND any names that
+    // weren't recognised — so a caller (config load, REHASH) can surface a typo
+    // loudly instead of silently granting nothing.
+    pub fn parse_names<S: AsRef<str>>(names: &[S]) -> (Self, Vec<String>) {
         let mut privs = Privs::default();
+        let mut unknown = Vec::new();
         for n in names {
-            match n.as_ref().to_ascii_lowercase().as_str() {
-                "auspex" => privs = privs.with(Priv::Auspex),
-                "suspend" => privs = privs.with(Priv::Suspend),
-                "admin" => privs = privs.with(Priv::Admin),
-                _ => {}
+            match Priv::from_name(n.as_ref()) {
+                Some(p) => privs = privs.with(p),
+                None => unknown.push(n.as_ref().to_string()),
             }
         }
-        privs
+        (privs, unknown)
+    }
+
+    // Build a set from privilege names, ignoring any that aren't recognised. Use
+    // [`Privs::parse_names`] where a typo should be surfaced.
+    pub fn from_names<S: AsRef<str>>(names: &[S]) -> Self {
+        Self::parse_names(names).0
     }
 
     // The privilege names held, for display.
     pub fn names(self) -> Vec<&'static str> {
-        [(Priv::Auspex, "auspex"), (Priv::Suspend, "suspend"), (Priv::Admin, "admin")]
-            .into_iter()
-            .filter(|(p, _)| self.has(*p))
-            .map(|(_, n)| n)
-            .collect()
+        Priv::ALL.into_iter().filter(|p| self.has(*p)).map(Priv::name).collect()
     }
 }
 
@@ -1481,6 +1508,19 @@ mod tests {
         assert!(!p.has(Priv::Suspend), "only granted privileges are held");
         assert!(p.any());
         assert!(!Privs::default().any(), "empty set is not an oper");
+    }
+
+    #[test]
+    fn parse_names_reports_typos_instead_of_dropping_them() {
+        // Known names are parsed (case-insensitive); unknown ones are collected so
+        // a config typo is surfaced, not silently ignored.
+        let (privs, unknown) = Privs::parse_names(&["Admin", "auspex", "admn", "root"]);
+        assert!(privs.has(Priv::Admin) && privs.has(Priv::Auspex));
+        assert!(!privs.has(Priv::Suspend));
+        assert_eq!(unknown, vec!["admn".to_string(), "root".to_string()]);
+        assert_eq!(Priv::from_name("SUSPEND"), Some(Priv::Suspend));
+        assert_eq!(Priv::from_name("nope"), None);
+        assert_eq!(Priv::valid_names(), "auspex, suspend, admin");
     }
 }
 

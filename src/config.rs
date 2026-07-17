@@ -130,6 +130,18 @@ impl Config {
         }
         map
     }
+
+    // (account, unrecognised-privilege-name) pairs across all [[oper]] blocks, so
+    // the caller can warn about a typo that would otherwise silently grant nothing.
+    pub fn oper_priv_warnings(&self) -> Vec<(String, String)> {
+        self.oper
+            .iter()
+            .flat_map(|o| {
+                let (_, unknown) = echo_api::Privs::parse_names(&o.privs);
+                unknown.into_iter().map(move |name| (o.account.clone(), name))
+            })
+            .collect()
+    }
 }
 
 // The service modules to bring up at burst. Each name maps to a compiled-in

@@ -851,6 +851,13 @@ impl Engine {
             if self.service_oper_type.is_empty() { "(none)" } else { &self.service_oper_type },
         )));
         out.push(notice("Not reloadable (need a RESTART): server name/SID/protocol, uplink, service umodes, keycard.".to_string()));
+        // Flag any typo'd privilege names so they don't silently grant nothing.
+        for (account, name) in cfg.oper_priv_warnings() {
+            out.push(notice(format!(
+                "\x02Warning:\x02 oper \x02{account}\x02 has an unknown privilege \x02{name}\x02 (valid: {}) — ignored.",
+                echo_api::Priv::valid_names()
+            )));
+        }
         out
     }
 

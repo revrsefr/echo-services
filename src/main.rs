@@ -187,6 +187,9 @@ async fn main() -> Result<()> {
     // Channel for services-initiated actions to reach the uplink (drained by the link loop).
     let (irc_tx, irc_rx) = tokio::sync::mpsc::unbounded_channel();
     engine.lock().await.set_irc_out(irc_tx);
+    for (account, name) in cfg.oper_priv_warnings() {
+        tracing::warn!(%account, privilege = %name, valid = %echo_api::Priv::valid_names(), "unknown privilege in [[oper]] — ignored (typo?)");
+    }
     engine.lock().await.set_opers(cfg.opers());
     engine.lock().await.set_config_path(path.clone());
     engine.lock().await.set_sid(cfg.server.sid.clone());
