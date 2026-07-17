@@ -673,6 +673,23 @@
         assert_eq!(e.network.account_of("000AAAAAB"), None, "empty account is a logout");
     }
 
+    // A login that finishes off the handle() path (the link layer's deferred
+    // password/keycard verify) must still make echo's OWN account map authoritative.
+    // Otherwise re-identifying an already-logged-in user after a services relink —
+    // a no-op accountname on the ircd, so nothing is reflected back — leaves them
+    // unable to use their access despite a successful login.
+    #[test]
+    fn deferred_login_makes_account_authoritative() {
+        let mut e = engine_with("deferlogin", "foo", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        assert_eq!(e.network.account_of("000AAAAAB"), None);
+        // Exactly what the link layer does after the off-thread verify — not via handle().
+        let then = echo_api::AuthThen::Identify { uid: "000AAAAAB".into(), agent: "42SAAAAAA".into(), name: "foo".into(), account: "foo".into() };
+        let out = e.complete_authenticate(true, then);
+        assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "foo")), "emits accountname metadata for the ircd");
+        assert_eq!(e.network.account_of("000AAAAAB"), Some("foo"), "and is authoritative in echo's own map");
+    }
+
     // A suspension that arrives by gossip must end local sessions on that account,
     // just as a local SUSPEND does — the account and its channels stay put.
     #[test]

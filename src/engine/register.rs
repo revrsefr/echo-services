@@ -275,7 +275,7 @@ impl Engine {
     /// ctx helpers the inline path did, so its login side-effects (login, notice,
     /// AJOIN, vhost, memo notice) stay identical.
     pub fn complete_authenticate(&mut self, ok: bool, then: AuthThen) -> Vec<NetAction> {
-        match then {
+        let actions = match then {
             AuthThen::Identify { uid, agent, name, account } => {
                 self.db.note_auth(&name, ok);
                 let mut ctx = ServiceCtx::default();
@@ -320,6 +320,14 @@ impl Engine {
                     self.sasl_deny("SASL PLAIN", &agent, &client, Some(&account), "bad password")
                 }
             }
-        }
+        };
+        // This runs in the link layer, off the handle() path, so the login's
+        // accountname metadata never reaches track_accounts in handle(). Apply it
+        // here so echo's own account map is authoritative and doesn't depend on the
+        // ircd reflecting the metadata back — which is a no-op when re-authenticating
+        // an already-logged-in user after a services relink, leaving the user unable
+        // to use their access despite a successful login.
+        self.track_accounts(&actions);
+        actions
     }
 }
