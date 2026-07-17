@@ -24,7 +24,7 @@ use board::{Game, Stats};
 const MAX_GAMES_PER_USER: usize = 5;
 const TYPES: [&str; 3] = ["chess", "c4", "ttt"];
 
-const BLURB: &str = "GameServ referees \x02tic-tac-toe\x02, \x02Connect Four\x02 and \x02chess\x02 — it checks every move and keeps a ranked ladder. Challenge someone, then take turns. Moves: ttt cell \x020-8\x02, c4 column \x020-6\x02, chess \x02UCI\x02 (e2e4).";
+const BLURB: &str = "GamesServ referees \x02tic-tac-toe\x02, \x02Connect Four\x02 and \x02chess\x02 — it checks every move and keeps a ranked ladder. Challenge someone, then take turns. Moves: ttt cell \x020-8\x02, c4 column \x020-6\x02, chess \x02UCI\x02 (e2e4).";
 
 const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "CHALLENGE", summary: "challenge someone to a game", detail: "Syntax: \x02CHALLENGE <nick> <ttt|c4|chess>\x02\nChallenges a user. They accept with \x02ACCEPT\x02; you move first." },
@@ -119,7 +119,7 @@ impl GameServ {
         };
         self.games.insert(id, g);
         ctx.notice(me, from.uid, format!("Challenge \x02#{id}\x02 ({gtype}) sent to \x02{target}\x02."));
-        ctx.notice(me, &tuid, format!("{} challenges you to {gtype} (game #{id}). \x02/msg GameServ ACCEPT {id}\x02", from.nick));
+        ctx.notice(me, &tuid, format!("{} challenges you to {gtype} (game #{id}). \x02/msg GamesServ ACCEPT {id}\x02", from.nick));
         let g = &self.games[&id];
         push_one(g, 0, "pending", me, net, ctx); // challenger: waiting
         push_one(g, 1, "offer", me, net, ctx); // target: can accept/decline
@@ -366,7 +366,9 @@ fn push_stats(ladder: &Ladder, account: &str, to_nick: &str, me: &str, net: &dyn
 
 impl Service for GameServ {
     fn nick(&self) -> &str {
-        "GameServ"
+        // "GameServ" (singular) is reserved on this network; the games service is
+        // "GamesServ" here.
+        "GamesServ"
     }
     fn uid(&self) -> &str {
         &self.uid
