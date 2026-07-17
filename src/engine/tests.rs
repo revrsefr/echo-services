@@ -1414,6 +1414,51 @@
         assert!(!out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("PEACE"))), "self-deop must not be PEACE-blocked: {out:?}");
     }
 
+    // The ordered rank in action: with PEACE on, an AOP can't kick a SOP, but a
+    // SOP (higher tier) can kick an AOP. The old collapsed u8 rank made SOP and
+    // AOP equal, so neither could act on the other.
+    #[test]
+    fn peace_lets_sop_act_on_aop_not_the_reverse() {
+        use echo_chanserv::ChanServ;
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-peacetiers.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        for a in ["alice", "bob", "carol"] {
+            db.register(a, "sesame", None).unwrap();
+        }
+        db.register_channel("#c", "alice").unwrap();
+        db.access_add("#c", "bob", "sop").unwrap();
+        db.access_add("#c", "carol", "op").unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(ChanServ { uid: "42SAAAAAB".into() }),
+            ],
+            db,
+        );
+        for (uid, nick) in [("000AAAAAA", "alice"), ("000AAAAAB", "bob"), ("000AAAAAC", "carol")] {
+            e.handle(NetEvent::UserConnect { uid: uid.into(), nick: nick.into(), host: "h".into(), ip: "0.0.0.0".into() });
+            e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+            e.handle(NetEvent::Join { uid: uid.into(), channel: "#c".into(), op: true });
+        }
+        e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAB".into(), text: "SET #c PEACE ON".into() });
+
+        let kick = |e: &mut Engine, from: &str, target: &str| {
+            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: format!("KICK #c {target}") })
+        };
+        let blocked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("PEACE")));
+        let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { .. }));
+
+        // AOP carol tries to kick SOP bob -> PEACE blocks it.
+        let out = kick(&mut e, "000AAAAAC", "bob");
+        assert!(blocked(&out) && !kicked(&out), "AOP can't kick a SOP under PEACE: {out:?}");
+        // SOP bob kicks AOP carol -> allowed (SOP outranks AOP).
+        let out = kick(&mut e, "000AAAAAB", "carol");
+        assert!(kicked(&out) && !blocked(&out), "SOP can kick an AOP: {out:?}");
+    }
+
     // NickServ LIST is auspex-gated and glob-matches; UPDATE refreshes a session.
     #[test]
     fn nickserv_list_and_update() {

@@ -129,19 +129,31 @@
         assert!(s.signkick && !s.private, "settings replay from the log");
     }
 
-    // Access ranks order founder > op > voice > none for PEACE comparisons.
+    // Access ranks order founder > sop > op > halfop > voice > none, matching the
+    // ircd prefix ranks so PEACE tells every tier apart (the old u8 collapsed
+    // SOP≡AOP and halfop≡voice).
     #[test]
-    fn access_rank_orders_founder_op_voice() {
+    fn access_rank_orders_all_tiers() {
+        use echo_api::Rank;
         let mut db = Db::open(&tmp("rank"), "N1");
         db.register_channel("#c", "boss").unwrap();
+        db.access_add("#c", "sop1", "sop").unwrap();
         db.access_add("#c", "op1", "op").unwrap();
+        db.access_add("#c", "hop1", "halfop").unwrap();
         db.access_add("#c", "v1", "voice").unwrap();
         let cv = Store::channel(&db, "#c").unwrap();
-        assert_eq!(cv.access_rank(Some("boss")), 3);
-        assert_eq!(cv.access_rank(Some("OP1")), 2, "case-insensitive");
-        assert_eq!(cv.access_rank(Some("v1")), 1);
-        assert_eq!(cv.access_rank(Some("nobody")), 0);
-        assert_eq!(cv.access_rank(None), 0);
+        assert_eq!(cv.access_rank(Some("boss")), Rank::Founder);
+        assert_eq!(cv.access_rank(Some("SOP1")), Rank::Admin, "case-insensitive");
+        assert_eq!(cv.access_rank(Some("op1")), Rank::Op);
+        assert_eq!(cv.access_rank(Some("hop1")), Rank::Halfop);
+        assert_eq!(cv.access_rank(Some("v1")), Rank::Voice);
+        assert_eq!(cv.access_rank(Some("nobody")), Rank::None);
+        assert_eq!(cv.access_rank(None), Rank::None);
+        // The whole point: each tier strictly outranks the next one down.
+        assert!(cv.access_rank(Some("boss")) > cv.access_rank(Some("sop1")));
+        assert!(cv.access_rank(Some("sop1")) > cv.access_rank(Some("op1")), "SOP outranks AOP");
+        assert!(cv.access_rank(Some("op1")) > cv.access_rank(Some("hop1")));
+        assert!(cv.access_rank(Some("hop1")) > cv.access_rank(Some("v1")), "halfop outranks voice");
     }
 
     // Suspension sets/lifts, expires lazily, and replays from the log.

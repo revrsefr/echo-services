@@ -631,6 +631,22 @@ pub struct ChanAccessView {
 //   s channel settings  g greet shown
 pub const ACCESS_FLAGS: &str = "foOhvtiasg";
 
+/// A channel access rank, ordered lowest to highest. The derived `Ord` mirrors
+/// the ircd's prefix ranks (voice < halfop < op < admin < founder), so services
+/// decisions — PEACE, and merging a direct access entry with a group's — order
+/// the tiers the same way the channel itself does. `Admin` is the SOP tier
+/// (a protected op), distinct from a plain `Op` (AOP).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Rank {
+    #[default]
+    None,
+    Voice,
+    Halfop,
+    Op,
+    Admin,
+    Founder,
+}
+
 // The capabilities an access `level` confers (founder is layered on by callers).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Caps {
@@ -641,7 +657,7 @@ pub struct Caps {
     pub access: bool, // may modify the access / flags / akick lists
     pub set: bool,    // may change channel settings
     pub greet: bool,
-    pub rank: u8, // 3 co-founder, 2 op, 1 voice/halfop — for PEACE comparisons
+    pub rank: Rank, // ordered tier for PEACE comparisons (see `Rank`)
 }
 
 // Resolve an access `level` string to its capabilities. Recognises the legacy
@@ -649,15 +665,15 @@ pub struct Caps {
 // entries and new flag entries coexist.
 pub fn level_caps(level: &str) -> Caps {
     match level {
-        "founder" => Caps { auto: Some("+qo"), op: true, topic: true, invite: true, access: true, set: true, greet: true, rank: 3 },
+        "founder" => Caps { auto: Some("+qo"), op: true, topic: true, invite: true, access: true, set: true, greet: true, rank: Rank::Founder },
         // The XOP tiers, ordered high to low. Each op-and-above tier carries op
         // (+o, the @ prefix) plus its rank marker: founder owner (+q, ~), sop
         // protect (+a, &). So AOP and above all show @, while sop outranks aop and
         // founder outranks sop. SOP additionally holds access-list management.
-        "sop" => Caps { auto: Some("+ao"), op: true, topic: true, invite: true, access: true, rank: 2, ..Caps::default() },
-        "op" => Caps { auto: Some("+o"), op: true, topic: true, invite: true, rank: 2, ..Caps::default() },
-        "halfop" => Caps { auto: Some("+h"), rank: 1, ..Caps::default() },
-        "voice" => Caps { auto: Some("+v"), rank: 1, ..Caps::default() },
+        "sop" => Caps { auto: Some("+ao"), op: true, topic: true, invite: true, access: true, rank: Rank::Admin, ..Caps::default() },
+        "op" => Caps { auto: Some("+o"), op: true, topic: true, invite: true, rank: Rank::Op, ..Caps::default() },
+        "halfop" => Caps { auto: Some("+h"), rank: Rank::Halfop, ..Caps::default() },
+        "voice" => Caps { auto: Some("+v"), rank: Rank::Voice, ..Caps::default() },
         flags => {
             let has = |c: char| flags.contains(c);
             let auto = if has('o') {
@@ -670,18 +686,23 @@ pub fn level_caps(level: &str) -> Caps {
                 None
             };
             let founderish = has('f');
+            let op = has('o') || has('O');
             let rank = if founderish {
-                3
-            } else if has('o') || has('O') {
-                2
+                Rank::Founder
+            } else if op && has('a') {
+                Rank::Admin // op plus access-list management = the SOP tier
+            } else if op {
+                Rank::Op
+            } else if has('h') {
+                Rank::Halfop
             } else if !flags.is_empty() {
-                1
+                Rank::Voice // voice, or any other privilege without a higher status mode
             } else {
-                0
+                Rank::None
             };
             Caps {
                 auto,
-                op: founderish || has('o') || has('O'),
+                op: founderish || op,
                 topic: founderish || has('t'),
                 invite: founderish || has('i'),
                 access: founderish || has('a'),
@@ -1162,8 +1183,8 @@ impl ChannelView {
         self.caps_of(Some(account)).auto
     }
 
-    // A comparable access rank for PEACE: founder 3, op 2, voice/halfop 1, none 0.
-    pub fn access_rank(&self, account: Option<&str>) -> u8 {
+    // The ordered access rank used for PEACE comparisons (see `Rank`).
+    pub fn access_rank(&self, account: Option<&str>) -> Rank {
         self.caps_of(account).rank
     }
 
