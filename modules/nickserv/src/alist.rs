@@ -1,5 +1,4 @@
-use echo_api::Store;
-use echo_api::{Sender, ServiceCtx};
+use echo_api::{level_caps, Sender, ServiceCtx, Store};
 
 // ALIST: list the channels the sender's account founds or has access on.
 pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &dyn Store) {
@@ -12,7 +11,20 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &dyn Store) {
         if c.founder.eq_ignore_ascii_case(account) {
             rows.push((c.name.clone(), "founder"));
         } else if let Some(a) = c.access.iter().find(|a| a.account.eq_ignore_ascii_case(account)) {
-            rows.push((c.name.clone(), if a.level == "voice" { "voice" } else { "op" }));
+            // Resolve the entry's capabilities rather than string-matching the
+            // level, so a role set via granular FLAGS (e.g. "v") reads correctly
+            // and isn't mislabelled "op".
+            let caps = level_caps(&a.level);
+            let role = if caps.op {
+                "op"
+            } else if caps.auto == Some("+v") {
+                "voice"
+            } else if caps.auto == Some("+h") {
+                "halfop"
+            } else {
+                "access"
+            };
+            rows.push((c.name.clone(), role));
         }
     }
     if rows.is_empty() {

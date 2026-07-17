@@ -1,5 +1,4 @@
-use echo_api::Store;
-use echo_api::{Sender, ServiceCtx};
+use echo_api::{level_caps, Sender, ServiceCtx, Store};
 
 // AOP/SOP/VOP <#channel> ADD <account> | DEL <account> | LIST — tiered
 // shortcuts over the access list. `level` is the access level they map to
@@ -14,7 +13,14 @@ pub fn handle(me: &str, from: &Sender, word: &str, level: &str, args: &[&str], c
             None => ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered.")),
             Some(info) => {
                 ctx.notice(me, from.uid, format!("{word} list for \x02{}\x02:", info.name));
-                for a in info.access.iter().filter(|a| a.level == level) {
+                // Match by capability, not the raw level string, so entries set via
+                // granular FLAGS still list under the right tier (VOP = voice-only,
+                // AOP/SOP = op).
+                let want_op = level_caps(level).op;
+                for a in info.access.iter().filter(|a| {
+                    let c = level_caps(&a.level);
+                    if want_op { c.op } else { c.auto == Some("+v") && !c.op }
+                }) {
                     ctx.notice(me, from.uid, format!("  \x02{}\x02", a.account));
                 }
             }
