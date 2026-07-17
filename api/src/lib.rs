@@ -1577,6 +1577,11 @@ pub trait Store {
     fn extban_lookup(&self, _token: &str) -> Option<ExtbanCap> {
         None
     }
+    // The ircd's live extban set (its CAPAB EXTBANS burst), for HELP to list what
+    // this network actually offers. Empty until we link.
+    fn extbans(&self) -> Vec<ExtbanCap> {
+        Vec::new()
+    }
     fn exists(&self, name: &str) -> bool;
     fn account(&self, name: &str) -> Option<AccountView>;
     // Canonical account name for a nick (following a grouping), if registered.

@@ -23,6 +23,8 @@ mod take;
 mod next;
 #[path = "close.rs"]
 mod close;
+#[path = "extbans.rs"]
+mod extbans;
 
 const BLURB: &str = "HelpServ is the help desk and the network's help index. Open a ticket with \x02REQUEST\x02; operators work the queue.";
 
@@ -65,16 +67,22 @@ impl Service for HelpServ {
             Some("TAKE") | Some("ASSIGN") => take::handle(me, from, args.get(1).copied(), ctx, db),
             Some("NEXT") => next::handle(me, from, ctx, db),
             Some("CLOSE") | Some("RESOLVE") => close::handle(me, from, args.get(1).copied(), ctx, db),
+            // The extended-ban reference, listing this network's live extban set.
+            Some("EXTBANS") | Some("EXTBAN") => extbans::handle(me, from, ctx, db),
             // HELP [service [command]]: bare HELP is HelpServ's own; HELP <service>
             // [command] fronts any other service's help through the shared renderer.
-            Some("HELP") | None => match args.get(1).and_then(|&s| net.service_help(s)) {
-                Some((blurb, topics)) => echo_api::help(me, from, ctx, blurb, topics, args.get(2).copied()),
-                None => {
-                    echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied());
-                    if args.get(1).is_none() {
-                        ctx.notice(me, from.uid, format!("For a service's own commands, type \x02HELP <service>\x02. Services: {}.", net.help_services().join(", ")));
+            Some("HELP") | None => match args.get(1).copied() {
+                Some(t) if t.eq_ignore_ascii_case("extbans") || t.eq_ignore_ascii_case("extban") => extbans::handle(me, from, ctx, db),
+                other => match other.and_then(|s| net.service_help(s)) {
+                    Some((blurb, topics)) => echo_api::help(me, from, ctx, blurb, topics, args.get(2).copied()),
+                    None => {
+                        echo_api::help(me, from, ctx, BLURB, TOPICS, other);
+                        if other.is_none() {
+                            ctx.notice(me, from.uid, format!("For a service's own commands, type \x02HELP <service>\x02. Services: {}.", net.help_services().join(", ")));
+                            ctx.notice(me, from.uid, "For the extended ban types you can use, type \x02HELP EXTBANS\x02.");
+                        }
                     }
-                }
+                },
             },
             // Not a HelpServ command — maybe the name of a service to get help for.
             Some(_) => match net.service_help(args[0]) {

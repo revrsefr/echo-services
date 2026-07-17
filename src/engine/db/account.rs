@@ -187,6 +187,11 @@ impl Db {
         self.live_extbans.as_ref().is_none_or(|set| set.iter().any(|e| e.name.eq_ignore_ascii_case(name)))
     }
 
+    /// The ircd's live extban set (empty until we link and get its CAPAB burst).
+    pub fn extbans(&self) -> Vec<echo_api::ExtbanCap> {
+        self.live_extbans.clone().unwrap_or_default()
+    }
+
     /// Resolve an extban token (name, case-insensitive; or single letter, case-
     /// sensitive) against the ircd's live set. For extbans echo's static table lacks.
     pub fn extban_lookup(&self, token: &str) -> Option<echo_api::ExtbanCap> {
