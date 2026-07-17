@@ -804,14 +804,23 @@ impl Engine {
     // keycard endpoint are NOT reloadable — they need a restart.
     pub fn rehash(&mut self, requester: &str, agent: &str) -> Vec<NetAction> {
         let path = self.config_path.clone();
+        // Who ran it, for the DebugServ log-channel line (account, else nick).
+        let oper = self
+            .network
+            .account_of(requester)
+            .or_else(|| self.network.nick_of(requester))
+            .unwrap_or("an operator")
+            .to_string();
+        let notice = |text: String| NetAction::Notice { from: agent.to_string(), to: requester.to_string(), text };
         let cfg = match crate::config::Config::load(&path) {
             Ok(cfg) => cfg,
             Err(e) => {
-                return vec![NetAction::Notice {
-                    from: agent.to_string(),
-                    to: requester.to_string(),
-                    text: format!("REHASH failed: {e}. The running configuration is unchanged."),
-                }];
+                let mut out = Vec::new();
+                if let Some(line) = self.feed("OPER", format!("\x02{oper}\x02 ran \x02REHASH\x02 · config.toml failed to parse, keeping the running config · {e}")) {
+                    out.push(line);
+                }
+                out.push(notice(format!("REHASH failed: {e}. The running configuration is unchanged.")));
+                return out;
             }
         };
         let opers = cfg.opers();
@@ -828,17 +837,21 @@ impl Engine {
         if let Some(session) = &cfg.session {
             self.set_session_limit(session.limit());
         }
-        let notice = |text: String| NetAction::Notice { from: agent.to_string(), to: requester.to_string(), text };
-        vec![
-            notice(format!("Configuration reloaded from \x02{path}\x02.")),
-            notice(format!(
-                "Applied: \x02{oper_count}\x02 oper(s), standard-replies \x02{}\x02, services channel \x02{}\x02, service oper-type \x02{}\x02.",
-                if self.standard_replies { "on" } else { "off" },
-                if self.services_channel.is_empty() { "(none)" } else { &self.services_channel },
-                if self.service_oper_type.is_empty() { "(none)" } else { &self.service_oper_type },
-            )),
-            notice("Not reloadable (need a RESTART): server name/SID/protocol, uplink, service umodes, keycard.".to_string()),
-        ]
+        let sr = if self.standard_replies { "on" } else { "off" };
+        let chan = if self.services_channel.is_empty() { "(none)" } else { &self.services_channel };
+        let opers_word = if oper_count == 1 { "oper" } else { "opers" };
+        let mut out = Vec::new();
+        // Announce it in the log channel so staff see who reloaded what, when.
+        if let Some(line) = self.feed("OPER", format!("\x02{oper}\x02 reloaded the configuration live · \x02{oper_count}\x02 {opers_word} · standard-replies \x02{sr}\x02 · services \x02{chan}\x02 · no restart needed")) {
+            out.push(line);
+        }
+        out.push(notice(format!("Configuration reloaded from \x02{path}\x02.")));
+        out.push(notice(format!(
+            "Applied: \x02{oper_count}\x02 oper(s), standard-replies \x02{sr}\x02, services channel \x02{chan}\x02, service oper-type \x02{}\x02.",
+            if self.service_oper_type.is_empty() { "(none)" } else { &self.service_oper_type },
+        )));
+        out.push(notice("Not reloadable (need a RESTART): server name/SID/protocol, uplink, service umodes, keycard.".to_string()));
+        out
     }
 
     // A user arrived on (or changed to) a registered nick: if they aren't logged

@@ -711,6 +711,39 @@
         assert!(b.iter().any(|x| matches!(x, NetAction::Notice { text, .. } if text.contains("admin"))), "{b:?}");
     }
 
+    // REHASH re-reads the file, applies the reloadable settings, and announces the
+    // reload in the log channel as a DebugServ feed line.
+    #[test]
+    fn rehash_applies_config_and_announces_in_log_channel() {
+        use echo_operserv::OperServ;
+        let cfgpath = std::env::temp_dir().join("echo-rehash-fixture.toml");
+        std::fs::write(&cfgpath, concat!(
+            "[uplink]\nhost = \"127.0.0.1\"\nport = 7000\npassword = \"x\"\n\n",
+            "[server]\nname = \"services.test\"\nsid = \"42S\"\ndescription = \"t\"\n",
+            "standard_replies = true\nservices_channel = \"#svc\"\n\n",
+            "[log]\nchannel = \"#services\"\n\n",
+            "[[oper]]\naccount = \"reverse\"\nprivs = [\"admin\"]\n",
+        )).unwrap();
+        let path = std::env::temp_dir().join("echo-rehash-eng.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "test");
+        db.scram_iterations = 4096;
+        let mut e = Engine::new(vec![Box::new(OperServ { uid: "42SAAAAAH".into() })], db);
+        e.set_sid("42S".into());
+        e.set_config_path(cfgpath.to_string_lossy().to_string());
+        e.set_debugserv_uid("42SAAAAAO");
+        e.set_log_channel(Some("#services".to_string()));
+
+        let out = e.rehash("000AAAAAB", "42SAAAAAH");
+        let feed = out.iter().find_map(|a| match a {
+            NetAction::Privmsg { from, to, text } if from == "42SAAAAAO" && to == "#services" => Some(text.clone()),
+            _ => None,
+        }).expect("DebugServ announces the reload in the log channel");
+        assert!(feed.contains("reloaded the configuration"), "{feed}");
+        assert!(feed.contains("#svc"), "the reloaded services channel is applied and shown: {feed}");
+        let _ = std::fs::remove_file(&cfgpath);
+    }
+
     // A login that finishes off the handle() path (the link layer's deferred
     // password/keycard verify) must still make echo's OWN account map authoritative.
     // Otherwise re-identifying an already-logged-in user after a services relink —
