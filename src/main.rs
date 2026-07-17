@@ -24,6 +24,7 @@ use echo_statserv::StatServ;
 use echo_hostserv::HostServ;
 use echo_operserv::OperServ;
 use echo_diceserv::DiceServ;
+use echo_gameserv::GameServ;
 use echo_infoserv::InfoServ;
 use echo_reportserv::ReportServ;
 use echo_groupserv::GroupServ;
@@ -131,6 +132,9 @@ async fn main() -> Result<()> {
         services.push(Box::new(DiceServ {
             uid: format!("{}AAAAAI", cfg.server.sid),
         }));
+    }
+    if enabled("gameserv") {
+        services.push(Box::new(GameServ::new(format!("{}AAAAAP", cfg.server.sid))));
     }
     if enabled("infoserv") {
         services.push(Box::new(InfoServ {

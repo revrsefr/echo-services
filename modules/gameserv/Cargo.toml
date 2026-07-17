@@ -1,0 +1,8 @@
+[package]
+name = "echo-gameserv"
+version = "0.0.1"
+edition = "2021"
+description = "GameServ: a server-authoritative referee for tic-tac-toe, Connect Four and chess, with a ranked ladder."
+
+[dependencies]
+echo-api = { path = "../../api" }

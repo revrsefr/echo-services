@@ -287,6 +287,7 @@ dependencies = [
  "echo-debugserv",
  "echo-diceserv",
  "echo-example",
+ "echo-gameserv",
  "echo-groupserv",
  "echo-helpserv",
  "echo-hostserv",
@@ -361,6 +362,13 @@ dependencies = [
 
 [[package]]
 name = "echo-example"
+version = "0.0.1"
+dependencies = [
+ "echo-api",
+]
+
+[[package]]
+name = "echo-gameserv"
 version = "0.0.1"
 dependencies = [
  "echo-api",
