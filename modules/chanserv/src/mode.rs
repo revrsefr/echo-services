@@ -43,19 +43,9 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     ctx.notice(me, from.uid, format!("Set \x02{modes}\x02 on \x02{chan}\x02."));
 }
 
-// Whether a channel mode consumes a parameter. List modes (b/e/I) and prefix
-// modes (qaohv) take one on both + and -, as does the key (k); the type-C modes
-// (limit, redirect, flood) only when added. Params are paired in IRC MODE order,
-// so every param-taking mode must be accounted for to find the ban masks.
-fn mode_takes_param(c: char, adding: bool) -> bool {
-    match c {
-        'b' | 'e' | 'I' | 'q' | 'a' | 'o' | 'h' | 'v' | 'k' => true,
-        'l' | 'L' | 'f' | 'j' | 'J' => adding,
-        _ => false,
-    }
-}
-
 // The parameters attached to +b/-b/+e/-e/+I/-I in a `<modes> [params...]` change.
+// Every param-taking mode is accounted for (via the shared arity helper) so ban
+// masks pair to the right mode in IRC order.
 fn ban_masks<'a>(tokens: &'a [&'a str]) -> Vec<&'a str> {
     let modes = tokens.first().copied().unwrap_or("");
     let mut params = tokens.iter().skip(1);
@@ -65,7 +55,7 @@ fn ban_masks<'a>(tokens: &'a [&'a str]) -> Vec<&'a str> {
         match ch {
             '+' => adding = true,
             '-' => adding = false,
-            m if mode_takes_param(m, adding) => {
+            m if echo_api::chanmode_takes_param(m, adding) => {
                 if let Some(&p) = params.next() {
                     if matches!(m, 'b' | 'e' | 'I') {
                         out.push(p);
