@@ -475,7 +475,7 @@
     // account founded — and a bot assigned to one must part, not linger, even
     // though this cleanup runs outside the dispatch path.
     #[test]
-    fn gossip_takeover_parts_orphaned_channel_bot() {
+    fn gossip_account_drop_parts_orphaned_channel_bot() {
         use echo_botserv::BotServ;
         use echo_nickserv::NickServ;
         let path = std::env::temp_dir().join("echo-gossipbot.jsonl");
@@ -501,16 +501,13 @@
         let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "ASSIGN #hers Bendy".into() });
         assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, .. } if channel == "#hers")), "bot joins the channel");
 
-        // An earlier remote claim on alice arrives by gossip and wins the name.
+        // alice is dropped on another node; the drop arrives by gossip and, being a
+        // genuine removal, releases her founderless channel.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         e.set_irc_out(tx);
-        let winner = db::Account {
-            name: "alice".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
-        };
-        e.gossip_ingest(LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)))).unwrap();
+        e.gossip_ingest(LogEntry::for_test("peer", 1, 1, db::Event::AccountDropped { account: "alice".into() })).unwrap();
 
-        assert!(e.db.channel("#hers").is_none(), "orphaned channel released");
+        assert!(e.db.channel("#hers").is_none(), "the dropped account's channel is released");
         let parted = std::iter::from_fn(|| rx.try_recv().ok())
             .any(|a| matches!(a, NetAction::ServicePart { channel, .. } if channel == "#hers"));
         assert!(parted, "the assigned bot parts the released channel");
@@ -858,10 +855,11 @@
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)));
         e.gossip_ingest(entry).unwrap();
 
-        // The local session is logged out and its orphaned channel is dropped.
+        // The local session is logged out (its credential moved to the winner), but
+        // the channel it founded is KEPT — the account still exists, home just moved.
         assert!(e.network.account_of("000AAAAAB").is_none(), "session cleared after losing the name");
-        assert!(e.db.channel("#hers").is_none(), "orphaned channel dropped");
-        // The outbound path got a logout, a notice, a -r on the channel, and a release notice.
+        assert!(e.db.channel("#hers").is_some(), "the channel is kept on a takeover (the account still exists)");
+        // The outbound path got a logout and a notice, but NO -r and NO release notice.
         let (mut logout, mut notice, mut unreg, mut released) = (false, false, false, false);
         while let Ok(a) = rx.try_recv() {
             match a {
@@ -874,8 +872,8 @@
         }
         assert!(logout, "a logout must be pushed to the uplink");
         assert!(notice, "the user must be told why");
-        assert!(unreg, "the orphaned channel must be de-registered (-r)");
-        assert!(released, "the user must be told which channels were released");
+        assert!(!unreg, "a takeover must NOT de-register the channel");
+        assert!(!released, "no channels are released on a takeover");
     }
 
     // NickServ INFO shows registration details (email only to the owner); ALIST

@@ -93,7 +93,7 @@ impl Engine {
     pub fn authority_drop(&mut self, account: &str) -> AuthorityStatus {
         match self.db.drop_account(account) {
             Ok(true) => {
-                self.handle_account_gone(account, "was dropped");
+                self.handle_account_gone(account, "was dropped", true);
                 AuthorityStatus::Ok
             }
             Ok(false) => AuthorityStatus::NotFound,

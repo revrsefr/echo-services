@@ -574,11 +574,13 @@ impl Engine {
         // relied on (lost a conflict, or dropped elsewhere), clean up after it.
         let gone = match self.db.ingest(entry)? {
             Some(db::IngestEffect::TakenOver(a)) => {
-                self.handle_account_gone(&a, "collided with another network and no longer belongs to you");
-                true
+                // The account still exists (its home moved) — end local sessions
+                // using the old credential, but keep the channels it founded.
+                self.handle_account_gone(&a, "collided with another network and no longer belongs to you", false);
+                false
             }
             Some(db::IngestEffect::Dropped(a)) => {
-                self.handle_account_gone(&a, "was dropped");
+                self.handle_account_gone(&a, "was dropped", true);
                 true
             }
             Some(db::IngestEffect::Suspended(a)) => {
@@ -610,13 +612,19 @@ impl Engine {
         Ok(())
     }
 
-    // An account a local session was using is gone (lost a conflict, or dropped on
-    // another node). Log out those sessions (their credential is gone) and drop the
-    // channels it founded locally — their founder identity no longer exists here.
-    fn handle_account_gone(&mut self, account: &str, reason: &str) {
+    // An account a local session was using is gone or moved. Log out those
+    // sessions (their credential may have changed). Only release the channels it
+    // founded when `release_channels` — i.e. the account is genuinely gone (dropped
+    // or expired). A takeover leaves the account in place (its home just moved), so
+    // its channels keep a valid founder by name and must NOT be dropped.
+    fn handle_account_gone(&mut self, account: &str, reason: &str, release_channels: bool) {
         let victims = self.network.uids_logged_into(account);
         // A channel with a valid successor is inherited rather than released.
-        let (inherited, orphaned) = self.db.release_founded_channels(account);
+        let (inherited, orphaned) = if release_channels {
+            self.db.release_founded_channels(account)
+        } else {
+            (Vec::new(), Vec::new())
+        };
         let (cs, ns) = (self.chan_service.clone(), self.nick_service.clone());
         // Release the registered mode on each dropped (not inherited) channel.
         for chan in &orphaned {
@@ -726,7 +734,7 @@ impl Engine {
                     continue;
                 }
                 if self.db.drop_account(&account).unwrap_or(false) {
-                    self.handle_account_gone(&account, "expired after a long period of inactivity");
+                    self.handle_account_gone(&account, "expired after a long period of inactivity", true);
                     self.audit(format!("Account \x02{account}\x02 expired after inactivity."));
                 }
             }
