@@ -565,17 +565,25 @@
             _ => None,
         }).expect("bot joins #room");
 
-        // bob speaks in the channel, then quits.
+        // bob speaks in the channel but never joins it (online, not a member).
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "#room".into(), text: "bye bye friends".into() });
-        e.handle(NetEvent::Quit { uid: "000AAAAAB".into() });
 
-        // alice asks !seen bob: the bot answers in the channel with bob's last message.
-        let seen = e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "#room".into(), text: "!seen bob".into() });
+        // Online elsewhere but not in #room -> report his last message, NOT "here".
+        let away = e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "#room".into(), text: "!seen bob".into() });
         assert!(
-            seen.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text }
-                if from == &botuid && to == "#room" && text.contains("bye bye friends") && text.contains("bob"))),
-            "bot reports bob's last message in the channel, got {seen:?}"
+            away.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text }
+                if from == &botuid && to == "#room" && text.contains("bye bye friends") && !text.contains("here right now"))),
+            "online-elsewhere bob: last message, not 'here', got {away:?}"
+        );
+
+        // Now bob is actually in the channel -> "here right now".
+        e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: false });
+        let here = e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "#room".into(), text: "!seen bob".into() });
+        assert!(
+            here.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text }
+                if from == &botuid && to == "#room" && text.contains("here right now"))),
+            "bob in channel: 'here right now', got {here:?}"
         );
     }
 

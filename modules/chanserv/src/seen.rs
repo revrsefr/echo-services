@@ -12,7 +12,9 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
                 ctx.notice(me, from.uid, "Syntax: SEEN <#channel> <nick>");
                 return;
             };
-            if net.uid_by_nick(nick).is_some() {
+            // Present in THIS channel right now — online elsewhere doesn't count.
+            let here = net.uid_by_nick(nick).is_some_and(|uid| net.channel_members(chan).iter().any(|m| m == uid));
+            if here {
                 ctx.notice(me, from.uid, format!("{}: \x02{nick}\x02 is here right now.", from.nick));
                 return;
             }
