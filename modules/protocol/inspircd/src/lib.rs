@@ -106,12 +106,20 @@ impl Protocol for InspIrcd {
             // <ip> <signon> … — take the displayed host for ban masks and the ip
             // (index 7) for session limiting.
             "UID" => {
+                // insp4: uuid nickts nick realhost disphost realuser dispuser ip signonts +modes[ params] :gecos
                 let a: Vec<&str> = tokens.collect();
                 match (a.first(), a.get(2)) {
                     (Some(uid), Some(nick)) => {
+                        let realhost = a.get(3).unwrap_or(&"").to_string();
                         let host = a.get(4).unwrap_or(&"").to_string();
+                        let ident = a.get(6).unwrap_or(&"").to_string();
                         let ip = a.get(7).unwrap_or(&"").to_string();
-                        vec![NetEvent::UserConnect { uid: uid.to_string(), nick: nick.to_string(), host, ip }]
+                        // gecos is the trailing param (has spaces) — take it whole.
+                        let gecos = rest.split_once(" :").map_or("", |(_, g)| g).to_string();
+                        vec![
+                            NetEvent::UserConnect { uid: uid.to_string(), nick: nick.to_string(), host, ip },
+                            NetEvent::UserAttrs { uid: uid.to_string(), ident, realhost, gecos },
+                        ]
                     }
                     _ => vec![],
                 }
@@ -558,12 +566,17 @@ mod tests {
         assert!(matches!(ev.as_slice(), [NetEvent::ServerSplit { server }] if server == "0IR"), "{ev:?}");
     }
 
-    // A UID burst introduces the user under their current nick.
+    // A UID burst introduces the user and, alongside, the identity fields the
+    // UID carries that UserConnect omits (ident, real host, gecos).
     #[test]
     fn parses_uid_burst() {
-        let ev = proto().parse(":0IR UID 0IRAAAAAB 1783833000 alice host host user user 0.0.0.0 1783833000 +i :real");
+        let ev = proto().parse(":0IR UID 0IRAAAAAB 1783833000 alice real.host disp.host ruser duser 1.2.3.4 1783833000 +i :Real Name");
         assert!(
-            matches!(ev.as_slice(), [NetEvent::UserConnect { uid, nick, .. }] if uid == "0IRAAAAAB" && nick == "alice"),
+            matches!(ev.as_slice(), [
+                NetEvent::UserConnect { uid, nick, host, ip },
+                NetEvent::UserAttrs { ident, realhost, gecos, .. },
+            ] if uid == "0IRAAAAAB" && nick == "alice" && host == "disp.host" && ip == "1.2.3.4"
+                && ident == "duser" && realhost == "real.host" && gecos == "Real Name"),
             "{ev:?}"
         );
     }

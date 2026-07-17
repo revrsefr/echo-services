@@ -1078,6 +1078,10 @@ impl Engine {
                     Vec::new()
                 }
             }
+            NetEvent::UserAttrs { uid, ident, realhost, gecos } => {
+                self.network.set_user_attrs(&uid, ident, realhost, gecos);
+                Vec::new()
+            }
             NetEvent::UserConnect { uid, nick, host, ip } => {
                 let arriving_nick = nick.clone();
                 self.network.user_connect(uid.clone(), nick, host, ip.clone());
@@ -1218,13 +1222,17 @@ impl Engine {
                     }
                     // No access: an auto-kick match is banned and kicked, else greeted.
                     None => {
-                        let nick = self.network.nick_of(&uid).unwrap_or("*").to_string();
-                        let host = self.network.host_of(&uid).unwrap_or("*").to_string();
-                        let hostmask = format!("{nick}!*@{host}");
-                        let akick = self.db.channel(&channel).and_then(|c| c.akick_match(&hostmask)).map(|k| {
-                            let reason = if k.reason.is_empty() { "You are banned from this channel.".to_string() } else { k.reason.clone() };
-                            (k.mask.clone(), reason)
-                        });
+                        // Match the akick list against the user's full identity —
+                        // host and the extbans (account/realname/…) the ircd gave us.
+                        let akick = {
+                            let target = self.network.ban_target(&uid);
+                            target.as_ref().and_then(|t| {
+                                self.db.channel(&channel).and_then(|c| c.akick_match(t)).map(|k| {
+                                    let reason = if k.reason.is_empty() { "You are banned from this channel.".to_string() } else { k.reason.clone() };
+                                    (k.mask.clone(), reason)
+                                })
+                            })
+                        };
                         match akick {
                             Some((mask, reason)) => {
                                 self.network.channel_part(&channel, &uid);

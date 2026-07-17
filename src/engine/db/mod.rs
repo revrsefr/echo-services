@@ -625,9 +625,9 @@ impl ChannelInfo {
                 .is_some_and(|a| echo_api::level_caps(&a.level).op)
     }
 
-    /// The matching auto-kick entry for `hostmask` (nick!user@host), if any.
-    pub fn akick_match(&self, hostmask: &str) -> Option<&ChanAkick> {
-        self.akick.iter().find(|k| glob_match(&k.mask, hostmask))
+    /// The auto-kick entry matching a live user (plain host mask or extban), if any.
+    pub fn akick_match(&self, target: &echo_api::BanTarget) -> Option<&ChanAkick> {
+        self.akick.iter().find(|k| echo_api::akick_matches(&k.mask, target))
     }
 
     /// The mode string services keep applied: +r plus the lock.

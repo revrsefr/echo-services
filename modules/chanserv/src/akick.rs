@@ -2,7 +2,9 @@ use echo_api::Store;
 use echo_api::{Sender, ServiceCtx};
 
 // AKICK <#channel> ADD <mask> [reason] | DEL <mask> | LIST
-// Masks are nick!user@host globs; matching users are banned and kicked on join.
+// Masks are nick!user@host globs or an extban echo can match: account:<glob>,
+// realname:<glob>, realmask:<host>+<realname>, or unauthed:<host>. Matching users
+// are banned and kicked on join.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
     let Some(&chan) = args.get(1) else {
         ctx.notice(me, from.uid, "Syntax: AKICK <#channel> ADD <mask> [reason] | DEL <mask> | LIST");
@@ -24,6 +26,12 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 ctx.notice(me, from.uid, "Syntax: AKICK <#channel> ADD <mask> [reason]");
                 return;
             };
+            // Reject extbans echo has no per-user data to match (country, class, …),
+            // so we never store an akick that can't be enforced.
+            if let echo_api::AkickMask::Other(name) = echo_api::AkickMask::parse(mask) {
+                ctx.notice(me, from.uid, format!("Can't auto-kick by the \x02{name}\x02 extban. Use a host mask or \x02account:\x02 / \x02realname:\x02 / \x02realmask:\x02 / \x02unauthed:\x02."));
+                return;
+            }
             if !super::require_op(me, from, chan, ctx, db) {
                 return;
             }

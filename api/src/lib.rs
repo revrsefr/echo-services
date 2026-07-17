@@ -21,6 +21,10 @@ pub enum NetEvent {
     Idle { requester: String, target: String },
     Privmsg { from: String, to: String, text: String },
     UserConnect { uid: String, nick: String, host: String, ip: String },
+    // The rest of a user's UID that UserConnect omits — ident, real host, and
+    // real name (gecos). The ircd sends them in the same UID line; extban
+    // matching (AKICK) needs them. Emitted right after UserConnect.
+    UserAttrs { uid: String, ident: String, realhost: String, gecos: String },
     NickChange { uid: String, nick: String },
     // The ircd tells us a user's logged-in account (METADATA accountname), e.g.
     // replayed on a services netburst so we can restore who was identified. An
@@ -1008,6 +1012,83 @@ pub struct ChanAkickView {
     pub reason: String,
 }
 
+/// A live user's identity, matched against an AKICK mask (plain host or extban).
+/// Built by the engine from what the ircd told us in the UID + metadata.
+pub struct BanTarget<'a> {
+    pub nick: &'a str,
+    pub ident: &'a str,
+    pub host: &'a str,     // displayed host
+    pub realhost: &'a str, // real host
+    pub ip: &'a str,
+    pub gecos: &'a str,    // real name
+    pub account: Option<&'a str>,
+}
+
+/// How echo interprets an AKICK mask. A plain `nick!user@host` glob is `Host`;
+/// the rest are the InspIRCd matching-extbans echo has the s2s data to match (by
+/// name `account:`… or by letter `R:`…). `Realmask` is the `nick!user@host+realname`
+/// form (letter `a`). `Other` is any extban echo has no per-user data for (country,
+/// class, …) — rejected at AKICK ADD.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AkickMask<'a> {
+    Host(&'a str),
+    Account(&'a str),
+    Unauthed(&'a str),
+    Realname(&'a str),
+    Realmask(&'a str, &'a str), // (hostmask, realname-glob)
+    Other(&'a str),
+}
+
+impl<'a> AkickMask<'a> {
+    /// Parse a stored/entered AKICK mask. Extbans are `[name|letter]:value` whose
+    /// name holds no `!`/`@` (so an IPv6 host in a normal mask isn't mistaken for
+    /// one). Letters are case-sensitive (R = account, r = realname, a = realmask).
+    pub fn parse(mask: &'a str) -> AkickMask<'a> {
+        let Some((name, value)) = mask.split_once(':').filter(|(n, _)| !n.is_empty() && !n.contains(['!', '@'])) else {
+            return AkickMask::Host(mask);
+        };
+        let letter = if name.len() == 1 {
+            name.chars().next().unwrap()
+        } else {
+            match name.to_ascii_lowercase().as_str() {
+                "account" => 'R',
+                "unauthed" => 'U',
+                "realname" => 'r',
+                "realmask" => 'a',
+                _ => return AkickMask::Other(name),
+            }
+        };
+        match letter {
+            'R' => AkickMask::Account(value),
+            'U' => AkickMask::Unauthed(value),
+            'r' => AkickMask::Realname(value),
+            // realmask value is `<hostmask>+<realname>` (m_realnameban).
+            'a' => match value.split_once('+') {
+                Some((hm, real)) => AkickMask::Realmask(hm, real),
+                None => AkickMask::Other(name),
+            },
+            _ => AkickMask::Other(name),
+        }
+    }
+}
+
+/// Whether an AKICK `mask` matches a live user `t` — a plain hostmask (globbed
+/// against the displayed-host, real-host and IP forms, as InspIRCd's CheckBan
+/// does) or one of the matching-extbans echo has the data for. An `Other` extban
+/// (no per-user data) never matches.
+pub fn akick_matches(mask: &str, t: &BanTarget) -> bool {
+    let hm = |host: &str| format!("{}!{}@{}", t.nick, t.ident, host);
+    let host_hit = |g: &str| glob_match(g, &hm(t.host)) || glob_match(g, &hm(t.realhost)) || glob_match(g, &hm(t.ip));
+    match AkickMask::parse(mask) {
+        AkickMask::Host(g) => host_hit(g),
+        AkickMask::Account(g) => t.account.is_some_and(|a| glob_match(g, a)),
+        AkickMask::Unauthed(g) => t.account.is_none() && host_hit(g),
+        AkickMask::Realname(g) => glob_match(g, t.gecos),
+        AkickMask::Realmask(hmask, real) => host_hit(hmask) && glob_match(real, t.gecos),
+        AkickMask::Other(_) => false,
+    }
+}
+
 // A memo left for an account (MemoServ).
 #[derive(Debug, Clone)]
 pub struct MemoView {
@@ -1345,9 +1426,9 @@ impl ChannelView {
         s
     }
 
-    // The first auto-kick entry whose mask matches the given hostmask.
-    pub fn akick_match(&self, hostmask: &str) -> Option<&ChanAkickView> {
-        self.akick.iter().find(|k| glob_match(&k.mask, hostmask))
+    // The first auto-kick entry matching a live user (host mask or extban).
+    pub fn akick_match(&self, target: &BanTarget) -> Option<&ChanAkickView> {
+        self.akick.iter().find(|k| akick_matches(&k.mask, target))
     }
 }
 
@@ -1643,6 +1724,8 @@ pub trait NetView {
     fn nick_of(&self, uid: &str) -> Option<&str>;
     fn host_of(&self, uid: &str) -> Option<&str>;
     fn account_of(&self, uid: &str) -> Option<&str>;
+    // A user's identity for extban / AKICK matching, if known.
+    fn ban_target(&self, uid: &str) -> Option<BanTarget<'_>>;
     fn uids_logged_into(&self, account: &str) -> Vec<String>;
     fn is_op(&self, channel: &str, uid: &str) -> bool;
     fn channel_members(&self, channel: &str) -> Vec<String>;
@@ -1826,6 +1909,35 @@ pub fn human_time(ts: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn akick_extbans_parse_and_match() {
+        // Parse: hostmask fallback (incl IPv6), named + letter extbans, realmask
+        // split, and an extban echo has no data for.
+        assert_eq!(AkickMask::parse("*!*@host"), AkickMask::Host("*!*@host"));
+        assert_eq!(AkickMask::parse("*!*@2001:db8::1"), AkickMask::Host("*!*@2001:db8::1"), "ipv6 host isn't an extban");
+        assert_eq!(AkickMask::parse("account:bad"), AkickMask::Account("bad"));
+        assert_eq!(AkickMask::parse("R:bad"), AkickMask::Account("bad"), "letter form");
+        assert_eq!(AkickMask::parse("realname:*spam*"), AkickMask::Realname("*spam*"));
+        assert_eq!(AkickMask::parse("realmask:*!*@h+*bot*"), AkickMask::Realmask("*!*@h", "*bot*"));
+        assert!(matches!(AkickMask::parse("country:US"), AkickMask::Other("country")));
+
+        let t = BanTarget { nick: "n", ident: "u", host: "h.com", realhost: "real.h", ip: "1.2.3.4", gecos: "a spammer", account: Some("bad") };
+        assert!(akick_matches("*!*@h.com", &t), "displayed host");
+        assert!(akick_matches("*!*@real.h", &t), "real host too");
+        assert!(akick_matches("*!*@1.2.3.4", &t), "ip too");
+        assert!(akick_matches("account:bad", &t));
+        assert!(!akick_matches("account:other", &t));
+        assert!(akick_matches("realname:*spammer*", &t), "gecos");
+        assert!(akick_matches("realmask:*!*@h.com+*spammer*", &t), "host + realname");
+        assert!(!akick_matches("realmask:*!*@nope+*spammer*", &t), "host part must also match");
+        assert!(!akick_matches("unauthed:*!*@h.com", &t), "logged-in user isn't unauthed");
+        assert!(!akick_matches("country:US", &t), "no data -> never matches");
+
+        let anon = BanTarget { account: None, ..t };
+        assert!(akick_matches("unauthed:*!*@h.com", &anon), "not logged in + host matches");
+        assert!(!akick_matches("account:bad", &anon), "no account -> account extban can't match");
+    }
 
     #[test]
     fn flags_bitset_parses_applies_and_matches_presets() {

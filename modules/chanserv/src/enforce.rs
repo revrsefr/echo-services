@@ -21,9 +21,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         match net.account_of(&uid).and_then(|a| info.join_mode(a)) {
             Some(m) => ctx.channel_mode(me, chan, &status_mode(m, &uid)),
             None => {
-                let nick = net.nick_of(&uid).unwrap_or("*");
-                let host = net.host_of(&uid).unwrap_or("*");
-                if let Some(k) = info.akick_match(&format!("{nick}!*@{host}")) {
+                if let Some(k) = net.ban_target(&uid).and_then(|t| info.akick_match(&t)) {
                     ctx.channel_mode(me, chan, &format!("+b {}", k.mask));
                     let reason = if k.reason.is_empty() { "You are banned from this channel." } else { &k.reason };
                     ctx.kick(me, chan, &uid, reason);

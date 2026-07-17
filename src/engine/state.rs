@@ -80,8 +80,11 @@ fn incident_code(seq: u64) -> String {
 pub struct User {
     pub uid: String,
     pub nick: String,
-    pub host: String,
+    pub ident: String,    // user@ — from the UID (was discarded); empty until UserAttrs
+    pub host: String,     // the displayed host
+    pub realhost: String, // the real host, for host bans against it
     pub ip: String,
+    pub gecos: String,    // real name, for realname / realmask extbans
 }
 
 // A channel's live membership, ops, and current key (+k), tracked from the burst.
@@ -129,7 +132,17 @@ impl Network {
         if !ip.is_empty() {
             *self.sessions.entry(ip.clone()).or_insert(0) += 1;
         }
-        self.users.insert(uid.clone(), User { uid, nick, host, ip });
+        self.users.insert(uid.clone(), User { uid, nick, ident: String::new(), host, realhost: String::new(), ip, gecos: String::new() });
+    }
+
+    // Fill in the rest of a user's identity (ident, real host, real name), which
+    // the UID carries but UserConnect doesn't — needed for extban matching.
+    pub fn set_user_attrs(&mut self, uid: &str, ident: String, realhost: String, gecos: String) {
+        if let Some(u) = self.users.get_mut(uid) {
+            u.ident = ident;
+            u.realhost = realhost;
+            u.gecos = gecos;
+        }
     }
 
     // Mirror the engine's declarative config operators, so services can enumerate
@@ -200,6 +213,21 @@ impl Network {
 
     pub fn host_of(&self, uid: &str) -> Option<&str> {
         self.users.get(uid).map(|u| u.host.as_str())
+    }
+
+    // A user's identity for extban / ban matching (nick, ident, hosts, ip, gecos,
+    // account). `None` if we don't know the uid.
+    pub fn ban_target<'a>(&'a self, uid: &str) -> Option<echo_api::BanTarget<'a>> {
+        let u = self.users.get(uid)?;
+        Some(echo_api::BanTarget {
+            nick: &u.nick,
+            ident: &u.ident,
+            host: &u.host,
+            realhost: &u.realhost,
+            ip: &u.ip,
+            gecos: &u.gecos,
+            account: self.accounts.get(uid).map(String::as_str),
+        })
     }
 
     // Every known user whose uid carries `sid` as its prefix — i.e. those behind
@@ -482,6 +510,9 @@ impl NetView for Network {
     }
     fn nick_of(&self, uid: &str) -> Option<&str> {
         Network::nick_of(self, uid)
+    }
+    fn ban_target(&self, uid: &str) -> Option<echo_api::BanTarget<'_>> {
+        Network::ban_target(self, uid)
     }
     fn host_of(&self, uid: &str) -> Option<&str> {
         Network::host_of(self, uid)

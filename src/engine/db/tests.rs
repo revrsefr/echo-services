@@ -81,12 +81,18 @@
         let mut db = Db::open(&tmp("akick"), "N1");
         db.register_channel("#c", "founder").unwrap();
         db.akick_add("#c", "*!*@bad.host", "spam").unwrap();
+        // Also an account extban (the evasion-proof kind) and a realname extban.
+        db.akick_add("#c", "account:baddie", "gone").unwrap();
+        db.akick_add("#c", "realname:*viagra*", "spam").unwrap();
         let info = db.channel("#c").unwrap();
-        assert!(info.akick_match("evil!~e@bad.host").is_some());
-        assert!(info.akick_match("good!~g@ok.host").is_none());
+        let t = |nick, ident, host, gecos, account| echo_api::BanTarget { nick, ident, host, realhost: host, ip: "0.0.0.0", gecos, account };
+        assert!(info.akick_match(&t("evil", "~e", "bad.host", "", None)).is_some(), "host mask");
+        assert!(info.akick_match(&t("good", "~g", "ok.host", "", None)).is_none());
+        assert!(info.akick_match(&t("x", "y", "ok.host", "", Some("baddie"))).is_some(), "account extban");
+        assert!(info.akick_match(&t("x", "y", "ok.host", "cheap VIAGRA now", None)).is_some(), "realname extban");
+        assert!(info.akick_match(&t("x", "y", "ok.host", "hello", None)).is_none());
         assert!(db.akick_del("#c", "*!*@bad.host").unwrap());
         assert!(!db.akick_del("#c", "*!*@bad.host").unwrap());
-        assert!(db.channel("#c").unwrap().akick.is_empty());
     }
 
     // The auto-join list adds, updates a key in place, removes case-insensitively,
