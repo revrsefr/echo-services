@@ -1116,6 +1116,16 @@ impl Engine {
                 self.db.set_live_chanmodes(modes);
                 Vec::new()
             }
+            NetEvent::Casemapping { name } => {
+                // echo folds identifiers as ascii. Verify the ircd agrees, rather than
+                // assuming it silently — a mismatch would desync account/channel identity.
+                if name.eq_ignore_ascii_case("ascii") {
+                    tracing::info!(casemapping = %name, "ircd casemapping matches echo (ascii)");
+                } else {
+                    tracing::warn!(casemapping = %name, "ircd CASEMAPPING is not ascii — echo compares identifiers as ascii, so nicks/channels differing only by rfc1459-equivalent characters may be mismatched; keep the ircd on CASEMAPPING=ascii");
+                }
+                Vec::new()
+            }
             NetEvent::UserConnect { uid, nick, host, ip } => {
                 let arriving_nick = nick.clone();
                 self.network.user_connect(uid.clone(), nick, host, ip.clone());

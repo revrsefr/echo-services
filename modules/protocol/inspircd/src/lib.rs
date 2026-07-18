@@ -330,6 +330,13 @@ impl Protocol for InspIrcd {
                         vec![NetEvent::ChanModeRegistry { modes }]
                     }
                 }
+                // CAPAB CAPABILITIES :K=V … — a KV list; we care about CASEMAPPING.
+                Some(s) if s.eq_ignore_ascii_case("CAPABILITIES") => {
+                    match rest.split_whitespace().find_map(|t| t.trim_start_matches(':').strip_prefix("CASEMAPPING=")) {
+                        Some(name) => vec![NetEvent::Casemapping { name: name.to_string() }],
+                        None => vec![],
+                    }
+                }
                 _ => vec![],
             },
             _ => vec![NetEvent::Unknown { line: line.to_string() }],
@@ -654,6 +661,15 @@ mod tests {
         assert_eq!(entries[1], echo_api::ExtbanCap { name: "mute".into(), letter: Some('m'), acting: true });
         assert_eq!(entries[2], echo_api::ExtbanCap { name: "noletter".into(), letter: None, acting: false });
         assert!(p.parse("CAPAB CHANMODES :ban=b").is_empty(), "other CAPAB subcommands ignored");
+    }
+
+    // CAPAB CAPABILITIES surfaces CASEMAPPING (echo verifies it's ascii).
+    #[test]
+    fn parses_capab_casemapping() {
+        let mut p = proto();
+        assert!(matches!(p.parse("CAPAB CAPABILITIES :NICKMAX=31 CASEMAPPING=ascii CHANMAX=65").as_slice(),
+            [NetEvent::Casemapping { name }] if name == "ascii"));
+        assert!(p.parse("CAPAB CAPABILITIES :NICKMAX=31 CHANMAX=65").is_empty(), "no CASEMAPPING token -> nothing");
     }
 
     // CAPAB CHANMODES surfaces mode arity + prefix modes, including a custom prefix

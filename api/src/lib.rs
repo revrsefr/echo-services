@@ -69,6 +69,9 @@ pub enum NetEvent {
     // The ircd's live channel-mode set from its `CAPAB CHANMODES` burst — mode
     // letters, param arity, and prefix (status) modes incl custom ones like `Y`.
     ChanModeRegistry { modes: Vec<ChanModeCap> },
+    // The ircd's `CASEMAPPING` from its `CAPAB CAPABILITIES` burst. echo folds
+    // identifiers as ascii, so it verifies this matches and warns otherwise.
+    Casemapping { name: String },
     // A server split away (SQUIT). `server` is its SID; every user behind it — and
     // behind any server in its subtree — is gone, since a split is signalled once
     // rather than as a QUIT per user.
