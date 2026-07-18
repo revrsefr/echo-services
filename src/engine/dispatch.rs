@@ -71,19 +71,26 @@ impl Engine {
         out
     }
 
-    // Rewrite each service→user NOTICE to a server-notice ("*** NickServ: …",
-    // sourced from our server) for users who opted into SET SNOTICE. Everyone
-    // else's reply is left as a normal notice from the pseudoclient. Per target,
-    // so notices to channels or to users who didn't opt in are untouched.
+    // Rewrite each service→user NOTICE to a server-notice (sourced from our
+    // server) for users who opted into SET SNOTICE; everyone else keeps a normal
+    // notice from the pseudoclient. A multi-line reply names the service once, on
+    // its first line ("*** NickServ: …"), and the rest are plain "*** …"
+    // continuations — so a long HELP isn't the service name on every row. Per
+    // target, so notices to channels or to users who didn't opt in are untouched.
     fn apply_msg_style(&self, out: &mut [NetAction]) {
+        let mut named: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
         for a in out.iter_mut() {
             let NetAction::Notice { from, to, text } = a else { continue };
             let Some(account) = self.network.account_of(to) else { continue };
             if !self.db.account_wants_snotice(account) {
                 continue;
             }
-            let Some(nick) = self.services.iter().find(|s| s.uid() == *from).map(|s| s.nick()) else { continue };
-            *text = format!("*** {nick}: {text}");
+            let Some(nick) = self.services.iter().find(|s| s.uid() == *from).map(|s| s.nick().to_string()) else { continue };
+            *text = if named.insert((from.clone(), to.clone())) {
+                format!("*** {nick}: {text}")
+            } else {
+                format!("*** {text}")
+            };
             *from = self.sid.clone();
         }
     }
