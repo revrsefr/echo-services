@@ -45,6 +45,42 @@ impl Db {
             .collect()
     }
 
+    /// Add (or refresh) a spam filter. Returns whether it was newly added.
+    pub fn filter_add(&mut self, pattern: &str, action: &str, flags: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
+        // One timestamp for the event and the in-memory record (see akill_add).
+        let ts = now();
+        let same = |f: &Filter| f.pattern.eq_ignore_ascii_case(pattern);
+        let fresh = !self.net.filters.iter().any(|f| same(f) && f.expires.is_none_or(|e| e > ts));
+        self.log
+            .append(Event::FilterAdded { pattern: pattern.to_string(), action: action.to_string(), flags: flags.to_string(), reason: reason.to_string(), setter: setter.to_string(), ts, expires })
+            .map_err(|_| RegError::Internal)?;
+        self.net.filters.retain(|f| !same(f));
+        self.net.filters.push(Filter { pattern: pattern.to_string(), action: action.to_string(), flags: flags.to_string(), reason: reason.to_string(), setter: setter.to_string(), ts, expires });
+        Ok(fresh)
+    }
+
+    /// Remove a spam filter by pattern. Returns whether a live one existed.
+    pub fn filter_del(&mut self, pattern: &str) -> Result<bool, RegError> {
+        let same = |f: &Filter| f.pattern.eq_ignore_ascii_case(pattern);
+        let existed = self.net.filters.iter().any(|f| same(f) && f.expires.is_none_or(|e| e > now()));
+        if !existed {
+            return Ok(false);
+        }
+        self.log.append(Event::FilterRemoved { pattern: pattern.to_string() }).map_err(|_| RegError::Internal)?;
+        self.net.filters.retain(|f| !same(f));
+        Ok(true)
+    }
+
+    /// The live spam filters (expired ones hidden lazily), oldest first.
+    pub fn filters(&self) -> Vec<echo_api::FilterView> {
+        let now = now();
+        self.net.filters
+            .iter()
+            .filter(|f| f.expires.is_none_or(|e| e > now))
+            .map(|f| echo_api::FilterView { pattern: f.pattern.clone(), action: f.action.clone(), flags: f.flags.clone(), reason: f.reason.clone(), setter: f.setter.clone(), ts: f.ts, expires: f.expires })
+            .collect()
+    }
+
     /// Add a registration ban of `kind` ("NICK"/"CHAN"/"EMAIL") for `mask`.
     /// Returns whether it was new.
     pub fn forbid_add(&mut self, kind: ForbidKind, mask: &str, setter: &str, reason: &str) -> Result<bool, RegError> {

@@ -230,6 +230,15 @@ impl Store for Db {
     fn akills(&self) -> Vec<AkillView> {
         Db::akills(self)
     }
+    fn filter_add(&mut self, pattern: &str, action: &str, flags: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
+        Db::filter_add(self, pattern, action, flags, setter, reason, expires)
+    }
+    fn filter_del(&mut self, pattern: &str) -> Result<bool, RegError> {
+        Db::filter_del(self, pattern)
+    }
+    fn filters(&self) -> Vec<echo_api::FilterView> {
+        Db::filters(self)
+    }
     fn forbid_add(&mut self, kind: ForbidKind, mask: &str, setter: &str, reason: &str) -> Result<bool, RegError> {
         Db::forbid_add(self, kind, mask, setter, reason)
     }

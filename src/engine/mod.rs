@@ -1057,6 +1057,12 @@ impl Engine {
             let duration = a.expires.map(|e| e.saturating_sub(now)).unwrap_or(0);
             out.push(NetAction::AddLine { kind: a.kind.wire().to_string(), mask: a.mask, setter: a.setter, duration, reason: a.reason });
         }
+        // Re-assert the spam filters so they survive an ircd restart (m_filter has
+        // no s2s delete, so echo is the durable source of truth for them).
+        for f in self.db.filters() {
+            let duration = f.expires.map(|e| e.saturating_sub(now)).unwrap_or(0);
+            out.push(NetAction::Metadata { target: "*".to_string(), key: "filter".to_string(), value: echo_api::encode_filter(&f.pattern, &f.action, &f.flags, duration, &f.reason) });
+        }
         // Re-introduce our juped servers over the fresh link.
         for (name, sid, reason) in self.db.jupes() {
             out.push(NetAction::JupeServer { name, sid, reason });
@@ -1657,6 +1663,8 @@ fn audit_summary(event: &db::Event) -> Option<String> {
             format!("set a {} on \x02{mask}\x02{temp} ({reason})", ban_kind_label(kind))
         }
         AkillRemoved { kind, mask } => format!("lifted the {} on \x02{mask}\x02", ban_kind_label(kind)),
+        FilterAdded { pattern, action, reason, .. } => format!("added a \x02{action}\x02 spam filter on \x02{pattern}\x02 ({reason})"),
+        FilterRemoved { pattern } => format!("removed the spam filter on \x02{pattern}\x02"),
         ForbidAdded { kind, mask, reason, .. } => format!("forbade {} \x02{mask}\x02 ({reason})", kind.to_ascii_lowercase()),
         ForbidRemoved { kind, mask } => format!("un-forbade {} \x02{mask}\x02", kind.to_ascii_lowercase()),
         JupeAdded { name, reason, .. } => format!("juped server \x02{name}\x02 ({reason})"),

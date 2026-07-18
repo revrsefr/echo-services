@@ -177,6 +177,8 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::ChannelNoExpire { .. }
         | Event::AkillAdded { .. }
         | Event::AkillRemoved { .. }
+        | Event::FilterAdded { .. }
+        | Event::FilterRemoved { .. }
         | Event::ForbidAdded { .. }
         | Event::ForbidRemoved { .. }
         | Event::JupeAdded { .. }

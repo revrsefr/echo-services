@@ -581,6 +581,13 @@ impl ServiceCtx {
         self.actions.push(NetAction::DelLine { kind: kind.wire().to_string(), mask: mask.to_string() });
     }
 
+    // Push a spam filter to the ircd's m_filter via a broadcast `METADATA * filter`.
+    // `value` is the encoded filter (see `encode_filter`). m_filter accepts adds
+    // this way; there is no matching metadata delete.
+    pub fn filter_push(&mut self, value: String) {
+        self.actions.push(NetAction::Metadata { target: "*".to_string(), key: "filter".to_string(), value });
+    }
+
     // Disconnect a user, sourced from pseudoclient `from`.
     pub fn kill(&mut self, from: &str, uid: &str, reason: &str) {
         self.actions.push(NetAction::KillUser { from: from.to_string(), uid: uid.to_string(), reason: reason.to_string() });
@@ -1208,6 +1215,36 @@ pub struct AkillView {
     pub expires: Option<u64>,
 }
 
+// A spam filter OperServ manages and pushes to the ircd's m_filter (SPAMFILTER).
+#[derive(Debug, Clone)]
+pub struct FilterView {
+    pub pattern: String,
+    pub action: String,
+    pub flags: String,
+    pub reason: String,
+    pub setter: String,
+    pub ts: u64,
+    pub expires: Option<u64>,
+}
+
+// The filter actions InspIRCd's m_filter accepts (what happens on a match).
+pub const FILTER_ACTIONS: &[&str] = &["gline", "zline", "block", "silent", "kill", "shun", "warn", "none"];
+
+// Whether `action` is a filter action m_filter understands (case-insensitive).
+pub fn is_filter_action(action: &str) -> bool {
+    FILTER_ACTIONS.iter().any(|a| a.eq_ignore_ascii_case(action))
+}
+
+/// Encode a filter for InspIRCd m_filter's `METADATA * filter` value:
+/// `<freeform> <action> <flags> <duration> :<reason>`, spaces in the pattern
+/// escaped to `\x07` exactly as m_filter's own EncodeFilter does. `flags` empty
+/// becomes `-`; `duration` is seconds remaining (0 = permanent).
+pub fn encode_filter(pattern: &str, action: &str, flags: &str, duration: u64, reason: &str) -> String {
+    let freeform: String = pattern.chars().map(|c| if c == ' ' { '\x07' } else { c }).collect();
+    let flags = if flags.is_empty() { "-" } else { flags };
+    format!("{freeform} {} {flags} {duration} :{reason}", action.to_ascii_lowercase())
+}
+
 // A network-ban type OperServ manages, identified by the ircd's X-line token.
 // The wire (`NetAction::AddLine`), storage, and gossip stay the string token
 // (a transparent passthrough — the ircd knows more line types than we model);
@@ -1669,6 +1706,11 @@ pub trait Store {
     fn akill_add(&mut self, kind: XlineKind, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError>;
     fn akill_del(&mut self, kind: XlineKind, mask: &str) -> Result<bool, RegError>;
     fn akills(&self) -> Vec<AkillView>;
+    // Spam filters (OperServ SPAMFILTER, oper-only), persisted and re-asserted to
+    // the ircd at each burst. `filter_add` returns whether it was newly added.
+    fn filter_add(&mut self, pattern: &str, action: &str, flags: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError>;
+    fn filter_del(&mut self, pattern: &str) -> Result<bool, RegError>;
+    fn filters(&self) -> Vec<FilterView>;
     // Registration bans (OperServ FORBID).
     fn forbid_add(&mut self, kind: ForbidKind, mask: &str, setter: &str, reason: &str) -> Result<bool, RegError>;
     fn forbid_del(&mut self, kind: ForbidKind, mask: &str) -> Result<bool, RegError>;
@@ -2064,6 +2106,15 @@ mod tests {
         assert!(!ircd_enforced("account:bad"), "matchable extban: echo kicks");
         assert!(ircd_enforced("country:US"), "passive extban: ircd enforces");
         assert!(ircd_enforced("mute:*!*@x"), "extban echo's table lacks: ircd enforces");
+    }
+
+    #[test]
+    fn encode_filter_matches_m_filter_wire_form() {
+        // "<freeform> <action> <flags> <duration> :<reason>", spaces in the pattern
+        // escaped to \x07, action lowercased, empty flags -> "-".
+        assert_eq!(encode_filter("*viagra*", "GLINE", "*", 0, "spam"), "*viagra* gline * 0 :spam");
+        assert_eq!(encode_filter("buy now", "block", "", 3600, "ads"), "buy\x07now block - 3600 :ads");
+        assert!(is_filter_action("gline") && is_filter_action("Kill") && !is_filter_action("nonsense"));
     }
 
     #[test]

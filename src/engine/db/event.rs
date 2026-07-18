@@ -128,6 +128,11 @@ pub enum Event {
         kind: String,
         mask: String,
     },
+    // Spam filters (OperServ SPAMFILTER) pushed to the ircd's m_filter via
+    // broadcast METADATA. Global network policy; re-asserted at burst so they
+    // survive an ircd restart. Keyed by `pattern` (the filter's freeform match).
+    FilterAdded { pattern: String, action: String, flags: String, reason: String, setter: String, ts: u64, expires: Option<u64> },
+    FilterRemoved { pattern: String },
     // Registration bans (OperServ FORBID). Global network policy. `kind` is
     // "NICK", "CHAN", or "EMAIL".
     ForbidAdded { kind: String, mask: String, setter: String, reason: String, ts: u64 },
@@ -193,6 +198,8 @@ impl Event {
             | Event::AccountOperNoteSet { .. }
             | Event::AkillAdded { .. }
             | Event::AkillRemoved { .. }
+            | Event::FilterAdded { .. }
+            | Event::FilterRemoved { .. }
             | Event::ForbidAdded { .. }
             | Event::ForbidRemoved { .. }
             | Event::NewsAdded { .. }
@@ -614,6 +621,14 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         }
         Event::AkillRemoved { kind, mask } => {
             net.akills.retain(|a| !(a.kind == kind && a.mask.eq_ignore_ascii_case(&mask)));
+        }
+        Event::FilterAdded { pattern, action, flags, reason, setter, ts, expires } => {
+            // Keyed by pattern (case-insensitive): a re-add refreshes in place.
+            net.filters.retain(|f| !f.pattern.eq_ignore_ascii_case(&pattern));
+            net.filters.push(Filter { pattern, action, flags, reason, setter, ts, expires });
+        }
+        Event::FilterRemoved { pattern } => {
+            net.filters.retain(|f| !f.pattern.eq_ignore_ascii_case(&pattern));
         }
         Event::ForbidAdded { kind, mask, setter, reason, ts } => {
             net.forbids.retain(|f| !(f.kind == kind && f.mask.eq_ignore_ascii_case(&mask)));

@@ -190,6 +190,20 @@ pub struct Akill {
     pub expires: Option<u64>,
 }
 
+// A spam filter (OperServ SPAMFILTER), pushed to the ircd's m_filter. `expires`
+// is absolute unix seconds (None = permanent), like an Akill.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Filter {
+    pub pattern: String,
+    pub action: String,
+    pub flags: String,
+    pub reason: String,
+    pub setter: String,
+    pub ts: u64,
+    #[serde(default)]
+    pub expires: Option<u64>,
+}
+
 // A registration ban: an account name, channel, or email pattern that may not be
 // registered. `kind` is "NICK", "CHAN", or "EMAIL". Network-wide policy like an
 // AKILL, so it gossips and every node enforces it.
@@ -288,6 +302,7 @@ pub type ChanStats = Vec<(String, u64, Vec<(String, u64)>)>;
 #[derive(Debug, Clone, Default)]
 pub struct NetData {
     pub akills: Vec<Akill>,
+    pub filters: Vec<Filter>,
     pub forbids: Vec<Forbid>,
     pub news: Vec<News>,
     pub news_seq: u64,
@@ -1212,6 +1227,9 @@ impl Db {
         }
         for a in self.net.akills.iter().filter(|a| a.expires.is_none_or(|e| e > now)) {
             snapshot.push(Event::AkillAdded { kind: a.kind.clone(), mask: a.mask.clone(), setter: a.setter.clone(), reason: a.reason.clone(), ts: a.ts, expires: a.expires });
+        }
+        for f in self.net.filters.iter().filter(|f| f.expires.is_none_or(|e| e > now)) {
+            snapshot.push(Event::FilterAdded { pattern: f.pattern.clone(), action: f.action.clone(), flags: f.flags.clone(), reason: f.reason.clone(), setter: f.setter.clone(), ts: f.ts, expires: f.expires });
         }
         for n in &self.net.news {
             snapshot.push(Event::NewsAdded { id: n.id, kind: n.kind.clone(), text: n.text.clone(), setter: n.setter.clone(), ts: n.ts });
