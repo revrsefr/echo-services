@@ -106,6 +106,30 @@
         assert!(!db.akick_del("#c", "*!*@bad.host").unwrap());
     }
 
+    // LEVELS grants are additive (default = unchanged), tier-gated, and reversible.
+    #[test]
+    fn levels_grant_is_additive_and_tier_gated() {
+        let mut db = Db::open(tmp("levels"), "N1");
+        db.register_channel("#c", "founder").unwrap();
+        db.access_add("#c", "aop", "op").unwrap();
+        db.access_add("#c", "vop", "voice").unwrap();
+        // caps_of lives on the ChannelView the Store builds (levels are typed there).
+        let view = |db: &Db| echo_api::Store::channel(db, "#c").unwrap();
+        // Baseline: no LEVELS set → an AOP can op but can't manage the access list.
+        assert!(view(&db).levels.is_empty(), "no overrides by default");
+        assert!(view(&db).caps_of(Some("aop")).op);
+        assert!(!view(&db).caps_of(Some("aop")).access, "AOP lacks access mgmt by default");
+        // Grant ACCESS to AOP-and-above.
+        db.level_set("#c", "ACCESS", "AOP").unwrap();
+        assert!(view(&db).caps_of(Some("aop")).access, "AOP now manages the access list");
+        assert!(!view(&db).caps_of(Some("vop")).access, "VOP is below AOP — not granted");
+        assert!(view(&db).caps_of(Some("aop")).op, "existing caps untouched");
+        // Reset restores the default.
+        assert!(db.level_reset("#c", "ACCESS").unwrap());
+        assert!(!view(&db).caps_of(Some("aop")).access);
+        assert!(!db.level_reset("#c", "ACCESS").unwrap(), "already default");
+    }
+
     // The auto-join list adds, updates a key in place, removes case-insensitively,
     // and replays from the event log after a reopen.
     #[test]

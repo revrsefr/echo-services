@@ -1640,6 +1640,8 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         ChannelAccessDel { channel, account } => format!("removed \x02{account}\x02 from \x02{channel}\x02 access"),
         ChannelAkickAdd { channel, mask, reason } => format!("added akick \x02{mask}\x02 on \x02{channel}\x02 ({reason})"),
         ChannelAkickDel { channel, mask } => format!("removed akick \x02{mask}\x02 on \x02{channel}\x02"),
+        ChannelLevelSet { channel, cap, role } => format!("set level \x02{cap}\x02 to \x02{role}\x02 on \x02{channel}\x02"),
+        ChannelLevelReset { channel, cap } => format!("reset level \x02{cap}\x02 on \x02{channel}\x02"),
         ChannelSuspended { channel, reason, .. } => format!("suspended channel \x02{channel}\x02 ({reason})"),
         ChannelUnsuspended { channel } => format!("unsuspended channel \x02{channel}\x02"),
         ChannelBotAssigned { channel, bot } => format!("assigned bot \x02{bot}\x02 to \x02{channel}\x02"),

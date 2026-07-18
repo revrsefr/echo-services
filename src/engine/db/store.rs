@@ -575,6 +575,12 @@ impl Store for Db {
     fn akick_del(&mut self, channel: &str, mask: &str) -> Result<bool, ChanError> {
         Db::akick_del(self, channel, mask)
     }
+    fn level_set(&mut self, channel: &str, cap: &str, role: &str) -> Result<(), ChanError> {
+        Db::level_set(self, channel, cap, role)
+    }
+    fn level_reset(&mut self, channel: &str, cap: &str) -> Result<bool, ChanError> {
+        Db::level_reset(self, channel, cap)
+    }
 }
 
 fn channel_view(c: &ChannelInfo) -> ChannelView {
@@ -587,6 +593,7 @@ fn channel_view(c: &ChannelInfo) -> ChannelView {
         lock_params: c.lock_params.clone(),
         access: c.access.iter().map(|a| ChanAccessView { account: a.account.clone(), level: a.level.clone() }).collect(),
         akick: c.akick.iter().map(|k| ChanAkickView { mask: k.mask.clone(), reason: k.reason.clone() }).collect(),
+        levels: c.levels.iter().filter_map(|(cap, role)| Some((echo_api::LevelCap::parse(cap)?, echo_api::AccessRole::parse(role)?))).collect(),
         desc: c.desc.clone(),
         entrymsg: c.entrymsg.clone(),
         url: c.url.clone(),

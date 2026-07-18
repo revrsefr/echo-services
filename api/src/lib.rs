@@ -880,6 +880,32 @@ impl AccessRole {
         }
     }
 
+    /// Parse a tier word (SOP/AOP/HOP/VOP/FOUNDER) into a role, for LEVELS.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_uppercase().as_str() {
+            "SOP" => Some(Self::Sop),
+            "AOP" => Some(Self::Aop),
+            "HOP" => Some(Self::Hop),
+            "VOP" => Some(Self::Vop),
+            "FOUNDER" => Some(Self::Founder),
+            _ => None,
+        }
+    }
+
+    /// Ordering rank for "this tier and above" comparisons (Vop < Hop < Aop < Sop
+    /// < Founder). A `Custom` flag entry sits below the tiers, so tier-based LEVELS
+    /// grants don't apply to it — it keeps exactly the flags it was given.
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::Custom => 0,
+            Self::Vop => 1,
+            Self::Hop => 2,
+            Self::Aop => 3,
+            Self::Sop => 4,
+            Self::Founder => 5,
+        }
+    }
+
     /// The XOP command word this role is the exact tier of, if any. Founder and
     /// Custom entries belong to no XOP list.
     pub fn xop_word(self) -> Option<&'static str> {
@@ -890,6 +916,52 @@ impl AccessRole {
             Self::Vop => "VOP",
             _ => return None,
         })
+    }
+}
+
+/// A channel capability a founder can re-grant to a lower access tier with LEVELS.
+/// Each maps to a boolean `Caps` field that gates real commands (op-family / topic
+/// / invite / access-list management). LEVELS is additive: it only lowers the tier
+/// that holds a capability, never removes one, so it can't lock anyone out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LevelCap {
+    Op,     // op-family: OP/DEOP, AKICK, KICK, BAN, GETKEY, ENTRYMSG (via is_op)
+    Topic,  // TOPIC
+    Invite, // INVITE
+    Access, // ACCESS / FLAGS / XOP list management
+}
+
+impl LevelCap {
+    pub const ALL: [LevelCap; 4] = [Self::Op, Self::Topic, Self::Invite, Self::Access];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Op => "OP",
+            Self::Topic => "TOPIC",
+            Self::Invite => "INVITE",
+            Self::Access => "ACCESS",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.name().eq_ignore_ascii_case(s))
+    }
+
+    /// The tier that holds this capability by default (from the XOP presets).
+    pub fn default_role(self) -> AccessRole {
+        match self {
+            Self::Access => AccessRole::Sop,
+            _ => AccessRole::Aop,
+        }
+    }
+
+    fn grant(self, c: &mut Caps) {
+        match self {
+            Self::Op => c.op = true,
+            Self::Topic => c.topic = true,
+            Self::Invite => c.invite = true,
+            Self::Access => c.access = true,
+        }
     }
 }
 
@@ -1432,6 +1504,9 @@ pub struct ChannelView {
     pub lock_params: Vec<(char, String)>,
     pub access: Vec<ChanAccessView>,
     pub akick: Vec<ChanAkickView>,
+    // LEVELS overrides: a capability granted to this access tier and above (in
+    // addition to the tier's defaults). Empty = the standard XOP capabilities.
+    pub levels: Vec<(LevelCap, AccessRole)>,
     pub desc: String,
     pub entrymsg: String,
     // Channel homepage URL, shown in INFO (empty = none).
@@ -1506,10 +1581,21 @@ impl ChannelView {
         if self.founder.eq_ignore_ascii_case(acc) {
             return level_caps("founder");
         }
-        self.access
-            .iter()
-            .find(|a| a.account.eq_ignore_ascii_case(acc))
-            .map_or(Caps::default(), |a| level_caps(&a.level))
+        let Some(entry) = self.access.iter().find(|a| a.account.eq_ignore_ascii_case(acc)) else {
+            return Caps::default();
+        };
+        let mut caps = level_caps(&entry.level);
+        // Layer LEVELS grants on top: a capability the founder granted to this tier
+        // (or a lower one) is added. Purely additive, so it never removes a cap.
+        if !self.levels.is_empty() {
+            let role = access_role(&entry.level);
+            for (cap, min_role) in &self.levels {
+                if role.rank() >= min_role.rank() {
+                    cap.grant(&mut caps);
+                }
+            }
+        }
+        caps
     }
 
     // The status mode this account gets on join (+o / +h / +v), or None.
@@ -1853,6 +1939,9 @@ pub trait Store {
     fn access_del(&mut self, channel: &str, account: &str) -> Result<bool, ChanError>;
     fn akick_add(&mut self, channel: &str, mask: &str, reason: &str) -> Result<(), ChanError>;
     fn akick_del(&mut self, channel: &str, mask: &str) -> Result<bool, ChanError>;
+    // LEVELS: grant a capability to an access tier (and above), or reset to default.
+    fn level_set(&mut self, channel: &str, cap: &str, role: &str) -> Result<(), ChanError>;
+    fn level_reset(&mut self, channel: &str, cap: &str) -> Result<bool, ChanError>;
 }
 
 // The live network state a service reads (never mutates directly; changes go out

@@ -150,6 +150,8 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::ChannelAccessDel { .. }
         | Event::ChannelAkickAdd { .. }
         | Event::ChannelAkickDel { .. }
+        | Event::ChannelLevelSet { .. }
+        | Event::ChannelLevelReset { .. }
         | Event::ChannelEntryMsgSet { .. }
         | Event::ChannelUrlSet { .. }
         | Event::ChannelEmailSet { .. }

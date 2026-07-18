@@ -11,7 +11,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), lock_params: Vec::new(), access: Vec::new(), akick: Vec::new(), successor: None, desc: String::new(), entrymsg: String::new(), url: String::new(), email: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), lock_params: Vec::new(), access: Vec::new(), akick: Vec::new(), levels: Vec::new(), successor: None, desc: String::new(), entrymsg: String::new(), url: String::new(), email: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
         Ok(())
     }
 
@@ -109,6 +109,40 @@ impl Db {
         c.akick.retain(|a| !a.mask.eq_ignore_ascii_case(mask));
         c.akick.push(ChanAkick { mask: mask.to_string(), reason: reason.to_string() });
         Ok(())
+    }
+
+    /// Grant a LEVELS capability to `role` (and above) on `channel`. `cap`/`role`
+    /// are the canonical names (echo_api::LevelCap / AccessRole), validated by the
+    /// command layer before this is called.
+    pub fn level_set(&mut self, channel: &str, cap: &str, role: &str) -> Result<(), ChanError> {
+        let k = key(channel);
+        if !self.channels.contains_key(&k) {
+            return Err(ChanError::NoChannel);
+        }
+        self.log
+            .append(Event::ChannelLevelSet { channel: channel.to_string(), cap: cap.to_string(), role: role.to_string() })
+            .map_err(|_| ChanError::Internal)?;
+        let c = self.channels.get_mut(&k).unwrap();
+        c.levels.retain(|(cp, _)| !cp.eq_ignore_ascii_case(cap));
+        c.levels.push((cap.to_string(), role.to_string()));
+        Ok(())
+    }
+
+    /// Reset a LEVELS capability on `channel` to its tier default. Ok(false) if it
+    /// had no override.
+    pub fn level_reset(&mut self, channel: &str, cap: &str) -> Result<bool, ChanError> {
+        let k = key(channel);
+        let Some(c) = self.channels.get(&k) else {
+            return Err(ChanError::NoChannel);
+        };
+        if !c.levels.iter().any(|(cp, _)| cp.eq_ignore_ascii_case(cap)) {
+            return Ok(false);
+        }
+        self.log
+            .append(Event::ChannelLevelReset { channel: channel.to_string(), cap: cap.to_string() })
+            .map_err(|_| ChanError::Internal)?;
+        self.channels.get_mut(&k).unwrap().levels.retain(|(cp, _)| !cp.eq_ignore_ascii_case(cap));
+        Ok(true)
     }
 
     /// Remove auto-kick `mask` from `channel`. Ok(false) if not present.

@@ -23,6 +23,7 @@ mod topic;
 mod invite;
 #[path = "akick.rs"]
 mod akick;
+mod levels;
 #[path = "list.rs"]
 mod list;
 #[path = "status.rs"]
@@ -54,6 +55,7 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "SET", summary: "change founder or settings", detail: "Syntax: \x02SET <#channel> FOUNDER <account> | DESC <text> | URL [address] | EMAIL [address] | SUCCESSOR <account>|OFF | SIGNKICK|PRIVATE|PEACE|SECUREOPS|RESTRICTED|AUTOOP|KEEPTOPIC|TOPICLOCK {ON|OFF}\x02\nTransfers the founder or changes a channel setting." },
     HelpEntry { cmd: "ACCESS", summary: "manage the access list", detail: "Syntax: \x02ACCESS <#channel> LIST | ADD <account|!group> <sop|op|halfop|voice> | DEL <account|!group>\x02\nManages the channel access list. The target may be a GroupServ \x02!group\x02; each of its members holding the group's \x02c\x02 flag then inherits the access." },
     HelpEntry { cmd: "FLAGS", summary: "granular per-account flags", detail: "Syntax: \x02FLAGS <#channel> [account [+/-flags]]\x02\nViews or changes granular per-account channel flags." },
+    HelpEntry { cmd: "LEVELS", summary: "tune which tier holds each capability", detail: "Syntax: \x02LEVELS <#channel> [SET <capability> <tier> | RESET <capability>]\x02\nGrants a channel capability (\x02OP\x02, \x02TOPIC\x02, \x02INVITE\x02, \x02ACCESS\x02) to an access tier (\x02VOP\x02/\x02HOP\x02/\x02AOP\x02/\x02SOP\x02) and above, e.g. let halfops manage AKICK. Additive — it never removes access. Founder only." },
     HelpEntry { cmd: "SOP/AOP/HOP/VOP", summary: "tiered access shortcuts", detail: "Syntax: \x02SOP|AOP|HOP|VOP <#channel> ADD <account> | DEL <account> | LIST\x02\nTiered shortcuts over ACCESS: SOP grants op plus access-list management, AOP grants op, HOP grants halfop, VOP grants voice." },
     HelpEntry { cmd: "STATUS", summary: "show a user's access", detail: "Syntax: \x02STATUS <#channel> [nick]\x02\nShows a user's access level on a channel." },
     HelpEntry { cmd: "OP/DEOP/VOICE/DEVOICE", summary: "give or take op/voice", detail: "Syntax: \x02OP|DEOP|VOICE|DEVOICE <#channel> [nick]\x02\nGives or takes channel op or voice." },
@@ -285,6 +287,7 @@ impl Service for ChanServ {
             Some("TOPIC") => topic::handle(me, from, args, ctx, db),
             Some("INVITE") => invite::handle(me, from, args, ctx, net, db),
             Some("AKICK") => akick::handle(me, from, args, ctx, db),
+            Some("LEVELS") => levels::handle(me, from, args, ctx, db),
             Some("STATUS") => status::handle(me, from, args, ctx, net, db),
             Some("SUSPEND") => suspend::handle(me, from, args, ctx, net, db, true),
             Some("UNSUSPEND") => suspend::handle(me, from, args, ctx, net, db, false),

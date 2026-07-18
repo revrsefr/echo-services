@@ -44,6 +44,9 @@ pub enum Event {
     ChannelAccessDel { channel: String, account: String },
     ChannelAkickAdd { channel: String, mask: String, reason: String },
     ChannelAkickDel { channel: String, mask: String },
+    // LEVELS: grant `cap` to access tier `role` (and above), or reset it to default.
+    ChannelLevelSet { channel: String, cap: String, role: String },
+    ChannelLevelReset { channel: String, cap: String },
     ChannelFounderSet { channel: String, founder: String },
     ChannelSuccessorSet { channel: String, successor: Option<String> },
     ChannelDescSet { channel: String, desc: String },
@@ -226,6 +229,8 @@ impl Event {
             | Event::ChannelAccessDel { .. }
             | Event::ChannelAkickAdd { .. }
             | Event::ChannelAkickDel { .. }
+            | Event::ChannelLevelSet { .. }
+            | Event::ChannelLevelReset { .. }
             | Event::ChannelFounderSet { .. }
             | Event::ChannelSuccessorSet { .. }
             | Event::ChannelDescSet { .. }
@@ -448,7 +453,7 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
             grouped.remove(&key(&nick));
         }
         Event::ChannelRegistered { name, founder, ts } => {
-            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), lock_params: Vec::new(), access: Vec::new(), akick: Vec::new(), successor: None, desc: String::new(), entrymsg: String::new(), url: String::new(), email: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
+            channels.insert(key(&name), ChannelInfo { name, founder, ts, lock_on: String::new(), lock_off: String::new(), lock_params: Vec::new(), access: Vec::new(), akick: Vec::new(), levels: Vec::new(), successor: None, desc: String::new(), entrymsg: String::new(), url: String::new(), email: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
@@ -480,6 +485,17 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         Event::ChannelAkickDel { channel, mask } => {
             if let Some(c) = channels.get_mut(&key(&channel)) {
                 c.akick.retain(|k| !k.mask.eq_ignore_ascii_case(&mask));
+            }
+        }
+        Event::ChannelLevelSet { channel, cap, role } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.levels.retain(|(cp, _)| !cp.eq_ignore_ascii_case(&cap));
+                c.levels.push((cap, role));
+            }
+        }
+        Event::ChannelLevelReset { channel, cap } => {
+            if let Some(c) = channels.get_mut(&key(&channel)) {
+                c.levels.retain(|(cp, _)| !cp.eq_ignore_ascii_case(&cap));
             }
         }
         Event::ChannelFounderSet { channel, founder } => {

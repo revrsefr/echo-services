@@ -439,6 +439,10 @@ pub struct ChannelInfo {
     pub access: Vec<ChanAccess>,
     #[serde(default)]
     pub akick: Vec<ChanAkick>,
+    // LEVELS overrides as (capability, tier) name pairs — a capability granted to
+    // that access tier and above. Strings at the persistence seam; typed in the view.
+    #[serde(default)]
+    pub levels: Vec<(String, String)>,
     // Account that inherits the channel if the founder's account is dropped or
     // expires; None means the channel is released instead.
     #[serde(default)]
