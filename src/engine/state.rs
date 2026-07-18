@@ -25,6 +25,9 @@ pub struct Network {
     servers: HashMap<String, String>,
     // SID -> server name, for the `server` extban. Rebuilt each link.
     server_names: HashMap<String, String>,
+    // Module names the ircd advertised in its CAPAB burst. Rebuilt each link, used
+    // to verify echo's dependencies at CAPAB END.
+    ircd_modules: std::collections::HashSet<String>,
     // Shared, namespaced stat counters any service contributes to (persisted via
     // StatsSet). Read by StatServ and the gRPC Stats API.
     stats: BTreeMap<String, u64>,
@@ -161,6 +164,21 @@ impl Network {
         self.server_names.insert(sid.to_string(), name);
     }
 
+    // Accumulate ircd module names from a CAPAB MODULES/MODSUPPORT line.
+    pub fn learn_modules(&mut self, names: Vec<String>) {
+        self.ircd_modules.extend(names);
+    }
+
+    // Whether the ircd advertised module `name`. Empty set (never received) reads
+    // as unknown → callers should skip the dependency check.
+    pub fn has_module(&self, name: &str) -> bool {
+        self.ircd_modules.contains(name)
+    }
+
+    pub fn module_count(&self) -> usize {
+        self.ircd_modules.len()
+    }
+
     // Mirror the engine's declarative config operators, so services can enumerate
     // staff. Called whenever the config oper set changes.
     pub fn set_config_opers(&mut self, accounts: Vec<String>) {
@@ -292,6 +310,7 @@ impl Network {
     pub fn clear_servers(&mut self) {
         self.servers.clear();
         self.server_names.clear();
+        self.ircd_modules.clear();
     }
 
     pub fn user_nick_change(&mut self, uid: &str, nick: String) {

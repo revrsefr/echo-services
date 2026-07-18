@@ -337,6 +337,17 @@ impl Protocol for InspIrcd {
                         None => vec![],
                     }
                 }
+                // CAPAB MODULES/MODSUPPORT :mod mod=data … — the ircd's loaded modules,
+                // which echo verifies its dependencies against.
+                Some(s) if s.eq_ignore_ascii_case("MODULES") || s.eq_ignore_ascii_case("MODSUPPORT") => {
+                    let modules: Vec<_> = trailing(rest).split_whitespace().map(module_name).collect();
+                    if modules.is_empty() {
+                        vec![]
+                    } else {
+                        vec![NetEvent::ModulesAvailable { modules }]
+                    }
+                }
+                Some(s) if s.eq_ignore_ascii_case("END") => vec![NetEvent::CapabEnd],
                 _ => vec![],
             },
             _ => vec![NetEvent::Unknown { line: line.to_string() }],
@@ -574,6 +585,14 @@ fn parse_extban_cap(token: &str) -> Option<echo_api::ExtbanCap> {
     (!name.is_empty()).then(|| echo_api::ExtbanCap { name: name.to_string(), letter, acting })
 }
 
+// Normalize a `CAPAB MODULES` token (`m_foo.so=data` / `foo=data` / `foo`) to the
+// bare module name, matching the ircd's own naming.
+fn module_name(token: &str) -> String {
+    let name = token.split_once('=').map_or(token, |(n, _)| n);
+    let name = name.strip_prefix("m_").unwrap_or(name);
+    name.strip_suffix(".so").unwrap_or(name).to_string()
+}
+
 // Parse one `CAPAB CHANMODES` token into a ChanModeCap:
 //   list:ban=b  param:key=k  param-set:limit=l  simple:moderated=m
 //   prefix:<rank>:op=@o   (value is <symbol><letter>)
@@ -661,6 +680,19 @@ mod tests {
         assert_eq!(entries[1], echo_api::ExtbanCap { name: "mute".into(), letter: Some('m'), acting: true });
         assert_eq!(entries[2], echo_api::ExtbanCap { name: "noletter".into(), letter: None, acting: false });
         assert!(p.parse("CAPAB CHANMODES :ban=b").is_empty(), "other CAPAB subcommands ignored");
+    }
+
+    // CAPAB MODULES/MODSUPPORT surface normalized module names; CAPAB END triggers
+    // the dependency check. Names are stripped of m_/.so/=data.
+    #[test]
+    fn parses_capab_modules_and_end() {
+        let mut p = proto();
+        let ev = p.parse("CAPAB MODULES :m_account.so=1.0 cban chghost=2 ircv3_ctctags");
+        let [NetEvent::ModulesAvailable { modules }] = ev.as_slice() else { panic!("{ev:?}") };
+        assert_eq!(modules, &["account", "cban", "chghost", "ircv3_ctctags"]);
+        assert!(matches!(p.parse("CAPAB MODSUPPORT :rline services").as_slice(),
+            [NetEvent::ModulesAvailable { modules }] if modules == &["rline", "services"]));
+        assert!(matches!(p.parse("CAPAB END").as_slice(), [NetEvent::CapabEnd]));
     }
 
     // CAPAB CAPABILITIES surfaces CASEMAPPING (echo verifies it's ascii).

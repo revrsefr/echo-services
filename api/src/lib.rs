@@ -72,6 +72,11 @@ pub enum NetEvent {
     // The ircd's `CASEMAPPING` from its `CAPAB CAPABILITIES` burst. echo folds
     // identifiers as ascii, so it verifies this matches and warns otherwise.
     Casemapping { name: String },
+    // Module names the ircd advertises (`CAPAB MODULES` / `MODSUPPORT`), normalized
+    // (no `m_`/`.so`/`=data`). Accumulated to verify echo's dependencies.
+    ModulesAvailable { modules: Vec<String> },
+    // `CAPAB END` — the module lists are complete; verify dependencies now.
+    CapabEnd,
     // A server split away (SQUIT). `server` is its SID; every user behind it — and
     // behind any server in its subtree — is gone, since a split is signalled once
     // rather than as a QUIT per user.

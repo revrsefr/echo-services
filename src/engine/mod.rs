@@ -1116,6 +1116,14 @@ impl Engine {
                 self.db.set_live_chanmodes(modes);
                 Vec::new()
             }
+            NetEvent::ModulesAvailable { modules } => {
+                self.network.learn_modules(modules);
+                Vec::new()
+            }
+            NetEvent::CapabEnd => {
+                verify_ircd_dependencies(&self.network);
+                Vec::new()
+            }
             NetEvent::Casemapping { name } => {
                 // echo folds identifiers as ascii. Verify the ircd agrees, rather than
                 // assuming it silently — a mismatch would desync account/channel identity.
@@ -1616,6 +1624,39 @@ fn event_category(event: &db::Event) -> &'static str {
         | ChannelUnsuspended { .. } | ChannelBotAssigned { .. } | ChannelBotUnassigned { .. }
         | ChannelOperNoteSet { .. } => "CHAN",
         _ => "OPER",
+    }
+}
+
+// echo's ircd module dependencies: (module, critical?, the feature it enables).
+const IRCD_DEPS: &[(&str, bool, &str)] = &[
+    ("account", true, "account login tracking"),
+    ("services", true, "services-server privileges (SVS*, u-line)"),
+    ("rline", false, "regex realname bans (SNLINE)"),
+    ("chghost", false, "vhosts (HostServ)"),
+    ("chgident", false, "vidents (HostServ)"),
+    ("cban", false, "channel-name bans (CBAN)"),
+    ("ircv3_ctctags", false, "tag messages (GameServ)"),
+];
+
+// At CAPAB END, check the modules the ircd advertised against echo's dependencies,
+// so a missing one is a clear diagnostic at link rather than a silent malfunction.
+fn verify_ircd_dependencies(net: &Network) {
+    if net.module_count() == 0 {
+        return; // the ircd didn't advertise its modules — nothing to verify against
+    }
+    let mut missing = 0;
+    for &(module, critical, feature) in IRCD_DEPS {
+        if !net.has_module(module) {
+            missing += 1;
+            if critical {
+                tracing::error!(module, "REQUIRED ircd module not loaded — {feature} will not work");
+            } else {
+                tracing::warn!(module, "ircd module not loaded — {feature} is unavailable");
+            }
+        }
+    }
+    if missing == 0 {
+        tracing::info!(count = net.module_count(), "verified ircd module dependencies");
     }
 }
 
