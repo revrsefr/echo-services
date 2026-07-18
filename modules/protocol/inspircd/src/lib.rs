@@ -475,6 +475,11 @@ impl Protocol for InspIrcd {
             }
             NetAction::DelLine { kind, mask } => vec![self.sourced(format!("DELLINE {} {}", kind, mask))],
             NetAction::KillUser { from, uid, reason } => vec![format!(":{} KILL {} :{}", from, uid, reason)],
+            NetAction::Redact { from, target, msgid, reason } => vec![if reason.is_empty() {
+                format!(":{from} REDACT {target} {msgid}")
+            } else {
+                format!(":{from} REDACT {target} {msgid} :{reason}")
+            }],
             // Introduce a server behind us: :<our-sid> SERVER <name> <sid> :<desc>.
             NetAction::JupeServer { name, sid, reason } => {
                 vec![self.sourced(format!("SERVER {} {} :JUPED: {}", name, sid, reason))]
@@ -766,6 +771,14 @@ mod tests {
         assert_eq!(lines, vec![":42S ENCAP 0IR CHGHOST 0IRAAAAAB cool.example".to_string()]);
         let lines = proto().serialize(&NetAction::SetIdent { uid: "0IRAAAAAB".into(), ident: "cool".into() });
         assert_eq!(lines, vec![":42S ENCAP 0IR CHGIDENT 0IRAAAAAB cool".to_string()]);
+    }
+
+    #[test]
+    fn serializes_redact() {
+        let with = proto().serialize(&NetAction::Redact { from: "42SAAAAAA".into(), target: "#c".into(), msgid: "abc".into(), reason: "spam".into() });
+        assert_eq!(with, vec![":42SAAAAAA REDACT #c abc :spam".to_string()]);
+        let without = proto().serialize(&NetAction::Redact { from: "42SAAAAAA".into(), target: "alice".into(), msgid: "xyz".into(), reason: String::new() });
+        assert_eq!(without, vec![":42SAAAAAA REDACT alice xyz".to_string()], "no trailing when reason is empty");
     }
 
     #[test]

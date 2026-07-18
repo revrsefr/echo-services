@@ -8,6 +8,7 @@ use echo_api::{HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
 #[path = "xline.rs"]
 mod xline;
 mod spamfilter;
+mod redact;
 #[path = "forbid.rs"]
 mod forbid;
 #[path = "global.rs"]
@@ -78,6 +79,7 @@ impl Service for OperServ {
             Some(cmd) if cmd.eq_ignore_ascii_case("SHUN") => xline::SHUN.handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("CBAN") => xline::CBAN.handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("SPAMFILTER") => spamfilter::handle(me, from, args, ctx, db),
+            Some(cmd) if cmd.eq_ignore_ascii_case("REDACT") => redact::handle(me, from, args, ctx),
             Some(cmd) if cmd.eq_ignore_ascii_case("FORBID") => forbid::handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("GLOBAL") => global::handle(me, from, args, ctx),
             Some(cmd) if cmd.eq_ignore_ascii_case("KILL") => kill::handle(me, from, args, ctx, net),
@@ -112,6 +114,7 @@ const BLURB: &str = "OperServ holds the network operator tools. Every command is
 const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "AKILL", summary: "network-ban a user@host", detail: "Syntax: \x02AKILL ADD [+expiry] <user@host> <reason> | AKILL DEL <mask|number> | AKILL LIST [pattern]\x02\nA network-wide user@host ban." },
     HelpEntry { cmd: "SPAMFILTER", summary: "content spam filter (ircd m_filter)", detail: "Syntax: \x02SPAMFILTER ADD <action> [+expiry] <regex> <reason> | SPAMFILTER DEL <regex|number> | SPAMFILTER LIST [pattern]\x02\nMatches message content (a regular expression, e.g. \x02.*free.*bitcoin.*\x02) and acts on it. Actions: gline, zline, block, silent, kill, shun, warn, none. echo persists filters and re-applies them to the ircd at each link. Admin only." },
+    HelpEntry { cmd: "REDACT", summary: "delete a message by its msgid", detail: "Syntax: \x02REDACT <#channel|nick> <msgid> [reason]\x02\nDeletes a specific message (by its IRCv3 \x02msgid\x02, which your client shows) from everyone who received it. draft/message-redaction." },
     HelpEntry { cmd: "FORBID", summary: "ban a nick/chan/email from registration", detail: "Syntax: \x02FORBID ADD <NICK|CHAN|EMAIL> <mask> <reason> | FORBID DEL <NICK|CHAN|EMAIL> <mask> | FORBID LIST\x02\nStops a nick, channel, or email pattern from being registered." },
     HelpEntry { cmd: "SQLINE", summary: "ban a nick pattern", detail: "Syntax: \x02SQLINE ADD [+expiry] <nick> <reason> | SQLINE DEL <mask|number> | SQLINE LIST [pattern]\x02\nBans matching nicknames." },
     HelpEntry { cmd: "SNLINE", summary: "ban a realname pattern", detail: "Syntax: \x02SNLINE ADD [+expiry] <realname> <reason> | SNLINE DEL <mask|number> | SNLINE LIST [pattern]\x02\nBans matching real names." },

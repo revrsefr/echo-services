@@ -156,6 +156,9 @@ pub enum NetAction {
     DelLine { kind: String, mask: String },
     // Disconnect a user from the network, sourced from pseudoclient `from`.
     KillUser { from: String, uid: String, reason: String },
+    // Redact (delete) a message by its msgid, sourced from a pseudoclient. `target`
+    // is a channel or a uid; `reason` is optional (empty = none). draft/message-redaction.
+    Redact { from: String, target: String, msgid: String, reason: String },
     // Introduce a juped server (a fake server holding a name so the real one
     // can't link), sourced from our server. `sid` is its allocated server id.
     JupeServer { name: String, sid: String, reason: String },
@@ -615,6 +618,12 @@ impl ServiceCtx {
     // Lift a network ban previously set with `add_line`.
     pub fn del_line(&mut self, kind: XlineKind, mask: &str) {
         self.actions.push(NetAction::DelLine { kind: kind.wire().to_string(), mask: mask.to_string() });
+    }
+
+    // Redact (delete) a message by `msgid` in `target` (a channel or nick), sourced
+    // from pseudoclient `from`. `reason` may be empty. draft/message-redaction.
+    pub fn redact(&mut self, from: &str, target: &str, msgid: &str, reason: &str) {
+        self.actions.push(NetAction::Redact { from: from.to_string(), target: target.to_string(), msgid: msgid.to_string(), reason: reason.to_string() });
     }
 
     // Push a spam filter to the ircd's m_filter via a broadcast `METADATA * filter`.
