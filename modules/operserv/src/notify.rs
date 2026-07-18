@@ -2,7 +2,7 @@ use echo_api::{human_time, parse_duration, Priv, Sender, ServiceCtx, Store};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // The event letters a watch can carry, in help order.
-const ALL_FLAGS: &str = "cdjpntsS";
+const ALL_FLAGS: &str = "cdjkmnoptusS";
 
 // NOTIFY ADD +expiry <flags|*> <mask> <reason> | DEL <mask|number> |
 //        LIST [pattern] | VIEW [pattern] | CLEAR
@@ -158,5 +158,5 @@ fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-const FLAG_LEGEND: &str = "c=connect d=disconnect j=join p=part n=nick t=topic s=service-cmd S=SET";
+const FLAG_LEGEND: &str = "c=connect d=disconnect o=oper-up j=join p=part k=kick m=chan-mode t=topic n=nick u=user-mode s=service-cmd S=SET";
 const SYNTAX: &str = "Syntax: NOTIFY ADD +<expiry> <flags|*> <mask> <reason> | NOTIFY DEL <mask|number> | NOTIFY LIST [pattern] | NOTIFY VIEW [pattern] | NOTIFY CLEAR";

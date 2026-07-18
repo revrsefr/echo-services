@@ -36,21 +36,32 @@ pub enum NetEvent {
     // A user joined a channel (an FJOIN member or an IJOIN), for auto-op. `op` is
     // whether they hold channel-operator status at that point (an FJOIN prefix).
     Join { uid: String, channel: String, op: bool },
-    // A user left a channel (PART) or was removed (KICK), for membership tracking.
-    Part { uid: String, channel: String },
+    // A user left a channel (PART), for membership tracking. `reason` is the part
+    // message (may be empty).
+    Part { uid: String, channel: String, reason: String },
+    // A user was kicked from a channel: `by` is the kicker's uid, `reason` the kick
+    // message. Membership is dropped the same as a part.
+    Kicked { channel: String, uid: String, by: String, reason: String },
+    // A user's own modes changed (`:uid MODE uid <modes>`), e.g. going +i. Our own
+    // pseudo-clients are filtered out by the protocol layer.
+    UserMode { uid: String, modes: String },
+    // A user became a network operator (`OPERTYPE`). `oper_type` is the oper class
+    // WHOIS shows. Our own services opering themselves are filtered out.
+    OperUp { uid: String, oper_type: String },
     // A user's channel-operator status changed (FMODE +o/-o), for live op tracking.
     ChannelOp { channel: String, uid: String, op: bool },
     // A user's voice status changed (FMODE +v/-v, or a +v join prefix).
     ChannelVoice { channel: String, uid: String, voice: bool },
-    // A channel's modes changed (FMODE), for enforcing mode locks. Our own
-    // changes are filtered out by the protocol layer.
-    ChannelModeChange { channel: String, modes: String },
+    // A channel's modes changed (FMODE), for enforcing mode locks. `setter` is the
+    // source uid (empty for a server). Our own changes are filtered by the protocol.
+    ChannelModeChange { channel: String, modes: String, setter: String },
     // A channel's key (+k/-k) changed, tracked so GETKEY can report it.
     ChannelKey { channel: String, key: Option<String> },
     // A channel's topic changed (FTOPIC), for KEEPTOPIC / TOPICLOCK. `setter` is
     // the source uid; our own changes are filtered out by the protocol layer.
     TopicChange { channel: String, setter: String, topic: String },
-    Quit { uid: String },
+    // A user disconnected (QUIT). `reason` is the quit message (may be empty).
+    Quit { uid: String, reason: String },
     // A user was forcibly removed (KILL). Handled like a quit, except a killed
     // services bot is reintroduced rather than forgotten.
     UserKilled { uid: String },

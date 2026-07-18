@@ -414,6 +414,20 @@ impl Engine {
         self.feed("NOTIFY", format!("{who} {what}{detail}"))
     }
 
+    // Membership cleanup shared by PART and KICK: drop the user from the channel,
+    // forget their chatter, and re-add an assigned bot that was evicted (an op can't
+    // kick the channel's own bot). Any reconcile actions are returned.
+    fn member_left(&mut self, channel: &str, uid: &str) -> Vec<NetAction> {
+        self.network.channel_part(channel, uid);
+        self.forget_chatter(channel, uid);
+        if let Some(bot_lc) = self.bot_uids.iter().find_map(|(lc, u)| (u == uid).then(|| lc.clone())) {
+            if self.bot_channels.remove(&(bot_lc, channel.to_string())) {
+                return self.reconcile_bots();
+            }
+        }
+        Vec::new()
+    }
+
     // Inactivity-expiry thresholds (seconds); None leaves that kind never
     // expiring. `warn` is the lead time before expiry to email a warning (None =
     // no warning emails).
@@ -1266,12 +1280,13 @@ impl Engine {
                 }
             }
             // Enforce the mode lock: revert any change that broke it.
-            NetEvent::ChannelModeChange { channel, modes } => {
+            NetEvent::ChannelModeChange { channel, modes, setter } => {
+                let mut out: Vec<NetAction> = self.notify_line('m', &setter, Some(&channel), &format!("set mode {modes} on {channel}")).into_iter().collect();
                 let from = self.channel_mode_source(&channel);
-                match self.db.channel(&channel).and_then(|info| info.enforce(&modes)) {
-                    Some(revert) => vec![NetAction::ChannelMode { from, channel, modes: revert }],
-                    None => Vec::new(),
+                if let Some(revert) = self.db.channel(&channel).and_then(|info| info.enforce(&modes)) {
+                    out.push(NetAction::ChannelMode { from, channel, modes: revert });
                 }
+                out
             }
             // On join: record membership, enforce the auto-kick list, give access
             // members their status mode, and send the entry message.
@@ -1365,19 +1380,27 @@ impl Engine {
                 }
                 out
             }
-            NetEvent::Part { uid, channel } => {
+            NetEvent::Part { uid, channel, reason } => {
                 // Match before dropping membership so the identity is still resolvable.
-                let mut out: Vec<NetAction> = self.notify_line('p', &uid, Some(&channel), &format!("left {channel}")).into_iter().collect();
-                self.network.channel_part(&channel, &uid);
-                self.forget_chatter(&channel, &uid);
-                // A services bot kicked/parted from a channel it's still assigned
-                // to rejoins — an op can't evict it. Drop the stale membership so
-                // reconcile re-adds it.
-                if let Some(bot_lc) = self.bot_uids.iter().find_map(|(lc, u)| (u == &uid).then(|| lc.clone())) {
-                    if self.bot_channels.remove(&(bot_lc, channel.clone())) {
-                        out.extend(self.reconcile_bots());
-                    }
+                let what = if reason.is_empty() { format!("left {channel}") } else { format!("left {channel} ({reason})") };
+                let mut out: Vec<NetAction> = self.notify_line('p', &uid, Some(&channel), &what).into_iter().collect();
+                out.extend(self.member_left(&channel, &uid));
+                out
+            }
+            NetEvent::Kicked { channel, uid, by, reason } => {
+                // Two watches can fire: the victim and the kicker. Resolve nicks and
+                // match before the membership drop.
+                let bynick = self.network.nick_of(&by).unwrap_or(&by).to_string();
+                let victim = self.network.nick_of(&uid).unwrap_or(&uid).to_string();
+                let tail = if reason.is_empty() { String::new() } else { format!(" ({reason})") };
+                let mut out = Vec::new();
+                if let Some(l) = self.notify_line('k', &uid, Some(&channel), &format!("was kicked from {channel} by {bynick}{tail}")) {
+                    out.push(l);
                 }
+                if let Some(l) = self.notify_line('k', &by, Some(&channel), &format!("kicked {victim} from {channel}{tail}")) {
+                    out.push(l);
+                }
+                out.extend(self.member_left(&channel, &uid));
                 out
             }
             NetEvent::ChannelOp { channel, uid, op } => {
@@ -1422,11 +1445,19 @@ impl Engine {
                 out.extend(watch);
                 out
             }
-            NetEvent::Quit { uid } => {
+            NetEvent::Quit { uid, reason } => {
                 // Match before we forget them, so their identity is still resolvable.
-                let out: Vec<NetAction> = self.notify_line('d', &uid, None, "disconnected").into_iter().collect();
+                let what = if reason.is_empty() { "disconnected".to_string() } else { format!("disconnected ({reason})") };
+                let out: Vec<NetAction> = self.notify_line('d', &uid, None, &what).into_iter().collect();
                 self.forget_user(&uid);
                 out
+            }
+            NetEvent::UserMode { uid, modes } => {
+                self.notify_line('u', &uid, None, &format!("set user mode {modes}")).into_iter().collect()
+            }
+            NetEvent::OperUp { uid, oper_type } => {
+                let what = if oper_type.is_empty() { "opered up".to_string() } else { format!("opered up as \x02{oper_type}\x02") };
+                self.notify_line('o', &uid, None, &what).into_iter().collect()
             }
             NetEvent::UserKilled { uid } => {
                 // A killed service agent (NickServ, ChanServ, …) has a fixed uid;

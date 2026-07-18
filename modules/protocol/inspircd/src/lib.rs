@@ -191,7 +191,7 @@ impl Protocol for InspIrcd {
             // :<uid> PART <chan> [:reason] — a user leaving a channel.
             "PART" => match (source.as_deref(), tokens.next()) {
                 (Some(uid), Some(chan)) if chan.starts_with('#') => {
-                    vec![NetEvent::Part { uid: uid.to_string(), channel: chan.to_string() }]
+                    vec![NetEvent::Part { uid: uid.to_string(), channel: chan.to_string(), reason: trailing(rest) }]
                 }
                 _ => vec![],
             },
@@ -200,7 +200,7 @@ impl Protocol for InspIrcd {
                 let chan = tokens.next().unwrap_or("");
                 match tokens.next() {
                     Some(uid) if chan.starts_with('#') => {
-                        vec![NetEvent::Part { uid: uid.to_string(), channel: chan.to_string() }]
+                        vec![NetEvent::Kicked { channel: chan.to_string(), uid: uid.to_string(), by: source.unwrap_or_default(), reason: trailing(rest) }]
                     }
                     _ => vec![],
                 }
@@ -213,7 +213,7 @@ impl Protocol for InspIrcd {
                     // Our own uids (server SID + pseudoclients) share our SID prefix.
                     (Some(src), Some(chan), Some(modes)) if !src.starts_with(self.sid.as_str()) && chan.starts_with('#') => {
                         let params = a.get(3..).unwrap_or(&[]);
-                        let mut out = vec![NetEvent::ChannelModeChange { channel: chan.to_string(), modes: modes.to_string() }];
+                        let mut out = vec![NetEvent::ChannelModeChange { channel: chan.to_string(), modes: modes.to_string(), setter: src.to_string() }];
                         if let Some(key) = scan_key(modes, params) {
                             out.push(NetEvent::ChannelKey { channel: chan.to_string(), key });
                         }
@@ -228,6 +228,29 @@ impl Protocol for InspIrcd {
                     _ => vec![],
                 }
             }
+            // :<uid> MODE <target> <modes> — a user's own mode change (channel modes
+            // arrive as FMODE). Skip our own pseudo-clients and any channel target.
+            "MODE" => {
+                let a: Vec<&str> = tokens.collect();
+                match (source.as_deref(), a.first()) {
+                    (Some(src), Some(target)) if !src.starts_with(self.sid.as_str()) && !target.starts_with('#') => {
+                        let modes = a.get(1..).unwrap_or(&[]).join(" ");
+                        if modes.is_empty() {
+                            vec![]
+                        } else {
+                            vec![NetEvent::UserMode { uid: (*target).to_string(), modes }]
+                        }
+                    }
+                    _ => vec![],
+                }
+            }
+            // :<uid> OPERTYPE :<type> — a user opered up. Skip our own services.
+            "OPERTYPE" => match source.as_deref() {
+                Some(src) if !src.starts_with(self.sid.as_str()) => {
+                    vec![NetEvent::OperUp { uid: src.to_string(), oper_type: trailing(rest) }]
+                }
+                _ => vec![],
+            },
             // :<src> FTOPIC <chan> <chants> <topicts> [setby] :<topic> — a topic
             // change. Skip changes we made ourselves so enforcement can't loop.
             "FTOPIC" => {
@@ -264,7 +287,7 @@ impl Protocol for InspIrcd {
                     _ => vec![],
                 }
             }
-            "QUIT" => vec![NetEvent::Quit { uid: source.unwrap_or_default() }],
+            "QUIT" => vec![NetEvent::Quit { uid: source.unwrap_or_default(), reason: trailing(rest) }],
             // :<src> KILL <uid> :<reason> — a user forcibly removed. We forget
             // them (or reintroduce, if it was one of our bots).
             "KILL" => match tokens.next() {
@@ -835,7 +858,7 @@ mod tests {
     fn parses_fmode_and_filters_own() {
         let ev = proto().parse(":0IRAAAAAB FMODE #chan 1783845132 +m");
         assert!(
-            matches!(ev.as_slice(), [NetEvent::ChannelModeChange { channel, modes }] if channel == "#chan" && modes == "+m"),
+            matches!(ev.as_slice(), [NetEvent::ChannelModeChange { channel, modes, .. }] if channel == "#chan" && modes == "+m"),
             "{ev:?}"
         );
         let ev = proto().parse(":42S FMODE #chan 1783845132 -m");

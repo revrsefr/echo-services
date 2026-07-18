@@ -238,7 +238,7 @@
         let mut e = engine_with("quit", "foo", "sesame");
         start(&mut e, "ZZZ");
         assert!(e.sasl_sessions.contains_key("ZZZ"));
-        e.handle(NetEvent::Quit { uid: "ZZZ".into() });
+        e.handle(NetEvent::Quit { uid: "ZZZ".into(), reason: String::new() });
         assert!(!e.sasl_sessions.contains_key("ZZZ"), "quit should drop the exchange");
     }
 
@@ -1175,7 +1175,7 @@
         // During the uplink burst (not yet synced) nobody is enforced.
         let out = e.handle(NetEvent::UserConnect { uid: "000AAAAAZ".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
         assert!(!out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("registered"))), "no enforcement during burst: {out:?}");
-        e.handle(NetEvent::Quit { uid: "000AAAAAZ".into() });
+        e.handle(NetEvent::Quit { uid: "000AAAAAZ".into(), reason: String::new() });
         e.handle(NetEvent::EndBurst);
 
         // Live: an unidentified user lands on the registered nick and is prompted.
@@ -1209,7 +1209,7 @@
         let out = e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "SET KILL OFF".into() });
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("off"))), "KILL OFF confirmed: {out:?}");
         assert!(!e.db.account_wants_protect("alice"), "protection preference stored off");
-        e.handle(NetEvent::Quit { uid: "000AAAAAA".into() });
+        e.handle(NetEvent::Quit { uid: "000AAAAAA".into(), reason: String::new() });
 
         // An unidentified intruder takes the nick: no prompt, and no rename at grace.
         let out = e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
@@ -1221,12 +1221,12 @@
         assert!(rx.try_recv().is_err(), "no rename when KILL is off");
 
         // Turning it back on restores enforcement for the next arrival.
-        e.handle(NetEvent::Quit { uid: "000AAAAAB".into() });
+        e.handle(NetEvent::Quit { uid: "000AAAAAB".into(), reason: String::new() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAA".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
         e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "SET KILL ON".into() });
         assert!(e.db.account_wants_protect("alice"), "protection preference stored on");
-        e.handle(NetEvent::Quit { uid: "000AAAAAA".into() });
+        e.handle(NetEvent::Quit { uid: "000AAAAAA".into(), reason: String::new() });
         let out = e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("registered"))), "prompt returns when KILL back on: {out:?}");
     }
@@ -2095,7 +2095,7 @@
 
         // Default: the founder is auto-opped on join.
         assert!(opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false })), "auto-op on by default");
-        e.handle(NetEvent::Part { uid: "000AAAAAB".into(), channel: "#c".into() });
+        e.handle(NetEvent::Part { uid: "000AAAAAB".into(), channel: "#c".into(), reason: String::new() });
         // Turn AUTOOP off; now a join is not auto-opped.
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "SET #c AUTOOP OFF".into() });
         assert!(!opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false })), "no auto-op when AUTOOP is off");
@@ -2128,7 +2128,7 @@
 
         // Default: founder is auto-opped (channel AUTOOP on, account AUTOOP on).
         assert!(opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false })), "auto-op on by default");
-        e.handle(NetEvent::Part { uid: "000AAAAAB".into(), channel: "#c".into() });
+        e.handle(NetEvent::Part { uid: "000AAAAAB".into(), channel: "#c".into(), reason: String::new() });
 
         // Account opts out via NickServ; now no auto-op despite channel allowing it.
         assert!(notice(&ns(&mut e, "SET AUTOOP OFF"), "no longer be auto-opped"), "pref set off");
@@ -2136,7 +2136,7 @@
         assert!(!opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false })), "no auto-op with account AUTOOP off");
 
         // Turn it back on: auto-op resumes.
-        e.handle(NetEvent::Part { uid: "000AAAAAB".into(), channel: "#c".into() });
+        e.handle(NetEvent::Part { uid: "000AAAAAB".into(), channel: "#c".into(), reason: String::new() });
         assert!(notice(&ns(&mut e, "SET AUTOOP ON"), "auto-opped where you have"), "pref set on");
         assert!(opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false })), "auto-op resumes");
     }
@@ -2334,7 +2334,7 @@
         }).expect("bot joined on assign");
 
         // The bot is kicked out (the ircd relays this as a PART for its uid).
-        let out = e.handle(NetEvent::Part { uid: bot_uid.clone(), channel: "#c".into() });
+        let out = e.handle(NetEvent::Part { uid: bot_uid.clone(), channel: "#c".into(), reason: String::new() });
         assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { uid, channel, .. } if uid == &bot_uid && channel == "#c")), "kicked bot rejoins: {out:?}");
     }
 
@@ -3345,7 +3345,7 @@
             !e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: true }).iter().any(|a| matches!(a, NetAction::Privmsg { .. })),
             "no greet before it is enabled"
         );
-        e.handle(NetEvent::Part { uid: "000AAAAAB".into(), channel: "#c".into() });
+        e.handle(NetEvent::Part { uid: "000AAAAAB".into(), channel: "#c".into(), reason: String::new() });
         bs(&mut e, "000AAAAAB", "SET #c GREET ON");
         // Now the founder's greet is shown by the bot.
         let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: true });
@@ -4320,7 +4320,7 @@
         assert!(os(&mut e, "000AAAAAS", "EXCEPTION LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("5.5.5.5") && text.contains("unlimited"))), "listed");
 
         // A quit frees a slot.
-        e.handle(NetEvent::Quit { uid: "000AAAAA4".into() });
+        e.handle(NetEvent::Quit { uid: "000AAAAA4".into(), reason: String::new() });
         assert!(os(&mut e, "000AAAAAS", "SESSION VIEW 6.6.6.6").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("0"))), "slot freed on quit");
     }
 
@@ -5059,7 +5059,7 @@
 
         // SEEN: an online user vs one who quit.
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "SEEN alice"), "currently online"));
-        e.handle(NetEvent::Quit { uid: "000AAAAAC".into() });
+        e.handle(NetEvent::Quit { uid: "000AAAAAC".into(), reason: String::new() });
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "SEEN guest"), "last seen"));
 
         // CLONE: copy #c's settings (incl. the AOP) into a second owned channel.
@@ -5102,11 +5102,11 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#lk" && modes == "+rnt-s")), "{out:?}");
 
         // Setting a locked-off mode is reverted.
-        let out = e.handle(NetEvent::ChannelModeChange { channel: "#lk".into(), modes: "+s".into() });
+        let out = e.handle(NetEvent::ChannelModeChange { channel: "#lk".into(), modes: "+s".into(), setter: String::new() });
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#lk" && modes == "-s")), "{out:?}");
 
         // An unrelated mode change is left alone.
-        assert!(e.handle(NetEvent::ChannelModeChange { channel: "#lk".into(), modes: "+m".into() }).is_empty());
+        assert!(e.handle(NetEvent::ChannelModeChange { channel: "#lk".into(), modes: "+m".into(), setter: String::new() }).is_empty());
     }
 
     // The founder is opped when they join their channel; others are not.
@@ -5423,11 +5423,39 @@ fn notify_hook_emits_feed_for_watched_user() {
     let quiet = e.handle(NetEvent::UserAttrs { uid: "000AAAAAD".into(), ident: "y".into(), realhost: "h".into(), gecos: "g".into() });
     assert!(!quiet.iter().any(|a| matches!(a, NetAction::Privmsg { to, .. } if to == "#services")), "no line for a clean user: {quiet:?}");
     // Their disconnect is matched before we forget them.
-    let dc = e.handle(NetEvent::Quit { uid: "000AAAAAC".into() });
+    let dc = e.handle(NetEvent::Quit { uid: "000AAAAAC".into(), reason: String::new() });
     assert!(
         dc.iter().any(|a| matches!(a, NetAction::Privmsg { text, .. } if text.contains("[NOTIFY]") && text.contains("disconnected"))),
         "expected a NOTIFY disconnect line, got {dc:?}"
     );
+}
+
+#[test]
+fn notify_hook_covers_kick_reason_oper_and_usermode() {
+    let mut e = engine_with("nfyext", "foo", "sesame");
+    e.set_sid("42S".into());
+    e.set_log_channel(Some("#services".into()));
+    e.set_debugserv_uid("42SAAAAAO");
+    e.db.notify_add("baddie*!*@*", "kdou", "watch", "admin", None).unwrap();
+    // The watched victim and a (non-watched) kicker.
+    e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "baddie1".into(), host: "h".into(), ip: "1.2.3.4".into() });
+    e.handle(NetEvent::UserAttrs { uid: "000AAAAAC".into(), ident: "x".into(), realhost: "h".into(), gecos: "g".into() });
+    e.handle(NetEvent::UserConnect { uid: "000AAAAAD".into(), nick: "moddy".into(), host: "h".into(), ip: "9.9.9.9".into() });
+
+    let feed = |acts: &[NetAction], needle: &str| acts.iter().any(|a| matches!(a, NetAction::Privmsg { to, text, .. } if to == "#services" && text.contains("[NOTIFY]") && text.contains(needle)));
+
+    // Kick: the victim's line names the kicker and carries the reason.
+    let k = e.handle(NetEvent::Kicked { channel: "#devs".into(), uid: "000AAAAAC".into(), by: "000AAAAAD".into(), reason: "spam".into() });
+    assert!(feed(&k, "was kicked from #devs by moddy") && feed(&k, "(spam)"), "kick line: {k:?}");
+    // User mode change.
+    let u = e.handle(NetEvent::UserMode { uid: "000AAAAAC".into(), modes: "+i".into() });
+    assert!(feed(&u, "set user mode +i"), "usermode line: {u:?}");
+    // Oper-up carries the oper class.
+    let o = e.handle(NetEvent::OperUp { uid: "000AAAAAC".into(), oper_type: "NetAdmin".into() });
+    assert!(feed(&o, "opered up") && feed(&o, "NetAdmin"), "operup line: {o:?}");
+    // Disconnect now carries the quit reason.
+    let d = e.handle(NetEvent::Quit { uid: "000AAAAAC".into(), reason: "Ping timeout: 240 seconds".into() });
+    assert!(feed(&d, "disconnected (Ping timeout: 240 seconds)"), "quit reason line: {d:?}");
 }
 
 #[test]
