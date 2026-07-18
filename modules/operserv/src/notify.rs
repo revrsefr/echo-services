@@ -72,10 +72,9 @@ fn add(me: &str, from: &Sender, rest: &[&str], ctx: &mut ServiceCtx, db: &mut dy
         ctx.notice(me, from.uid, "Mask must be a \x02#channel\x02, a \x02nick!user@host\x02 pattern, or a bare nick glob — and no spaces.");
         return;
     }
-    if too_wide(mask) {
-        ctx.notice(me, from.uid, "That mask is too wide — it would match almost everyone.");
-        return;
-    }
+    // No too-wide guard here: NOTIFY only observes, so a deliberately broad watch
+    // like "#*" (every channel) or "*" (every user) is a valid monitoring choice —
+    // scope it with flags and rely on `[log] notify_exclude` to keep relay noise out.
     let reason = rest[3..].join(" ");
     let setter = from.account.unwrap_or(from.nick);
     match db.notify_add(mask, &flags, &reason, setter, expires) {
@@ -144,13 +143,6 @@ fn list(me: &str, from: &Sender, verbose: bool, pattern: Option<&str>, ctx: &mut
 // and carries no whitespace (the wire splits on spaces).
 fn valid_mask(mask: &str) -> bool {
     !mask.is_empty() && !mask.contains(char::is_whitespace)
-}
-
-// A mask whose every meaningful character is a wildcard matches nearly everyone.
-// `!`/`@` count as structure-only so `*!*@*` is caught alongside `*`.
-fn too_wide(mask: &str) -> bool {
-    let body = mask.strip_prefix('#').or_else(|| mask.strip_prefix('&')).unwrap_or(mask);
-    body.is_empty() || body.chars().all(|c| matches!(c, '*' | '?' | '.' | '@' | '!'))
 }
 
 fn human_secs(secs: u64) -> String {
