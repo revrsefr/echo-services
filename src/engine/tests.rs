@@ -5486,3 +5486,62 @@ fn cmd_limiter_bursts_then_throttles_per_host() {
     }
     assert!(matches!(lim.check_at("1.2.3.4", next_window), CmdVerdict::Warn), "one fresh warning in a new window");
 }
+
+// Perf harness — not part of the normal suite. Run:
+//   cargo test --release -p echo -- --ignored --nocapture bench_engine
+// Measures the two costs that actually bound the single-threaded engine: the
+// BotServ per-message hot path (kicker scans + record_line + fantasy), and the
+// log append+fsync write path.
+#[test]
+#[ignore]
+fn bench_engine_throughput() {
+    use std::time::Instant;
+
+    // Write path: one serialize + append + fsync per state-mutating event.
+    {
+        let mut db = svc_db("bench_write");
+        let n = 3000usize;
+        let t = Instant::now();
+        for i in 0..n {
+            db.notify_add(&format!("m{i}!*@*"), "c", "bench", "admin", None).unwrap();
+        }
+        let el = t.elapsed();
+        println!(
+            "\n[write] append+fsync: {n} events in {:.3}s = {:.0} events/s, {:.3} ms/event\n        (temp-dir fs; a real data disk may fsync slower)",
+            el.as_secs_f64(),
+            n as f64 / el.as_secs_f64(),
+            el.as_secs_f64() * 1000.0 / n as f64,
+        );
+    }
+
+    // Hot path: BotServ chatter in a busy channel. Every kicker is on but set high
+    // enough that ordinary lines never trip it, so we time the per-message CHECK
+    // cost (the realistic case), not the kick path.
+    let (mut e, _p) = kicker_fixture("bench_hot");
+    let mut bs = |e: &mut Engine, t: &str| {
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+    };
+    bs(&mut e, "KICK #c CAPS ON");
+    bs(&mut e, "KICK #c REPEAT ON 100000");
+    bs(&mut e, "KICK #c FLOOD ON 100000 60");
+
+    let members = 1000usize;
+    let muid = |i: usize| format!("00M{i:06}");
+    for i in 0..members {
+        e.handle(NetEvent::UserConnect { uid: muid(i), nick: format!("user{i}"), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Join { uid: muid(i), channel: "#c".into(), op: false });
+    }
+
+    let msgs = 200_000usize;
+    let t = Instant::now();
+    for i in 0..msgs {
+        e.handle(NetEvent::Privmsg { from: muid(i % members), to: "#c".into(), text: format!("just chatting line {i} nothing special here") });
+    }
+    let el = t.elapsed();
+    println!(
+        "[hot]   botserv chatter: {msgs} msgs in a {members}-user channel in {:.3}s = {:.0} msgs/s, {:.3} us/msg\n",
+        el.as_secs_f64(),
+        msgs as f64 / el.as_secs_f64(),
+        el.as_micros() as f64 / msgs as f64,
+    );
+}
