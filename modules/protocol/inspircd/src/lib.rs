@@ -105,7 +105,11 @@ impl Protocol for InspIrcd {
                     _ => vec![],
                 }
             }
-            "PRIVMSG" => {
+            // PRIVMSG and SQUERY both deliver a message to a service. SQUERY (the
+            // form the NS/CS/… aliases use) is a 1206 command routed unicast to the
+            // services server; since we advertise 1206 the ircd sends it raw rather
+            // than folding it to PRIVMSG, so we must treat it the same.
+            "PRIVMSG" | "SQUERY" => {
                 let to = tokens.next().unwrap_or("").to_string();
                 vec![NetEvent::Privmsg {
                     from: source.unwrap_or_default(),
@@ -725,6 +729,15 @@ mod tests {
         assert!(matches!(p.parse("CAPAB MODSUPPORT :rline services").as_slice(),
             [NetEvent::ModulesAvailable { modules }] if modules == &["rline", "services"]));
         assert!(matches!(p.parse("CAPAB END").as_slice(), [NetEvent::CapabEnd]));
+    }
+
+    // SQUERY (what the NS/CS aliases use on proto 1206) is delivered to a service
+    // just like a PRIVMSG, so it must surface the same event.
+    #[test]
+    fn squery_is_handled_like_privmsg() {
+        let mut p = proto();
+        assert!(matches!(p.parse(":0IRAAAAAB SQUERY 42SAAAAAB :HELP").as_slice(),
+            [NetEvent::Privmsg { from, to, text }] if from == "0IRAAAAAB" && to == "42SAAAAAB" && text == "HELP"));
     }
 
     // CAPAB CAPABILITIES surfaces CASEMAPPING (echo verifies it's ascii).
