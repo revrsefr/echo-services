@@ -123,10 +123,11 @@ impl Expire {
 #[derive(Debug, Deserialize, Clone)]
 pub struct Log {
     pub channel: String,
-    // Masks (nick globs / user@host / extbans) whose users are never announced to
-    // the feed. Set "*/*" to silence PyLink relay clients — their nicks carry a
-    // `/network` suffix — which would otherwise flood the channel through NOTIFY
-    // watches. Reloadable with REHASH.
+    // Masks NOTIFY never announces: a `#channel` mask mutes that channel, any other
+    // mask (nick glob / user@host / extban) mutes a user. Set "*/*" to silence
+    // PyLink relay clients — their nicks carry a `/network` suffix — and add a
+    // channel like "#staff" to keep a broad `#*` watch out of it. Reloadable with
+    // REHASH.
     #[serde(default)]
     pub notify_exclude: Vec<String>,
 }
