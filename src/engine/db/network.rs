@@ -187,14 +187,18 @@ impl Db {
     /// channel: a `#`/`&` mask tests the channel name, any other tests the user's
     /// identity. The engine tests the result for a given event's letter.
     pub fn notify_flags(&self, target: Option<&echo_api::BanTarget>, chan: Option<&str>) -> String {
-        // A user on the exclude list (e.g. a `*/*` PyLink relay client) is never
-        // matched, so relayed traffic can't flood the staff feed.
-        if let Some(t) = target {
-            if self.notify_exclude.iter().any(|m| {
-                echo_api::akick_matches(m, t) || (!m.contains(['@', '!']) && glob_match(m, t.nick))
-            }) {
-                return String::new();
+        // Exclusions come first, same mask grammar as a watch: a `#channel` mask
+        // mutes events in that channel, any other mask mutes a user (e.g. `*/*` for
+        // PyLink relay clients). A match means the event never reaches the feed.
+        let excluded = self.notify_exclude.iter().any(|m| {
+            if m.starts_with('#') || m.starts_with('&') {
+                chan.is_some_and(|c| glob_match(m, c))
+            } else {
+                target.is_some_and(|t| echo_api::akick_matches(m, t) || (!m.contains(['@', '!']) && glob_match(m, t.nick)))
             }
+        });
+        if excluded {
+            return String::new();
         }
         let now = now();
         let mut flags = String::new();

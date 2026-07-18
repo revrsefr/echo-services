@@ -5384,6 +5384,11 @@ fn notify_flags_match_user_nick_channel_and_expiry() {
     db.set_notify_exclude(vec!["*/*".to_string()]);
     assert!(db.notify_flags(Some(&bt("baddie7/fun", "h.example")), None).is_empty(), "relay client excluded from every watch");
     assert!(db.notify_flags(Some(&bt("baddie7", "h.example")), None).contains('c'), "a normal nick still matches after exclude is set");
+    // A #channel in the exclude list mutes that channel while others still fire —
+    // e.g. watch every channel's joins but skip #staff.
+    db.set_notify_exclude(vec!["#staff".to_string()]);
+    assert!(db.notify_flags(Some(&bt("nice", "h.example")), Some("#staff")).is_empty(), "excluded channel is muted");
+    assert!(db.notify_flags(Some(&bt("nice", "h.example")), Some("#warez7")).contains('j'), "other channels still watched");
     db.set_notify_exclude(vec![]);
     // DEL by mask removes just that one.
     assert!(db.notify_del("baddie*!*@*").unwrap());
