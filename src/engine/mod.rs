@@ -1110,6 +1110,12 @@ impl Engine {
                 self.db.set_live_extbans(entries);
                 Vec::new()
             }
+            NetEvent::ChanModeRegistry { modes } => {
+                let prefixes = modes.iter().filter(|c| c.is_prefix()).map(|c| c.letter).collect::<String>();
+                tracing::info!(count = modes.len(), prefixes = %prefixes, "learned ircd channel-mode set");
+                self.db.set_live_chanmodes(modes);
+                Vec::new()
+            }
             NetEvent::UserConnect { uid, nick, host, ip } => {
                 let arriving_nick = nick.clone();
                 self.network.user_connect(uid.clone(), nick, host, ip.clone());

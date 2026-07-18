@@ -66,6 +66,9 @@ pub enum NetEvent {
     // The ircd's live extban set from its `CAPAB EXTBANS` burst — the authoritative
     // list AKICK/MODE validate against, replacing echo's static guess.
     ExtbanRegistry { entries: Vec<ExtbanCap> },
+    // The ircd's live channel-mode set from its `CAPAB CHANMODES` burst — mode
+    // letters, param arity, and prefix (status) modes incl custom ones like `Y`.
+    ChanModeRegistry { modes: Vec<ChanModeCap> },
     // A server split away (SQUIT). `server` is its SID; every user behind it — and
     // behind any server in its subtree — is gone, since a split is signalled once
     // rather than as a QUIT per user.
@@ -231,7 +234,7 @@ pub trait Protocol: Send {
 // The canonical arity for the standard chanmodes, shared by the protocol module
 // (parsing bursts) and services (building a MODE change): list and prefix modes
 // and the key take a parameter both ways; the rest that take one do so only when
-// set. A single source of truth so the two never drift.
+// set. Used as the fallback before the ircd's live CAPAB CHANMODES set is learned.
 pub fn chanmode_takes_param(m: char, adding: bool) -> bool {
     match m {
         'b' | 'e' | 'I' | 'q' | 'a' | 'o' | 'h' | 'v' | 'k' => true,
@@ -241,8 +244,41 @@ pub fn chanmode_takes_param(m: char, adding: bool) -> bool {
 }
 
 // The channel prefix (status) modes, whose parameter is a nick/uid rather than a
-// mask or value.
+// mask or value. Fallback before the ircd's live prefix set is learned.
 pub const STATUS_MODES: &str = "qaohv";
+
+/// How a channel mode consumes its parameter, from the ircd's `CAPAB CHANMODES`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChanModeKind {
+    List,                              // param on set + unset (b/e/I)
+    ParamAlways,                       // param on set + unset (k)
+    ParamSet,                          // param on set only (l)
+    Simple,                            // no param (n/t/s/...)
+    Prefix { symbol: char, rank: u32 }, // status mode: +v/@o/!Y, param is a nick
+}
+
+/// One channel mode the linked ircd advertises: its letter and how it takes a
+/// parameter. Learned from `CAPAB CHANMODES` so echo's mode handling matches the
+/// ircd exactly (custom param modes, and prefix modes like ojoin's `Y`/`!`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChanModeCap {
+    pub letter: char,
+    pub kind: ChanModeKind,
+}
+
+impl ChanModeCap {
+    /// Whether this mode consumes a parameter in the given direction.
+    pub fn takes_param(&self, adding: bool) -> bool {
+        match self.kind {
+            ChanModeKind::Simple => false,
+            ChanModeKind::ParamSet => adding,
+            _ => true, // list, param-always, prefix: a param both ways
+        }
+    }
+    pub fn is_prefix(&self) -> bool {
+        matches!(self.kind, ChanModeKind::Prefix { .. })
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Service vocabulary
@@ -1704,6 +1740,15 @@ pub trait Store {
     // this network actually offers. Empty until we link.
     fn extbans(&self) -> Vec<ExtbanCap> {
         Vec::new()
+    }
+    // Whether channel mode `m` takes a parameter (direction-aware), from the ircd's
+    // advertised CHANMODES if known. Default is the static arity.
+    fn chanmode_takes_param(&self, m: char, adding: bool) -> bool {
+        chanmode_takes_param(m, adding)
+    }
+    // The channel prefix (status) mode letters the ircd advertises. Default static.
+    fn status_modes(&self) -> String {
+        STATUS_MODES.to_string()
     }
     fn exists(&self, name: &str) -> bool;
     fn account(&self, name: &str) -> Option<AccountView>;

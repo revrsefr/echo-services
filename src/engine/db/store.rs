@@ -66,6 +66,12 @@ impl Store for Db {
     fn extbans(&self) -> Vec<echo_api::ExtbanCap> {
         Db::extbans(self)
     }
+    fn chanmode_takes_param(&self, m: char, adding: bool) -> bool {
+        Db::chanmode_takes_param(self, m, adding)
+    }
+    fn status_modes(&self) -> String {
+        Db::status_modes(self)
+    }
     fn email_enabled(&self) -> bool {
         Db::email_enabled(self)
     }

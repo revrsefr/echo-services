@@ -192,6 +192,29 @@ impl Db {
         self.live_extbans.clone().unwrap_or_default()
     }
 
+    /// Record the ircd's live channel-mode set (its CAPAB CHANMODES burst).
+    pub fn set_live_chanmodes(&mut self, modes: Vec<echo_api::ChanModeCap>) {
+        self.live_chanmodes = Some(modes);
+    }
+
+    /// Whether channel mode `m` takes a parameter in the given direction — from
+    /// the ircd's advertised set if known, else the static fallback.
+    pub fn chanmode_takes_param(&self, m: char, adding: bool) -> bool {
+        match self.live_chanmodes.as_ref().and_then(|v| v.iter().find(|c| c.letter == m)) {
+            Some(cap) => cap.takes_param(adding),
+            None => echo_api::chanmode_takes_param(m, adding),
+        }
+    }
+
+    /// The channel prefix (status) mode letters the ircd advertises (incl custom
+    /// ones like ojoin's `Y`), or the static fallback until we've linked.
+    pub fn status_modes(&self) -> String {
+        match &self.live_chanmodes {
+            Some(v) => v.iter().filter(|c| c.is_prefix()).map(|c| c.letter).collect(),
+            None => echo_api::STATUS_MODES.to_string(),
+        }
+    }
+
     /// Resolve an extban token (name, case-insensitive; or single letter, case-
     /// sensitive) against the ircd's live set. For extbans echo's static table lacks.
     pub fn extban_lookup(&self, token: &str) -> Option<echo_api::ExtbanCap> {

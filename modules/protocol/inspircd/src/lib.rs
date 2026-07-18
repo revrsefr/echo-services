@@ -312,19 +312,26 @@ impl Protocol for InspIrcd {
                 }
             }
             // CAPAB EXTBANS :matching:account=R acting:mute=m … — the ircd's live
-            // extban set. Other CAPAB subcommands (MODULES, CHANMODES, …) are noise.
-            "CAPAB" => {
-                if tokens.next().is_some_and(|s| s.eq_ignore_ascii_case("EXTBANS")) {
+            // extban / channel-mode sets. Other CAPAB subcommands are noise.
+            "CAPAB" => match tokens.next() {
+                Some(s) if s.eq_ignore_ascii_case("EXTBANS") => {
                     let entries: Vec<_> = trailing(rest).split_whitespace().filter_map(parse_extban_cap).collect();
                     if entries.is_empty() {
                         vec![]
                     } else {
                         vec![NetEvent::ExtbanRegistry { entries }]
                     }
-                } else {
-                    vec![]
                 }
-            }
+                Some(s) if s.eq_ignore_ascii_case("CHANMODES") => {
+                    let modes: Vec<_> = trailing(rest).split_whitespace().filter_map(parse_chanmode_cap).collect();
+                    if modes.is_empty() {
+                        vec![]
+                    } else {
+                        vec![NetEvent::ChanModeRegistry { modes }]
+                    }
+                }
+                _ => vec![],
+            },
             _ => vec![NetEvent::Unknown { line: line.to_string() }],
         }
     }
@@ -555,6 +562,30 @@ fn parse_extban_cap(token: &str) -> Option<echo_api::ExtbanCap> {
     (!name.is_empty()).then(|| echo_api::ExtbanCap { name: name.to_string(), letter, acting })
 }
 
+// Parse one `CAPAB CHANMODES` token into a ChanModeCap:
+//   list:ban=b  param:key=k  param-set:limit=l  simple:moderated=m
+//   prefix:<rank>:op=@o   (value is <symbol><letter>)
+fn parse_chanmode_cap(token: &str) -> Option<echo_api::ChanModeCap> {
+    use echo_api::ChanModeKind::*;
+    let (ty, spec) = token.split_once(':')?;
+    if ty == "prefix" {
+        let (rank, rest) = spec.split_once(':')?;
+        let (_name, val) = rest.split_once('=')?;
+        let (symbol, letter) = (val.chars().next()?, val.chars().nth(1)?);
+        return Some(echo_api::ChanModeCap { letter, kind: Prefix { symbol, rank: rank.parse().ok()? } });
+    }
+    let (_name, val) = spec.split_once('=')?;
+    let letter = val.chars().next()?;
+    let kind = match ty {
+        "list" => List,
+        "param" => ParamAlways,
+        "param-set" => ParamSet,
+        "simple" => Simple,
+        _ => return None,
+    };
+    Some(echo_api::ChanModeCap { letter, kind })
+}
+
 fn trailing(rest: &str) -> String {
     match rest.find(" :") {
         Some(i) => rest[i + 2..].to_string(),
@@ -618,6 +649,27 @@ mod tests {
         assert_eq!(entries[1], echo_api::ExtbanCap { name: "mute".into(), letter: Some('m'), acting: true });
         assert_eq!(entries[2], echo_api::ExtbanCap { name: "noletter".into(), letter: None, acting: false });
         assert!(p.parse("CAPAB CHANMODES :ban=b").is_empty(), "other CAPAB subcommands ignored");
+    }
+
+    // CAPAB CHANMODES surfaces mode arity + prefix modes, including a custom prefix
+    // like ojoin's Y (symbol !, rank 9000000) that the hardcoded set doesn't know.
+    #[test]
+    fn parses_capab_chanmodes() {
+        use echo_api::ChanModeKind::*;
+        let mut p = proto();
+        let ev = p.parse("CAPAB CHANMODES :list:ban=b param-set:limit=l param:key=k prefix:30000:op=@o prefix:9000000:official-join=!Y simple:moderated=m");
+        let [NetEvent::ChanModeRegistry { modes }] = ev.as_slice() else { panic!("{ev:?}") };
+        let find = |c: char| modes.iter().find(|m| m.letter == c).copied();
+        assert_eq!(find('b').unwrap().kind, List);
+        assert_eq!(find('l').unwrap().kind, ParamSet);
+        assert_eq!(find('k').unwrap().kind, ParamAlways);
+        assert_eq!(find('m').unwrap().kind, Simple);
+        assert_eq!(find('o').unwrap().kind, Prefix { symbol: '@', rank: 30000 });
+        assert_eq!(find('Y').unwrap().kind, Prefix { symbol: '!', rank: 9000000 }, "custom ojoin prefix");
+        // Arity: limit takes a param only when set; the key both ways.
+        assert!(find('l').unwrap().takes_param(true) && !find('l').unwrap().takes_param(false));
+        assert!(find('k').unwrap().takes_param(true) && find('k').unwrap().takes_param(false));
+        assert!(find('Y').unwrap().is_prefix());
     }
 
     // Both SERVER forms surface a ServerInfo (SID -> name) for the `server` extban:

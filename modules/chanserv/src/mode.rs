@@ -25,7 +25,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         return;
     }
     // Reject an extban the network has turned off, before relaying anything.
-    for mask in ban_masks(&args[2..]) {
+    for mask in ban_masks(&args[2..], |m, adding| db.chanmode_takes_param(m, adding)) {
         let core = mask.strip_prefix('!').unwrap_or(mask); // extbans may be inverted
         if let echo_api::AkickMask::Ext(eb, _) = echo_api::AkickMask::parse(core) {
             if !db.extban_offered(eb.name) {
@@ -44,9 +44,9 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
 }
 
 // The parameters attached to +b/-b/+e/-e/+I/-I in a `<modes> [params...]` change.
-// Every param-taking mode is accounted for (via the shared arity helper) so ban
-// masks pair to the right mode in IRC order.
-fn ban_masks<'a>(tokens: &'a [&'a str]) -> Vec<&'a str> {
+// `takes_param` (the ircd's advertised arity) accounts for every param-taking mode
+// so ban masks pair to the right mode in IRC order.
+fn ban_masks<'a>(tokens: &'a [&'a str], takes_param: impl Fn(char, bool) -> bool) -> Vec<&'a str> {
     let modes = tokens.first().copied().unwrap_or("");
     let mut params = tokens.iter().skip(1);
     let mut adding = true;
@@ -55,7 +55,7 @@ fn ban_masks<'a>(tokens: &'a [&'a str]) -> Vec<&'a str> {
         match ch {
             '+' => adding = true,
             '-' => adding = false,
-            m if echo_api::chanmode_takes_param(m, adding) => {
+            m if takes_param(m, adding) => {
                 if let Some(&p) = params.next() {
                     if matches!(m, 'b' | 'e' | 'I') {
                         out.push(p);
@@ -75,14 +75,14 @@ mod tests {
     #[test]
     fn ban_masks_pairs_params_in_mode_order() {
         // A lone ban, and a ban after a prefix mode: the mask must pair to +b.
-        assert_eq!(ban_masks(&["+b", "account:x"]), ["account:x"]);
-        assert_eq!(ban_masks(&["+ob", "nick", "account:x"]), ["account:x"]);
+        assert_eq!(ban_masks(&["+b", "account:x"], echo_api::chanmode_takes_param), ["account:x"]);
+        assert_eq!(ban_masks(&["+ob", "nick", "account:x"], echo_api::chanmode_takes_param), ["account:x"]);
         // The key's value is not a ban mask even when it looks like an extban.
-        assert!(ban_masks(&["+k", "account:secret"]).is_empty());
+        assert!(ban_masks(&["+k", "account:secret"], echo_api::chanmode_takes_param).is_empty());
         // Exceptions and invex count; plain flag modes carry nothing.
-        assert_eq!(ban_masks(&["+eI", "R:a", "r:b"]), ["R:a", "r:b"]);
-        assert!(ban_masks(&["+nt"]).is_empty());
+        assert_eq!(ban_masks(&["+eI", "R:a", "r:b"], echo_api::chanmode_takes_param), ["R:a", "r:b"]);
+        assert!(ban_masks(&["+nt"], echo_api::chanmode_takes_param).is_empty());
         // Removal still carries a mask.
-        assert_eq!(ban_masks(&["-b", "*!*@h"]), ["*!*@h"]);
+        assert_eq!(ban_masks(&["-b", "*!*@h"], echo_api::chanmode_takes_param), ["*!*@h"]);
     }
 }

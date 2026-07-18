@@ -82,7 +82,7 @@ impl Service for OperServ {
             Some(cmd) if cmd.eq_ignore_ascii_case("GLOBAL") => global::handle(me, from, args, ctx),
             Some(cmd) if cmd.eq_ignore_ascii_case("KILL") => kill::handle(me, from, args, ctx, net),
             Some(cmd) if cmd.eq_ignore_ascii_case("KICK") => kick::handle(me, from, args, ctx, net),
-            Some(cmd) if cmd.eq_ignore_ascii_case("MODE") => mode::handle(me, from, args, ctx, net),
+            Some(cmd) if cmd.eq_ignore_ascii_case("MODE") => mode::handle(me, from, args, ctx, net, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("IGNORE") => ignore::handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("STATS") => stats::handle(me, from, db, ctx),
             Some(cmd) if cmd.eq_ignore_ascii_case("SVSNICK") => svs::nick(me, from, args, ctx, net),
