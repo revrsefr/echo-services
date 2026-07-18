@@ -1098,11 +1098,18 @@ impl Db {
     /// the account name if this ingest changed its owner (a registration conflict
     /// resolved against the local claim), so the caller can log out stale sessions.
     pub fn ingest(&mut self, entry: LogEntry) -> std::io::Result<Option<IngestEffect>> {
-        // Snapshot the incoming account's local owner before applying, to detect a
-        // takeover (home changed) or a remote drop (it disappears).
-        let watched: Option<(String, Option<String>)> = match &entry.event {
-            Event::AccountRegistered(a) => Some((a.name.clone(), self.account(&a.name).map(|c| c.home.clone()))),
-            Event::AccountDropped { account } => Some((account.clone(), self.account(account).map(|c| c.home.clone()))),
+        // Snapshot the incoming account's local owner AND credential before applying,
+        // to tell a takeover (home moved to a *different* account) from a benign
+        // re-home (the same account re-asserted), and a remote drop (it disappears).
+        let watched: Option<(String, Option<String>, Option<String>)> = match &entry.event {
+            Event::AccountRegistered(a) => {
+                let c = self.account(&a.name);
+                Some((a.name.clone(), c.map(|c| c.home.clone()), c.and_then(|c| c.scram256.clone())))
+            }
+            Event::AccountDropped { account } => {
+                let c = self.account(account);
+                Some((account.clone(), c.map(|c| c.home.clone()), c.and_then(|c| c.scram256.clone())))
+            }
             _ => None,
         };
         let applied = self.log.ingest(entry)?;
@@ -1126,9 +1133,22 @@ impl Db {
         if let Some(event) = applied {
             apply(&mut self.accounts, &mut self.channels, &mut self.grouped, &mut self.bots, &mut self.host_cfg, &mut self.net, event);
         }
-        if let Some((name, prev_home)) = watched {
-            match (prev_home, self.account(&name).map(|c| c.home.clone())) {
-                (Some(prev), Some(cur)) if cur != prev => return Ok(Some(IngestEffect::TakenOver(name))),
+        if let Some((name, prev_home, prev_verifier)) = watched {
+            let cur = self.account(&name);
+            match (prev_home, cur.map(|c| c.home.clone())) {
+                (Some(prev), Some(cur_home)) if cur_home != prev => {
+                    // The account's home moved. Treat it as a hostile takeover — which
+                    // logs the local user out with a "collided with another network"
+                    // notice — ONLY if the credential changed too. A re-home that keeps
+                    // the same verifier is the SAME account being re-asserted (an
+                    // authority re-provision, an import, or an origin change during
+                    // migration): the local login is still valid, so it must not be
+                    // disrupted. This is what spuriously logged users out and (before
+                    // the channel-keep fix) dropped their channels during the cutover.
+                    if cur.and_then(|c| c.scram256.clone()) != prev_verifier {
+                        return Ok(Some(IngestEffect::TakenOver(name)));
+                    }
+                }
                 (Some(_), None) => return Ok(Some(IngestEffect::Dropped(name))),
                 _ => {}
             }

@@ -54,6 +54,34 @@
         assert_eq!(converge(&a, &a), "A");
     }
 
+    // A gossiped registration that wins the name (earlier ts) moves an account's
+    // home. That is a hostile takeover — logging the local user out — ONLY if the
+    // credential differs; re-asserting the SAME account (same verifier) must not.
+    #[test]
+    fn rehome_keeping_the_verifier_is_not_a_takeover() {
+        let acct = |home: &str, ts: u64, verifier: &str| Account {
+            name: "reverse".into(), email: None, ts, home: home.into(),
+            scram256: Some(verifier.into()), scram512: None, certfps: vec![], verified: true,
+            ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true,
+            memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false,
+            hide_status: false, vhost: None, vhost_request: None, last_seen: ts, noexpire: false,
+            expiry_warned: false, oper_note: None,
+        };
+        let reg = |origin: &str, a: Account| LogEntry::for_test(origin, 1, 1, Event::AccountRegistered(Box::new(a)));
+
+        // Same account, re-homed to B with the SAME verifier — not a takeover.
+        let mut db = Db::open(tmp("rehome-same"), "A");
+        db.ingest(reg("A", acct("A", 100, "V"))).unwrap();
+        assert!(db.ingest(reg("B", acct("B", 1, "V"))).unwrap().is_none(), "same-verifier re-home is not a takeover");
+        assert_eq!(db.account("reverse").unwrap().home, "B", "the home still moved (conflict resolved)");
+
+        // A genuinely different account (different verifier) winning the name is one.
+        let mut db2 = Db::open(tmp("rehome-diff"), "A");
+        db2.ingest(reg("A", acct("A", 100, "V"))).unwrap();
+        assert!(matches!(db2.ingest(reg("B", acct("B", 1, "OTHER"))).unwrap(), Some(IngestEffect::TakenOver(n)) if n == "reverse"),
+            "a different credential winning the name is a real takeover");
+    }
+
     #[test]
     fn channel_state_is_node_local_but_persists() {
         let path = tmp("scope");
