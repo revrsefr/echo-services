@@ -5379,6 +5379,12 @@ fn notify_flags_match_user_nick_channel_and_expiry() {
     // The expired host watch never matches and is hidden from the list.
     assert!(db.notify_flags(Some(&bt("x", "spam.net")), None).is_empty(), "expired entry never matches");
     assert_eq!(db.notifies().len(), 2, "expired entry hidden from the list");
+    // A PyLink relay client (nick carries a /network suffix) is excluded wholesale,
+    // even against a watch it would otherwise match — and a normal nick still hits.
+    db.set_notify_exclude(vec!["*/*".to_string()]);
+    assert!(db.notify_flags(Some(&bt("baddie7/fun", "h.example")), None).is_empty(), "relay client excluded from every watch");
+    assert!(db.notify_flags(Some(&bt("baddie7", "h.example")), None).contains('c'), "a normal nick still matches after exclude is set");
+    db.set_notify_exclude(vec![]);
     // DEL by mask removes just that one.
     assert!(db.notify_del("baddie*!*@*").unwrap());
     assert_eq!(db.notifies().len(), 1);

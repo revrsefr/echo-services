@@ -187,6 +187,15 @@ impl Db {
     /// channel: a `#`/`&` mask tests the channel name, any other tests the user's
     /// identity. The engine tests the result for a given event's letter.
     pub fn notify_flags(&self, target: Option<&echo_api::BanTarget>, chan: Option<&str>) -> String {
+        // A user on the exclude list (e.g. a `*/*` PyLink relay client) is never
+        // matched, so relayed traffic can't flood the staff feed.
+        if let Some(t) = target {
+            if self.notify_exclude.iter().any(|m| {
+                echo_api::akick_matches(m, t) || (!m.contains(['@', '!']) && glob_match(m, t.nick))
+            }) {
+                return String::new();
+            }
+        }
         let now = now();
         let mut flags = String::new();
         for n in self.net.notifies.iter().filter(|n| n.expires.is_none_or(|e| e > now)) {

@@ -860,6 +860,7 @@ impl Engine {
         self.set_services_channel(cfg.server.services_channel.clone());
         self.set_standard_replies(cfg.server.standard_replies);
         self.set_log_channel(cfg.log.as_ref().map(|l| l.channel.clone()));
+        self.db.set_notify_exclude(cfg.log.as_ref().map(|l| l.notify_exclude.clone()).unwrap_or_default());
         self.set_guest_nick(&cfg.server.guest_nick);
         if let Some(expire) = &cfg.expire {
             self.set_expiry(expire.account_ttl(), expire.channel_ttl(), expire.warn_ttl());

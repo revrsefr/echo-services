@@ -176,6 +176,12 @@ impl Db {
         self.extban_enabled.as_ref().is_none_or(|set| set.contains(&name.to_ascii_lowercase()))
     }
 
+    /// Masks whose users NOTIFY never matches (`[log] notify_exclude`). Replaces
+    /// the list wholesale so a REHASH can shrink it, not only grow it.
+    pub fn set_notify_exclude(&mut self, masks: Vec<String>) {
+        self.notify_exclude = masks;
+    }
+
     /// Record the ircd's live extban set (its CAPAB EXTBANS burst).
     pub fn set_live_extbans(&mut self, entries: Vec<echo_api::ExtbanCap>) {
         self.live_extbans = Some(entries);

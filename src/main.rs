@@ -184,6 +184,12 @@ async fn main() -> Result<()> {
         }
         _ => tracing::info!("extban policy: all extbans the ircd offers are accepted"),
     }
+    if let Some(log) = &cfg.log {
+        if !log.notify_exclude.is_empty() {
+            db.set_notify_exclude(log.notify_exclude.clone());
+            tracing::info!(masks = %log.notify_exclude.join(" "), "notify: excluding masks from the staff feed");
+        }
+    }
     if let Some(email) = &cfg.email {
         db.set_email_brand(&email.brand);
         db.set_email_accent(&email.accent);

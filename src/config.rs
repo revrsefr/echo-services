@@ -123,6 +123,12 @@ impl Expire {
 #[derive(Debug, Deserialize, Clone)]
 pub struct Log {
     pub channel: String,
+    // Masks (nick globs / user@host / extbans) whose users are never announced to
+    // the feed. Set "*/*" to silence PyLink relay clients — their nicks carry a
+    // `/network` suffix — which would otherwise flood the channel through NOTIFY
+    // watches. Reloadable with REHASH.
+    #[serde(default)]
+    pub notify_exclude: Vec<String>,
 }
 
 // One services operator: an account and the privileges it holds.
