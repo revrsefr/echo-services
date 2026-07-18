@@ -347,6 +347,14 @@ impl Protocol for InspIrcd {
                         vec![NetEvent::ModulesAvailable { modules }]
                     }
                 }
+                // CAPAB USERMODES: we only need servprotect (+k) — verify our own
+                // pseudoclients request it, so they can't be killed by operators.
+                Some(s) if s.eq_ignore_ascii_case("USERMODES") => {
+                    match trailing(rest).split_whitespace().find_map(servprotect_letter) {
+                        Some(letter) => vec![NetEvent::ServProtect { letter, requested: self.service_modes.contains(letter) }],
+                        None => vec![],
+                    }
+                }
                 Some(s) if s.eq_ignore_ascii_case("END") => vec![NetEvent::CapabEnd],
                 _ => vec![],
             },
@@ -585,6 +593,18 @@ fn parse_extban_cap(token: &str) -> Option<echo_api::ExtbanCap> {
     (!name.is_empty()).then(|| echo_api::ExtbanCap { name: name.to_string(), letter, acting })
 }
 
+// The mode letter of the `servprotect` user mode in a CAPAB USERMODES token
+// (`simple:servprotect=k`), or None for any other mode.
+fn servprotect_letter(token: &str) -> Option<char> {
+    let (_ty, spec) = token.split_once(':')?;
+    let (name, val) = spec.split_once('=')?;
+    if name.eq_ignore_ascii_case("servprotect") {
+        val.chars().next()
+    } else {
+        None
+    }
+}
+
 // Normalize a `CAPAB MODULES` token (`m_foo.so=data` / `foo=data` / `foo`) to the
 // bare module name, matching the ircd's own naming.
 fn module_name(token: &str) -> String {
@@ -680,6 +700,18 @@ mod tests {
         assert_eq!(entries[1], echo_api::ExtbanCap { name: "mute".into(), letter: Some('m'), acting: true });
         assert_eq!(entries[2], echo_api::ExtbanCap { name: "noletter".into(), letter: None, acting: false });
         assert!(p.parse("CAPAB CHANMODES :ban=b").is_empty(), "other CAPAB subcommands ignored");
+    }
+
+    // CAPAB USERMODES surfaces servprotect and whether our service_modes request it
+    // (proto()'s service_modes includes k). Only servprotect is extracted.
+    #[test]
+    fn parses_capab_usermodes_servprotect() {
+        let mut p = proto();
+        assert!(matches!(p.parse("CAPAB USERMODES :simple:invisible=i simple:servprotect=k param:snomask=s").as_slice(),
+            [NetEvent::ServProtect { letter: 'k', requested: true }]));
+        assert!(matches!(p.parse("CAPAB USERMODES :simple:servprotect=Z").as_slice(),
+            [NetEvent::ServProtect { letter: 'Z', requested: false }]), "char not in service_modes -> not requested");
+        assert!(p.parse("CAPAB USERMODES :simple:invisible=i simple:wallops=w").is_empty(), "no servprotect -> nothing");
     }
 
     // CAPAB MODULES/MODSUPPORT surface normalized module names; CAPAB END triggers

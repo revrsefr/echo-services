@@ -1124,6 +1124,14 @@ impl Engine {
                 verify_ircd_dependencies(&self.network);
                 Vec::new()
             }
+            NetEvent::ServProtect { letter, requested } => {
+                if requested {
+                    tracing::info!(mode = %letter, "services are servprotected (+{letter})");
+                } else {
+                    tracing::warn!(mode = %letter, "service_modes does not request servprotect (+{letter}) — echo's pseudoclients can be killed or hijacked by operators; add it to [server] service_modes");
+                }
+                Vec::new()
+            }
             NetEvent::Casemapping { name } => {
                 // echo folds identifiers as ascii. Verify the ircd agrees, rather than
                 // assuming it silently — a mismatch would desync account/channel identity.

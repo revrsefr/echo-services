@@ -77,6 +77,10 @@ pub enum NetEvent {
     ModulesAvailable { modules: Vec<String> },
     // `CAPAB END` — the module lists are complete; verify dependencies now.
     CapabEnd,
+    // The ircd's `servprotect` user mode (from CAPAB USERMODES) and whether echo's
+    // configured service_modes request it — a services pseudoclient without it can
+    // be killed/hijacked by an operator.
+    ServProtect { letter: char, requested: bool },
     // A server split away (SQUIT). `server` is its SID; every user behind it — and
     // behind any server in its subtree — is gone, since a split is signalled once
     // rather than as a QUIT per user.
