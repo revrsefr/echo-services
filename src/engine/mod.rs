@@ -377,6 +377,23 @@ impl Engine {
         }
     }
 
+    // OperServ NOTIFY: if `uid` matches a live watch carrying `flag`, build a staff
+    // feed line "nick!ident@host <what>". `chan` scopes a channel-mask watch to the
+    // relevant channel. None when nothing matches, the user is unknown, or there is
+    // no feed sink. The cheap `any_notifies` gate keeps the common (no-watch) path
+    // off the per-event identity lookup.
+    fn notify_line(&self, flag: char, uid: &str, chan: Option<&str>, what: &str) -> Option<NetAction> {
+        if !self.db.any_notifies() {
+            return None;
+        }
+        let target = self.network.ban_target(uid)?;
+        if !self.db.notify_flags(Some(&target), chan).contains(flag) {
+            return None;
+        }
+        let who = format!("\x02{}\x02!{}@{}", target.nick, target.ident, target.host);
+        self.feed("NOTIFY", format!("{who} {what}"))
+    }
+
     // Inactivity-expiry thresholds (seconds); None leaves that kind never
     // expiring. `warn` is the lead time before expiry to email a warning (None =
     // no warning emails).
@@ -1095,8 +1112,10 @@ impl Engine {
                 }
             }
             NetEvent::UserAttrs { uid, ident, realhost, gecos } => {
+                // Full identity (ident/host/gecos) is known now, so this is where a
+                // connect watch can match the whole nick!user@host#gecos.
                 self.network.set_user_attrs(&uid, ident, realhost, gecos);
-                Vec::new()
+                self.notify_line('c', &uid, None, "connected").into_iter().collect()
             }
             NetEvent::UserCert { uid, fp } => {
                 self.network.set_user_cert(&uid, fp);
@@ -1193,9 +1212,14 @@ impl Engine {
             }
             NetEvent::NickChange { uid, nick } => {
                 let new_nick = nick.clone();
+                let old_nick = self.network.nick_of(&uid).unwrap_or("?").to_string();
                 self.network.user_nick_change(&uid, nick);
                 self.pending_enforce.retain(|p| p.uid != uid); // they left the old nick
-                self.enforce_registered_nick(&uid, &new_nick)
+                let mut out = self.enforce_registered_nick(&uid, &new_nick);
+                if let Some(line) = self.notify_line('n', &uid, None, &format!("changed nick (was {old_nick})")) {
+                    out.push(line);
+                }
+                out
             }
             // The uplink finished its initial burst: from here on connections are
             // live, so nick-protection prompts/enforcement are safe to run.
@@ -1232,13 +1256,16 @@ impl Engine {
             // members their status mode, and send the entry message.
             NetEvent::Join { uid, channel, op } => {
                 self.network.channel_join(&channel, &uid, op);
+                // A watched user (or any user of a watched channel) joining: emit a
+                // staff line regardless of what enforcement below does.
+                let mut watch: Vec<NetAction> = self.notify_line('j', &uid, Some(&channel), &format!("joined {channel}")).into_iter().collect();
                 // A join to a registered channel is activity: keep it from expiring.
                 if self.db.channel(&channel).is_some() {
                     self.db.mark_channel_used(&channel, self.now_secs());
                 }
                 // A suspended channel is frozen: no auto-op, akick, or entry message.
                 if self.db.is_channel_suspended(&channel) {
-                    return Vec::new();
+                    return watch;
                 }
                 let account = self.network.account_of(&uid).map(str::to_string);
                 let from = self.channel_mode_source(&channel);
@@ -1251,7 +1278,7 @@ impl Engine {
                 let entrymsg = self.db.channel(&channel).map(|c| c.entrymsg.clone()).filter(|m| !m.is_empty());
                 // Computed before the match below moves `channel` into its actions.
                 let greet = self.greet_on_join(&channel, account.as_deref());
-                let mut out = Vec::new();
+                let mut out = std::mem::take(&mut watch);
                 // A services bot assigned here is opped on join and is never subject
                 // to secureops/restricted — it's staff, not a member.
                 let is_bot = self.bot_uids.values().any(|b| b == &uid);
@@ -1318,6 +1345,8 @@ impl Engine {
                 out
             }
             NetEvent::Part { uid, channel } => {
+                // Match before dropping membership so the identity is still resolvable.
+                let mut out: Vec<NetAction> = self.notify_line('p', &uid, Some(&channel), &format!("left {channel}")).into_iter().collect();
                 self.network.channel_part(&channel, &uid);
                 self.forget_chatter(&channel, &uid);
                 // A services bot kicked/parted from a channel it's still assigned
@@ -1325,10 +1354,10 @@ impl Engine {
                 // reconcile re-adds it.
                 if let Some(bot_lc) = self.bot_uids.iter().find_map(|(lc, u)| (u == &uid).then(|| lc.clone())) {
                     if self.bot_channels.remove(&(bot_lc, channel.clone())) {
-                        return self.reconcile_bots();
+                        out.extend(self.reconcile_bots());
                     }
                 }
-                Vec::new()
+                out
             }
             NetEvent::ChannelOp { channel, uid, op } => {
                 self.network.set_op(&channel, &uid, op);
@@ -1352,10 +1381,11 @@ impl Engine {
                 Vec::new()
             }
             NetEvent::TopicChange { channel, setter, topic } => {
+                let watch = self.notify_line('t', &setter, Some(&channel), &format!("changed the topic of {channel}"));
                 let info = self.db.channel(&channel).map(|c| (c.settings.keeptopic, c.settings.topiclock, c.topic.clone()));
                 // The setter may change a locked topic only with op-level access.
                 let authorized = self.network.account_of(&setter).and_then(|a| self.db.channel(&channel).map(|c| c.is_op(a))).unwrap_or(false);
-                match info {
+                let mut out: Vec<NetAction> = match info {
                     // TOPICLOCK + unauthorised: put the kept topic back.
                     Some((_, true, stored)) if !authorized => {
                         let from = self.chan_service.clone().unwrap_or_default();
@@ -1367,11 +1397,15 @@ impl Engine {
                         Vec::new()
                     }
                     _ => Vec::new(),
-                }
+                };
+                out.extend(watch);
+                out
             }
             NetEvent::Quit { uid } => {
+                // Match before we forget them, so their identity is still resolvable.
+                let out: Vec<NetAction> = self.notify_line('d', &uid, None, "disconnected").into_iter().collect();
                 self.forget_user(&uid);
-                Vec::new()
+                out
             }
             NetEvent::UserKilled { uid } => {
                 // A killed service agent (NickServ, ChanServ, …) has a fixed uid;
@@ -1736,6 +1770,8 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         FilterRemoved { pattern } => format!("removed the spam filter on \x02{pattern}\x02"),
         ForbidAdded { kind, mask, reason, .. } => format!("forbade {} \x02{mask}\x02 ({reason})", kind.to_ascii_lowercase()),
         ForbidRemoved { kind, mask } => format!("un-forbade {} \x02{mask}\x02", kind.to_ascii_lowercase()),
+        NotifyAdded { mask, flags, .. } => format!("added a notify watch on \x02{mask}\x02 [{flags}]"),
+        NotifyRemoved { mask } => format!("removed the notify watch on \x02{mask}\x02"),
         JupeAdded { name, reason, .. } => format!("juped server \x02{name}\x02 ({reason})"),
         JupeRemoved { name } => format!("lifted the jupe on \x02{name}\x02"),
         AccountOperNoteSet { account, note } => match note {

@@ -40,7 +40,7 @@ pub(crate) use event::{apply, Scope};
 // echo-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use echo_api::{
-    AccountView, AjoinView, AkillView, BotView, Caps, ForbidKind, ForbidView, GroupView, HelpView, IgnoreView, MemoView, NewsKind, NewsView, Privs, ReportView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView, XlineKind,
+    AccountView, AjoinView, AkillView, BotView, Caps, ForbidKind, ForbidView, GroupView, HelpView, IgnoreView, MemoView, NewsKind, NewsView, NotifyView, Privs, ReportView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView, XlineKind,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,6 +226,20 @@ fn gline_kind() -> String {
     "G".to_string()
 }
 
+// An OperServ NOTIFY watch entry: a mask (nick!user@host#gecos or #channel) whose
+// matching users have flagged events announced to the staff feed. Network-wide
+// oper policy like a forbid, so it gossips and persists; `expires` None = forever.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Notify {
+    pub mask: String,
+    pub flags: String,
+    pub reason: String,
+    pub setter: String,
+    pub ts: u64,
+    #[serde(default)]
+    pub expires: Option<u64>,
+}
+
 // A valid 3-char server id for a juped server from a counter: a leading digit
 // (kept high to avoid colliding with typical real SIDs) then two base-36 chars.
 fn jupe_sid(seq: u32) -> String {
@@ -309,6 +323,7 @@ pub struct NetData {
     pub akills: Vec<Akill>,
     pub filters: Vec<Filter>,
     pub forbids: Vec<Forbid>,
+    pub notifies: Vec<Notify>,
     pub news: Vec<News>,
     pub news_seq: u64,
     // Abuse reports (ReportServ), oldest first.
@@ -1256,6 +1271,9 @@ impl Db {
         let now = now();
         for f in &self.net.forbids {
             snapshot.push(Event::ForbidAdded { kind: f.kind.clone(), mask: f.mask.clone(), setter: f.setter.clone(), reason: f.reason.clone(), ts: f.ts });
+        }
+        for n in self.net.notifies.iter().filter(|n| n.expires.is_none_or(|e| e > now)) {
+            snapshot.push(Event::NotifyAdded { mask: n.mask.clone(), flags: n.flags.clone(), reason: n.reason.clone(), setter: n.setter.clone(), ts: n.ts, expires: n.expires });
         }
         for a in self.net.akills.iter().filter(|a| a.expires.is_none_or(|e| e > now)) {
             snapshot.push(Event::AkillAdded { kind: a.kind.clone(), mask: a.mask.clone(), setter: a.setter.clone(), reason: a.reason.clone(), ts: a.ts, expires: a.expires });

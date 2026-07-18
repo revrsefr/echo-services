@@ -5357,6 +5357,62 @@ fn chanfix_and_diceserv_basic_paths() {
 }
 
 #[test]
+fn notify_flags_match_user_nick_channel_and_expiry() {
+    fn bt(nick: &'static str, host: &'static str) -> echo_api::BanTarget<'static> {
+        echo_api::BanTarget { nick, ident: "u", host, realhost: host, ip: "1.2.3.4", gecos: "g", account: None, server: "s.net", fingerprint: None, channels: vec![] }
+    }
+    let mut db = svc_db("notifymatch");
+    db.notify_add("baddie*!*@*", "cdn", "nick watch", "admin", None).unwrap();
+    db.notify_add("#warez*", "j", "chan watch", "admin", None).unwrap();
+    db.notify_add("*@spam.net", "c", "host watch", "admin", Some(1)).unwrap(); // expires at epoch 1 = long gone
+
+    // A user mask hits exactly its own flags, not another entry's.
+    let baddie = bt("baddie99", "h.example");
+    assert!(db.notify_flags(Some(&baddie), None).contains('c'), "connect flag");
+    assert!(db.notify_flags(Some(&baddie), None).contains('n'), "nick flag");
+    assert!(!db.notify_flags(Some(&baddie), None).contains('j'), "j belongs to the channel mask only");
+    // An unrelated user matches nothing.
+    assert!(db.notify_flags(Some(&bt("nice", "h.example")), None).is_empty(), "no match for a clean user");
+    // A channel mask matches on the joined channel, not on a different one.
+    assert!(db.notify_flags(Some(&bt("nice", "h.example")), Some("#warez7")).contains('j'), "channel watch hit");
+    assert!(!db.notify_flags(Some(&bt("nice", "h.example")), Some("#chat")).contains('j'), "channel watch miss");
+    // The expired host watch never matches and is hidden from the list.
+    assert!(db.notify_flags(Some(&bt("x", "spam.net")), None).is_empty(), "expired entry never matches");
+    assert_eq!(db.notifies().len(), 2, "expired entry hidden from the list");
+    // DEL by mask removes just that one.
+    assert!(db.notify_del("baddie*!*@*").unwrap());
+    assert_eq!(db.notifies().len(), 1);
+}
+
+#[test]
+fn notify_hook_emits_feed_for_watched_user() {
+    let mut e = engine_with("nfyhook", "foo", "sesame");
+    e.set_sid("42S".into());
+    e.set_log_channel(Some("#services".into()));
+    e.set_debugserv_uid("42SAAAAAO");
+    e.db.notify_add("baddie*!*@*", "cd", "watch", "admin", None).unwrap();
+
+    // A matching user's connect (identity complete at UserAttrs) feeds a line.
+    e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "baddie1".into(), host: "h".into(), ip: "1.2.3.4".into() });
+    let out = e.handle(NetEvent::UserAttrs { uid: "000AAAAAC".into(), ident: "x".into(), realhost: "h".into(), gecos: "g".into() });
+    assert!(
+        out.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text }
+            if from == "42SAAAAAO" && to == "#services" && text.contains("[NOTIFY]") && text.contains("connected"))),
+        "expected a NOTIFY connect line, got {out:?}"
+    );
+    // A clean user draws nothing.
+    e.handle(NetEvent::UserConnect { uid: "000AAAAAD".into(), nick: "nice".into(), host: "h".into(), ip: "9.9.9.9".into() });
+    let quiet = e.handle(NetEvent::UserAttrs { uid: "000AAAAAD".into(), ident: "y".into(), realhost: "h".into(), gecos: "g".into() });
+    assert!(!quiet.iter().any(|a| matches!(a, NetAction::Privmsg { to, .. } if to == "#services")), "no line for a clean user: {quiet:?}");
+    // Their disconnect is matched before we forget them.
+    let dc = e.handle(NetEvent::Quit { uid: "000AAAAAC".into() });
+    assert!(
+        dc.iter().any(|a| matches!(a, NetAction::Privmsg { text, .. } if text.contains("[NOTIFY]") && text.contains("disconnected"))),
+        "expected a NOTIFY disconnect line, got {dc:?}"
+    );
+}
+
+#[test]
 fn cmd_limiter_bursts_then_throttles_per_host() {
     let mut lim = CmdLimiter::default();
     let t0 = Instant::now();

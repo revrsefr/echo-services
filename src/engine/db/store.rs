@@ -263,6 +263,24 @@ impl Store for Db {
     fn is_forbidden(&self, kind: ForbidKind, name: &str) -> Option<String> {
         Db::is_forbidden(self, kind, name)
     }
+    fn notify_add(&mut self, mask: &str, flags: &str, reason: &str, setter: &str, expires: Option<u64>) -> Result<bool, RegError> {
+        Db::notify_add(self, mask, flags, reason, setter, expires)
+    }
+    fn notify_del(&mut self, mask: &str) -> Result<bool, RegError> {
+        Db::notify_del(self, mask)
+    }
+    fn notify_clear(&mut self) -> Result<usize, RegError> {
+        Db::notify_clear(self)
+    }
+    fn notifies(&self) -> Vec<NotifyView> {
+        Db::notifies(self)
+    }
+    fn any_notifies(&self) -> bool {
+        Db::any_notifies(self)
+    }
+    fn notify_flags(&self, target: Option<&echo_api::BanTarget>, chan: Option<&str>) -> String {
+        Db::notify_flags(self, target, chan)
+    }
     fn ignore_add(&mut self, mask: &str, reason: &str, expires: Option<u64>) {
         Db::ignore_add(self, mask, reason, expires)
     }

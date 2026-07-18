@@ -130,6 +130,83 @@ impl Db {
             .map(|f| f.reason.clone())
     }
 
+    /// Add (or replace) an OperServ NOTIFY watch. Returns whether it was new.
+    pub fn notify_add(&mut self, mask: &str, flags: &str, reason: &str, setter: &str, expires: Option<u64>) -> Result<bool, RegError> {
+        let ts = now();
+        let same = |n: &Notify| n.mask.eq_ignore_ascii_case(mask);
+        let fresh = !self.net.notifies.iter().any(same);
+        self.log
+            .append(Event::NotifyAdded { mask: mask.to_string(), flags: flags.to_string(), reason: reason.to_string(), setter: setter.to_string(), ts, expires })
+            .map_err(|_| RegError::Internal)?;
+        self.net.notifies.retain(|n| !same(n));
+        self.net.notifies.push(Notify { mask: mask.to_string(), flags: flags.to_string(), reason: reason.to_string(), setter: setter.to_string(), ts, expires });
+        Ok(fresh)
+    }
+
+    /// Remove a NOTIFY watch by exact mask. Returns whether one existed.
+    pub fn notify_del(&mut self, mask: &str) -> Result<bool, RegError> {
+        let same = |n: &Notify| n.mask.eq_ignore_ascii_case(mask);
+        if !self.net.notifies.iter().any(same) {
+            return Ok(false);
+        }
+        self.log.append(Event::NotifyRemoved { mask: mask.to_string() }).map_err(|_| RegError::Internal)?;
+        self.net.notifies.retain(|n| !same(n));
+        Ok(true)
+    }
+
+    /// Drop every NOTIFY watch. Returns how many were removed. One event per entry
+    /// so a peer replaying the log folds to the same empty state.
+    pub fn notify_clear(&mut self) -> Result<usize, RegError> {
+        let masks: Vec<String> = self.net.notifies.iter().map(|n| n.mask.clone()).collect();
+        let count = masks.len();
+        for mask in masks {
+            self.log.append(Event::NotifyRemoved { mask }).map_err(|_| RegError::Internal)?;
+        }
+        self.net.notifies.clear();
+        Ok(count)
+    }
+
+    /// All live (unexpired) NOTIFY watches, oldest first.
+    pub fn notifies(&self) -> Vec<NotifyView> {
+        let now = now();
+        self.net.notifies
+            .iter()
+            .filter(|n| n.expires.is_none_or(|e| e > now))
+            .map(|n| NotifyView { mask: n.mask.clone(), flags: n.flags.clone(), reason: n.reason.clone(), setter: n.setter.clone(), ts: n.ts, expires: n.expires })
+            .collect()
+    }
+
+    /// Whether any live watch exists — a cheap gate so the engine can skip the
+    /// per-event identity lookup when the list is empty.
+    pub fn any_notifies(&self) -> bool {
+        let now = now();
+        self.net.notifies.iter().any(|n| n.expires.is_none_or(|e| e > now))
+    }
+
+    /// Union of the flag letters of every live watch matching this user and/or
+    /// channel: a `#`/`&` mask tests the channel name, any other tests the user's
+    /// identity. The engine tests the result for a given event's letter.
+    pub fn notify_flags(&self, target: Option<&echo_api::BanTarget>, chan: Option<&str>) -> String {
+        let now = now();
+        let mut flags = String::new();
+        for n in self.net.notifies.iter().filter(|n| n.expires.is_none_or(|e| e > now)) {
+            let hit = if n.mask.starts_with('#') || n.mask.starts_with('&') {
+                chan.is_some_and(|c| glob_match(&n.mask, c))
+            } else {
+                // Host/extban masks go through the ban matcher; a bare nick glob
+                // (no '@'/'!') also matches the nick, so `baddie*` works too.
+                target.is_some_and(|t| {
+                    echo_api::akick_matches(&n.mask, t)
+                        || (!n.mask.contains(['@', '!']) && glob_match(&n.mask, t.nick))
+                })
+            };
+            if hit {
+                flags.push_str(&n.flags);
+            }
+        }
+        flags
+    }
+
     /// Add (or replace) a session-limit exception for an IP-mask.
     pub fn session_except_add(&mut self, mask: &str, limit: u32, reason: &str) {
         let _ = self.log.append(Event::SessionExceptionAdded { mask: mask.to_string(), limit, reason: reason.to_string() });

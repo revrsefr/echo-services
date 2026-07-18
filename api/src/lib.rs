@@ -1480,6 +1480,19 @@ pub struct ForbidView {
     pub ts: u64,
 }
 
+// One OperServ NOTIFY watch entry: a mask opers want events flagged for. `flags`
+// is a subset of "cdjpntsS" (connect/disconnect/join/part/nick/topic/services).
+// `expires` is None for a permanent watch.
+#[derive(Debug, Clone)]
+pub struct NotifyView {
+    pub mask: String,
+    pub flags: String,
+    pub reason: String,
+    pub setter: String,
+    pub ts: u64,
+    pub expires: Option<u64>,
+}
+
 // A services ignore held by OperServ.
 #[derive(Debug, Clone)]
 pub struct IgnoreView {
@@ -1870,6 +1883,15 @@ pub trait Store {
     fn forbid_del(&mut self, kind: ForbidKind, mask: &str) -> Result<bool, RegError>;
     fn forbids(&self) -> Vec<ForbidView>;
     fn is_forbidden(&self, kind: ForbidKind, name: &str) -> Option<String>;
+    // OperServ NOTIFY (oper watch list). `notify_flags` returns the union of the
+    // flag letters of every live entry that matches the given user and/or channel,
+    // for the engine to test against a specific event.
+    fn notify_add(&mut self, mask: &str, flags: &str, reason: &str, setter: &str, expires: Option<u64>) -> Result<bool, RegError>;
+    fn notify_del(&mut self, mask: &str) -> Result<bool, RegError>;
+    fn notify_clear(&mut self) -> Result<usize, RegError>;
+    fn notifies(&self) -> Vec<NotifyView>;
+    fn any_notifies(&self) -> bool;
+    fn notify_flags(&self, target: Option<&BanTarget>, chan: Option<&str>) -> String;
     // Services ignores (node-local, oper-only).
     fn ignore_add(&mut self, mask: &str, reason: &str, expires: Option<u64>);
     fn ignore_del(&mut self, mask: &str) -> bool;

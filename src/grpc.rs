@@ -184,6 +184,8 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::FilterRemoved { .. }
         | Event::ForbidAdded { .. }
         | Event::ForbidRemoved { .. }
+        | Event::NotifyAdded { .. }
+        | Event::NotifyRemoved { .. }
         | Event::JupeAdded { .. }
         | Event::JupeRemoved { .. }
         | Event::StatsSet { .. }

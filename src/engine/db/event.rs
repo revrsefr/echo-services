@@ -141,6 +141,10 @@ pub enum Event {
     // "NICK", "CHAN", or "EMAIL".
     ForbidAdded { kind: String, mask: String, setter: String, reason: String, ts: u64 },
     ForbidRemoved { kind: String, mask: String },
+    // Oper watch list (OperServ NOTIFY). Global oper policy; `expires` None =
+    // permanent. `flags` selects which events (cdjpntsS) are announced.
+    NotifyAdded { mask: String, flags: String, reason: String, setter: String, ts: u64, expires: Option<u64> },
+    NotifyRemoved { mask: String },
     // Server jupes (OperServ JUPE). Node-local (each network holds a rogue server
     // by minting a fake one on `sid`), so Local scope but still persisted.
     JupeAdded { name: String, sid: String, reason: String },
@@ -207,6 +211,8 @@ impl Event {
             | Event::FilterRemoved { .. }
             | Event::ForbidAdded { .. }
             | Event::ForbidRemoved { .. }
+            | Event::NotifyAdded { .. }
+            | Event::NotifyRemoved { .. }
             | Event::NewsAdded { .. }
             | Event::NewsDeleted { .. }
             | Event::ReportFiled { .. }
@@ -659,6 +665,13 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         }
         Event::ForbidRemoved { kind, mask } => {
             net.forbids.retain(|f| !(f.kind == kind && f.mask.eq_ignore_ascii_case(&mask)));
+        }
+        Event::NotifyAdded { mask, flags, reason, setter, ts, expires } => {
+            net.notifies.retain(|n| !n.mask.eq_ignore_ascii_case(&mask));
+            net.notifies.push(Notify { mask, flags, reason, setter, ts, expires });
+        }
+        Event::NotifyRemoved { mask } => {
+            net.notifies.retain(|n| !n.mask.eq_ignore_ascii_case(&mask));
         }
         Event::JupeAdded { name, sid, reason } => {
             // Idempotent over a snapshot; keep jupe_seq ahead so a fresh add can't

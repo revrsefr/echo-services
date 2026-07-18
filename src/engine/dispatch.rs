@@ -82,6 +82,14 @@ impl Engine {
             }
             if let Some(nick) = matched {
                 self.bump(&format!("{nick}.command"));
+                // NOTIFY watch on services use: log the service + verb only (never
+                // the arguments, which may carry a password). SET commands carry the
+                // 'S' flag, everything else 's'.
+                let verb = text.split_whitespace().next().unwrap_or("").to_ascii_uppercase();
+                let flag = if verb == "SET" { 'S' } else { 's' };
+                if let Some(line) = self.notify_line(flag, from, None, &format!("used {nick} {verb}")) {
+                    ctx.actions.push(line);
+                }
             }
         }
         // Fold any counters the command recorded into the shared registry.
