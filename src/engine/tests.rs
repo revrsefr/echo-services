@@ -5355,3 +5355,32 @@ fn chanfix_and_diceserv_basic_paths() {
     // DiceServ evaluates an expression.
     assert!(svc_ask(&mut e, "42SAAAAAI", "ROLL 2d6").iter().any(|l| l.contains('=')), "dice result");
 }
+
+#[test]
+fn cmd_limiter_bursts_then_throttles_per_host() {
+    let mut lim = CmdLimiter::default();
+    let t0 = Instant::now();
+    // A full bucket lets a whole burst through back-to-back.
+    for _ in 0..CMD_BURST as usize {
+        assert!(matches!(lim.check_at("1.2.3.4", t0), CmdVerdict::Allow), "burst within budget");
+    }
+    // Going over budget warns once, then drops silently — never a fresh warning per
+    // line, which would just backscatter the flood.
+    assert!(matches!(lim.check_at("1.2.3.4", t0), CmdVerdict::Warn), "first over-budget warns");
+    assert!(matches!(lim.check_at("1.2.3.4", t0), CmdVerdict::Drop), "no repeat warning");
+    assert!(matches!(lim.check_at("1.2.3.4", t0), CmdVerdict::Drop), "stays dropped");
+    // A different host keeps its own independent budget.
+    assert!(matches!(lim.check_at("9.9.9.9", t0), CmdVerdict::Allow), "other host independent");
+    // A trickle refill lets a couple through, but an abuser the ircd is already
+    // pacing must not be re-warned each time the bucket briefly recovers.
+    let paced = t0 + Duration::from_secs(4); // +2 tokens
+    assert!(matches!(lim.check_at("1.2.3.4", paced), CmdVerdict::Allow), "refilled token 1");
+    assert!(matches!(lim.check_at("1.2.3.4", paced), CmdVerdict::Allow), "refilled token 2");
+    assert!(matches!(lim.check_at("1.2.3.4", paced), CmdVerdict::Drop), "dropped, not re-warned mid-window");
+    // Only once the warn window has elapsed does one fresh warning surface again.
+    let next_window = t0 + Duration::from_secs(CMD_WARN_EVERY.as_secs() + 5);
+    for _ in 0..CMD_BURST as usize {
+        assert!(matches!(lim.check_at("1.2.3.4", next_window), CmdVerdict::Allow), "bucket refilled after idle");
+    }
+    assert!(matches!(lim.check_at("1.2.3.4", next_window), CmdVerdict::Warn), "one fresh warning in a new window");
+}

@@ -34,12 +34,38 @@ impl Engine {
                 self.bump("botserv.messages");
             }
         } else {
-            // A services ignore silences a user's commands entirely — but an oper
-            // can never be ignored (else they could lock themselves out).
+            // A services ignore silences a user's commands entirely, and flood
+            // control clamps a bot spamming a service in a loop — but an oper is
+            // exempt from both (else they could lock themselves out).
             if !privs.any() {
                 let host = self.network.host_of(from).unwrap_or("").to_string();
                 if self.db.is_ignored(&nick, &host) {
                     return Vec::new();
+                }
+                // Flood control targets the stated vector: a bot that connects and
+                // spams a service in a loop without ever logging in. Identified users
+                // are accountable and legitimately burst (channel setup), and the
+                // ircd's own fakelag still governs everyone — so only anonymous
+                // senders are clamped, and only on lines aimed at one of our services.
+                if account.is_none() {
+                    let target = self.services.iter()
+                        .find(|s| to.eq_ignore_ascii_case(s.uid()) || to.eq_ignore_ascii_case(s.nick()))
+                        .map(|s| s.uid().to_string());
+                    if let Some(svc_uid) = target {
+                        match self.cmd_limiter.check(&host) {
+                            CmdVerdict::Allow => {}
+                            CmdVerdict::Warn => {
+                                let mut out = vec![NetAction::Notice {
+                                    from: svc_uid,
+                                    to: from.to_string(),
+                                    text: "You're sending commands too fast. Slow down and try again in a moment.".to_string(),
+                                }];
+                                self.apply_msg_style(&mut out);
+                                return out;
+                            }
+                            CmdVerdict::Drop => return Vec::new(),
+                        }
+                    }
                 }
             }
             let mut matched: Option<String> = None;

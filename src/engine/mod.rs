@@ -94,6 +94,7 @@ pub struct Engine {
     sasl_sessions: HashMap<String, TimedSession>, // client uid -> in-progress exchange
     sasl_source: HashMap<String, (Instant, String)>, // client uid -> real host/IP from the SASL H message
     reg_limiter: RegLimiter,
+    cmd_limiter: CmdLimiter, // per-host flood control for service commands
     chan_service: Option<String>, // uid to source channel modes from (ChanServ)
     nick_service: Option<String>, // uid of the account service (NickServ), for its notices
     irc_out: Option<mpsc::UnboundedSender<NetAction>>, // services-initiated actions -> the uplink
@@ -234,6 +235,7 @@ impl Engine {
             sasl_sessions: HashMap::new(),
             sasl_source: HashMap::new(),
             reg_limiter: RegLimiter::new(),
+            cmd_limiter: CmdLimiter::default(),
             chan_service,
             nick_service,
             irc_out: None,
@@ -1953,6 +1955,74 @@ impl RegLimiter {
         } else {
             false
         }
+    }
+}
+
+// Per-host flood control for anonymous service commands. A bot that connects and
+// spams `/msg NickServ HELP` in a loop is warned, then silently dropped until it
+// slows down — never answered per line, which would just double the flood on
+// the wire. A sender may burst up to CMD_BURST commands, then is held to
+// CMD_REFILL_PER_SEC sustained (one every two seconds). Keyed by host so a nick
+// change or reconnect does not reset the count. Ephemeral; never event-logged.
+#[derive(Default)]
+struct CmdLimiter {
+    buckets: HashMap<String, CmdBucket>,
+    last_sweep: Option<Instant>,
+}
+
+struct CmdBucket {
+    tokens: f64,
+    last: Instant,
+    last_warn: Option<Instant>, // when we last told this host to slow down
+}
+
+const CMD_BURST: f64 = 15.0; // commands allowed back-to-back from a full bucket
+const CMD_REFILL_PER_SEC: f64 = 0.5; // steady-state: one every two seconds
+const CMD_WARN_EVERY: Duration = Duration::from_secs(30); // at most one "slow down" per host per window
+const CMD_SWEEP_EVERY: Duration = Duration::from_secs(60);
+
+enum CmdVerdict {
+    Allow, // within budget: run the command
+    Warn,  // just went over: send one "slow down" notice, drop the command
+    Drop,  // still over and already warned: drop silently
+}
+
+impl CmdLimiter {
+    fn check(&mut self, key: &str) -> CmdVerdict {
+        self.check_at(key, Instant::now())
+    }
+
+    fn check_at(&mut self, key: &str, now: Instant) -> CmdVerdict {
+        self.sweep(now);
+        let b = self.buckets.entry(key.to_string()).or_insert(CmdBucket { tokens: CMD_BURST, last: now, last_warn: None });
+        b.tokens = (b.tokens + now.duration_since(b.last).as_secs_f64() * CMD_REFILL_PER_SEC).min(CMD_BURST);
+        b.last = now;
+        if b.tokens >= 1.0 {
+            b.tokens -= 1.0;
+            return CmdVerdict::Allow;
+        }
+        // Over budget. Warn at most once per window, then drop silently — a sustained
+        // flood that the ircd's fakelag paces to a trickle must not draw a fresh
+        // "slow down" on every other line, which would just backscatter the flood.
+        if b.last_warn.is_none_or(|w| now.duration_since(w) >= CMD_WARN_EVERY) {
+            b.last_warn = Some(now);
+            CmdVerdict::Warn
+        } else {
+            CmdVerdict::Drop
+        }
+    }
+
+    // Drop buckets that have refilled to full since we last touched them: a full
+    // bucket is indistinguishable from a fresh one, so this is lossless and keeps
+    // the map bounded to recently-active senders. Runs at most once a minute.
+    fn sweep(&mut self, now: Instant) {
+        if let Some(last) = self.last_sweep {
+            if now.duration_since(last) < CMD_SWEEP_EVERY {
+                return;
+            }
+        }
+        self.last_sweep = Some(now);
+        self.buckets.retain(|_, b| (b.tokens + now.duration_since(b.last).as_secs_f64() * CMD_REFILL_PER_SEC) < CMD_BURST);
     }
 }
 
