@@ -200,7 +200,7 @@ pub fn import_anope(anope_path: &str, out_path: &str, node: &str) -> std::io::Re
             greet: String::new(),
             no_autoop: !flag(nc, "AUTOOP"),
             no_protect: !flag(nc, "PROTECT"),
-            hide_status: flag(nc, "HIDE_MASK"),
+            hide_status: flag(nc, "HIDE_MASK"), snotice: false,
             vhost,
             vhost_request: None,
             last_seen: last_seen_of.get(name).copied().unwrap_or(ts),

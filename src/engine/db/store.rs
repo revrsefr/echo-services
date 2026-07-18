@@ -123,6 +123,12 @@ impl Store for Db {
     fn account_hides_status(&self, account: &str) -> bool {
         Db::account_hides_status(self, account)
     }
+    fn set_account_snotice(&mut self, account: &str, on: bool) -> Result<(), RegError> {
+        Db::set_account_snotice(self, account, on)
+    }
+    fn account_wants_snotice(&self, account: &str) -> bool {
+        Db::account_wants_snotice(self, account)
+    }
     fn set_vhost(&mut self, account: &str, host: &str, setter: &str, ttl: Option<u64>) -> Result<(), RegError> {
         Db::set_vhost(self, account, host, setter, ttl)
     }

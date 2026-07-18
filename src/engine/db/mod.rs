@@ -106,6 +106,11 @@ pub struct Account {
     // (visible) is the zero value.
     #[serde(default)]
     pub hide_status: bool,
+    // NickServ SET SNOTICE: when set, service replies to this user come as a
+    // server notice ("*** NickServ: …") instead of a normal notice from the
+    // pseudoclient. Default (normal notice) is the zero value.
+    #[serde(default)]
+    pub snotice: bool,
     // Assigned vhost (HostServ), applied to the displayed host on identify.
     #[serde(default)]
     pub vhost: Option<Vhost>,

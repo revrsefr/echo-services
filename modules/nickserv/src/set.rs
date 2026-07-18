@@ -92,6 +92,18 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
+        Some("SNOTICE") | Some("SNOTICES") => {
+            let Some(on) = args.get(2).and_then(|s| parse_toggle(s)) else {
+                let state = if db.account_wants_snotice(account) { "ON" } else { "OFF" };
+                ctx.notice(me, from.uid, format!("SNOTICE is \x02{state}\x02. Syntax: SET SNOTICE {{ON|OFF}}"));
+                return;
+            };
+            match db.set_account_snotice(account, on) {
+                Ok(()) if on => ctx.notice(me, from.uid, "Service replies now arrive as server notices (\x02*** NickServ: …\x02)."),
+                Ok(()) => ctx.notice(me, from.uid, "Service replies now arrive as normal notices from the service."),
+                Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+            }
+        }
         Some("GREET") => {
             // A bot shows this when you join a greet-enabled channel; no arg clears it.
             let greet = if args.len() > 2 { args[2..].join(" ") } else { String::new() };
@@ -102,7 +114,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
-        _ => ctx.notice(me, from.uid, "Syntax: SET PASSWORD <newpassword> | SET EMAIL [address] | SET GREET [message] | SET AUTOOP {ON|OFF} | SET KILL {ON|OFF} | SET HIDE STATUS {ON|OFF}"),
+        _ => ctx.notice(me, from.uid, "Syntax: SET PASSWORD <newpassword> | SET EMAIL [address] | SET GREET [message] | SET AUTOOP {ON|OFF} | SET KILL {ON|OFF} | SET HIDE STATUS {ON|OFF} | SET SNOTICE {ON|OFF}"),
     }
 }
 

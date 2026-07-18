@@ -1814,6 +1814,8 @@ pub trait Store {
     // NickServ SET HIDE STATUS: whether this account hides its last-seen line.
     fn set_account_hide_status(&mut self, account: &str, on: bool) -> Result<(), RegError>;
     fn account_hides_status(&self, account: &str) -> bool;
+    fn set_account_snotice(&mut self, account: &str, on: bool) -> Result<(), RegError>;
+    fn account_wants_snotice(&self, account: &str) -> bool;
     // HostServ vhosts.
     fn set_vhost(&mut self, account: &str, host: &str, setter: &str, ttl: Option<u64>) -> Result<(), RegError>;
     fn del_vhost(&mut self, account: &str) -> Result<bool, RegError>;

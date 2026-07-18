@@ -67,7 +67,25 @@ impl Engine {
         out.extend(self.reconcile_bots());
         // Announce whatever this command changed to the staff audit channel.
         out.extend(self.audit_feed(audit_mark, &nick, account.as_deref()));
+        self.apply_msg_style(&mut out);
         out
+    }
+
+    // Rewrite each service→user NOTICE to a server-notice ("*** NickServ: …",
+    // sourced from our server) for users who opted into SET SNOTICE. Everyone
+    // else's reply is left as a normal notice from the pseudoclient. Per target,
+    // so notices to channels or to users who didn't opt in are untouched.
+    fn apply_msg_style(&self, out: &mut [NetAction]) {
+        for a in out.iter_mut() {
+            let NetAction::Notice { from, to, text } = a else { continue };
+            let Some(account) = self.network.account_of(to) else { continue };
+            if !self.db.account_wants_snotice(account) {
+                continue;
+            }
+            let Some(nick) = self.services.iter().find(|s| s.uid() == *from).map(|s| s.nick()) else { continue };
+            *text = format!("*** {nick}: {text}");
+            *from = self.sid.clone();
+        }
     }
 
     // fantasy word becomes the command and the channel is injected as its first

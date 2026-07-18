@@ -22,7 +22,7 @@ impl Db {
             ajoin: Vec::new(),
             suspension: None,
             memos: Vec::new(), memo_ignore: Vec::new(), memo_notify: true, memo_limit: None,
-            greet: String::new(), no_autoop: false, no_protect: false, hide_status: false,
+            greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false,
             vhost: None,
             vhost_request: None,
             last_seen: ts,
@@ -78,7 +78,7 @@ impl Db {
             ajoin: Vec::new(),
             suspension: None,
             memos: Vec::new(), memo_ignore: Vec::new(), memo_notify: true, memo_limit: None,
-            greet: String::new(), no_autoop: false, no_protect: false, hide_status: false,
+            greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false,
             vhost: None,
             vhost_request: None,
             last_seen: ts,
@@ -561,6 +561,22 @@ impl Db {
     /// Whether `account` hides its last-seen/online line from others (default false).
     pub fn account_hides_status(&self, account: &str) -> bool {
         self.accounts.get(&key(account)).is_some_and(|a| a.hide_status)
+    }
+
+    /// NickServ SET SNOTICE: whether service replies come as a server notice.
+    pub fn set_account_snotice(&mut self, account: &str, on: bool) -> Result<(), RegError> {
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return Err(RegError::Internal);
+        }
+        self.log.append(Event::AccountSnoticeSet { account: account.to_string(), on }).map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().snotice = on;
+        Ok(())
+    }
+
+    /// Whether `account` wants server-notice-style service replies (default false).
+    pub fn account_wants_snotice(&self, account: &str) -> bool {
+        self.accounts.get(&key(account)).is_some_and(|a| a.snotice)
     }
 
     /// Replace `account`'s password with freshly derived credentials.

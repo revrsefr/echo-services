@@ -18,6 +18,7 @@ pub enum Event {
     AccountAutoOpSet { account: String, on: bool },
     AccountKillSet { account: String, on: bool },
     AccountHideStatusSet { account: String, on: bool },
+    AccountSnoticeSet { account: String, on: bool },
     AccountPasswordSet { account: String, scram256: String, scram512: String },
     AccountDropped { account: String },
     AccountVerified { account: String },
@@ -176,6 +177,7 @@ impl Event {
             | Event::AccountAutoOpSet { .. }
             | Event::AccountKillSet { .. }
             | Event::AccountHideStatusSet { .. }
+            | Event::AccountSnoticeSet { .. }
             | Event::AccountPasswordSet { .. }
             | Event::AccountDropped { .. }
             | Event::AccountVerified { .. }
@@ -350,6 +352,11 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         Event::AccountHideStatusSet { account, on } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {
                 a.hide_status = on;
+            }
+        }
+        Event::AccountSnoticeSet { account, on } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.snotice = on;
             }
         }
         Event::AccountPasswordSet { account, scram256, scram512 } => {

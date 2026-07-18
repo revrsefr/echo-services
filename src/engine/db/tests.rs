@@ -32,7 +32,7 @@
         // which of the two competing registrations we're looking at.
         let alice = |tag: &str, ts: u64, home: &str| Account {
             name: "alice".into(), email: Some(tag.into()),
-            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, vhost: None, vhost_request: None, last_seen: ts, noexpire: false, expiry_warned: false, oper_note: None,
+            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, vhost: None, vhost_request: None, last_seen: ts, noexpire: false, expiry_warned: false, oper_note: None,
         };
         let converge = |first: &Account, second: &Account| {
             let (mut acc, mut ch, mut gr, mut bo, mut hc, mut nd) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HostConfig::default(), NetData::default());
@@ -64,7 +64,7 @@
             scram256: Some(verifier.into()), scram512: None, certfps: vec![], verified: true,
             ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true,
             memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false,
-            hide_status: false, vhost: None, vhost_request: None, last_seen: ts, noexpire: false,
+            hide_status: false, snotice: false, vhost: None, vhost_request: None, last_seen: ts, noexpire: false,
             expiry_warned: false, oper_note: None,
         };
         let reg = |origin: &str, a: Account| LogEntry::for_test(origin, 1, 1, Event::AccountRegistered(Box::new(a)));
@@ -132,6 +132,18 @@
         assert!(info.akick_match(&t("x", "y", "ok.host", "hello", None)).is_none());
         assert!(db.akick_del("#c", "*!*@bad.host").unwrap());
         assert!(!db.akick_del("#c", "*!*@bad.host").unwrap());
+    }
+
+    // SET SNOTICE toggles the per-account server-notice preference (default off).
+    #[test]
+    fn snotice_pref_toggles() {
+        let mut db = Db::open(tmp("snotice"), "N1");
+        db.register("bob", "pw", None).unwrap();
+        assert!(!db.account_wants_snotice("bob"), "default is a normal notice");
+        db.set_account_snotice("bob", true).unwrap();
+        assert!(db.account_wants_snotice("bob"));
+        db.set_account_snotice("bob", false).unwrap();
+        assert!(!db.account_wants_snotice("bob"));
     }
 
     // LEVELS grants are additive (default = unchanged), tier-gated, and reversible.
@@ -410,7 +422,7 @@
         db.register("alice", "pw", None).unwrap();
         let bob = Account {
             name: "bob".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
         };
         let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, event: Event::AccountRegistered(Box::new(bob)) };
         db.ingest(entry).unwrap();
@@ -477,7 +489,7 @@
                 scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![],
                 suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true,
                 memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false,
-                hide_status: false, vhost: None, vhost_request: None, last_seen: 1,
+                hide_status: false, snotice: false, vhost: None, vhost_request: None, last_seen: 1,
                 noexpire: false, expiry_warned: false, oper_note: None,
             }))).unwrap();
         }
