@@ -56,12 +56,14 @@ protocol = 1206            # InspIRCd link protocol version (1206 = insp4, 1205 
 # surfaced. Omit the section to disable the feed.
 # [log]
 # channel = "#services"
-# Masks OperServ NOTIFY never announces, so they can't flood the feed. A `#channel`
-# mask mutes that channel (e.g. keep a broad `#*` watch out of "#staff"); any other
-# mask mutes a user — nick globs, user@host, or extbans, same syntax as a NOTIFY
-# mask. "*/*" silences PyLink relay clients (their nicks carry a `/network` suffix).
+# Masks OperServ NOTIFY never announces, so they can't flood the feed. Three kinds:
+#   "#channel"        mute a channel (keep a broad `#*` watch out of "#staff")
+#   "server:<glob>"   mute everyone on a server (a relay whose users have clean
+#                     nicks; alias "via:", matching the "via <server>" in the feed)
+#   anything else     mute a user — nick glob, user@host, or extban ("*/*" catches
+#                     PyLink relays that suffix nicks with /network)
 # Reloadable with OperServ REHASH.
-# notify_exclude = ["*/*", "#staff"]
+# notify_exclude = ["*/*", "server:chatnova.relay", "#staff"]
 
 # Inactivity-expiry: accounts not identified to, and channels not joined, for
 # longer than the threshold are dropped on a periodic pass (opers, live

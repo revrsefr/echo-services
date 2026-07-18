@@ -123,11 +123,12 @@ impl Expire {
 #[derive(Debug, Deserialize, Clone)]
 pub struct Log {
     pub channel: String,
-    // Masks NOTIFY never announces: a `#channel` mask mutes that channel, any other
-    // mask (nick glob / user@host / extban) mutes a user. Set "*/*" to silence
-    // PyLink relay clients — their nicks carry a `/network` suffix — and add a
-    // channel like "#staff" to keep a broad `#*` watch out of it. Reloadable with
-    // REHASH.
+    // Masks NOTIFY never announces, three kinds: `#channel` mutes that channel,
+    // `server:<glob>` (or `via:`) mutes everyone on a matching server — the handle
+    // on a relay whose users have clean nicks — and any other mask (nick glob /
+    // user@host / extban) mutes a user. E.g. "*/*" silences PyLink relays that
+    // suffix nicks, "server:chatnova.relay" a relay that doesn't, "#staff" keeps a
+    // broad `#*` watch out of a channel. Reloadable with REHASH.
     #[serde(default)]
     pub notify_exclude: Vec<String>,
 }

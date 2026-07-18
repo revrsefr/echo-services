@@ -191,7 +191,11 @@ impl Db {
         // mutes events in that channel, any other mask mutes a user (e.g. `*/*` for
         // PyLink relay clients). A match means the event never reaches the feed.
         let excluded = self.notify_exclude.iter().any(|m| {
-            if m.starts_with('#') || m.starts_with('&') {
+            if let Some(srv) = m.strip_prefix("server:").or_else(|| m.strip_prefix("via:")) {
+                // `server:<glob>` mutes everyone on a matching server — the only handle
+                // on a relay whose users carry clean nicks (no /network suffix).
+                target.is_some_and(|t| glob_match(&srv.to_ascii_lowercase(), &t.server.to_ascii_lowercase()))
+            } else if m.starts_with('#') || m.starts_with('&') {
                 chan.is_some_and(|c| glob_match(m, c))
             } else {
                 target.is_some_and(|t| echo_api::akick_matches(m, t) || (!m.contains(['@', '!']) && glob_match(m, t.nick)))

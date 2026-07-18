@@ -5389,6 +5389,12 @@ fn notify_flags_match_user_nick_channel_and_expiry() {
     db.set_notify_exclude(vec!["#staff".to_string()]);
     assert!(db.notify_flags(Some(&bt("nice", "h.example")), Some("#staff")).is_empty(), "excluded channel is muted");
     assert!(db.notify_flags(Some(&bt("nice", "h.example")), Some("#warez7")).contains('j'), "other channels still watched");
+    // `server:<glob>` mutes everyone on a matching server — a relay whose users have
+    // clean nicks. bt() puts users on server "s.net".
+    db.set_notify_exclude(vec!["server:s.net".to_string()]);
+    assert!(db.notify_flags(Some(&bt("relayed", "h.example")), Some("#warez7")).is_empty(), "user on the excluded server is muted");
+    db.set_notify_exclude(vec!["via:other.net".to_string()]);
+    assert!(db.notify_flags(Some(&bt("relayed", "h.example")), Some("#warez7")).contains('j'), "user on a different server still watched");
     db.set_notify_exclude(vec![]);
     // DEL by mask removes just that one.
     assert!(db.notify_del("baddie*!*@*").unwrap());
