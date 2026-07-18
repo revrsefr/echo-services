@@ -73,6 +73,10 @@ fn redact(line: &str) -> Cow<'_, str> {
 // never held across the registration key-stretching await.
 pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr: &str, mut irc_rx: mpsc::UnboundedReceiver<NetAction>, email: Option<crate::config::Email>, keycard: Option<crate::config::Keycard>) -> Result<()> {
     let stream = TcpStream::connect(addr).await?;
+    // Disable Nagle: service replies are small multi-line bursts, and without this
+    // the last segment of a reply is held ~40ms waiting on a delayed ACK, so a
+    // HELP visibly lags before it lands. Every ircd sets this on every socket.
+    stream.set_nodelay(true)?;
     let (read, mut write) = stream.into_split();
     let mut lines = BufReader::new(read).lines();
 
