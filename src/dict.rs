@@ -7,22 +7,28 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
-const TIMEOUT: Duration = Duration::from_secs(6);
+const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(6);
+const ATTEMPTS: usize = 2; // one retry — a database that's briefly slow under load often answers next try
 const MAX_LEN: usize = 400; // keep a spoken reply to about one IRC line
 
 // Look `word` up in `database` on `server`. Never errors out to the caller: on a
 // timeout, connection failure, or no match it returns a short human message, so
-// the bot always has something safe to say.
+// the bot always has something safe to say. A transient failure (timeout or
+// connection error) is retried once, since dict.org databases can be momentarily
+// slow and then recover; a clean "no match" is definitive and returns at once.
 pub async fn lookup(server: &str, database: &str, word: &str) -> String {
     let word = sanitize(word);
     if word.is_empty() {
         return "nothing to look up.".to_string();
     }
-    match tokio::time::timeout(TIMEOUT, exchange(server, database, &word)).await {
-        Ok(Ok(Some(def))) => def,
-        Ok(Ok(None)) => format!("no definition found for \x02{word}\x02."),
-        Ok(Err(_)) | Err(_) => "the dictionary is unavailable right now.".to_string(),
+    for _ in 0..ATTEMPTS {
+        match tokio::time::timeout(ATTEMPT_TIMEOUT, exchange(server, database, &word)).await {
+            Ok(Ok(Some(def))) => return def,
+            Ok(Ok(None)) => return format!("no definition found for \x02{word}\x02."),
+            Ok(Err(_)) | Err(_) => continue, // transient — try again, then give up
+        }
     }
+    "the dictionary is unavailable right now.".to_string()
 }
 
 // One request/response round trip. Returns the first definition's text, or None
@@ -36,15 +42,24 @@ async fn exchange(server: &str, database: &str, word: &str) -> std::io::Result<O
     lines.next_line().await?;
     wr.write_all(format!("DEFINE {database} \"{word}\"\r\n").as_bytes()).await?;
     let mut raw = String::new();
+    let mut in_def = false;
     while let Some(line) = lines.next_line().await? {
-        // 250 ends the whole response; stop reading once we've seen it.
-        if line.starts_with("250 ") {
-            break;
-        }
+        // Stop as soon as we have an answer, rather than blocking for a 250 that a
+        // no-match never sends: the first definition's terminating ".", or — before
+        // any definition — a terminal status ("552 no match", "550" bad db, a bare
+        // 250, or a 4xx/5xx error). "150 n" is just the count, so it's not terminal.
+        let stop = if in_def {
+            line == "."
+        } else if line.starts_with("151") {
+            in_def = true;
+            false
+        } else {
+            !line.starts_with("150") && line.chars().next().is_some_and(|c| matches!(c, '2' | '4' | '5'))
+        };
         raw.push_str(&line);
         raw.push('\n');
-        if raw.len() > MAX_LEN * 8 {
-            break; // guard against a runaway server
+        if stop || raw.len() > MAX_LEN * 8 {
+            break;
         }
     }
     let _ = wr.write_all(b"QUIT\r\n").await;
