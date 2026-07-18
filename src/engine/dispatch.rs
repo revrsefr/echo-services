@@ -75,19 +75,19 @@ impl Engine {
                     if to.eq_ignore_ascii_case(svc.uid()) || to.eq_ignore_ascii_case(svc.nick()) {
                         let args: Vec<&str> = text.split_whitespace().collect();
                         svc.on_command(&sender, &args, &mut ctx, network, db);
-                        matched = Some(svc.nick().to_ascii_lowercase());
+                        matched = Some(svc.nick().to_string()); // real case, for the feed line
                         break;
                     }
                 }
             }
             if let Some(nick) = matched {
-                self.bump(&format!("{nick}.command"));
+                self.bump(&format!("{}.command", nick.to_ascii_lowercase()));
                 // NOTIFY watch on services use: log the service + verb only (never
-                // the arguments, which may carry a password). SET commands carry the
-                // 'S' flag, everything else 's'.
-                let verb = text.split_whitespace().next().unwrap_or("").to_ascii_uppercase();
-                let flag = if verb == "SET" { 'S' } else { 's' };
-                if let Some(line) = self.notify_line(flag, from, None, &format!("used {nick} {verb}")) {
+                // the arguments, which may carry a password), as "Service:verb". A
+                // SET command carries the 'S' flag, everything else 's'.
+                let verb = text.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+                let flag = if verb == "set" { 'S' } else { 's' };
+                if let Some(line) = self.notify_line(flag, from, None, &format!("used {nick}:{verb}")) {
                     ctx.actions.push(line);
                 }
             }

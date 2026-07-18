@@ -397,17 +397,17 @@ impl Engine {
         // it still correlates with what ordinary users see.
         let mut parts: Vec<String> = Vec::new();
         if !target.ip.is_empty() {
-            let mut s = format!("\x02{}\x02", target.ip);
+            let mut s = format!("IP: \x02{}\x02", target.ip);
             if !target.realhost.is_empty() && target.realhost != target.ip {
-                s.push_str(&format!(" ({})", target.realhost));
+                s.push_str(&format!(" DNS: {}", target.realhost));
             }
             parts.push(s);
         }
         if let Some(account) = target.account {
-            parts.push(format!("acct \x02{account}\x02"));
+            parts.push(format!("Account: \x02{account}\x02"));
         }
         if !target.server.is_empty() {
-            parts.push(format!("via {}", target.server));
+            parts.push(format!("Server: {}", target.server));
         }
         let detail = if parts.is_empty() { String::new() } else { format!(" · {}", parts.join(" · ")) };
         let who = format!("\x02{}\x02!{}@{}", target.nick, target.ident, target.host);

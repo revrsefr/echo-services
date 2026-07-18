@@ -5415,8 +5415,8 @@ fn notify_hook_emits_feed_for_watched_user() {
     assert!(
         out.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text }
             if from == "42SAAAAAO" && to == "#services" && text.contains("[NOTIFY]") && text.contains("connected")
-                && text.contains("1.2.3.4"))), // the real IP is carried, not just the cloak
-        "expected a NOTIFY connect line with the real IP, got {out:?}"
+                && text.contains("IP: ") && text.contains("1.2.3.4"))), // real IP carried under a label, not just the cloak
+        "expected a NOTIFY connect line with a labelled real IP, got {out:?}"
     );
     // A clean user draws nothing.
     e.handle(NetEvent::UserConnect { uid: "000AAAAAD".into(), nick: "nice".into(), host: "h".into(), ip: "9.9.9.9".into() });
