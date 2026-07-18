@@ -71,7 +71,8 @@ fn redact(line: &str) -> Cow<'_, str> {
 // One uplink session: connect, handshake + burst, then translate lines forever.
 // The engine is shared with the gossip layer, so it is locked per operation and
 // never held across the registration key-stretching await.
-pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr: &str, mut irc_rx: mpsc::UnboundedReceiver<NetAction>, email: Option<crate::config::Email>, keycard: Option<crate::config::Keycard>) -> Result<()> {
+#[allow(clippy::too_many_arguments)] // the link driver legitimately wires up many collaborators
+pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr: &str, mut irc_rx: mpsc::UnboundedReceiver<NetAction>, irc_tx: mpsc::UnboundedSender<NetAction>, email: Option<crate::config::Email>, keycard: Option<crate::config::Keycard>, dict_server: Option<String>) -> Result<()> {
     let stream = TcpStream::connect(addr).await?;
     // Disable Nagle: service replies are small multi-line bursts, and without this
     // the last segment of a reply is held ~40ms waiting on a delayed ACK, so a
@@ -159,6 +160,10 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
                                 dispatch_email(&email, to, subject, text, html);
                                 continue;
                             }
+                            if let NetAction::DictLookup { speak_as, target, database, label, query } = act {
+                                dispatch_dict(&dict_server, &irc_tx, speak_as, target, database, label, query);
+                                continue;
+                            }
                             if let NetAction::Shutdown { restart, reason } = act {
                                 engine.lock().await.persist_stats();
                                 let _ = write.flush().await;
@@ -191,6 +196,27 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
 
     tracing::warn!("uplink closed the connection");
     Ok(())
+}
+
+// Run a DictServ lookup off the reactor and speak the result back. The DICT round
+// trip (up to a few seconds) must never touch the engine lock; the reply is pushed
+// through irc_tx so the link loop writes it like any services-initiated action. A
+// #channel target is spoken by the assigned bot (privmsg), a user gets a notice.
+fn dispatch_dict(server: &Option<String>, irc_tx: &mpsc::UnboundedSender<NetAction>, speak_as: String, target: String, database: String, label: String, query: String) {
+    let Some(server) = server.clone() else {
+        return tracing::warn!("dict lookup requested but no server configured");
+    };
+    let tx = irc_tx.clone();
+    tokio::spawn(async move {
+        let result = crate::dict::lookup(&server, &database, &query).await;
+        let text = format!("\x02{query}\x02 ({label}): {result}");
+        let action = if target.starts_with('#') || target.starts_with('&') {
+            NetAction::Privmsg { from: speak_as, to: target, text }
+        } else {
+            NetAction::Notice { from: speak_as, to: target, text }
+        };
+        let _ = tx.send(action);
+    });
 }
 
 // Fire off an email if email is configured: pipe an RFC822 message to the mail

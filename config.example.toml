@@ -93,3 +93,13 @@ protocol = 1206            # InspIRCd link protocol version (1206 = insp4, 1205 
 # still owns all channel/vhost/ban data, keyed by the account name.
 # [auth]
 # external = true
+
+# DictServ: dictionary / thesaurus / reference lookups over the DICT protocol
+# (RFC 2229). Present = the service loads and channel bots answer !dict, !define,
+# !thes, !acronym, !law, !element, !bible, and friends (DictServ LOOKUP lists them
+# all); also queryable directly with /msg DictServ <cmd> <term>. Omit it and echo
+# makes no outbound lookups at all — this is opt-in because it reaches the network.
+# Lookups are globally rate-limited and the reply is truncated to one line. The log
+# channel is unaffected; keep this off if you don't want echo talking to dict.org.
+# [dictserv]
+# server = "dict.org:2628"

@@ -540,7 +540,7 @@ impl Protocol for InspIrcd {
             NetAction::Squit { target, reason } => vec![self.sourced(format!("SQUIT {} :{}", target, reason))],
             NetAction::Raw(s) => vec![s.clone()],
             // Internal: the link layer handles these before serialization.
-            NetAction::DeferRegister { .. } | NetAction::DeferPassword { .. } | NetAction::DeferAuthenticate { .. } | NetAction::DeferKeycard { .. } | NetAction::SendEmail { .. } | NetAction::Shutdown { .. } | NetAction::Rehash { .. } => vec![],
+            NetAction::DeferRegister { .. } | NetAction::DeferPassword { .. } | NetAction::DeferAuthenticate { .. } | NetAction::DeferKeycard { .. } | NetAction::SendEmail { .. } | NetAction::DictLookup { .. } | NetAction::Shutdown { .. } | NetAction::Rehash { .. } => vec![],
         };
         // A trailing parameter can carry free-form text (message bodies, kick
         // reasons, topics, metadata). Strip CR/LF/NUL at this single choke-point

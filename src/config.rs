@@ -45,6 +45,10 @@ pub struct Config {
     // credentials (`kc_…` over SASL) are not honoured.
     #[serde(default)]
     pub keycard: Option<Keycard>,
+    // DictServ dictionary lookups (dict.org / RFC 2229). Absent = the service does
+    // not load and echo makes no outbound lookup requests. Opt-in on purpose.
+    #[serde(default)]
+    pub dictserv: Option<Dict>,
     // Which InspIRCd matching-extbans AKICK may use. Absent = every extban echo
     // knows (full compatibility). List `enabled` to restrict it — e.g. drop the
     // ones your ircd doesn't provide.
@@ -67,6 +71,18 @@ pub struct Extban {
 pub struct Keycard {
     pub url: String,
     pub api_key: String,
+}
+
+// DictServ. `server` is a DICT-protocol endpoint (RFC 2229); dict.org hosts the
+// standard databases (WordNet, GCIDE, thesaurus, …).
+#[derive(Debug, Deserialize, Clone)]
+pub struct Dict {
+    #[serde(default = "default_dict_server")]
+    pub server: String,
+}
+
+fn default_dict_server() -> String {
+    "dict.org:2628".to_string()
 }
 
 // Account-authority configuration.

@@ -95,6 +95,7 @@ pub struct Engine {
     sasl_source: HashMap<String, (Instant, String)>, // client uid -> real host/IP from the SASL H message
     reg_limiter: RegLimiter,
     cmd_limiter: CmdLimiter, // per-host flood control for service commands
+    dict_limiter: DictLimiter, // global rate cap on outbound DICT lookups
     chan_service: Option<String>, // uid to source channel modes from (ChanServ)
     nick_service: Option<String>, // uid of the account service (NickServ), for its notices
     irc_out: Option<mpsc::UnboundedSender<NetAction>>, // services-initiated actions -> the uplink
@@ -236,6 +237,7 @@ impl Engine {
             sasl_source: HashMap::new(),
             reg_limiter: RegLimiter::new(),
             cmd_limiter: CmdLimiter::default(),
+            dict_limiter: DictLimiter::new(),
             chan_service,
             nick_service,
             irc_out: None,
@@ -2036,6 +2038,36 @@ impl RegLimiter {
     fn allow(&mut self) -> bool {
         let now = Instant::now();
         self.tokens = (self.tokens + now.duration_since(self.last).as_secs_f64() * REG_REFILL_PER_SEC).min(REG_BURST);
+        self.last = now;
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+// A global token bucket bounding how fast echo hits the DICT server, so a channel
+// of users spamming !dict can't hammer dict.org (and get echo throttled). Bursts
+// of DICT_BURST, then DICT_REFILL_PER_SEC sustained; an over-budget lookup is
+// dropped — the bot simply doesn't answer that one.
+struct DictLimiter {
+    tokens: f64,
+    last: Instant,
+}
+
+const DICT_BURST: f64 = 6.0;
+const DICT_REFILL_PER_SEC: f64 = 1.0;
+
+impl DictLimiter {
+    fn new() -> Self {
+        Self { tokens: DICT_BURST, last: Instant::now() }
+    }
+
+    fn allow(&mut self) -> bool {
+        let now = Instant::now();
+        self.tokens = (self.tokens + now.duration_since(self.last).as_secs_f64() * DICT_REFILL_PER_SEC).min(DICT_BURST);
         self.last = now;
         if self.tokens >= 1.0 {
             self.tokens -= 1.0;

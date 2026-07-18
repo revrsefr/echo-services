@@ -43,6 +43,7 @@ Every service is a first-class pseudo-client, all started by default.
 | InfoServ | network bulletins shown on connect and login |
 | ReportServ | user abuse reports feeding the operator audit trail |
 | DiceServ | dice and math for tabletop games |
+| DictServ | dictionary, thesaurus and reference lookups (dict.org), opt-in |
 
 ## Architecture
 

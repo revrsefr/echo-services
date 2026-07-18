@@ -209,6 +209,11 @@ pub enum NetAction {
     // Internal only: send an email (plaintext + optional HTML). The link layer
     // pipes it to the configured mail command off-thread; never serialized.
     SendEmail { to: String, subject: String, text: String, html: Option<String> },
+    // Internal only: look up `query` on a DICT server (RFC 2229) off the reactor,
+    // then speak the result as `speak_as` to `target` — a #channel (a fantasy
+    // lookup, spoken by the assigned bot) or a user (a direct DictServ query).
+    // `label` is the human dictionary name for the reply. Never serialized.
+    DictLookup { speak_as: String, target: String, database: String, label: String, query: String },
     // Internal only: stop the services process (OperServ SHUTDOWN/RESTART). The
     // link layer exits cleanly; `restart` exits non-zero so a supervisor (systemd
     // Restart=) brings it back. Never serialized.
@@ -486,6 +491,12 @@ impl ServiceCtx {
     // Send an email (the link layer pipes it to the configured mail command).
     pub fn send_email(&mut self, to: impl Into<String>, subject: impl Into<String>, text: impl Into<String>, html: Option<String>) {
         self.actions.push(NetAction::SendEmail { to: to.into(), subject: subject.into(), text: text.into(), html });
+    }
+
+    // Look up `query` on a DICT server off the reactor and speak the result as
+    // `speak_as` to `target`. Used by DictServ (direct query) and channel fantasy.
+    pub fn dict_lookup(&mut self, speak_as: impl Into<String>, target: impl Into<String>, database: impl Into<String>, label: impl Into<String>, query: impl Into<String>) {
+        self.actions.push(NetAction::DictLookup { speak_as: speak_as.into(), target: target.into(), database: database.into(), label: label.into(), query: query.into() });
     }
 
     // Stop the services process (OperServ SHUTDOWN/RESTART). The link layer exits

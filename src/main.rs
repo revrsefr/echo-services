@@ -2,6 +2,7 @@
 // crates (echo-nickserv, echo-chanserv, echo-inspircd), each depending
 // only on the echo-api SDK.
 mod config;
+mod dict;
 mod engine;
 mod gossip;
 mod grpc;
@@ -24,6 +25,7 @@ use echo_statserv::StatServ;
 use echo_hostserv::HostServ;
 use echo_operserv::OperServ;
 use echo_diceserv::DiceServ;
+use echo_dictserv::DictServ;
 use echo_gameserv::GameServ;
 use echo_infoserv::InfoServ;
 use echo_reportserv::ReportServ;
@@ -133,6 +135,13 @@ async fn main() -> Result<()> {
             uid: format!("{}AAAAAI", cfg.server.sid),
         }));
     }
+    // DictServ is gated on its own [dictserv] config, not the module list — it's an
+    // opt-in that makes outbound lookup requests, so it never loads by default.
+    if cfg.dictserv.is_some() {
+        services.push(Box::new(DictServ {
+            uid: format!("{}AAAAAQ", cfg.server.sid),
+        }));
+    }
     if enabled("gameserv") {
         services.push(Box::new(GameServ::new(format!("{}AAAAAP", cfg.server.sid))));
     }
@@ -199,7 +208,7 @@ async fn main() -> Result<()> {
 
     // Channel for services-initiated actions to reach the uplink (drained by the link loop).
     let (irc_tx, irc_rx) = tokio::sync::mpsc::unbounded_channel();
-    engine.lock().await.set_irc_out(irc_tx);
+    engine.lock().await.set_irc_out(irc_tx.clone());
     for (account, name) in cfg.oper_priv_warnings() {
         tracing::warn!(%account, privilege = %name, valid = %echo_api::Priv::valid_names(), "unknown privilege in [[oper]] — ignored (typo?)");
     }
@@ -288,7 +297,7 @@ async fn main() -> Result<()> {
     // just lets systemd stop us without waiting out the kill timeout.
     let shutdown_engine = engine.clone();
     tokio::select! {
-        res = link::run(proto, engine, &addr, irc_rx, cfg.email.clone(), cfg.keycard.clone()) => res,
+        res = link::run(proto, engine, &addr, irc_rx, irc_tx, cfg.email.clone(), cfg.keycard.clone(), cfg.dictserv.as_ref().map(|d| d.server.clone())) => res,
         _ = shutdown_signal() => {
             // Flush stat counters so a clean stop/restart keeps StatServ history.
             shutdown_engine.lock().await.persist_stats();

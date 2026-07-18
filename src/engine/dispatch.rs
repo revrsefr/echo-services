@@ -101,8 +101,18 @@ impl Engine {
         out.extend(self.reconcile_bots());
         // Announce whatever this command changed to the staff audit channel.
         out.extend(self.audit_feed(audit_mark, &nick, account.as_deref()));
+        self.apply_dict_limit(&mut out);
         self.apply_msg_style(&mut out);
         out
+    }
+
+    // Drop DICT lookups that exceed the global rate budget, so a burst of !dict
+    // can't hammer the dictionary server. Non-lookup actions pass untouched, and
+    // the limiter is only consulted when a lookup is actually present.
+    fn apply_dict_limit(&mut self, out: &mut Vec<NetAction>) {
+        if out.iter().any(|a| matches!(a, NetAction::DictLookup { .. })) {
+            out.retain(|a| !matches!(a, NetAction::DictLookup { .. }) || self.dict_limiter.allow());
+        }
     }
 
     // Rewrite each service→user NOTICE to a server-notice (sourced from our
@@ -152,6 +162,19 @@ impl Engine {
             for a in ctx.actions[mark..].iter_mut() {
                 if let NetAction::Notice { text, .. } = a {
                     *a = NetAction::Privmsg { from: botuid.clone(), to: chan.to_string(), text: std::mem::take(text) };
+                }
+            }
+            return;
+        }
+
+        // A dictionary command (!dict/!define/…) becomes a deferred DICT lookup the
+        // assigned bot speaks — only when DictServ is loaded. The rate limiter in
+        // dispatch() drops excess lookups so nobody can hammer the DICT server.
+        if let Some(l) = echo_dictserv::lookup_for(cmd) {
+            if self.service_uid("DictServ").is_some() {
+                let query = words.collect::<Vec<_>>().join(" ");
+                if !query.trim().is_empty() {
+                    ctx.dict_lookup(botuid.as_str(), chan, l.database, l.label, query);
                 }
             }
             return;

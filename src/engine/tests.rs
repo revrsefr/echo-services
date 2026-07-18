@@ -5487,6 +5487,47 @@ fn cmd_limiter_bursts_then_throttles_per_host() {
     assert!(matches!(lim.check_at("1.2.3.4", next_window), CmdVerdict::Warn), "one fresh warning in a new window");
 }
 
+// A dict fantasy (!dict) in a bot channel emits a DictLookup carried by the
+// assigned bot — the actual dict.org round trip happens off-reactor in the link
+// layer, so this just checks the routing.
+#[test]
+fn fantasy_dict_emits_a_lookup_via_the_bot() {
+    use echo_botserv::BotServ;
+    use echo_dictserv::DictServ;
+    use echo_nickserv::NickServ;
+    let path = std::env::temp_dir().join("echo-fdict.jsonl");
+    let _ = std::fs::remove_file(&path);
+    let mut db = Db::open(&path, "42S");
+    db.scram_iterations = 4096;
+    db.register("boss", "password1", None).unwrap();
+    db.register_channel("#c", "boss").unwrap();
+    let mut e = Engine::new(
+        vec![
+            Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+            Box::new(BotServ { uid: "42SAAAAAD".into() }),
+            Box::new(DictServ { uid: "42SAAAAAQ".into() }),
+        ],
+        db,
+    );
+    e.set_sid("42S".into());
+    let mut opers = std::collections::HashMap::new();
+    opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
+    e.set_opers(opers);
+    e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
+    e.handle(NetEvent::UserConnect { uid: "000AAAAAR".into(), nick: "rando".into(), host: "h".into(), ip: "0.0.0.0".into() });
+    e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+    e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "BOT ADD Bendy bot serv.host Helper".into() });
+    e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "ASSIGN #c Bendy".into() });
+    e.handle(NetEvent::Join { uid: "000AAAAAR".into(), channel: "#c".into(), op: false });
+
+    let out = e.handle(NetEvent::Privmsg { from: "000AAAAAR".into(), to: "#c".into(), text: "!dict cat".into() });
+    assert!(
+        out.iter().any(|a| matches!(a, NetAction::DictLookup { target, database, query, speak_as, .. }
+            if target == "#c" && database == "wn" && query == "cat" && speak_as.starts_with("42SB"))),
+        "expected a bot-carried DictLookup, got {out:?}"
+    );
+}
+
 // Perf harness — not part of the normal suite. Run:
 //   cargo test --release -p echo -- --ignored --nocapture bench_engine
 // Measures the two costs that actually bound the single-threaded engine: the

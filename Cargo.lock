@@ -286,6 +286,7 @@ dependencies = [
  "echo-chanserv",
  "echo-debugserv",
  "echo-diceserv",
+ "echo-dictserv",
  "echo-example",
  "echo-gameserv",
  "echo-groupserv",
@@ -358,6 +359,13 @@ version = "0.0.1"
 dependencies = [
  "echo-api",
  "rand",
+]
+
+[[package]]
+name = "echo-dictserv"
+version = "0.0.1"
+dependencies = [
+ "echo-api",
 ]
 
 [[package]]

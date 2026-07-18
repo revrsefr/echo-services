@@ -13,6 +13,7 @@ members = [
     "modules/hostserv",
     "modules/operserv",
     "modules/diceserv",
+    "modules/dictserv",
     "modules/gameserv",
     "modules/infoserv",
     "modules/reportserv",
@@ -41,6 +42,7 @@ echo-statserv = { path = "modules/statserv" }
 echo-hostserv = { path = "modules/hostserv" }
 echo-operserv = { path = "modules/operserv" }
 echo-diceserv = { path = "modules/diceserv" }
+echo-dictserv = { path = "modules/dictserv" }
 echo-gameserv = { path = "modules/gameserv" }
 echo-infoserv = { path = "modules/infoserv" }
 echo-reportserv = { path = "modules/reportserv" }

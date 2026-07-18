@@ -1,0 +1,8 @@
+[package]
+name = "echo-dictserv"
+version = "0.0.1"
+edition = "2021"
+description = "DictServ: dictionary, thesaurus and reference lookups over DICT (RFC 2229)."
+
+[dependencies]
+echo-api = { path = "../../api" }
