@@ -390,8 +390,28 @@ impl Engine {
         if !self.db.notify_flags(Some(&target), chan).contains(flag) {
             return None;
         }
+        // The feed lands in the oper-only staff channel, so a watch line carries the
+        // forensic detail a cloak hides: the real IP (with rdns if it differs), the
+        // login, and the origin server. The connection port is not available — the
+        // ircd's s2s UID burst never sends it. `nick!ident@host` keeps the cloak so
+        // it still correlates with what ordinary users see.
+        let mut parts: Vec<String> = Vec::new();
+        if !target.ip.is_empty() {
+            let mut s = format!("\x02{}\x02", target.ip);
+            if !target.realhost.is_empty() && target.realhost != target.ip {
+                s.push_str(&format!(" ({})", target.realhost));
+            }
+            parts.push(s);
+        }
+        if let Some(account) = target.account {
+            parts.push(format!("acct \x02{account}\x02"));
+        }
+        if !target.server.is_empty() {
+            parts.push(format!("via {}", target.server));
+        }
+        let detail = if parts.is_empty() { String::new() } else { format!(" · {}", parts.join(" · ")) };
         let who = format!("\x02{}\x02!{}@{}", target.nick, target.ident, target.host);
-        self.feed("NOTIFY", format!("{who} {what}"))
+        self.feed("NOTIFY", format!("{who} {what}{detail}"))
     }
 
     // Inactivity-expiry thresholds (seconds); None leaves that kind never
