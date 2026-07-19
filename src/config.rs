@@ -431,3 +431,33 @@ impl Config {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Oper;
+    use echo_api::Priv;
+
+    fn oper(privs: &[&str], oper_type: Option<&str>) -> Oper {
+        Oper {
+            account: "reverse".into(),
+            privs: privs.iter().map(|s| s.to_string()).collect(),
+            oper_type: oper_type.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn oper_type_shortcut_resolves_to_the_tier_it_names() {
+        // `type = "root"` must grant the full root privilege set. This is the seam
+        // that, if it read the (now empty) `privs` field instead, would silently
+        // strip a `type`-only oper of every privilege.
+        let privs = echo_api::Privs::from_names(&oper(&[], Some("root")).all_priv_names());
+        assert!(privs.has(Priv::Root) && privs.has(Priv::Admin) && privs.has(Priv::Oper) && privs.has(Priv::Auspex));
+        assert_eq!(privs.tier(), "Services Root");
+
+        // The tier aliases resolve too, and `type` combines with explicit `privs`.
+        let admin = echo_api::Privs::from_names(&oper(&[], Some("administrator")).all_priv_names());
+        assert!(admin.has(Priv::Admin) && !admin.has(Priv::Root));
+        let combined = echo_api::Privs::from_names(&oper(&["auspex"], Some("suspend")).all_priv_names());
+        assert!(combined.contains(Priv::Auspex) && combined.contains(Priv::Suspend));
+    }
+}
