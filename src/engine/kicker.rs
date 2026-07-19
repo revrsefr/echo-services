@@ -218,7 +218,7 @@ impl Engine {
         let threshold = self.db.channel(channel).map(|c| c.kickers.votekick).unwrap_or(0);
         let botnick = self.db.channel(channel).and_then(|c| c.assigned_bot.clone());
         let (Some(botnick), true) = (botnick, threshold > 0) else { return None };
-        let Some(botuid) = self.network.uid_by_nick(&botnick).map(str::to_string) else { return None };
+        let botuid = self.network.uid_by_nick(&botnick).map(str::to_string)?;
         let Some(target_uid) = self.network.uid_by_nick(target_nick).map(str::to_string) else {
             return Some(vec![NetAction::Privmsg { from: botuid, to: channel.to_string(), text: format!("There's no \x02{target_nick}\x02 here to vote on.") }]);
         };

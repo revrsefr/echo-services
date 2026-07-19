@@ -50,10 +50,10 @@ impl Service for ReportServ {
         (BLURB, TOPICS)
     }
 
-    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, _net: &dyn NetView, db: &mut dyn Store) {
+    fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
         let me = self.uid.as_str();
         match args.first().map(|s| s.to_ascii_uppercase()).as_deref() {
-            Some("REPORT") => report::handle(me, from, &args[1..], ctx, db),
+            Some("REPORT") => report::handle(me, from, &args[1..], ctx, net, db),
             Some("LIST") => list::handle(me, from, args.get(1).copied(), ctx, db),
             Some("VIEW") | Some("READ") => view::handle(me, from, args.get(1).copied(), ctx, db),
             Some("CLOSE") | Some("RESOLVE") => close::handle(me, from, args.get(1).copied(), ctx, db),

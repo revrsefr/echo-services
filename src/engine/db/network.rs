@@ -460,10 +460,10 @@ impl Db {
 
     /// File an abuse report, rate-limited per reporter. Returns the new report's
     /// id, or None if the reporter filed one too recently.
-    pub fn report_file(&mut self, reporter: &str, target: &str, reason: &str) -> Option<u64> {
+    pub fn report_file(&mut self, reporter: &str, cooldown_key: &str, target: &str, reason: &str) -> Option<u64> {
         const COOLDOWN: u64 = 30;
         let now = now();
-        let key = reporter.to_ascii_lowercase();
+        let key = cooldown_key.to_ascii_lowercase();
         if self.report_times.get(&key).is_some_and(|&t| now.saturating_sub(t) < COOLDOWN) {
             return None;
         }
@@ -516,10 +516,10 @@ impl Db {
 
     /// Open a help-desk ticket, rate-limited per requester (shares the report
     /// throttle namespace). Returns the new ticket's id, or None if too soon.
-    pub fn help_request(&mut self, requester: &str, message: &str) -> Option<u64> {
+    pub fn help_request(&mut self, requester: &str, cooldown_key: &str, message: &str) -> Option<u64> {
         const COOLDOWN: u64 = 30;
         let now = now();
-        let tkey = format!("help:{}", requester.to_ascii_lowercase());
+        let tkey = format!("help:{}", cooldown_key.to_ascii_lowercase());
         if self.report_times.get(&tkey).is_some_and(|&t| now.saturating_sub(t) < COOLDOWN) {
             return None;
         }

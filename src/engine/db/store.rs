@@ -344,8 +344,8 @@ impl Store for Db {
     fn news(&self, kind: NewsKind) -> Vec<NewsView> {
         Db::news(self, kind)
     }
-    fn report_file(&mut self, reporter: &str, target: &str, reason: &str) -> Option<u64> {
-        Db::report_file(self, reporter, target, reason)
+    fn report_file(&mut self, reporter: &str, cooldown_key: &str, target: &str, reason: &str) -> Option<u64> {
+        Db::report_file(self, reporter, cooldown_key, target, reason)
     }
     fn report_close(&mut self, id: u64) -> bool {
         Db::report_close(self, id)
@@ -359,8 +359,8 @@ impl Store for Db {
     fn report(&self, id: u64) -> Option<ReportView> {
         Db::report(self, id)
     }
-    fn help_request(&mut self, requester: &str, message: &str) -> Option<u64> {
-        Db::help_request(self, requester, message)
+    fn help_request(&mut self, requester: &str, cooldown_key: &str, message: &str) -> Option<u64> {
+        Db::help_request(self, requester, cooldown_key, message)
     }
     fn help_take(&mut self, id: u64, handler: &str) -> bool {
         Db::help_take(self, id, handler)

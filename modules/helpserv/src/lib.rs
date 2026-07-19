@@ -60,7 +60,7 @@ impl Service for HelpServ {
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
         let me = self.uid.as_str();
         match args.first().map(|s| s.to_ascii_uppercase()).as_deref() {
-            Some("REQUEST") | Some("HELPME") => request::handle(me, from, &args[1..], ctx, db),
+            Some("REQUEST") | Some("HELPME") => request::handle(me, from, &args[1..], ctx, net, db),
             Some("CANCEL") => cancel::handle(me, from, ctx, db),
             Some("LIST") => list::handle(me, from, args.get(1).copied(), ctx, db),
             Some("VIEW") | Some("READ") => view::handle(me, from, args.get(1).copied(), ctx, db),

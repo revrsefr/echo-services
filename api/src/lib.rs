@@ -2056,13 +2056,13 @@ pub trait Store {
     fn news_del(&mut self, id: u64) -> bool;
     fn news(&self, kind: NewsKind) -> Vec<NewsView>;
     // Abuse reports (ReportServ). `report_file` is rate-limited (None = too soon).
-    fn report_file(&mut self, reporter: &str, target: &str, reason: &str) -> Option<u64>;
+    fn report_file(&mut self, reporter: &str, cooldown_key: &str, target: &str, reason: &str) -> Option<u64>;
     fn report_close(&mut self, id: u64) -> bool;
     fn report_del(&mut self, id: u64) -> bool;
     fn reports(&self, open_only: bool) -> Vec<ReportView>;
     fn report(&self, id: u64) -> Option<ReportView>;
     // Help-desk tickets (HelpServ). `help_request` is rate-limited (None = too soon).
-    fn help_request(&mut self, requester: &str, message: &str) -> Option<u64>;
+    fn help_request(&mut self, requester: &str, cooldown_key: &str, message: &str) -> Option<u64>;
     fn help_take(&mut self, id: u64, handler: &str) -> bool;
     fn help_close(&mut self, id: u64) -> bool;
     fn help_tickets(&self, open_only: bool) -> Vec<HelpView>;
