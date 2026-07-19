@@ -2898,6 +2898,7 @@
         bs(&mut e, "SET #c VOTEKICK 2");
         e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "victim".into(), host: "h".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "carol".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Join { uid: "000AAAAAV".into(), channel: "#c".into(), op: false }); // the target must be in the channel
         let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { from, uid, .. } if from.starts_with("42SB") && uid == "000AAAAAV"));
 
         // First voter, then the same voter again (deduped) — no kick yet.

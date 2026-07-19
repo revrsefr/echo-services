@@ -157,7 +157,8 @@ impl Engine {
                 }
                 e.last_fired = now;
                 let mut resp = e.response.clone();
-                for i in 1..caps.len() {
+                // High group numbers first, so `$1` doesn't rewrite the prefix of `$10`.
+                for i in (1..caps.len()).rev() {
                     resp = resp.replace(&format!("${i}"), caps.get(i).map_or("", |m| m.as_str()));
                 }
                 response = Some(resp.replace("$nick", &nick));
@@ -220,8 +221,13 @@ impl Engine {
         let (Some(botnick), true) = (botnick, threshold > 0) else { return None };
         let botuid = self.network.uid_by_nick(&botnick).map(str::to_string)?;
         let Some(target_uid) = self.network.uid_by_nick(target_nick).map(str::to_string) else {
-            return Some(vec![NetAction::Privmsg { from: botuid, to: channel.to_string(), text: format!("There's no \x02{target_nick}\x02 here to vote on.") }]);
+            return None; // unknown target: treat as ordinary text so the bot can't be spammed into flooding, and the flood kicker still sees it
         };
+        // Only a current member can be voted out — otherwise `!voteban <online nick
+        // from another channel>` would ban someone who never visited.
+        if !self.network.channel_members(channel).any(|u| u == target_uid.as_str()) {
+            return None;
+        }
         let target_display = self.network.nick_of(&target_uid).unwrap_or(target_nick).to_string();
         // Never let the community vote out a service bot, an oper, or a user with
         // channel op-access — moderation authority isn't a valid vote target.
@@ -242,7 +248,11 @@ impl Engine {
 
         let vs = self.votes.entry(key.clone()).or_insert(VoteState { ban, voters: std::collections::HashSet::new(), started: now });
         vs.ban = ban;
-        vs.voters.insert(from.to_string());
+        if !vs.voters.insert(from.to_string()) {
+            // Already counted this voter: don't re-announce (which let one user spam
+            // the bot into flooding), and let the line fall through to the flood kicker.
+            return None;
+        }
         let count = vs.voters.len() as u16;
 
         if count < threshold {
