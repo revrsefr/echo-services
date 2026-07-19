@@ -378,7 +378,12 @@ fn peace_blocks(me: &str, from: &Sender, chan: &str, target_uid: &str, ctx: &mut
     if target_uid == from.uid {
         return false;
     }
-    if info.access_rank(net.account_of(target_uid)) >= info.access_rank(from.account) {
+    // Group-aware rank: channel_caps resolves !group access (and founder), so PEACE
+    // protects a member whose access comes via a group, not just direct entries —
+    // ChannelView::access_rank is group-blind and let a plain op act against a
+    // group-SOP it should protect.
+    let rank = |account: Option<&str>| account.map_or(echo_api::Rank::None, |a| db.channel_caps(chan, a).rank);
+    if rank(net.account_of(target_uid)) >= rank(from.account) {
         ctx.notice(me, from.uid, "\x02PEACE\x02 is set: you can't act against someone with equal or higher access.");
         return true;
     }

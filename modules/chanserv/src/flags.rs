@@ -45,6 +45,9 @@ pub fn handle(me: &str, from: &Sender, chan: &str, args: &[&str], ctx: &mut Serv
         ctx.notice(me, from.uid, format!("You need the founder or the \x02a\x02 flag to change access on \x02{chan}\x02."));
         return;
     }
+    if super::suspended_block(me, from, chan, ctx, db) {
+        return; // a staff-suspended channel is frozen: no flag changes either
+    }
     if info.founder.eq_ignore_ascii_case(target) {
         ctx.notice(me, from.uid, "The founder's access is set with \x02SET FOUNDER\x02, not flags.");
         return;

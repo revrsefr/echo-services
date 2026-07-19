@@ -69,6 +69,7 @@ fn is_founder(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &dy
             ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can change access."));
             false
         }
-        Some(_) => true,
+        // Founder, but a staff-suspended channel is frozen — no access changes.
+        Some(_) => !super::suspended_block(me, from, chan, ctx, db),
     }
 }

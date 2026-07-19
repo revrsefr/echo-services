@@ -24,6 +24,9 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can change its modes."));
         return;
     }
+    if super::suspended_block(me, from, chan, ctx, db) {
+        return; // a staff-suspended channel is frozen: no mode changes either
+    }
     // Reject an extban the network has turned off, before relaying anything.
     for mask in ban_masks(&args[2..], |m, adding| db.chanmode_takes_param(m, adding)) {
         let core = mask.strip_prefix('!').unwrap_or(mask); // extbans may be inverted
