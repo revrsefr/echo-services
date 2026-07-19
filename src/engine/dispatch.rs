@@ -199,6 +199,12 @@ impl Engine {
             return;
         }
 
+        // Only ChanServ's own verbs are fantasy commands. An unknown `!word` is
+        // some other bot's command sharing the `!` prefix, not ours, so ignore it
+        // silently instead of the bot barking "I don't know that command".
+        if !echo_chanserv::is_command(cmd) {
+            return;
+        }
         let Some(csuid) = self.service_uid("ChanServ") else { return };
         // Rewrite `!cmd args…` into `CMD #channel args…` for ChanServ.
         let mark = ctx.actions.len();

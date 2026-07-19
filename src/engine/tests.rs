@@ -3469,6 +3469,11 @@
         assert!(chan(&mut e, "000AAAAAB", "#c", "hello everyone").is_empty(), "chatter ignored");
         // Fantasy in a channel with no bot does nothing.
         assert!(chan(&mut e, "000AAAAAB", "#d", "!op").is_empty(), "no bot, no fantasy");
+
+        // An unknown `!word` (another bot's command sharing the `!` prefix) draws
+        // no reply from the assigned bot — not even "I don't know that command".
+        let out = chan(&mut e, "000AAAAAB", "#c", "!cissue \"CERT LIST\" fix it");
+        assert!(out.is_empty(), "unknown fantasy command stays silent: {out:?}");
     }
 
     // MemoServ delivers a memo to an offline account and notifies them on login.
@@ -3539,8 +3544,12 @@
         assert!(notice(&cs(&mut e, "000AAAAAB", "SUSPEND #c"), "Access denied"));
         // The oper suspends it.
         assert!(notice(&cs(&mut e, "000AAAAAC", "SUSPEND #c raided"), "now suspended"));
-        // The founder can no longer manage it.
+        // The founder can no longer manage it — including MODE/ACCESS/FLAGS, which
+        // used to bypass the suspension freeze.
         assert!(notice(&cs(&mut e, "000AAAAAB", "SET #c SIGNKICK ON"), "suspended"));
+        assert!(notice(&cs(&mut e, "000AAAAAB", "MODE #c +m"), "suspended"), "MODE frozen while suspended");
+        assert!(notice(&cs(&mut e, "000AAAAAB", "ACCESS #c ADD someone sop"), "suspended"), "ACCESS frozen while suspended");
+        assert!(notice(&cs(&mut e, "000AAAAAB", "FLAGS #c someone +o"), "suspended"), "FLAGS frozen while suspended");
         // UNSUSPEND restores management.
         assert!(notice(&cs(&mut e, "000AAAAAC", "UNSUSPEND #c"), "no longer suspended"));
         assert!(notice(&cs(&mut e, "000AAAAAB", "SET #c SIGNKICK ON"), "is now"));

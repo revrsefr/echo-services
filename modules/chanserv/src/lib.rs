@@ -79,6 +79,23 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "NOEXPIRE", summary: "pin against expiry (operator)", detail: "Syntax: \x02NOEXPIRE <#channel> {ON|OFF}\x02\nPins a channel so inactivity expiry never drops it. Operators only." },
 ];
 
+// Every command the dispatcher below recognizes. The fantasy router consults
+// this so an unknown in-channel `!word` — another bot's command sharing the `!`
+// prefix — is silently ignored rather than drawing a "don't know that command"
+// reply from the assigned bot. Keep in sync with the `on_command` match.
+pub const COMMANDS: &[&str] = &[
+    "REGISTER", "INFO", "DROP", "MLOCK", "MODE", "ACCESS", "FLAGS", "OP", "DEOP", "VOICE",
+    "DEVOICE", "UP", "DOWN", "OWNER", "DEOWNER", "PROTECT", "ADMIN", "DEPROTECT", "DEADMIN",
+    "HALFOP", "DEHALFOP", "KICK", "BAN", "UNBAN", "TOPIC", "INVITE", "AKICK", "LEVELS",
+    "STATUS", "SUSPEND", "UNSUSPEND", "NOEXPIRE", "LIST", "SET", "ENTRYMSG", "GETKEY",
+    "SEEN", "ENFORCE", "SYNC", "CLONE", "SOP", "AOP", "HOP", "VOP", "HELP",
+];
+
+/// True if `cmd` (any case) is a command ChanServ handles.
+pub fn is_command(cmd: &str) -> bool {
+    COMMANDS.iter().any(|c| cmd.eq_ignore_ascii_case(c))
+}
+
 pub struct ChanServ {
     pub uid: String,
 }
@@ -315,6 +332,8 @@ impl Service for ChanServ {
             Some("HOP") => xop::handle(me, from, "HOP", "halfop", args, ctx, db),
             Some("VOP") => xop::handle(me, from, "VOP", "voice", args, ctx, db),
             Some("HELP") => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
+            // Direct `/msg ChanServ FOO` earns this reply; the fantasy router
+            // gates on COMMANDS first so an in-channel `!foo` stays silent.
             Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
             None => {}
         }
