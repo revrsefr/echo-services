@@ -17,11 +17,15 @@ pub struct InspIrcd {
     // Monotonic membership id for our own IJOINs. InspIRCd requires a membid on
     // IJOIN (`IJOIN <chan> <membid>`); it need only be unique among our members.
     membid: u64,
+    // Channel-mode arities learned from CAPAB CHANMODES. FMODE/FJOIN param scanning
+    // consults this so a param-taking mode outside the static fallback table (e.g.
+    // m_chanfilter's +g) doesn't desync the param cursor and mispair status/key args.
+    chanmodes: std::collections::HashMap<char, echo_api::ChanModeCap>,
 }
 
 impl InspIrcd {
     pub fn new(name: String, description: String, sid: String, password: String, protocol: u32, ts: u64, service_modes: String) -> Self {
-        Self { sid, name, description, password, protocol, ts, service_modes, membid: 0 }
+        Self { sid, name, description, password, protocol, ts, service_modes, membid: 0, chanmodes: std::collections::HashMap::new() }
     }
 
     fn sourced(&self, cmd: String) -> String {
@@ -161,7 +165,7 @@ impl Protocol for InspIrcd {
                 } else {
                     let mut out = vec![NetEvent::ChannelCreate { channel: chan.to_string() }];
                     if let Some(modes) = head.get(3) {
-                        if let Some(key) = scan_key(modes, head.get(4..).unwrap_or(&[])) {
+                        if let Some(key) = scan_key(modes, head.get(4..).unwrap_or(&[]), &self.chanmodes) {
                             out.push(NetEvent::ChannelKey { channel: chan.to_string(), key });
                         }
                     }
@@ -214,13 +218,13 @@ impl Protocol for InspIrcd {
                     (Some(src), Some(chan), Some(modes)) if !src.starts_with(self.sid.as_str()) && chan.starts_with('#') => {
                         let params = a.get(3..).unwrap_or(&[]);
                         let mut out = vec![NetEvent::ChannelModeChange { channel: chan.to_string(), modes: modes.to_string(), setter: src.to_string() }];
-                        if let Some(key) = scan_key(modes, params) {
+                        if let Some(key) = scan_key(modes, params, &self.chanmodes) {
                             out.push(NetEvent::ChannelKey { channel: chan.to_string(), key });
                         }
-                        for (op, uid) in scan_status(modes, params, 'o') {
+                        for (op, uid) in scan_status(modes, params, 'o', &self.chanmodes) {
                             out.push(NetEvent::ChannelOp { channel: chan.to_string(), uid, op });
                         }
-                        for (voice, uid) in scan_status(modes, params, 'v') {
+                        for (voice, uid) in scan_status(modes, params, 'v', &self.chanmodes) {
                             out.push(NetEvent::ChannelVoice { channel: chan.to_string(), uid, voice });
                         }
                         out
@@ -354,6 +358,8 @@ impl Protocol for InspIrcd {
                     if modes.is_empty() {
                         vec![]
                     } else {
+                        // Retain the arities locally too, for FMODE/FJOIN param scanning.
+                        self.chanmodes = modes.iter().map(|m| (m.letter, *m)).collect();
                         vec![NetEvent::ChanModeRegistry { modes }]
                     }
                 }
@@ -560,7 +566,7 @@ use echo_api::chanmode_takes_param as takes_param;
 
 // Walk a mode change and its params for a key (+k/-k). Returns Some(Some(key))
 // when a key is set, Some(None) when cleared, None when `k` isn't in the change.
-fn scan_key(modes: &str, params: &[&str]) -> Option<Option<String>> {
+fn scan_key(modes: &str, params: &[&str], learned: &std::collections::HashMap<char, echo_api::ChanModeCap>) -> Option<Option<String>> {
     let mut adding = true;
     let mut pi = 0;
     let mut result = None;
@@ -572,17 +578,23 @@ fn scan_key(modes: &str, params: &[&str]) -> Option<Option<String>> {
                 result = Some(if adding { params.get(pi).map(|s| s.to_string()) } else { None });
                 pi += 1;
             }
-            c if takes_param(c, adding) => pi += 1,
+            c if arity(learned, c, adding) => pi += 1,
             _ => {}
         }
     }
     result
 }
 
+// Whether mode `c` consumes a param in this direction: the ircd's learned arity if
+// we have it, else the static fallback table.
+fn arity(learned: &std::collections::HashMap<char, echo_api::ChanModeCap>, c: char, adding: bool) -> bool {
+    learned.get(&c).map(|cap| cap.takes_param(adding)).unwrap_or_else(|| takes_param(c, adding))
+}
+
 // Walk a mode change and its params for grants/revokes of one status mode
 // (`want`, e.g. 'o' or 'v'). Returns (is_set, uid) per match, using the same
 // param cursor as scan_key.
-fn scan_status(modes: &str, params: &[&str], want: char) -> Vec<(bool, String)> {
+fn scan_status(modes: &str, params: &[&str], want: char, learned: &std::collections::HashMap<char, echo_api::ChanModeCap>) -> Vec<(bool, String)> {
     let mut adding = true;
     let mut pi = 0;
     let mut out = Vec::new();
@@ -596,7 +608,7 @@ fn scan_status(modes: &str, params: &[&str], want: char) -> Vec<(bool, String)> 
                 }
                 pi += 1;
             }
-            c if takes_param(c, adding) => pi += 1,
+            c if arity(learned, c, adding) => pi += 1,
             _ => {}
         }
     }
@@ -791,6 +803,18 @@ mod tests {
         assert!(find('l').unwrap().takes_param(true) && !find('l').unwrap().takes_param(false));
         assert!(find('k').unwrap().takes_param(true) && find('k').unwrap().takes_param(false));
         assert!(find('Y').unwrap().is_prefix());
+    }
+
+    // A param-taking mode learned from CHANMODES but absent from the static table
+    // (m_chanfilter's +g) must not desync the FMODE param cursor: the +o that
+    // follows must grant to the real uid, not the +g mask param.
+    #[test]
+    fn fmode_param_cursor_uses_learned_chanmodes() {
+        let mut p = proto();
+        p.parse("CAPAB CHANMODES :list:filter=g prefix:30000:op=@o param:key=k");
+        let ev = p.parse(":0IR FMODE #chan 1783845132 +go badword 0IRAAAAAB");
+        assert!(ev.iter().any(|e| matches!(e, NetEvent::ChannelOp { uid, op, .. } if uid == "0IRAAAAAB" && *op)), "op grants to the real uid: {ev:?}");
+        assert!(!ev.iter().any(|e| matches!(e, NetEvent::ChannelOp { uid, .. } if uid == "badword")), "the +g mask isn't mistaken for a nick: {ev:?}");
     }
 
     // Both SERVER forms surface a ServerInfo (SID -> name) for the `server` extban:
