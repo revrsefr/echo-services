@@ -78,6 +78,13 @@ impl Engine {
                                 }]
                             }
                             Some((authcid, passwd)) => match self.scram_verifier(&authcid) {
+                                // Refuse while throttled, so SASL PLAIN can't be used to
+                                // brute-force past the IDENTIFY lockout.
+                                Some((account, _)) if self.db.auth_lockout(&account).is_some() => {
+                                    let mut out = mk("D", vec!["F".to_string()]);
+                                    out.extend(self.auth_report(false, Some(&account), "SASL PLAIN", &client, Some("rate limited")));
+                                    out
+                                }
                                 Some((account, verifier)) => vec![NetAction::DeferAuthenticate {
                                     verifier,
                                     password: passwd,

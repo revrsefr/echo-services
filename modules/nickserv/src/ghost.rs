@@ -8,7 +8,7 @@ use echo_api::NetView;
 // it. Every argument is a distinct input the guest-rename needs, so the count is
 // inherent.
 #[allow(clippy::too_many_arguments)]
-pub fn handle(me: &str, guest_nick: &str, guest_seq: &mut u32, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &dyn Store, regain: bool) {
+pub fn handle(me: &str, guest_nick: &str, guest_seq: &mut u32, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store, regain: bool) {
     let cmd = if regain { "RECOVER" } else { "GHOST" };
     let Some(&target) = args.get(1) else {
         ctx.notice(me, from.uid, format!("Syntax: {cmd} <nick> [password]"));
@@ -18,7 +18,25 @@ pub fn handle(me: &str, guest_nick: &str, guest_seq: &mut u32, from: &Sender, ar
         ctx.notice(me, from.uid, format!("\x02{target}\x02 isn't registered."));
         return;
     };
-    let owns = from.account == Some(account.as_str()) || args.get(2).is_some_and(|pw| db.authenticate(target, pw).is_some());
+    // Ownership by an identified session, or by password — throttled and recorded
+    // like IDENTIFY so GHOST can't be an unthrottled guessing oracle against any
+    // registered nick, and each ~1s verify can't be spammed to stall the engine.
+    let owns = if from.account == Some(account.as_str()) {
+        true
+    } else if let Some(&pw) = args.get(2) {
+        if let Some(secs) = db.auth_lockout(&account) {
+            ctx.notice(me, from.uid, format!("Too many failed attempts. Please wait {secs}s and try again."));
+            return;
+        }
+        let ok = db.authenticate(&account, pw).is_some();
+        db.note_auth(&account, ok);
+        if !ok {
+            ctx.auth_report(false, Some(&account), "NickServ GHOST", from.uid, Some("bad password"));
+        }
+        ok
+    } else {
+        false
+    };
     if !owns {
         ctx.notice(me, from.uid, format!("Access denied. Identify to \x02{account}\x02 or give its password."));
         return;

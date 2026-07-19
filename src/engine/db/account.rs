@@ -302,7 +302,10 @@ impl Db {
     /// Seconds the caller must wait before another password attempt on `account`,
     /// or None if it is not currently throttled.
     pub fn auth_lockout(&self, account: &str) -> Option<u64> {
-        let until = self.auth_fails.get(&key(account))?.locked_until?;
+        // Key the throttle by the resolved account, so every grouped-nick alias of
+        // one account shares a single lockout bucket (else each spelling is its own).
+        let k = self.resolved_key(account).unwrap_or_else(|| key(account));
+        let until = self.auth_fails.get(&k)?.locked_until?;
         let now = Instant::now();
         (until > now).then(|| (until - now).as_secs() + 1)
     }
@@ -311,7 +314,7 @@ impl Db {
     /// the counter; each failure past a few free tries grows an exponential
     /// backoff, throttling guessing without a hard lockout a griefer could abuse.
     pub fn note_auth(&mut self, account: &str, success: bool) {
-        let k = key(account);
+        let k = self.resolved_key(account).unwrap_or_else(|| key(account));
         if success {
             self.auth_fails.remove(&k);
             return;

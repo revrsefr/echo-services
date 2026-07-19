@@ -13,10 +13,18 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         ctx.notice(me, from.uid, "Syntax: DROP <password>");
         return;
     };
+    // Throttle the confirmation verify like IDENTIFY so the ~1s check can't be
+    // spammed to stall the engine, and record the attempt.
+    if let Some(secs) = db.auth_lockout(account) {
+        ctx.notice(me, from.uid, format!("Too many failed attempts. Please wait {secs}s and try again."));
+        return;
+    }
     if db.authenticate(account, password).is_none() {
+        db.note_auth(account, false);
         ctx.notice(me, from.uid, "Invalid password.");
         return;
     }
+    db.note_auth(account, true);
     // A channel with a successor is inherited; the rest are dropped and released.
     let (inherited, dropped) = db.release_founded_channels(account);
     for chan in &dropped {

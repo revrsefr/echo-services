@@ -8,10 +8,20 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         ctx.notice(me, from.uid, "Syntax: GROUP <account> <password>");
         return;
     };
+    // Throttle + record the attempt like IDENTIFY, or GROUP is an unthrottled
+    // password-guessing oracle against any account (and each ~1s verify blocks the
+    // engine). Also feeds the auth audit feed.
+    if let Some(secs) = db.auth_lockout(account) {
+        ctx.notice(me, from.uid, format!("Too many failed attempts. Please wait {secs}s and try again."));
+        return;
+    }
     let Some(canonical) = db.authenticate(account, password).map(str::to_string) else {
+        db.note_auth(account, false);
+        ctx.auth_report(false, Some(account), "NickServ GROUP", from.uid, Some("bad password"));
         ctx.notice(me, from.uid, "Invalid account or password.");
         return;
     };
+    db.note_auth(account, true);
     if db.account(from.nick).is_some() {
         ctx.notice(me, from.uid, format!("\x02{}\x02 is itself a registered account.", from.nick));
         return;

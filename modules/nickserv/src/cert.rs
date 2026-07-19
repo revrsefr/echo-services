@@ -5,15 +5,13 @@ use echo_api::{Sender, ServiceCtx};
 // fingerprints that may log in to your account via SASL EXTERNAL. Each
 // subcommand is password-gated, so it needs no identified-session state.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
-    let auth = |db: &dyn Store, password: &str| db.authenticate(from.nick, password).map(str::to_string);
     match args.get(1).map(|s| s.to_ascii_uppercase()).as_deref() {
         Some("LIST") => {
             let Some(password) = args.get(2) else {
                 ctx.notice(me, from.uid, "Syntax: CERT LIST <password>");
                 return;
             };
-            let Some(account) = auth(db, password) else {
-                ctx.notice(me, from.uid, "Invalid password.");
+            let Some(account) = verify(me, from, ctx, db, password) else {
                 return;
             };
             let fps = db.certfps(&account);
@@ -28,8 +26,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 ctx.notice(me, from.uid, "Syntax: CERT ADD <password> <fingerprint>");
                 return;
             };
-            let Some(account) = auth(db, password) else {
-                ctx.notice(me, from.uid, "Invalid password.");
+            let Some(account) = verify(me, from, ctx, db, password) else {
                 return;
             };
             match db.certfp_add(&account, fp) {
@@ -44,8 +41,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 ctx.notice(me, from.uid, "Syntax: CERT DEL <password> <fingerprint>");
                 return;
             };
-            let Some(account) = auth(db, password) else {
-                ctx.notice(me, from.uid, "Invalid password.");
+            let Some(account) = verify(me, from, ctx, db, password) else {
                 return;
             };
             match db.certfp_del(&account, fp) {
@@ -55,5 +51,28 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             }
         }
         _ => ctx.notice(me, from.uid, "Syntax: CERT ADD|DEL|LIST <password> [fingerprint]"),
+    }
+}
+
+// Verify the caller's password against the account matching their current nick,
+// throttled and recorded like IDENTIFY — so CERT can't be used as an unthrottled
+// guessing oracle (a user can `/nick victim` then CERT LIST <guess>) and each ~1s
+// verify can't be spammed to stall the engine.
+fn verify(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store, password: &str) -> Option<String> {
+    if let Some(secs) = db.auth_lockout(from.nick) {
+        ctx.notice(me, from.uid, format!("Too many failed attempts. Please wait {secs}s and try again."));
+        return None;
+    }
+    match db.authenticate(from.nick, password).map(str::to_string) {
+        Some(account) => {
+            db.note_auth(from.nick, true);
+            Some(account)
+        }
+        None => {
+            db.note_auth(from.nick, false);
+            ctx.auth_report(false, Some(from.nick), "NickServ CERT", from.uid, Some("bad password"));
+            ctx.notice(me, from.uid, "Invalid password.");
+            None
+        }
     }
 }

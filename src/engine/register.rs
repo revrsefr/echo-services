@@ -314,6 +314,9 @@ impl Engine {
                 actions
             }
             AuthThen::Sasl { agent, client, account } => {
+                // Feed the same brute-force throttle IDENTIFY uses: success clears it,
+                // a failure grows the backoff — so SASL isn't a throttle-free door.
+                self.db.note_auth(&account, ok);
                 if ok {
                     self.sasl_login("SASL PLAIN", &agent, &client, account)
                 } else {
