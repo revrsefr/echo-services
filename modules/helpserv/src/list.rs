@@ -1,4 +1,4 @@
-use echo_api::{Sender, ServiceCtx, Store};
+use echo_api::{t, Sender, ServiceCtx, Store};
 
 // LIST [ALL]: operators list the open queue (or every ticket with ALL).
 pub fn handle(me: &str, from: &Sender, arg: Option<&str>, ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -13,12 +13,12 @@ pub fn handle(me: &str, from: &Sender, arg: Option<&str>, ctx: &mut ServiceCtx, 
     }
     for t in &tickets {
         let state = match (&t.handler, t.open) {
-            (_, false) => " (closed)".to_string(),
-            (Some(h), true) => format!(" (taken by {h})"),
+            (_, false) => t!(ctx, " (closed)"),
+            (Some(h), true) => t!(ctx, " (taken by {handler})", handler = h),
             (None, true) => String::new(),
         };
         let short: String = t.message.chars().take(60).collect();
-        ctx.notice(me, from.uid, format!("\x02#{}\x02 {} — {}{}", t.id, t.requester, short, state));
+        ctx.notice(me, from.uid, t!(ctx, "\x02#{id}\x02 {requester} — {short}{state}", id = t.id, requester = t.requester, short = short, state = state));
     }
-    ctx.notice(me, from.uid, format!("{} ticket(s). \x02VIEW\x02 <id> for detail.", tickets.len()));
+    ctx.notice(me, from.uid, t!(ctx, "{count} ticket(s). \x02VIEW\x02 <id> for detail.", count = tickets.len()));
 }

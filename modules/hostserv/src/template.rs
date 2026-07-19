@@ -1,4 +1,4 @@
-use echo_api::{Sender, ServiceCtx, Store};
+use echo_api::{t, Sender, ServiceCtx, Store};
 
 // TEMPLATE [<pattern>]: show the auto-vhost template, or (operators) set it.
 // Use $account for the requester's sanitised account name, e.g.
@@ -6,7 +6,7 @@ use echo_api::{Sender, ServiceCtx, Store};
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
     match args.get(1) {
         None => match db.vhost_template() {
-            Some(t) => ctx.notice(me, from.uid, format!("Auto-vhost template: \x02{t}\x02. Users apply it with \x02DEFAULT\x02.")),
+            Some(tmpl) => ctx.notice(me, from.uid, t!(ctx, "Auto-vhost template: \x02{tmpl}\x02. Users apply it with \x02DEFAULT\x02.", tmpl = tmpl)),
             None => ctx.notice(me, from.uid, "No auto-vhost template is set."),
         },
         Some(&arg) => {
@@ -24,7 +24,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             }
             match db.set_vhost_template(Some(template.clone())) {
-                Ok(()) => ctx.notice(me, from.uid, format!("Auto-vhost template set to \x02{template}\x02.")),
+                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Auto-vhost template set to \x02{template}\x02.", template = template)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }

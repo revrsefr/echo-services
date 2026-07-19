@@ -1,4 +1,4 @@
-use echo_api::{Sender, ServiceCtx, Store};
+use echo_api::{t, Sender, ServiceCtx, Store};
 
 // OFFER <host>: add a vhost to the self-serve menu (operators).
 pub fn add(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -10,11 +10,11 @@ pub fn add(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mu
         return;
     };
     if !super::valid_vhost(host) {
-        ctx.notice(me, from.uid, format!("\x02{host}\x02 isn't a valid host."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{host}\x02 isn't a valid host.", host = host));
         return;
     }
     match db.vhost_offer_add(host) {
-        Ok(true) => ctx.notice(me, from.uid, format!("\x02{host}\x02 is now on the vhost menu.")),
+        Ok(true) => ctx.notice(me, from.uid, t!(ctx, "\x02{host}\x02 is now on the vhost menu.", host = host)),
         Ok(false) => ctx.notice(me, from.uid, "That vhost is already on the menu."),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
@@ -27,9 +27,9 @@ pub fn list(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &dyn Store) {
         ctx.notice(me, from.uid, "No vhosts are on offer.");
         return;
     }
-    ctx.notice(me, from.uid, format!("Vhosts on offer ({}):", offers.len()));
+    ctx.notice(me, from.uid, t!(ctx, "Vhosts on offer ({count}):", count = offers.len()));
     for (i, host) in offers.iter().enumerate() {
-        ctx.notice(me, from.uid, format!("  {}. {host}", i + 1));
+        ctx.notice(me, from.uid, t!(ctx, "  {n}. {host}", n = i + 1, host = host));
     }
     ctx.notice(me, from.uid, "Take one with \x02TAKE\x02 <number>.");
 }
@@ -44,8 +44,8 @@ pub fn del(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mu
         return;
     };
     match db.vhost_offer_del(n) {
-        Ok(Some(host)) => ctx.notice(me, from.uid, format!("Removed \x02{host}\x02 from the menu.")),
-        Ok(None) => ctx.notice(me, from.uid, format!("There's no offer #\x02{n}\x02.")),
+        Ok(Some(host)) => ctx.notice(me, from.uid, t!(ctx, "Removed \x02{host}\x02 from the menu.", host = host)),
+        Ok(None) => ctx.notice(me, from.uid, t!(ctx, "There's no offer #\x02{n}\x02.", n = n)),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
 }

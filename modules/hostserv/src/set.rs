@@ -1,4 +1,4 @@
-use echo_api::{parse_duration, NetView, Sender, ServiceCtx, Store};
+use echo_api::{parse_duration, t, NetView, Sender, ServiceCtx, Store};
 
 // SET <account> <host> [duration]: assign a vhost to an account, applying it at
 // once to online sessions. An optional duration (e.g. 30d) makes it temporary.
@@ -12,10 +12,10 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         return;
     };
     if db.account(account).is_none() {
-        ctx.notice(me, from.uid, format!("\x02{account}\x02 isn't registered."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 isn't registered.", account = account));
         return;
     }
-    let host = match super::prepare_vhost(host, account, db) {
+    let host = match super::prepare_vhost(host, account, db, ctx) {
         Ok(h) => h,
         Err(msg) => {
             ctx.notice(me, from.uid, msg);
@@ -28,8 +28,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
             for uid in net.uids_logged_into(account) {
                 ctx.apply_vhost(&uid, &host);
             }
-            let when = args.get(3).filter(|_| ttl.is_some()).map(|d| format!(" (expires in {d})")).unwrap_or_default();
-            ctx.notice(me, from.uid, format!("Vhost \x02{host}\x02 assigned to \x02{account}\x02{when}."));
+            let when = args.get(3).filter(|_| ttl.is_some()).map(|d| t!(ctx, " (expires in {d})", d = d)).unwrap_or_default();
+            ctx.notice(me, from.uid, t!(ctx, "Vhost \x02{host}\x02 assigned to \x02{account}\x02{when}.", host = host, account = account, when = when));
         }
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }

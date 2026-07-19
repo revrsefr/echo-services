@@ -1,4 +1,4 @@
-use echo_api::{human_time, Sender, ServiceCtx, Store};
+use echo_api::{human_time, t, Sender, ServiceCtx, Store};
 
 // LIST: show every memo with a one-line preview; \x02*\x02 marks unread.
 pub fn handle(me: &str, from: &Sender, account: &str, ctx: &mut ServiceCtx, db: &dyn Store) {
@@ -8,10 +8,10 @@ pub fn handle(me: &str, from: &Sender, account: &str, ctx: &mut ServiceCtx, db: 
         return;
     }
     let unread = memos.iter().filter(|m| !m.read).count();
-    ctx.notice(me, from.uid, format!("Your memos ({} total, {unread} new). \x02*\x02 marks unread:", memos.len()));
+    ctx.notice(me, from.uid, t!(ctx, "Your memos ({total} total, {unread} new). \x02*\x02 marks unread:", total = memos.len(), unread = unread));
     for (i, m) in memos.iter().enumerate() {
         let flag = if m.read { ' ' } else { '*' };
-        ctx.notice(me, from.uid, format!("  {}{flag} from \x02{}\x02 ({}): {}", i + 1, m.from, human_time(m.ts), preview(&m.text)));
+        ctx.notice(me, from.uid, t!(ctx, "  {num}{flag} from \x02{from}\x02 ({when}): {preview}", num = i + 1, flag = flag, from = m.from, when = human_time(m.ts), preview = preview(&m.text)));
     }
 }
 

@@ -1,4 +1,4 @@
-use echo_api::{Sender, ServiceCtx, Store};
+use echo_api::{t, Sender, ServiceCtx, Store};
 
 // CANCEL: withdraw your own newest open ticket.
 pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -15,7 +15,7 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store)
     match mine {
         Some(t) => {
             db.help_close(t.id);
-            ctx.notice(me, from.uid, format!("Your request \x02#{}\x02 has been cancelled.", t.id));
+            ctx.notice(me, from.uid, t!(ctx, "Your request \x02#{id}\x02 has been cancelled.", id = t.id));
         }
         None => ctx.notice(me, from.uid, "You have no open request to cancel."),
     }

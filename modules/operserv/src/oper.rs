@@ -1,4 +1,4 @@
-use echo_api::{parse_duration, Priv, Privs, Sender, ServiceCtx, Store};
+use echo_api::{parse_duration, t, Priv, Privs, Sender, ServiceCtx, Store};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // OPER ADD <account> <priv[,priv…]> [+duration] | OPER DEL <account> | OPER LIST:
@@ -25,7 +25,7 @@ fn add(me: &str, from: &Sender, account: Option<&str>, privs: Option<&str>, dur:
         return;
     };
     let Some(account) = db.resolve_account(account).map(str::to_string) else {
-        ctx.notice(me, from.uid, format!("\x02{account}\x02 isn't registered."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 isn't registered.", account = account));
         return;
     };
     // Parse the privilege names, rejecting the whole grant on a typo rather than
@@ -39,17 +39,22 @@ fn add(me: &str, from: &Sender, account: Option<&str>, privs: Option<&str>, dur:
         }
     }
     if !unknown.is_empty() {
-        ctx.notice(me, from.uid, format!("Unknown privilege(s): \x02{}\x02 (valid: {}).", unknown.join(", "), Priv::valid_names()));
+        ctx.notice(me, from.uid, t!(ctx, "Unknown privilege(s): \x02{privs}\x02 (valid: {valid}).", privs = unknown.join(", "), valid = Priv::valid_names()));
         return;
     }
     if names.is_empty() {
-        ctx.notice(me, from.uid, format!("No privileges given (valid: {}).", Priv::valid_names()));
+        ctx.notice(me, from.uid, t!(ctx, "No privileges given (valid: {valid}).", valid = Priv::valid_names()));
         return;
     }
     let expires = dur.and_then(|d| d.strip_prefix('+')).and_then(parse_duration).map(|secs| now() + secs);
     db.oper_grant(&account, names.clone(), expires);
-    let window = if expires.is_some() { " (temporary)" } else { "" };
-    ctx.notice(me, from.uid, format!("\x02{account}\x02 is now an operator ({}){window}.", names.join(", ")));
+    let privlist = names.join(", ");
+    let msg = if expires.is_some() {
+        t!(ctx, "\x02{account}\x02 is now an operator ({privs}) (temporary).", account = account, privs = privlist)
+    } else {
+        t!(ctx, "\x02{account}\x02 is now an operator ({privs}).", account = account, privs = privlist)
+    };
+    ctx.notice(me, from.uid, msg);
 }
 
 fn now() -> u64 {
@@ -63,9 +68,9 @@ fn del(me: &str, from: &Sender, account: Option<&str>, ctx: &mut ServiceCtx, db:
     };
     let canonical = db.resolve_account(account).map(str::to_string).unwrap_or_else(|| account.to_string());
     if db.oper_revoke(&canonical) {
-        ctx.notice(me, from.uid, format!("\x02{canonical}\x02 is no longer a runtime operator."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{canonical}\x02 is no longer a runtime operator.", canonical = canonical));
     } else {
-        ctx.notice(me, from.uid, format!("\x02{account}\x02 isn't a runtime operator (config opers are set in the daemon config)."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 isn't a runtime operator (config opers are set in the daemon config).", account = account));
     }
 }
 
@@ -76,9 +81,14 @@ fn list(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store) {
         return;
     }
     for (account, privs, expires) in &opers {
-        let window = if expires.is_some() { " (temporary)" } else { "" };
         let tier = Privs::from_names(privs).tier();
-        ctx.notice(me, from.uid, format!("  \x02{account}\x02 [{tier}] — {}{window}", privs.join(", ")));
+        let privlist = privs.join(", ");
+        let msg = if expires.is_some() {
+            t!(ctx, "  \x02{account}\x02 [{tier}] — {privs} (temporary)", account = account, tier = tier, privs = privlist)
+        } else {
+            t!(ctx, "  \x02{account}\x02 [{tier}] — {privs}", account = account, tier = tier, privs = privlist)
+        };
+        ctx.notice(me, from.uid, msg);
     }
-    ctx.notice(me, from.uid, format!("End of runtime operator list ({} shown).", opers.len()));
+    ctx.notice(me, from.uid, t!(ctx, "End of runtime operator list ({count} shown).", count = opers.len()));
 }

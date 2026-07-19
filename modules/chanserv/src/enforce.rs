@@ -1,6 +1,7 @@
 use echo_api::Store;
 use echo_api::{status_mode, Sender, ServiceCtx};
 use echo_api::NetView;
+use echo_api::t;
 
 // ENFORCE <#channel>: re-apply the channel's settings to everyone present —
 // the mode lock, access status modes, and the auto-kick list.
@@ -35,5 +36,5 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
             }
         }
     }
-    ctx.notice(me, from.uid, format!("Re-applied \x02{chan}\x02's settings to everyone present."));
+    ctx.notice(me, from.uid, t!(ctx, "Re-applied \x02{chan}\x02's settings to everyone present.", chan = chan));
 }

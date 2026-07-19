@@ -1,6 +1,7 @@
 use echo_api::Store;
 use echo_api::{Sender, ServiceCtx};
 use echo_api::NetView;
+use echo_api::t;
 
 // OP/DEOP/VOICE/DEVOICE <#channel> [nick]: set a status mode on a user (self if
 // no nick given). `mode` is the mode to apply, e.g. "+o".
@@ -22,7 +23,7 @@ pub fn handle(me: &str, from: &Sender, mode: &str, args: &[&str], ctx: &mut Serv
         Some(&nick) => match net.uid_by_nick(nick) {
             Some(u) => u.to_string(),
             None => {
-                ctx.notice(me, from.uid, format!("\x02{nick}\x02 isn't here."));
+                ctx.notice(me, from.uid, t!(ctx, "\x02{nick}\x02 isn't here.", nick = nick));
                 return;
             }
         },

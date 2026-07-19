@@ -1,5 +1,6 @@
 use echo_api::{CertError, Store};
 use echo_api::{Sender, ServiceCtx};
+use echo_api::t;
 
 // CERT ADD|DEL|LIST [password] [fingerprint]: manage the TLS certificate
 // fingerprints that may log in to your account via SASL EXTERNAL. An identified
@@ -16,7 +17,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             if fps.is_empty() {
                 ctx.notice(me, from.uid, "No certificate fingerprints are registered to your account.");
             } else {
-                ctx.notice(me, from.uid, format!("Registered fingerprints: {}", fps.join(", ")));
+                ctx.notice(me, from.uid, t!(ctx, "Registered fingerprints: {list}", list = fps.join(", ")));
             }
         }
         Some("ADD") => {
@@ -28,7 +29,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             };
             match db.certfp_add(&account, fp) {
-                Ok(()) => ctx.notice(me, from.uid, format!("Added fingerprint \x02{fp}\x02. You can now log in with SASL EXTERNAL.")),
+                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Added fingerprint \x02{fp}\x02. You can now log in with SASL EXTERNAL.", fp = fp)),
                 Err(CertError::InUse) => ctx.notice(me, from.uid, "That fingerprint is already registered."),
                 Err(CertError::Invalid) => ctx.notice(me, from.uid, "That does not look like a certificate fingerprint."),
                 Err(CertError::Full) => ctx.notice(me, from.uid, "You have too many fingerprints registered. Remove one first."),
@@ -44,7 +45,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             };
             match db.certfp_del(&account, fp) {
-                Ok(true) => ctx.notice(me, from.uid, format!("Removed fingerprint \x02{fp}\x02.")),
+                Ok(true) => ctx.notice(me, from.uid, t!(ctx, "Removed fingerprint \x02{fp}\x02.", fp = fp)),
                 Ok(false) => ctx.notice(me, from.uid, "No such fingerprint is registered to your account."),
                 Err(_) => ctx.notice(me, from.uid, "Could not remove the fingerprint, please try again later."),
             }
@@ -75,7 +76,7 @@ fn resolve<'a>(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store
 // verify can't be spammed to stall the engine.
 fn verify(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store, password: &str) -> Option<String> {
     if let Some(secs) = db.auth_lockout(from.nick) {
-        ctx.notice(me, from.uid, format!("Too many failed attempts. Please wait {secs}s and try again."));
+        ctx.notice(me, from.uid, t!(ctx, "Too many failed attempts. Please wait {secs}s and try again.", secs = secs));
         return None;
     }
     match db.authenticate(from.nick, password).map(str::to_string) {

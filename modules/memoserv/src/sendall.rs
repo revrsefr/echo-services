@@ -1,4 +1,4 @@
-use echo_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::{t, Priv, Sender, ServiceCtx, Store};
 
 // SENDALL <text>: leave a memo on every registered account. Admin-only, for
 // network-wide announcements that persist until read.
@@ -20,5 +20,5 @@ pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut S
             sent += 1;
         }
     }
-    ctx.notice(me, from.uid, format!("Memo sent to \x02{sent}\x02 account(s)."));
+    ctx.notice(me, from.uid, t!(ctx, "Memo sent to \x02{sent}\x02 account(s).", sent = sent));
 }

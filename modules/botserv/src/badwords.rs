@@ -1,4 +1,4 @@
-use echo_api::{ChanError, Sender, ServiceCtx, Store};
+use echo_api::{t, ChanError, Sender, ServiceCtx, Store};
 
 // BADWORDS <#channel> ADD <regex> | DEL <regex> | LIST | CLEAR: manage the
 // channel's badword patterns. Each entry is a regular expression, so a channel
@@ -21,9 +21,9 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             }
             let pattern = args[3..].join(" ");
             match db.badword_add(chan, &pattern) {
-                Ok(true) => ctx.notice(me, from.uid, format!("Added badword pattern to \x02{chan}\x02: {pattern}")),
+                Ok(true) => ctx.notice(me, from.uid, t!(ctx, "Added badword pattern to \x02{chan}\x02: {pattern}", chan = chan, pattern = pattern)),
                 Ok(false) => ctx.notice(me, from.uid, "That pattern is already on the list."),
-                Err(ChanError::InvalidPattern) => ctx.notice(me, from.uid, format!("\x02{pattern}\x02 isn't a valid regular expression.")),
+                Err(ChanError::InvalidPattern) => ctx.notice(me, from.uid, t!(ctx, "\x02{pattern}\x02 isn't a valid regular expression.", pattern = pattern)),
                 Err(_) => reg_error(me, from, chan, ctx),
             }
         }
@@ -34,30 +34,30 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             }
             let pattern = args[3..].join(" ");
             match db.badword_del(chan, &pattern) {
-                Ok(true) => ctx.notice(me, from.uid, format!("Removed badword pattern from \x02{chan}\x02.")),
+                Ok(true) => ctx.notice(me, from.uid, t!(ctx, "Removed badword pattern from \x02{chan}\x02.", chan = chan)),
                 Ok(false) => ctx.notice(me, from.uid, "That pattern isn't on the list."),
                 Err(_) => reg_error(me, from, chan, ctx),
             }
         }
         Some("CLEAR") => match db.badword_clear(chan) {
-            Ok(n) => ctx.notice(me, from.uid, format!("Cleared \x02{n}\x02 badword pattern(s) from \x02{chan}\x02.")),
+            Ok(n) => ctx.notice(me, from.uid, t!(ctx, "Cleared \x02{n}\x02 badword pattern(s) from \x02{chan}\x02.", n = n, chan = chan)),
             Err(_) => reg_error(me, from, chan, ctx),
         },
         None | Some("LIST") => {
             let words = db.badwords(chan);
             if words.is_empty() {
-                ctx.notice(me, from.uid, format!("\x02{chan}\x02 has no badword patterns."));
+                ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 has no badword patterns.", chan = chan));
                 return;
             }
-            ctx.notice(me, from.uid, format!("Badword patterns for \x02{chan}\x02 ({}):", words.len()));
+            ctx.notice(me, from.uid, t!(ctx, "Badword patterns for \x02{chan}\x02 ({count}):", chan = chan, count = words.len()));
             for (i, w) in words.iter().enumerate() {
-                ctx.notice(me, from.uid, format!("  {}. {w}", i + 1));
+                ctx.notice(me, from.uid, t!(ctx, "  {num}. {word}", num = i + 1, word = w));
             }
         }
-        Some(other) => ctx.notice(me, from.uid, format!("Unknown BADWORDS command \x02{other}\x02. Use ADD, DEL, LIST or CLEAR.")),
+        Some(other) => ctx.notice(me, from.uid, t!(ctx, "Unknown BADWORDS command \x02{other}\x02. Use ADD, DEL, LIST or CLEAR.", other = other)),
     }
 }
 
 fn reg_error(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx) {
-    ctx.notice(me, from.uid, format!("Couldn't update \x02{chan}\x02 — please try again in a moment."));
+    ctx.notice(me, from.uid, t!(ctx, "Couldn't update \x02{chan}\x02 — please try again in a moment.", chan = chan));
 }

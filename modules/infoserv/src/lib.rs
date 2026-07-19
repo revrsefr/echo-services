@@ -9,7 +9,7 @@
 //! and any operator may OLIST. `lib.rs` holds the dispatcher; each command
 //! (parameterised by bulletin kind) lives in its own file.
 
-use echo_api::{HelpEntry, NetView, NewsKind, Sender, Service, ServiceCtx, Store};
+use echo_api::{t, HelpEntry, NetView, NewsKind, Sender, Service, ServiceCtx, Store};
 
 #[path = "post.rs"]
 mod post;
@@ -64,7 +64,7 @@ impl Service for InfoServ {
             // Oper bulletins are for operators only.
             Some("OLIST") => list::handle(me, from, OPER, true, ctx, db),
             Some("HELP") => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
-            Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02LIST\x02 or \x02HELP\x02.")),
+            Some(other) => ctx.notice(me, from.uid, t!(ctx, "I don't know \x02{other}\x02. Try \x02LIST\x02 or \x02HELP\x02.", other = other)),
         }
     }
 }

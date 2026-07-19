@@ -1,5 +1,6 @@
 use echo_api::Store;
 use echo_api::{Sender, ServiceCtx};
+use echo_api::t;
 
 // MODE <#channel> <modes>: the founder sets channel modes via ChanServ. Extban
 // arguments on the ban-family list modes (+b/+e/+I) are held to the same
@@ -16,12 +17,12 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     let founder = match db.channel(chan) {
         Some(info) => info.founder.clone(),
         None => {
-            ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
+            ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan));
             return;
         }
     };
     if from.account != Some(founder.as_str()) {
-        ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can change its modes."));
+        ctx.notice(me, from.uid, t!(ctx, "Only \x02{chan}\x02's founder can change its modes.", chan = chan));
         return;
     }
     if super::suspended_block(me, from, chan, ctx, db) {
@@ -32,18 +33,18 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         let core = mask.strip_prefix('!').unwrap_or(mask); // extbans may be inverted
         if let echo_api::AkickMask::Ext(eb, _) = echo_api::AkickMask::parse(core) {
             if !db.extban_offered(eb.name) {
-                ctx.notice(me, from.uid, format!("This network's ircd doesn't offer the \x02{}\x02 extban.", eb.name));
+                ctx.notice(me, from.uid, t!(ctx, "This network's ircd doesn't offer the \x02{name}\x02 extban.", name = eb.name));
                 return;
             }
             if !db.extban_enabled(eb.name) {
-                ctx.notice(me, from.uid, format!("The \x02{}\x02 extban isn't enabled on this network.", eb.name));
+                ctx.notice(me, from.uid, t!(ctx, "The \x02{name}\x02 extban isn't enabled on this network.", name = eb.name));
                 return;
             }
         }
     }
     let modes = args[2..].join(" ");
     ctx.channel_mode(me, chan, &modes);
-    ctx.notice(me, from.uid, format!("Set \x02{modes}\x02 on \x02{chan}\x02."));
+    ctx.notice(me, from.uid, t!(ctx, "Set \x02{modes}\x02 on \x02{chan}\x02.", modes = modes, chan = chan));
 }
 
 // The parameters attached to +b/-b/+e/-e/+I/-I in a `<modes> [params...]` change.

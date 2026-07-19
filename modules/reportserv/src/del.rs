@@ -1,4 +1,4 @@
-use echo_api::{Sender, ServiceCtx, Store};
+use echo_api::{t, Sender, ServiceCtx, Store};
 
 // DEL <id> (aka REMOVE): delete a report outright.
 pub fn handle(me: &str, from: &Sender, id: Option<&str>, ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -10,8 +10,8 @@ pub fn handle(me: &str, from: &Sender, id: Option<&str>, ctx: &mut ServiceCtx, d
         return;
     };
     if db.report_del(n) {
-        ctx.notice(me, from.uid, format!("Report \x02#{n}\x02 deleted."));
+        ctx.notice(me, from.uid, t!(ctx, "Report \x02#{n}\x02 deleted.", n = n));
     } else {
-        ctx.notice(me, from.uid, format!("There's no report \x02#{n}\x02."));
+        ctx.notice(me, from.uid, t!(ctx, "There's no report \x02#{n}\x02.", n = n));
     }
 }

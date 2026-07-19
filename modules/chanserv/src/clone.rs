@@ -1,5 +1,6 @@
 use echo_api::Store;
 use echo_api::{Sender, ServiceCtx};
+use echo_api::t;
 
 // CLONE <source> <target>: copy a channel's settings (mode lock, access,
 // auto-kick, description, entry message) into another. Founder of both.
@@ -34,5 +35,5 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     if let Some(info) = db.channel(dest) {
         ctx.channel_mode(me, dest, &info.lock_modes());
     }
-    ctx.notice(me, from.uid, format!("Copied \x02{src}\x02's settings to \x02{dest}\x02."));
+    ctx.notice(me, from.uid, t!(ctx, "Copied \x02{src}\x02's settings to \x02{dest}\x02.", src = src, dest = dest));
 }

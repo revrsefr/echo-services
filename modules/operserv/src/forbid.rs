@@ -1,4 +1,4 @@
-use echo_api::{human_time, ForbidKind, Priv, Sender, ServiceCtx, Store};
+use echo_api::{human_time, t, ForbidKind, Priv, Sender, ServiceCtx, Store};
 
 // FORBID ADD <NICK|CHAN|EMAIL> <mask> <reason> | DEL <NICK|CHAN|EMAIL> <mask> | LIST
 // Bans a nick, channel, or email pattern from being registered. Admin-only.
@@ -21,8 +21,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             let setter = from.account.unwrap_or(from.nick);
             let label = kind.wire().to_lowercase();
             match db.forbid_add(kind, mask, setter, &reason) {
-                Ok(true) => ctx.notice(me, from.uid, format!("Forbade {label} \x02{mask}\x02.")),
-                Ok(false) => ctx.notice(me, from.uid, format!("Updated the forbid on {label} \x02{mask}\x02.")),
+                Ok(true) => ctx.notice(me, from.uid, t!(ctx, "Forbade {label} \x02{mask}\x02.", label = label, mask = mask)),
+                Ok(false) => ctx.notice(me, from.uid, t!(ctx, "Updated the forbid on {label} \x02{mask}\x02.", label = label, mask = mask)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
@@ -33,8 +33,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             };
             let label = kind.wire().to_lowercase();
             match db.forbid_del(kind, mask) {
-                Ok(true) => ctx.notice(me, from.uid, format!("Removed the forbid on {label} \x02{mask}\x02.")),
-                Ok(false) => ctx.notice(me, from.uid, format!("No forbid on {label} \x02{mask}\x02.")),
+                Ok(true) => ctx.notice(me, from.uid, t!(ctx, "Removed the forbid on {label} \x02{mask}\x02.", label = label, mask = mask)),
+                Ok(false) => ctx.notice(me, from.uid, t!(ctx, "No forbid on {label} \x02{mask}\x02.", label = label, mask = mask)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
@@ -46,7 +46,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             }
             ctx.notice(me, from.uid, "Registration bans:");
             for f in &forbids {
-                ctx.notice(me, from.uid, format!("  [{}] \x02{}\x02 by {} ({}) — {}", f.kind.wire(), f.mask, f.setter, human_time(f.ts), f.reason));
+                ctx.notice(me, from.uid, t!(ctx, "  [{kind}] \x02{mask}\x02 by {setter} ({when}) — {reason}", kind = f.kind.wire(), mask = f.mask, setter = f.setter, when = human_time(f.ts), reason = f.reason));
             }
         }
         _ => ctx.notice(me, from.uid, "Syntax: FORBID ADD <NICK|CHAN|EMAIL> <mask> <reason> | DEL <NICK|CHAN|EMAIL> <mask> | LIST"),

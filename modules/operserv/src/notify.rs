@@ -1,4 +1,4 @@
-use echo_api::{human_time, parse_duration, Priv, Sender, ServiceCtx, Store};
+use echo_api::{human_time, parse_duration, t, Priv, Sender, ServiceCtx, Store};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // The event letters a watch can carry, in help order.
@@ -20,7 +20,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         Some("VIEW") => list(me, from, true, args.get(2).copied(), ctx, db),
         Some("CLEAR") => match db.notify_clear() {
             Ok(0) => ctx.notice(me, from.uid, "The notify list is already empty."),
-            Ok(n) => ctx.notice(me, from.uid, format!("Cleared \x02{n}\x02 notify watch(es).")),
+            Ok(n) => ctx.notice(me, from.uid, t!(ctx, "Cleared \x02{n}\x02 notify watch(es).", n = n)),
             Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
         },
         _ => ctx.notice(me, from.uid, SYNTAX),
@@ -43,7 +43,7 @@ fn add(me: &str, from: &Sender, rest: &[&str], ctx: &mut ServiceCtx, db: &mut dy
             Some(0) => None,
             Some(secs) => Some(now() + secs),
             None => {
-                ctx.notice(me, from.uid, format!("\x02{d}\x02 isn't a valid expiry — try 30d, 12h, 45m, or 0."));
+                ctx.notice(me, from.uid, t!(ctx, "\x02{d}\x02 isn't a valid expiry — try 30d, 12h, 45m, or 0.", d = d));
                 return;
             }
         },
@@ -57,7 +57,7 @@ fn add(me: &str, from: &Sender, rest: &[&str], ctx: &mut ServiceCtx, db: &mut dy
     } else if flags_tok.chars().all(|c| ALL_FLAGS.contains(c)) && !flags_tok.is_empty() {
         flags_tok.to_string()
     } else {
-        ctx.notice(me, from.uid, format!("Unknown flag(s). Valid: \x02{ALL_FLAGS}\x02 (or \x02*\x02 for all). {FLAG_LEGEND}"));
+        ctx.notice(me, from.uid, t!(ctx, "Unknown flag(s). Valid: \x02{flags}\x02 (or \x02*\x02 for all). c=connect d=disconnect o=oper-up j=join p=part k=kick m=chan-mode t=topic n=nick u=user-mode s=service-cmd S=SET", flags = ALL_FLAGS));
         return;
     };
     let Some(&mask) = rest.get(2) else {
@@ -78,8 +78,8 @@ fn add(me: &str, from: &Sender, rest: &[&str], ctx: &mut ServiceCtx, db: &mut dy
     let reason = rest[3..].join(" ");
     let setter = from.account.unwrap_or(from.nick);
     match db.notify_add(mask, &flags, &reason, setter, expires) {
-        Ok(true) => ctx.notice(me, from.uid, format!("Now watching \x02{mask}\x02 [{flags}].")),
-        Ok(false) => ctx.notice(me, from.uid, format!("Updated the watch on \x02{mask}\x02 [{flags}].")),
+        Ok(true) => ctx.notice(me, from.uid, t!(ctx, "Now watching \x02{mask}\x02 [{flags}].", mask = mask, flags = flags)),
+        Ok(false) => ctx.notice(me, from.uid, t!(ctx, "Updated the watch on \x02{mask}\x02 [{flags}].", mask = mask, flags = flags)),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
 }
@@ -94,15 +94,15 @@ fn del(me: &str, from: &Sender, arg: Option<&str>, ctx: &mut ServiceCtx, db: &mu
         Ok(n) if n >= 1 => match db.notifies().get(n - 1) {
             Some(v) => v.mask.clone(),
             None => {
-                ctx.notice(me, from.uid, format!("There's no notify number \x02{n}\x02."));
+                ctx.notice(me, from.uid, t!(ctx, "There's no notify number \x02{n}\x02.", n = n));
                 return;
             }
         },
         _ => arg.to_string(),
     };
     match db.notify_del(&mask) {
-        Ok(true) => ctx.notice(me, from.uid, format!("Stopped watching \x02{mask}\x02.")),
-        Ok(false) => ctx.notice(me, from.uid, format!("No watch matches \x02{mask}\x02.")),
+        Ok(true) => ctx.notice(me, from.uid, t!(ctx, "Stopped watching \x02{mask}\x02.", mask = mask)),
+        Ok(false) => ctx.notice(me, from.uid, t!(ctx, "No watch matches \x02{mask}\x02.", mask = mask)),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
 }
@@ -121,21 +121,19 @@ fn list(me: &str, from: &Sender, verbose: bool, pattern: Option<&str>, ctx: &mut
                 continue;
             }
         }
-        let expiry = match n.expires {
-            Some(e) => format!(", expires in {}", human_secs(e.saturating_sub(now()))),
-            None => String::new(),
+        let msg = match (verbose, n.expires) {
+            (true, Some(e)) => t!(ctx, "{n}. \x02{mask}\x02 [{flags}] by {setter} ({when}), expires in {ttl} — {reason}", n = i + 1, mask = n.mask, flags = n.flags, setter = n.setter, when = human_time(n.ts), ttl = human_secs(e.saturating_sub(now())), reason = n.reason),
+            (true, None) => t!(ctx, "{n}. \x02{mask}\x02 [{flags}] by {setter} ({when}) — {reason}", n = i + 1, mask = n.mask, flags = n.flags, setter = n.setter, when = human_time(n.ts), reason = n.reason),
+            (false, Some(e)) => t!(ctx, "{n}. \x02{mask}\x02 [{flags}] — {reason}, expires in {ttl}", n = i + 1, mask = n.mask, flags = n.flags, reason = n.reason, ttl = human_secs(e.saturating_sub(now()))),
+            (false, None) => t!(ctx, "{n}. \x02{mask}\x02 [{flags}] — {reason}", n = i + 1, mask = n.mask, flags = n.flags, reason = n.reason),
         };
-        if verbose {
-            ctx.notice(me, from.uid, format!("{}. \x02{}\x02 [{}] by {} ({}){} — {}", i + 1, n.mask, n.flags, n.setter, human_time(n.ts), expiry, n.reason));
-        } else {
-            ctx.notice(me, from.uid, format!("{}. \x02{}\x02 [{}] — {}{}", i + 1, n.mask, n.flags, n.reason, expiry));
-        }
+        ctx.notice(me, from.uid, msg);
         shown += 1;
     }
     if shown == 0 {
         ctx.notice(me, from.uid, "No matching notify entries.");
     } else {
-        ctx.notice(me, from.uid, format!("End of notify list ({shown} shown)."));
+        ctx.notice(me, from.uid, t!(ctx, "End of notify list ({shown} shown).", shown = shown));
     }
 }
 
@@ -158,5 +156,4 @@ fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-const FLAG_LEGEND: &str = "c=connect d=disconnect o=oper-up j=join p=part k=kick m=chan-mode t=topic n=nick u=user-mode s=service-cmd S=SET";
-const SYNTAX: &str = "Syntax: NOTIFY ADD +<expiry> <flags|*> <mask> <reason> | NOTIFY DEL <mask|number> | NOTIFY LIST [pattern] | NOTIFY VIEW [pattern] | NOTIFY CLEAR";
+const SYNTAX: &str ="Syntax: NOTIFY ADD +<expiry> <flags|*> <mask> <reason> | NOTIFY DEL <mask|number> | NOTIFY LIST [pattern] | NOTIFY VIEW [pattern] | NOTIFY CLEAR";

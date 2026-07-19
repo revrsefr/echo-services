@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use echo_api::{HelpEntry, NetAction, NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{t, HelpEntry, NetAction, NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "chess.rs"]
 mod chess;

@@ -1,4 +1,4 @@
-use echo_api::{Priv, Sender, ServiceCtx, Store, XlineKind};
+use echo_api::{t, Priv, Sender, ServiceCtx, Store, XlineKind};
 
 // STATS: an at-a-glance summary of the enforcement state OperServ holds — how
 // many network bans of each kind and how many services ignores are live.
@@ -13,5 +13,5 @@ pub fn handle(me: &str, from: &Sender, db: &mut dyn Store, ctx: &mut ServiceCtx)
     let qlines = akills.iter().filter(|a| a.kind == XlineKind::Qline).count();
     let rlines = akills.iter().filter(|a| a.kind == XlineKind::Rline).count();
     let ignores = db.ignores().len();
-    ctx.notice(me, from.uid, format!("Live network bans: \x02{glines}\x02 AKILL, \x02{qlines}\x02 SQLINE, \x02{rlines}\x02 SNLINE. Services ignores: \x02{ignores}\x02."));
+    ctx.notice(me, from.uid, t!(ctx, "Live network bans: \x02{glines}\x02 AKILL, \x02{qlines}\x02 SQLINE, \x02{rlines}\x02 SNLINE. Services ignores: \x02{ignores}\x02.", glines = glines, qlines = qlines, rlines = rlines, ignores = ignores));
 }

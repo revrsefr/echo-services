@@ -1,4 +1,4 @@
-use echo_api::{NetView, Priv, Sender, ServiceCtx};
+use echo_api::{t, NetView, Priv, Sender, ServiceCtx};
 
 // KILL <nick> [reason]: disconnect a user from the network. Admin-only.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView) {
@@ -11,11 +11,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         return;
     };
     let Some(uid) = net.uid_by_nick(target).map(str::to_string) else {
-        ctx.notice(me, from.uid, format!("There's no \x02{target}\x02 online."));
+        ctx.notice(me, from.uid, t!(ctx, "There's no \x02{target}\x02 online.", target = target));
         return;
     };
     let by = from.account.unwrap_or(from.nick);
     let reason = if args.len() > 2 { args[2..].join(" ") } else { "No reason given".to_string() };
     ctx.kill(me, &uid, &format!("({by}) {reason}"));
-    ctx.notice(me, from.uid, format!("\x02{target}\x02 has been disconnected."));
+    ctx.notice(me, from.uid, t!(ctx, "\x02{target}\x02 has been disconnected.", target = target));
 }

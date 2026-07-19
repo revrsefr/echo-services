@@ -1,4 +1,4 @@
-use echo_api::{parse_duration, Priv, Sender, ServiceCtx, Store};
+use echo_api::{parse_duration, t, Priv, Sender, ServiceCtx, Store};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // Default filter flags: apply to privmsg/notice/part/quit, exempt opers, match on
@@ -29,7 +29,7 @@ fn add(me: &str, from: &Sender, rest: &[&str], ctx: &mut ServiceCtx, db: &mut dy
         return;
     };
     if !echo_api::is_filter_action(action) {
-        ctx.notice(me, from.uid, format!("\x02{action}\x02 isn't a filter action. Use one of: {}.", echo_api::FILTER_ACTIONS.join(", ")));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{action}\x02 isn't a filter action. Use one of: {actions}.", action = action, actions = echo_api::FILTER_ACTIONS.join(", ")));
         return;
     }
     // An optional leading +duration, then the pattern (one glob token), then reason.
@@ -57,9 +57,14 @@ fn add(me: &str, from: &Sender, rest: &[&str], ctx: &mut ServiceCtx, db: &mut dy
     match db.filter_add(pattern, action, DEFAULT_FLAGS, setter, &reason, expires) {
         Ok(fresh) => {
             ctx.filter_push(echo_api::encode_filter(pattern, action, DEFAULT_FLAGS, duration.unwrap_or(0), &reason));
-            let word = if fresh { "added" } else { "updated" };
-            let expiry = if expires.is_some() { " (temporary)" } else { "" };
-            ctx.notice(me, from.uid, format!("Spam filter {word}: \x02{pattern}\x02 ({}){expiry}.", action.to_ascii_lowercase()));
+            let action_l = action.to_ascii_lowercase();
+            let msg = match (fresh, expires.is_some()) {
+                (true, true) => t!(ctx, "Spam filter added: \x02{pattern}\x02 ({action}) (temporary).", pattern = pattern, action = action_l),
+                (true, false) => t!(ctx, "Spam filter added: \x02{pattern}\x02 ({action}).", pattern = pattern, action = action_l),
+                (false, true) => t!(ctx, "Spam filter updated: \x02{pattern}\x02 ({action}) (temporary).", pattern = pattern, action = action_l),
+                (false, false) => t!(ctx, "Spam filter updated: \x02{pattern}\x02 ({action}).", pattern = pattern, action = action_l),
+            };
+            ctx.notice(me, from.uid, msg);
         }
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
@@ -75,15 +80,15 @@ fn del(me: &str, from: &Sender, arg: Option<&str>, ctx: &mut ServiceCtx, db: &mu
         Ok(n) if n >= 1 => match db.filters().get(n - 1) {
             Some(f) => f.pattern.clone(),
             None => {
-                ctx.notice(me, from.uid, format!("There's no spam filter number \x02{n}\x02."));
+                ctx.notice(me, from.uid, t!(ctx, "There's no spam filter number \x02{n}\x02.", n = n));
                 return;
             }
         },
         _ => arg.to_string(),
     };
     match db.filter_del(&pattern) {
-        Ok(true) => ctx.notice(me, from.uid, format!("Spam filter \x02{pattern}\x02 removed. It stops being re-applied, but stays live on the ircd until the next services relink or a manual \x02/FILTER\x02 removal.")),
-        Ok(false) => ctx.notice(me, from.uid, format!("No spam filter matches \x02{pattern}\x02.")),
+        Ok(true) => ctx.notice(me, from.uid, t!(ctx, "Spam filter \x02{pattern}\x02 removed. It stops being re-applied, but stays live on the ircd until the next services relink or a manual \x02/FILTER\x02 removal.", pattern = pattern)),
+        Ok(false) => ctx.notice(me, from.uid, t!(ctx, "No spam filter matches \x02{pattern}\x02.", pattern = pattern)),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
 }
@@ -97,17 +102,17 @@ fn list(me: &str, from: &Sender, pattern: Option<&str>, ctx: &mut ServiceCtx, db
                 continue;
             }
         }
-        let expiry = match f.expires {
-            Some(e) => format!(", expires in {}", human_secs(e.saturating_sub(now()))),
-            None => String::new(),
+        let msg = match f.expires {
+            Some(e) => t!(ctx, "{n}. \x02{pattern}\x02 [{action}] by {setter} — {reason}, expires in {ttl}", n = i + 1, pattern = f.pattern, action = f.action, setter = f.setter, reason = f.reason, ttl = human_secs(e.saturating_sub(now()))),
+            None => t!(ctx, "{n}. \x02{pattern}\x02 [{action}] by {setter} — {reason}", n = i + 1, pattern = f.pattern, action = f.action, setter = f.setter, reason = f.reason),
         };
-        ctx.notice(me, from.uid, format!("{}. \x02{}\x02 [{}] by {} — {}{}", i + 1, f.pattern, f.action, f.setter, f.reason, expiry));
+        ctx.notice(me, from.uid, msg);
         shown += 1;
     }
     if shown == 0 {
         ctx.notice(me, from.uid, "No matching spam filters.");
     } else {
-        ctx.notice(me, from.uid, format!("End of spam-filter list ({shown} shown)."));
+        ctx.notice(me, from.uid, t!(ctx, "End of spam-filter list ({shown} shown).", shown = shown));
     }
 }
 

@@ -1,6 +1,7 @@
 use echo_api::Store;
 use echo_api::{Sender, ServiceCtx};
 use echo_api::NetView;
+use echo_api::t;
 
 // INVITE <#channel> [nick]: invite a user (self if no nick) into the channel.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &dyn Store) {
@@ -15,12 +16,12 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         Some(&nick) => match net.uid_by_nick(nick) {
             Some(u) => u.to_string(),
             None => {
-                ctx.notice(me, from.uid, format!("\x02{nick}\x02 isn't here."));
+                ctx.notice(me, from.uid, t!(ctx, "\x02{nick}\x02 isn't here.", nick = nick));
                 return;
             }
         },
         None => from.uid.to_string(),
     };
     ctx.invite(me, &target, chan);
-    ctx.notice(me, from.uid, format!("Invited to \x02{chan}\x02."));
+    ctx.notice(me, from.uid, t!(ctx, "Invited to \x02{chan}\x02.", chan = chan));
 }

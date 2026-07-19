@@ -1,4 +1,4 @@
-use echo_api::{human_time, NetView, Priv, Sender, ServiceCtx};
+use echo_api::{human_time, t, NetView, Priv, Sender, ServiceCtx};
 
 // LOGSEARCH [pattern]: search the recent action log — every kick, kill, ban,
 // registration/drop, akill, suspension, vhost, note, and so on. A bare id (as
@@ -17,7 +17,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         return;
     }
     for h in &hits {
-        ctx.notice(me, from.uid, format!("[\x02#{}\x02] {} — {}", h.id, human_time(h.ts), h.summary));
+        ctx.notice(me, from.uid, t!(ctx, "[\x02#{id}\x02] {when} — {summary}", id = h.id, when = human_time(h.ts), summary = h.summary));
     }
-    ctx.notice(me, from.uid, format!("End of results ({} shown, newest first — refine the search to narrow).", hits.len()));
+    ctx.notice(me, from.uid, t!(ctx, "End of results ({count} shown, newest first — refine the search to narrow).", count = hits.len()));
 }

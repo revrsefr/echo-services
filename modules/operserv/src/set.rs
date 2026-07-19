@@ -1,4 +1,4 @@
-use echo_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::{t, Priv, Sender, ServiceCtx, Store};
 
 // SET READONLY {ON|OFF}: put services into (or out of) read-only lockdown.
 // While on, no new registrations or changes are accepted; existing data and
@@ -12,7 +12,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         Some("READONLY") => {
             let Some(on) = args.get(2).and_then(|s| parse_toggle(s)) else {
                 let state = if db.readonly() { "ON" } else { "OFF" };
-                ctx.notice(me, from.uid, format!("READONLY is currently \x02{state}\x02. Syntax: SET READONLY {{ON|OFF}}"));
+                ctx.notice(me, from.uid, t!(ctx, "READONLY is currently \x02{state}\x02. Syntax: SET READONLY {ON|OFF}", state = state));
                 return;
             };
             db.set_readonly(on);

@@ -1,4 +1,5 @@
 use echo_api::{parse_duration, NetView, Priv, Sender, ServiceCtx, Store};
+use echo_api::t;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // SUSPEND <account> [+expiry] [reason] / UNSUSPEND <account>: freeze or unfreeze
@@ -15,14 +16,14 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         return;
     };
     let Some(account) = db.resolve_account(target).map(str::to_string) else {
-        ctx.notice(me, from.uid, format!("\x02{target}\x02 isn't registered."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{target}\x02 isn't registered.", target = target));
         return;
     };
 
     if !suspending {
         match db.unsuspend_account(&account) {
-            Ok(true) => ctx.notice(me, from.uid, format!("\x02{account}\x02 is no longer suspended.")),
-            Ok(false) => ctx.notice(me, from.uid, format!("\x02{account}\x02 isn't suspended.")),
+            Ok(true) => ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 is no longer suspended.", account = account)),
+            Ok(false) => ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 isn't suspended.", account = account)),
             Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
         }
         return;
@@ -42,8 +43,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
             for uid in net.uids_logged_into(&account) {
                 ctx.logout(&uid);
             }
-            let expiry = if expires.is_some() { " (with expiry)" } else { "" };
-            ctx.notice(me, from.uid, format!("\x02{account}\x02 is now suspended{expiry}."));
+            let expiry = if expires.is_some() { t!(ctx, " (with expiry)") } else { String::new() };
+            ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 is now suspended{expiry}.", account = account, expiry = expiry));
         }
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }

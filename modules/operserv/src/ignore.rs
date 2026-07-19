@@ -1,4 +1,4 @@
-use echo_api::{parse_duration, Priv, Sender, ServiceCtx, Store};
+use echo_api::{parse_duration, t, Priv, Sender, ServiceCtx, Store};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // IGNORE ADD [+expiry] <mask> [reason] | DEL <mask> | LIST: services silently
@@ -34,8 +34,12 @@ fn add(me: &str, from: &Sender, rest: &[&str], ctx: &mut ServiceCtx, db: &mut dy
     let reason = if reason_words.is_empty() { "No reason given".to_string() } else { reason_words.join(" ") };
     let expires = duration.map(|secs| now() + secs);
     db.ignore_add(mask, &reason, expires);
-    let expiry = if expires.is_some() { " (temporary)" } else { "" };
-    ctx.notice(me, from.uid, format!("Now ignoring \x02{mask}\x02{expiry}."));
+    let msg = if expires.is_some() {
+        t!(ctx, "Now ignoring \x02{mask}\x02 (temporary).", mask = mask)
+    } else {
+        t!(ctx, "Now ignoring \x02{mask}\x02.", mask = mask)
+    };
+    ctx.notice(me, from.uid, msg);
 }
 
 fn del(me: &str, from: &Sender, arg: Option<&str>, ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -44,9 +48,9 @@ fn del(me: &str, from: &Sender, arg: Option<&str>, ctx: &mut ServiceCtx, db: &mu
         return;
     };
     if db.ignore_del(mask) {
-        ctx.notice(me, from.uid, format!("No longer ignoring \x02{mask}\x02."));
+        ctx.notice(me, from.uid, t!(ctx, "No longer ignoring \x02{mask}\x02.", mask = mask));
     } else {
-        ctx.notice(me, from.uid, format!("\x02{mask}\x02 isn't on the ignore list."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{mask}\x02 isn't on the ignore list.", mask = mask));
     }
 }
 
@@ -57,13 +61,13 @@ fn list(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store) {
         return;
     }
     for (i, ig) in ignores.iter().enumerate() {
-        let expiry = match ig.expires {
-            Some(e) => format!(", expires in {}", human_secs(e.saturating_sub(now()))),
-            None => String::new(),
+        let msg = match ig.expires {
+            Some(e) => t!(ctx, "{n}. \x02{mask}\x02 — {reason}, expires in {ttl}", n = i + 1, mask = ig.mask, reason = ig.reason, ttl = human_secs(e.saturating_sub(now()))),
+            None => t!(ctx, "{n}. \x02{mask}\x02 — {reason}", n = i + 1, mask = ig.mask, reason = ig.reason),
         };
-        ctx.notice(me, from.uid, format!("{}. \x02{}\x02 — {}{}", i + 1, ig.mask, ig.reason, expiry));
+        ctx.notice(me, from.uid, msg);
     }
-    ctx.notice(me, from.uid, format!("End of ignore list ({} shown).", ignores.len()));
+    ctx.notice(me, from.uid, t!(ctx, "End of ignore list ({count} shown).", count = ignores.len()));
 }
 
 fn human_secs(secs: u64) -> String {

@@ -1,4 +1,4 @@
-use echo_api::{Sender, ServiceCtx, Store};
+use echo_api::{t, Sender, ServiceCtx, Store};
 
 // DEFAULT: give yourself the auto-vhost from the network template, with your
 // account name substituted for $account.
@@ -18,7 +18,7 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store)
         return;
     }
     let generated = template.replace("$account", &label);
-    let host = match super::prepare_vhost(&generated, account, db) {
+    let host = match super::prepare_vhost(&generated, account, db, ctx) {
         Ok(h) if !db.vhost_is_forbidden(&h) => h,
         _ => {
             ctx.notice(me, from.uid, "Sorry, a vhost couldn't be generated for your account.");
@@ -28,7 +28,7 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store)
     match db.set_vhost(account, &host, "template", None) {
         Ok(()) => {
             ctx.apply_vhost(from.uid, &host);
-            ctx.notice(me, from.uid, format!("You now have the vhost \x02{host}\x02."));
+            ctx.notice(me, from.uid, t!(ctx, "You now have the vhost \x02{host}\x02.", host = host));
         }
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }

@@ -1,4 +1,5 @@
 use echo_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::t;
 
 // SASET <account> <option> [value]: the operator counterpart of SET, editing
 // another account's settings. Oper-only (Priv::Admin). Mirrors the self-service
@@ -13,7 +14,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         return;
     };
     let Some(account) = db.resolve_account(target).map(str::to_string) else {
-        ctx.notice(me, from.uid, format!("\x02{target}\x02 isn't registered."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{target}\x02 isn't registered.", target = target));
         return;
     };
     // Credential/identity fields are owned by the website in external mode.
@@ -38,8 +39,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             let email = args.get(3).map(|s| s.to_string());
             let cleared = email.is_none();
             match db.set_email(&account, email) {
-                Ok(()) if cleared => ctx.notice(me, from.uid, format!("Email for \x02{account}\x02 cleared.")),
-                Ok(()) => ctx.notice(me, from.uid, format!("Email for \x02{account}\x02 updated.")),
+                Ok(()) if cleared => ctx.notice(me, from.uid, t!(ctx, "Email for \x02{account}\x02 cleared.", account = account)),
+                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Email for \x02{account}\x02 updated.", account = account)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
@@ -47,8 +48,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             let greet = if args.len() > 3 { args[3..].join(" ") } else { String::new() };
             let cleared = greet.is_empty();
             match db.set_greet(&account, &greet) {
-                Ok(()) if cleared => ctx.notice(me, from.uid, format!("Greet for \x02{account}\x02 cleared.")),
-                Ok(()) => ctx.notice(me, from.uid, format!("Greet for \x02{account}\x02 is now: {greet}")),
+                Ok(()) if cleared => ctx.notice(me, from.uid, t!(ctx, "Greet for \x02{account}\x02 cleared.", account = account)),
+                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Greet for \x02{account}\x02 is now: {greet}", account = account, greet = greet)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }

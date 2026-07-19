@@ -1,4 +1,5 @@
 use echo_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::t;
 
 // NOEXPIRE <account> {ON|OFF}: pin an account so inactivity-expiry never drops
 // it (or lift the pin). Oper-only (Priv::Admin) — protecting a record from
@@ -13,13 +14,13 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         return;
     };
     let Some(account) = db.resolve_account(target).map(str::to_string) else {
-        ctx.notice(me, from.uid, format!("\x02{target}\x02 isn't registered."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{target}\x02 isn't registered.", target = target));
         return;
     };
     match db.set_account_noexpire(&account, on) {
-        Ok(true) if on => ctx.notice(me, from.uid, format!("\x02{account}\x02 will no longer expire.")),
-        Ok(true) => ctx.notice(me, from.uid, format!("\x02{account}\x02 can expire from inactivity again.")),
-        Ok(false) => ctx.notice(me, from.uid, format!("\x02{account}\x02 was already set that way.")),
+        Ok(true) if on => ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 will no longer expire.", account = account)),
+        Ok(true) => ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 can expire from inactivity again.", account = account)),
+        Ok(false) => ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 was already set that way.", account = account)),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
 }

@@ -1,4 +1,4 @@
-use echo_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::{t, Priv, Sender, ServiceCtx, Store};
 
 // JUPE <server.name> [reason] | JUPE DEL <server.name> | JUPE LIST: hold a
 // server name with a fake server so a rogue one can't link (or lift it). Admin-
@@ -16,7 +16,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             let by = from.account.unwrap_or(from.nick);
             let sid = db.jupe_add(name, &format!("({by}) {reason}"));
             ctx.jupe(name, &sid, &format!("({by}) {reason}"));
-            ctx.notice(me, from.uid, format!("\x02{name}\x02 is now juped."));
+            ctx.notice(me, from.uid, t!(ctx, "\x02{name}\x02 is now juped.", name = name));
         }
         _ => ctx.notice(me, from.uid, "Syntax: JUPE <server.name> [reason] | JUPE DEL <server.name> | JUPE LIST"),
     }
@@ -30,9 +30,9 @@ fn del(me: &str, from: &Sender, name: Option<&str>, ctx: &mut ServiceCtx, db: &m
     match db.jupe_del(name) {
         Some(sid) => {
             ctx.squit(&sid, "Jupe lifted");
-            ctx.notice(me, from.uid, format!("The jupe on \x02{name}\x02 has been lifted."));
+            ctx.notice(me, from.uid, t!(ctx, "The jupe on \x02{name}\x02 has been lifted.", name = name));
         }
-        None => ctx.notice(me, from.uid, format!("\x02{name}\x02 isn't juped.")),
+        None => ctx.notice(me, from.uid, t!(ctx, "\x02{name}\x02 isn't juped.", name = name)),
     }
 }
 
@@ -43,7 +43,7 @@ fn list(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store) {
         return;
     }
     for (name, sid, reason) in &jupes {
-        ctx.notice(me, from.uid, format!("  \x02{name}\x02 ({sid}) — {reason}"));
+        ctx.notice(me, from.uid, t!(ctx, "  \x02{name}\x02 ({sid}) — {reason}", name = name, sid = sid, reason = reason));
     }
-    ctx.notice(me, from.uid, format!("End of jupe list ({} shown).", jupes.len()));
+    ctx.notice(me, from.uid, t!(ctx, "End of jupe list ({count} shown).", count = jupes.len()));
 }

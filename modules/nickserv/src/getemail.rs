@@ -1,4 +1,5 @@
 use echo_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::t;
 
 // GETEMAIL <email>: list accounts registered with a matching email. Oper-only.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &dyn Store) {
@@ -12,8 +13,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     };
     let accounts = db.accounts_by_email(pattern);
     if accounts.is_empty() {
-        ctx.notice(me, from.uid, format!("No accounts use an email matching \x02{pattern}\x02."));
+        ctx.notice(me, from.uid, t!(ctx, "No accounts use an email matching \x02{pattern}\x02.", pattern = pattern));
         return;
     }
-    ctx.notice(me, from.uid, format!("Accounts with email matching \x02{pattern}\x02: {}", accounts.join(", ")));
+    ctx.notice(me, from.uid, t!(ctx, "Accounts with email matching \x02{pattern}\x02: {list}", pattern = pattern, list = accounts.join(", ")));
 }

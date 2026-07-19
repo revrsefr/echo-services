@@ -566,11 +566,12 @@ impl ServiceCtx {
     }
 
     pub fn notice(&mut self, from: &str, to: &str, text: impl Into<String>) {
-        self.actions.push(NetAction::Notice {
-            from: from.to_string(),
-            to: to.to_string(),
-            text: text.into(),
-        });
+        // Auto-localize: a static English reply is looked up in the catalog for this
+        // command's language and swapped for its translation (English/no-catalog =
+        // unchanged). Interpolated messages must use the `t!` macro so their template
+        // — not the already-filled-in text — is the lookup key.
+        let text = render(self.lang(), &text.into(), &[]);
+        self.actions.push(NetAction::Notice { from: from.to_string(), to: to.to_string(), text });
     }
 
     // IRCv3 standard replies from a service (`from` uid) to a client (`to` uid).
@@ -591,13 +592,14 @@ impl ServiceCtx {
     }
 
     fn standard_reply(&mut self, kind: ReplyKind, from: &str, to: &str, command: &str, code: &str, text: impl Into<String>) {
+        let text = render(self.lang(), &text.into(), &[]); // auto-localize static replies (see `notice`)
         self.actions.push(NetAction::StandardReply {
             kind,
             from: from.to_string(),
             to: to.to_string(),
             command: command.to_string(),
             code: code.to_string(),
-            text: text.into(),
+            text,
         });
     }
 

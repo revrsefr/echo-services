@@ -1,4 +1,4 @@
-use echo_api::{ChanError, Sender, ServiceCtx, Store};
+use echo_api::{t, ChanError, Sender, ServiceCtx, Store};
 
 // TRIGGER <#channel> ADD <regex>|<response> | DEL <num> | LIST | CLEAR: manage
 // the channel's auto-responses. When a line matches <regex>, the assigned bot
@@ -35,9 +35,9 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             }
             match db.trigger_add(chan, pattern, response, cooldown) {
-                Ok(true) => ctx.notice(me, from.uid, format!("Added a trigger to \x02{chan}\x02.")),
+                Ok(true) => ctx.notice(me, from.uid, t!(ctx, "Added a trigger to \x02{chan}\x02.", chan = chan)),
                 Ok(false) => ctx.notice(me, from.uid, "That pattern already has a trigger."),
-                Err(ChanError::InvalidPattern) => ctx.notice(me, from.uid, format!("\x02{pattern}\x02 isn't a valid regular expression.")),
+                Err(ChanError::InvalidPattern) => ctx.notice(me, from.uid, t!(ctx, "\x02{pattern}\x02 isn't a valid regular expression.", pattern = pattern)),
                 Err(_) => reg_error(me, from, chan, ctx),
             }
         }
@@ -47,31 +47,31 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             };
             match db.trigger_del(chan, n) {
-                Ok(true) => ctx.notice(me, from.uid, format!("Trigger #\x02{n}\x02 removed from \x02{chan}\x02.")),
-                Ok(false) => ctx.notice(me, from.uid, format!("\x02{chan}\x02 has no trigger #\x02{n}\x02.")),
+                Ok(true) => ctx.notice(me, from.uid, t!(ctx, "Trigger #\x02{n}\x02 removed from \x02{chan}\x02.", n = n, chan = chan)),
+                Ok(false) => ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 has no trigger #\x02{n}\x02.", chan = chan, n = n)),
                 Err(_) => reg_error(me, from, chan, ctx),
             }
         }
         Some("CLEAR") => match db.trigger_clear(chan) {
-            Ok(n) => ctx.notice(me, from.uid, format!("Cleared \x02{n}\x02 trigger(s) from \x02{chan}\x02.")),
+            Ok(n) => ctx.notice(me, from.uid, t!(ctx, "Cleared \x02{n}\x02 trigger(s) from \x02{chan}\x02.", n = n, chan = chan)),
             Err(_) => reg_error(me, from, chan, ctx),
         },
         None | Some("LIST") => {
             let triggers = db.triggers(chan);
             if triggers.is_empty() {
-                ctx.notice(me, from.uid, format!("\x02{chan}\x02 has no triggers."));
+                ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 has no triggers.", chan = chan));
                 return;
             }
-            ctx.notice(me, from.uid, format!("Triggers for \x02{chan}\x02 ({}):", triggers.len()));
-            for (i, t) in triggers.iter().enumerate() {
-                let cd = if t.cooldown > 0 { format!(" (cooldown {}s)", t.cooldown) } else { String::new() };
-                ctx.notice(me, from.uid, format!("  {}. {} \x02→\x02 {}{cd}", i + 1, t.pattern, t.response));
+            ctx.notice(me, from.uid, t!(ctx, "Triggers for \x02{chan}\x02 ({count}):", chan = chan, count = triggers.len()));
+            for (i, tr) in triggers.iter().enumerate() {
+                let cd = if tr.cooldown > 0 { t!(ctx, " (cooldown {secs}s)", secs = tr.cooldown) } else { String::new() };
+                ctx.notice(me, from.uid, t!(ctx, "  {num}. {pattern} \x02→\x02 {response}{cd}", num = i + 1, pattern = tr.pattern, response = tr.response, cd = cd));
             }
         }
-        Some(other) => ctx.notice(me, from.uid, format!("Unknown TRIGGER command \x02{other}\x02. Use ADD, DEL, LIST or CLEAR.")),
+        Some(other) => ctx.notice(me, from.uid, t!(ctx, "Unknown TRIGGER command \x02{other}\x02. Use ADD, DEL, LIST or CLEAR.", other = other)),
     }
 }
 
 fn reg_error(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx) {
-    ctx.notice(me, from.uid, format!("Couldn't update \x02{chan}\x02 — please try again in a moment."));
+    ctx.notice(me, from.uid, t!(ctx, "Couldn't update \x02{chan}\x02 — please try again in a moment.", chan = chan));
 }

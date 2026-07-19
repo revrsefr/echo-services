@@ -3,7 +3,7 @@
 //! with SET/DEL and review with LIST. `lib.rs` holds the dispatcher; each
 //! command lives in its own file.
 
-use echo_api::{HelpEntry, NetView, Priv, Sender, Service, ServiceCtx, Store};
+use echo_api::{t, HelpEntry, NetView, Priv, Sender, Service, ServiceCtx, Store};
 
 #[path = "on.rs"]
 mod on;
@@ -96,7 +96,7 @@ impl Service for HostServ {
             Some("TEMPLATE") => template::handle(me, from, args, ctx, db),
             Some("DEFAULT") => default::handle(me, from, ctx, db),
             Some("HELP") | None => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
-            Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
+            Some(other) => ctx.notice(me, from.uid, t!(ctx, "I don't know the command \x02{other}\x02. Try \x02HELP\x02.", other = other)),
         }
     }
 }
@@ -125,13 +125,13 @@ pub(crate) fn normalize_vhost(spec: &str) -> String {
 
 // Normalise a requested vhost and check it's valid and not already another
 // account's. Returns the canonical spec to store, or a message to show.
-pub(crate) fn prepare_vhost(spec: &str, account: &str, db: &dyn Store) -> Result<String, String> {
+pub(crate) fn prepare_vhost(spec: &str, account: &str, db: &dyn Store, ctx: &ServiceCtx) -> Result<String, String> {
     let host = normalize_vhost(spec);
     if !valid_vhost(&host) {
-        return Err(format!("\x02{host}\x02 isn't a valid host (letters, digits, hyphens and dots)."));
+        return Err(t!(ctx, "\x02{host}\x02 isn't a valid host (letters, digits, hyphens and dots).", host = host));
     }
     if db.vhost_owner(&host).is_some_and(|owner| !owner.eq_ignore_ascii_case(account)) {
-        return Err(format!("\x02{host}\x02 is already in use. Please choose another."));
+        return Err(t!(ctx, "\x02{host}\x02 is already in use. Please choose another.", host = host));
     }
     Ok(host)
 }

@@ -1,5 +1,6 @@
 use echo_api::Store;
 use echo_api::{Sender, ServiceCtx};
+use echo_api::t;
 
 // The named tiers ACCESS ADD accepts, high to low; the granular FLAGS command
 // covers anything finer. Kept in step with the XOP presets in `level_caps`.
@@ -13,12 +14,12 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     };
     match args.get(2).map(|s| s.to_ascii_uppercase()).as_deref() {
         None | Some("LIST") => match db.channel(chan) {
-            None => ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered.")),
+            None => ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan)),
             Some(info) => {
-                ctx.notice(me, from.uid, format!("Access list for \x02{}\x02:", info.name));
-                ctx.notice(me, from.uid, format!("  \x02{}\x02 (founder)", info.founder));
+                ctx.notice(me, from.uid, t!(ctx, "Access list for \x02{name}\x02:", name = info.name));
+                ctx.notice(me, from.uid, t!(ctx, "  \x02{founder}\x02 (founder)", founder = info.founder));
                 for a in &info.access {
-                    ctx.notice(me, from.uid, format!("  \x02{}\x02 ({})", a.account, a.level));
+                    ctx.notice(me, from.uid, t!(ctx, "  \x02{account}\x02 ({level})", account = a.account, level = a.level));
                 }
             }
         },
@@ -36,7 +37,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             }
             match db.access_add(chan, account, &level) {
-                Ok(()) => ctx.notice(me, from.uid, format!("Added \x02{account}\x02 to \x02{chan}\x02 as \x02{level}\x02.")),
+                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Added \x02{account}\x02 to \x02{chan}\x02 as \x02{level}\x02.", account = account, chan = chan, level = level)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
@@ -49,8 +50,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             }
             match db.access_del(chan, account) {
-                Ok(true) => ctx.notice(me, from.uid, format!("Removed \x02{account}\x02 from \x02{chan}\x02.")),
-                Ok(false) => ctx.notice(me, from.uid, format!("\x02{account}\x02 has no access to \x02{chan}\x02.")),
+                Ok(true) => ctx.notice(me, from.uid, t!(ctx, "Removed \x02{account}\x02 from \x02{chan}\x02.", account = account, chan = chan)),
+                Ok(false) => ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 has no access to \x02{chan}\x02.", account = account, chan = chan)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
@@ -62,11 +63,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
 fn is_founder(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &dyn Store) -> bool {
     match db.channel(chan) {
         None => {
-            ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
+            ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan));
             false
         }
         Some(info) if from.account != Some(info.founder.as_str()) => {
-            ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can change access."));
+            ctx.notice(me, from.uid, t!(ctx, "Only \x02{chan}\x02's founder can change access.", chan = chan));
             false
         }
         // Founder, but a staff-suspended channel is frozen — no access changes.

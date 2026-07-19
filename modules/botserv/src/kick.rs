@@ -1,4 +1,4 @@
-use echo_api::{Kicker, Sender, ServiceCtx, Store};
+use echo_api::{t, Kicker, Sender, ServiceCtx, Store};
 
 // KICK <#channel> <type> {ON|OFF} [params]: configure the bot's kickers.
 // Types: CAPS [min [percent]], BOLDS, COLORS, UNDERLINES, REVERSES, ITALICS,
@@ -16,8 +16,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     if kind.eq_ignore_ascii_case("TTB") {
         match args.get(3).and_then(|s| s.parse::<u16>().ok()) {
             Some(n) => match db.set_ttb(chan, n) {
-                Ok(()) if n == 0 => ctx.notice(me, from.uid, format!("The bot will only kick (not ban) in \x02{chan}\x02.")),
-                Ok(()) => ctx.notice(me, from.uid, format!("The bot will ban a user after \x02{n}\x02 kick(s) in \x02{chan}\x02.")),
+                Ok(()) if n == 0 => ctx.notice(me, from.uid, t!(ctx, "The bot will only kick (not ban) in \x02{chan}\x02.", chan = chan)),
+                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "The bot will ban a user after \x02{n}\x02 kick(s) in \x02{chan}\x02.", n = n, chan = chan)),
                 Err(_) => reg_error(me, from, chan, ctx),
             },
             None => ctx.notice(me, from.uid, "Syntax: KICK <#channel> TTB <number>"),
@@ -34,7 +34,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         }
         let text = args[3..].join(" ");
         match db.kicker_test(chan, &text) {
-            Some(reason) => ctx.notice(me, from.uid, format!("That line \x02would be kicked\x02: {reason}")),
+            Some(reason) => ctx.notice(me, from.uid, t!(ctx, "That line \x02would be kicked\x02: {reason}", reason = reason)),
             None => ctx.notice(me, from.uid, "That line trips no content kicker (flood/repeat depend on timing and repetition, so they aren't tested here)."),
         }
         return;
@@ -55,7 +55,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             let min = args.get(4).and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
             let percent = args.get(5).and_then(|s| s.parse::<u16>().ok()).filter(|p| (1..=100).contains(p)).unwrap_or(0);
             match db.set_caps_kicker(chan, min, percent) {
-                Ok(()) => ctx.notice(me, from.uid, format!("The bot will now kick for \x02caps\x02 in \x02{chan}\x02.")),
+                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "The bot will now kick for \x02caps\x02 in \x02{chan}\x02.", chan = chan)),
                 Err(_) => reg_error(me, from, chan, ctx),
             }
         } else {
@@ -68,7 +68,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             let lines = args.get(4).and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
             let secs = args.get(5).and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
             match db.set_flood_kicker(chan, lines, secs) {
-                Ok(()) => ctx.notice(me, from.uid, format!("The bot will now kick for \x02flooding\x02 in \x02{chan}\x02.")),
+                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "The bot will now kick for \x02flooding\x02 in \x02{chan}\x02.", chan = chan)),
                 Err(_) => reg_error(me, from, chan, ctx),
             }
         } else {
@@ -80,7 +80,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         if on {
             let times = args.get(4).and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
             match db.set_repeat_kicker(chan, times) {
-                Ok(()) => ctx.notice(me, from.uid, format!("The bot will now kick for \x02repeating\x02 in \x02{chan}\x02.")),
+                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "The bot will now kick for \x02repeating\x02 in \x02{chan}\x02.", chan = chan)),
                 Err(_) => reg_error(me, from, chan, ctx),
             }
         } else {
@@ -100,7 +100,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         "DONTKICKOPS" => Kicker::DontKickOps,
         "DONTKICKVOICES" => Kicker::DontKickVoices,
         other => {
-            ctx.notice(me, from.uid, format!("Unknown kicker \x02{other}\x02. Try CAPS, FLOOD, REPEAT, BADWORDS, BOLDS, COLORS, UNDERLINES, REVERSES, ITALICS, WARN, DONTKICKOPS or DONTKICKVOICES."));
+            ctx.notice(me, from.uid, t!(ctx, "Unknown kicker \x02{other}\x02. Try CAPS, FLOOD, REPEAT, BADWORDS, BOLDS, COLORS, UNDERLINES, REVERSES, ITALICS, WARN, DONTKICKOPS or DONTKICKVOICES.", other = other));
             return;
         }
     };
@@ -126,18 +126,18 @@ fn label(kicker: Kicker) -> &'static str {
 
 fn toggle(me: &str, from: &Sender, chan: &str, kicker: Kicker, on: bool, ctx: &mut ServiceCtx, db: &mut dyn Store) {
     match db.set_kicker(chan, kicker, on) {
-        Ok(()) if kicker == Kicker::DontKickOps && on => ctx.notice(me, from.uid, format!("The bot will no longer kick channel operators in \x02{chan}\x02.")),
-        Ok(()) if kicker == Kicker::DontKickOps => ctx.notice(me, from.uid, format!("The bot may again kick channel operators in \x02{chan}\x02.")),
-        Ok(()) if kicker == Kicker::DontKickVoices && on => ctx.notice(me, from.uid, format!("The bot will no longer kick voiced users in \x02{chan}\x02.")),
-        Ok(()) if kicker == Kicker::DontKickVoices => ctx.notice(me, from.uid, format!("The bot may again kick voiced users in \x02{chan}\x02.")),
-        Ok(()) if kicker == Kicker::Warn && on => ctx.notice(me, from.uid, format!("The bot will warn once before the first kick in \x02{chan}\x02.")),
-        Ok(()) if kicker == Kicker::Warn => ctx.notice(me, from.uid, format!("The bot will kick without warning in \x02{chan}\x02.")),
-        Ok(()) if on => ctx.notice(me, from.uid, format!("The \x02{}\x02 kicker is now on in \x02{chan}\x02.", label(kicker))),
-        Ok(()) => ctx.notice(me, from.uid, format!("The \x02{}\x02 kicker is now off in \x02{chan}\x02.", label(kicker))),
+        Ok(()) if kicker == Kicker::DontKickOps && on => ctx.notice(me, from.uid, t!(ctx, "The bot will no longer kick channel operators in \x02{chan}\x02.", chan = chan)),
+        Ok(()) if kicker == Kicker::DontKickOps => ctx.notice(me, from.uid, t!(ctx, "The bot may again kick channel operators in \x02{chan}\x02.", chan = chan)),
+        Ok(()) if kicker == Kicker::DontKickVoices && on => ctx.notice(me, from.uid, t!(ctx, "The bot will no longer kick voiced users in \x02{chan}\x02.", chan = chan)),
+        Ok(()) if kicker == Kicker::DontKickVoices => ctx.notice(me, from.uid, t!(ctx, "The bot may again kick voiced users in \x02{chan}\x02.", chan = chan)),
+        Ok(()) if kicker == Kicker::Warn && on => ctx.notice(me, from.uid, t!(ctx, "The bot will warn once before the first kick in \x02{chan}\x02.", chan = chan)),
+        Ok(()) if kicker == Kicker::Warn => ctx.notice(me, from.uid, t!(ctx, "The bot will kick without warning in \x02{chan}\x02.", chan = chan)),
+        Ok(()) if on => ctx.notice(me, from.uid, t!(ctx, "The \x02{kicker}\x02 kicker is now on in \x02{chan}\x02.", kicker = label(kicker), chan = chan)),
+        Ok(()) => ctx.notice(me, from.uid, t!(ctx, "The \x02{kicker}\x02 kicker is now off in \x02{chan}\x02.", kicker = label(kicker), chan = chan)),
         Err(_) => reg_error(me, from, chan, ctx),
     }
 }
 
 fn reg_error(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx) {
-    ctx.notice(me, from.uid, format!("Couldn't update \x02{chan}\x02 — please try again in a moment."));
+    ctx.notice(me, from.uid, t!(ctx, "Couldn't update \x02{chan}\x02 — please try again in a moment.", chan = chan));
 }

@@ -1,4 +1,4 @@
-use echo_api::{NetView, Priv, Sender, ServiceCtx, Store};
+use echo_api::{t, NetView, Priv, Sender, ServiceCtx, Store};
 
 // MODE <#channel> <modes> [params]: set channel modes as a services override
 // (forced, so it applies regardless of the current TS). Admin-only. Status-mode
@@ -43,5 +43,5 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
     }
     let full = if out_params.is_empty() { modes.to_string() } else { format!("{} {}", modes, out_params.join(" ")) };
     ctx.channel_mode(me, chan, &full);
-    ctx.notice(me, from.uid, format!("Set \x02{modes}\x02 on \x02{chan}\x02."));
+    ctx.notice(me, from.uid, t!(ctx, "Set \x02{modes}\x02 on \x02{chan}\x02.", modes = modes, chan = chan));
 }

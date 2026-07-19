@@ -1,4 +1,4 @@
-use echo_api::{ChanError, Priv, Sender, ServiceCtx, Store};
+use echo_api::{t, ChanError, Priv, Sender, ServiceCtx, Store};
 
 // BOT ADD <nick> <user> <host> [gecos] | BOT DEL <nick> | BOT LIST — manage the
 // bot registry. Administering bots is oper-only (Priv::Admin).
@@ -15,8 +15,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             };
             let gecos = if args.len() > 5 { args[5..].join(" ") } else { "Service Bot".to_string() };
             match db.bot_add(nick, user, host, &gecos) {
-                Ok(()) => ctx.notice(me, from.uid, format!("Bot \x02{nick}\x02 (\x02{user}@{host}\x02) added.")),
-                Err(_) => ctx.notice(me, from.uid, format!("A bot named \x02{nick}\x02 already exists, or that didn't work.")),
+                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Bot \x02{nick}\x02 (\x02{user}@{host}\x02) added.", nick = nick, user = user, host = host)),
+                Err(_) => ctx.notice(me, from.uid, t!(ctx, "A bot named \x02{nick}\x02 already exists, or that didn't work.", nick = nick)),
             }
         }
         Some("CHANGE") => {
@@ -26,15 +26,15 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             };
             // Omitted fields keep the bot's current values.
             let Some(cur) = db.bots().into_iter().find(|b| b.nick.eq_ignore_ascii_case(old)) else {
-                ctx.notice(me, from.uid, format!("There's no bot named \x02{old}\x02."));
+                ctx.notice(me, from.uid, t!(ctx, "There's no bot named \x02{nick}\x02.", nick = old));
                 return;
             };
             let user = args.get(4).map(|s| s.to_string()).unwrap_or(cur.user);
             let host = args.get(5).map(|s| s.to_string()).unwrap_or(cur.host);
             let gecos = if args.len() > 6 { args[6..].join(" ") } else { cur.gecos };
             match db.bot_change(old, newnick, &user, &host, &gecos) {
-                Ok(()) => ctx.notice(me, from.uid, format!("Bot \x02{old}\x02 is now \x02{newnick}\x02 (\x02{user}@{host}\x02).")),
-                Err(ChanError::Exists) => ctx.notice(me, from.uid, format!("A bot named \x02{newnick}\x02 already exists.")),
+                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Bot \x02{old}\x02 is now \x02{newnick}\x02 (\x02{user}@{host}\x02).", old = old, newnick = newnick, user = user, host = host)),
+                Err(ChanError::Exists) => ctx.notice(me, from.uid, t!(ctx, "A bot named \x02{newnick}\x02 already exists.", newnick = newnick)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
@@ -45,14 +45,14 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             };
             if nick == "*" {
                 match db.bot_del_all() {
-                    Ok(n) => ctx.notice(me, from.uid, format!("Removed all \x02{n}\x02 bot(s).")),
+                    Ok(n) => ctx.notice(me, from.uid, t!(ctx, "Removed all \x02{n}\x02 bot(s).", n = n)),
                     Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
                 }
                 return;
             }
             match db.bot_del(nick) {
-                Ok(true) => ctx.notice(me, from.uid, format!("Bot \x02{nick}\x02 deleted.")),
-                Ok(false) => ctx.notice(me, from.uid, format!("There's no bot named \x02{nick}\x02.")),
+                Ok(true) => ctx.notice(me, from.uid, t!(ctx, "Bot \x02{nick}\x02 deleted.", nick = nick)),
+                Ok(false) => ctx.notice(me, from.uid, t!(ctx, "There's no bot named \x02{nick}\x02.", nick = nick)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
@@ -62,12 +62,12 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 ctx.notice(me, from.uid, "No bots have been added yet. Add one with \x02BOT ADD\x02.");
                 return;
             }
-            ctx.notice(me, from.uid, format!("Bots ({}):", bots.len()));
+            ctx.notice(me, from.uid, t!(ctx, "Bots ({count}):", count = bots.len()));
             for b in &bots {
                 let flag = if b.private { " \x02[private]\x02" } else { "" };
-                ctx.notice(me, from.uid, format!("  \x02{}\x02 ({}@{}) — {}{flag}", b.nick, b.user, b.host, b.gecos));
+                ctx.notice(me, from.uid, t!(ctx, "  \x02{nick}\x02 ({user}@{host}) — {gecos}{flag}", nick = b.nick, user = b.user, host = b.host, gecos = b.gecos, flag = flag));
             }
         }
-        Some(other) => ctx.notice(me, from.uid, format!("Unknown BOT command \x02{other}\x02. Use \x02ADD\x02, \x02CHANGE\x02, \x02DEL\x02 or \x02LIST\x02.")),
+        Some(other) => ctx.notice(me, from.uid, t!(ctx, "Unknown BOT command \x02{other}\x02. Use \x02ADD\x02, \x02CHANGE\x02, \x02DEL\x02 or \x02LIST\x02.", other = other)),
     }
 }

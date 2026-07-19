@@ -1,4 +1,4 @@
-use echo_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::{t, Priv, Sender, ServiceCtx, Store};
 
 // BOTLIST: show the bots a channel founder can assign. Available to everyone,
 // unlike \x02BOT LIST\x02 (operator bot administration). Private bots are hidden
@@ -10,10 +10,10 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &dyn Store) {
         ctx.notice(me, from.uid, "No bots are available.");
         return;
     }
-    ctx.notice(me, from.uid, format!("Available bots ({}):", bots.len()));
+    ctx.notice(me, from.uid, t!(ctx, "Available bots ({count}):", count = bots.len()));
     for b in &bots {
         let flag = if b.private { " \x02[private]\x02" } else { "" };
-        ctx.notice(me, from.uid, format!("  \x02{}\x02 ({}@{}){flag}", b.nick, b.user, b.host));
+        ctx.notice(me, from.uid, t!(ctx, "  \x02{nick}\x02 ({user}@{host}){flag}", nick = b.nick, user = b.user, host = b.host, flag = flag));
     }
     ctx.notice(me, from.uid, "Assign one with \x02ASSIGN <#channel> <bot>\x02.");
 }

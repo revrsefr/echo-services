@@ -7,7 +7,7 @@
 //! `lib.rs` holds the dispatcher and the shared guard/claim helpers; each
 //! command lives in its own file.
 
-use echo_api::{HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{t, HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "request.rs"]
 mod request;
@@ -78,7 +78,7 @@ impl Service for HelpServ {
                     None => {
                         echo_api::help(me, from, ctx, BLURB, TOPICS, other);
                         if other.is_none() {
-                            ctx.notice(me, from.uid, format!("For a service's own commands, type \x02HELP <service>\x02. Services: {}.", net.help_services().join(", ")));
+                            ctx.notice(me, from.uid, t!(ctx, "For a service's own commands, type \x02HELP <service>\x02. Services: {services}.", services = net.help_services().join(", ")));
                             ctx.notice(me, from.uid, "For the extended ban types you can use, type \x02HELP EXTBANS\x02.");
                         }
                     }
@@ -87,7 +87,7 @@ impl Service for HelpServ {
             // Not a HelpServ command — maybe the name of a service to get help for.
             Some(_) => match net.service_help(args[0]) {
                 Some((blurb, topics)) => echo_api::help(me, from, ctx, blurb, topics, args.get(1).copied()),
-                None => ctx.notice(me, from.uid, format!("I don't know \x02{}\x02. Try \x02REQUEST\x02 <message>, \x02HELP\x02, or a service name (e.g. \x02NickServ\x02).", args[0])),
+                None => ctx.notice(me, from.uid, t!(ctx, "I don't know \x02{name}\x02. Try \x02REQUEST\x02 <message>, \x02HELP\x02, or a service name (e.g. \x02NickServ\x02).", name = args[0])),
             },
         }
     }
@@ -103,8 +103,8 @@ fn take_id(me: &str, from: &Sender, id: u64, ctx: &mut ServiceCtx, db: &mut dyn 
     let handler = from.account.unwrap_or(from.nick);
     if db.help_take(id, handler) {
         let msg = db.help_ticket(id).map(|t| t.message).unwrap_or_default();
-        ctx.notice(me, from.uid, format!("You took ticket \x02#{id}\x02: {msg}"));
+        ctx.notice(me, from.uid, t!(ctx, "You took ticket \x02#{id}\x02: {msg}", id = id, msg = msg));
     } else {
-        ctx.notice(me, from.uid, format!("Ticket \x02#{id}\x02 isn't open (or doesn't exist)."));
+        ctx.notice(me, from.uid, t!(ctx, "Ticket \x02#{id}\x02 isn't open (or doesn't exist).", id = id));
     }
 }

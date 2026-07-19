@@ -1,4 +1,4 @@
-use echo_api::{Sender, ServiceCtx, Store};
+use echo_api::{t, Sender, ServiceCtx, Store};
 
 // REGISTER <!group>: create a group with you as its founder.
 pub fn handle(me: &str, from: &Sender, name: Option<&str>, ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -29,13 +29,13 @@ pub fn handle(me: &str, from: &Sender, name: Option<&str>, ctx: &mut ServiceCtx,
     // (mirrors NickServ's grouped-nick and AJOIN caps).
     const MAX_GROUPS: usize = 25;
     if db.groups_founded(acc) >= MAX_GROUPS {
-        ctx.notice(me, from.uid, format!("You've reached the maximum of {MAX_GROUPS} registered groups."));
+        ctx.notice(me, from.uid, t!(ctx, "You've reached the maximum of {max} registered groups.", max = MAX_GROUPS));
         return;
     }
     let acc = acc.to_string();
     match db.group_register(name, &acc) {
-        Ok(()) => ctx.notice(me, from.uid, format!("Group \x02{name}\x02 registered — you're the founder.")),
-        Err(echo_api::ChanError::Exists) => ctx.notice(me, from.uid, format!("\x02{name}\x02 is already registered.")),
+        Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Group \x02{name}\x02 registered — you're the founder.", name = name)),
+        Err(echo_api::ChanError::Exists) => ctx.notice(me, from.uid, t!(ctx, "\x02{name}\x02 is already registered.", name = name)),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
 }

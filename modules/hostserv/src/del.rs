@@ -1,4 +1,4 @@
-use echo_api::{NetView, Sender, ServiceCtx, Store};
+use echo_api::{t, NetView, Sender, ServiceCtx, Store};
 
 // DEL <account>: remove an account's vhost, restoring the normal host on any
 // online sessions. Operators only.
@@ -27,9 +27,9 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
                     }
                 }
             }
-            ctx.notice(me, from.uid, format!("Vhost for \x02{account}\x02 removed."));
+            ctx.notice(me, from.uid, t!(ctx, "Vhost for \x02{account}\x02 removed.", account = account));
         }
-        Ok(false) => ctx.notice(me, from.uid, format!("\x02{account}\x02 has no vhost.")),
-        Err(_) => ctx.notice(me, from.uid, format!("\x02{account}\x02 isn't registered.")),
+        Ok(false) => ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 has no vhost.", account = account)),
+        Err(_) => ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 isn't registered.", account = account)),
     }
 }

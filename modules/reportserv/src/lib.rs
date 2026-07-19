@@ -8,7 +8,7 @@
 //! `lib.rs` holds the dispatcher and the shared oper guard; each command lives
 //! in its own file.
 
-use echo_api::{HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{t, HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "report.rs"]
 mod report;
@@ -59,7 +59,7 @@ impl Service for ReportServ {
             Some("CLOSE") | Some("RESOLVE") => close::handle(me, from, args.get(1).copied(), ctx, db),
             Some("DEL") | Some("REMOVE") => del::handle(me, from, args.get(1).copied(), ctx, db),
             Some("HELP") | None => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
-            Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02REPORT\x02 <nick|#channel> <reason> or \x02HELP\x02.")),
+            Some(other) => ctx.notice(me, from.uid, t!(ctx, "I don't know \x02{other}\x02. Try \x02REPORT\x02 <nick|#channel> <reason> or \x02HELP\x02.", other = other)),
         }
     }
 }

@@ -1,5 +1,6 @@
 use echo_api::Store;
 use echo_api::{AccessRole, LevelCap, Sender, ServiceCtx};
+use echo_api::t;
 
 // LEVELS <#channel> [SET <capability> <tier> | RESET <capability>]
 // Tune which access tier holds each channel capability (OP, TOPIC, INVITE, ACCESS).
@@ -20,16 +21,16 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
 
 fn list(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &dyn Store) {
     let Some(info) = db.channel(chan) else {
-        ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan));
         return;
     };
-    ctx.notice(me, from.uid, format!("Access levels for \x02{}\x02 (capability → minimum tier):", info.name));
+    ctx.notice(me, from.uid, t!(ctx, "Access levels for \x02{name}\x02 (capability → minimum tier):", name = info.name));
     for cap in LevelCap::ALL {
         let (tier, tag) = match info.levels.iter().find(|(c, _)| *c == cap) {
             Some((_, role)) => (*role, "  (custom)"),
             None => (cap.default_role(), ""),
         };
-        ctx.notice(me, from.uid, format!("  \x02{}\x02 — {}{}", cap.name(), tier_word(tier), tag));
+        ctx.notice(me, from.uid, t!(ctx, "  \x02{cap}\x02 — {tier}{tag}", cap = cap.name(), tier = tier_word(tier), tag = tag));
     }
     ctx.notice(me, from.uid, "Founder: \x02LEVELS <#chan> SET <capability> <tier>\x02 grants it to that tier and above; \x02RESET\x02 restores the default.");
 }
@@ -58,7 +59,7 @@ fn set(me: &str, from: &Sender, chan: &str, rest: &[&str], ctx: &mut ServiceCtx,
         }
     };
     match db.level_set(chan, cap.name(), tier_word(role)) {
-        Ok(()) => ctx.notice(me, from.uid, format!("\x02{}\x02 on \x02{chan}\x02 is now held by \x02{}\x02 and above.", cap.name(), tier_word(role))),
+        Ok(()) => ctx.notice(me, from.uid, t!(ctx, "\x02{cap}\x02 on \x02{chan}\x02 is now held by \x02{tier}\x02 and above.", cap = cap.name(), chan = chan, tier = tier_word(role))),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
 }
@@ -76,8 +77,8 @@ fn reset(me: &str, from: &Sender, chan: &str, cap_arg: Option<&str>, ctx: &mut S
         return;
     };
     match db.level_reset(chan, cap.name()) {
-        Ok(true) => ctx.notice(me, from.uid, format!("\x02{}\x02 on \x02{chan}\x02 is back to its default tier (\x02{}\x02).", cap.name(), tier_word(cap.default_role()))),
-        Ok(false) => ctx.notice(me, from.uid, format!("\x02{}\x02 on \x02{chan}\x02 has no custom level.", cap.name())),
+        Ok(true) => ctx.notice(me, from.uid, t!(ctx, "\x02{cap}\x02 on \x02{chan}\x02 is back to its default tier (\x02{tier}\x02).", cap = cap.name(), chan = chan, tier = tier_word(cap.default_role()))),
+        Ok(false) => ctx.notice(me, from.uid, t!(ctx, "\x02{cap}\x02 on \x02{chan}\x02 has no custom level.", cap = cap.name(), chan = chan)),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
 }

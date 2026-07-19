@@ -1,4 +1,5 @@
 use echo_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::t;
 
 // NOEXPIRE <#channel> {ON|OFF}: pin a channel so inactivity-expiry never drops
 // it (or lift the pin). Oper-only (Priv::Admin).
@@ -12,13 +13,13 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         return;
     };
     if db.channel(chan).is_none() {
-        ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan));
         return;
     }
     match db.set_channel_noexpire(chan, on) {
-        Ok(true) if on => ctx.notice(me, from.uid, format!("\x02{chan}\x02 will no longer expire.")),
-        Ok(true) => ctx.notice(me, from.uid, format!("\x02{chan}\x02 can expire from inactivity again.")),
-        Ok(false) => ctx.notice(me, from.uid, format!("\x02{chan}\x02 was already set that way.")),
+        Ok(true) if on => ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 will no longer expire.", chan = chan)),
+        Ok(true) => ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 can expire from inactivity again.", chan = chan)),
+        Ok(false) => ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 was already set that way.", chan = chan)),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
 }

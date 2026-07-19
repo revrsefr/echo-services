@@ -1,4 +1,4 @@
-use echo_api::{NetView, Priv, Sender, ServiceCtx};
+use echo_api::{t, NetView, Priv, Sender, ServiceCtx};
 
 // SVSNICK <nick> <newnick>: force a user to change nick. Admin-only.
 pub fn nick(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView) {
@@ -11,15 +11,15 @@ pub fn nick(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &
         return;
     };
     if newnick.is_empty() || newnick.starts_with('#') || newnick.contains(|c: char| c.is_whitespace() || c == ',') {
-        ctx.notice(me, from.uid, format!("\x02{newnick}\x02 isn't a valid nick."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{newnick}\x02 isn't a valid nick.", newnick = newnick));
         return;
     }
     let Some(uid) = net.uid_by_nick(target).map(str::to_string) else {
-        ctx.notice(me, from.uid, format!("There's no \x02{target}\x02 online."));
+        ctx.notice(me, from.uid, t!(ctx, "There's no \x02{target}\x02 online.", target = target));
         return;
     };
     ctx.force_nick(&uid, newnick);
-    ctx.notice(me, from.uid, format!("\x02{target}\x02 has been renamed to \x02{newnick}\x02."));
+    ctx.notice(me, from.uid, t!(ctx, "\x02{target}\x02 has been renamed to \x02{newnick}\x02.", target = target, newnick = newnick));
 }
 
 // SVSJOIN <nick> <#channel> [key]: force a user into a channel. Admin-only.
@@ -37,11 +37,11 @@ pub fn join(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &
         return;
     }
     let Some(uid) = net.uid_by_nick(target).map(str::to_string) else {
-        ctx.notice(me, from.uid, format!("There's no \x02{target}\x02 online."));
+        ctx.notice(me, from.uid, t!(ctx, "There's no \x02{target}\x02 online.", target = target));
         return;
     };
     ctx.force_join(&uid, chan, args.get(3).copied().unwrap_or(""));
-    ctx.notice(me, from.uid, format!("\x02{target}\x02 has been joined to \x02{chan}\x02."));
+    ctx.notice(me, from.uid, t!(ctx, "\x02{target}\x02 has been joined to \x02{chan}\x02.", target = target, chan = chan));
 }
 
 // SVSPART <nick> <#channel> [reason]: force a user out of a channel. Admin-only.
@@ -59,10 +59,10 @@ pub fn part(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &
         return;
     }
     let Some(uid) = net.uid_by_nick(target).map(str::to_string) else {
-        ctx.notice(me, from.uid, format!("There's no \x02{target}\x02 online."));
+        ctx.notice(me, from.uid, t!(ctx, "There's no \x02{target}\x02 online.", target = target));
         return;
     };
     let reason = if args.len() > 3 { args[3..].join(" ") } else { "Removed by services".to_string() };
     ctx.force_part(&uid, chan, &reason);
-    ctx.notice(me, from.uid, format!("\x02{target}\x02 has been removed from \x02{chan}\x02."));
+    ctx.notice(me, from.uid, t!(ctx, "\x02{target}\x02 has been removed from \x02{chan}\x02.", target = target, chan = chan));
 }

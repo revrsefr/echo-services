@@ -1,6 +1,7 @@
 use echo_api::Store;
 use echo_api::{Sender, ServiceCtx};
 use echo_api::NetView;
+use echo_api::t;
 
 // GHOST/RECOVER <nick> [password]: rename off a session using a nick you own,
 // either by being identified to its account or giving that account's password.
@@ -11,11 +12,11 @@ use echo_api::NetView;
 pub fn handle(me: &str, guest_nick: &str, guest_seq: &mut u32, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store, regain: bool) {
     let cmd = if regain { "RECOVER" } else { "GHOST" };
     let Some(&target) = args.get(1) else {
-        ctx.notice(me, from.uid, format!("Syntax: {cmd} <nick> [password]"));
+        ctx.notice(me, from.uid, t!(ctx, "Syntax: {cmd} <nick> [password]", cmd = cmd));
         return;
     };
     let Some(account) = db.resolve_account(target).map(str::to_string) else {
-        ctx.notice(me, from.uid, format!("\x02{target}\x02 isn't registered."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{target}\x02 isn't registered.", target = target));
         return;
     };
     // Ownership by an identified session, or by password — throttled and recorded
@@ -25,7 +26,7 @@ pub fn handle(me: &str, guest_nick: &str, guest_seq: &mut u32, from: &Sender, ar
         true
     } else if let Some(&pw) = args.get(2) {
         if let Some(secs) = db.auth_lockout(&account) {
-            ctx.notice(me, from.uid, format!("Too many failed attempts. Please wait {secs}s and try again."));
+            ctx.notice(me, from.uid, t!(ctx, "Too many failed attempts. Please wait {secs}s and try again.", secs = secs));
             return;
         }
         let ok = db.authenticate(&account, pw).is_some();
@@ -38,7 +39,7 @@ pub fn handle(me: &str, guest_nick: &str, guest_seq: &mut u32, from: &Sender, ar
         false
     };
     if !owns {
-        ctx.notice(me, from.uid, format!("Access denied. Identify to \x02{account}\x02 or give its password."));
+        ctx.notice(me, from.uid, t!(ctx, "Access denied. Identify to \x02{account}\x02 or give its password.", account = account));
         return;
     }
     // Free the nick if someone else is holding it.
@@ -50,10 +51,10 @@ pub fn handle(me: &str, guest_nick: &str, guest_seq: &mut u32, from: &Sender, ar
         Some(ghost) => {
             let guest = echo_api::next_guest_nick(guest_nick, guest_seq, net, &*db);
             ctx.force_nick(&ghost, &guest);
-            ctx.notice(me, from.uid, format!("\x02{target}\x02 has been freed."));
+            ctx.notice(me, from.uid, t!(ctx, "\x02{target}\x02 has been freed.", target = target));
         }
         None if !regain => {
-            ctx.notice(me, from.uid, format!("Nobody is using \x02{target}\x02."));
+            ctx.notice(me, from.uid, t!(ctx, "Nobody is using \x02{target}\x02.", target = target));
             return;
         }
         None => {} // already free — RECOVER will simply regain it
@@ -61,6 +62,6 @@ pub fn handle(me: &str, guest_nick: &str, guest_seq: &mut u32, from: &Sender, ar
     // RECOVER puts the caller back onto the nick (queued after any guest-rename).
     if regain {
         ctx.force_nick(from.uid, target);
-        ctx.notice(me, from.uid, format!("You have regained \x02{target}\x02."));
+        ctx.notice(me, from.uid, t!(ctx, "You have regained \x02{target}\x02.", target = target));
     }
 }

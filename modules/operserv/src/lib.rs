@@ -3,7 +3,7 @@
 //! announcement to every user, and KILL to disconnect one. `lib.rs` dispatches;
 //! each command family is its own file.
 
-use echo_api::{HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{t, HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "xline.rs"]
 mod xline;
@@ -106,7 +106,7 @@ impl Service for OperServ {
             Some(cmd) if cmd.eq_ignore_ascii_case("REHASH") => rehash::handle(me, from, ctx),
             Some(cmd) if cmd.eq_ignore_ascii_case("HELP") => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
             None => echo_api::help(me, from, ctx, BLURB, TOPICS, None),
-            Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02HELP\x02.")),
+            Some(other) => ctx.notice(me, from.uid, t!(ctx, "I don't know \x02{other}\x02. Try \x02HELP\x02.", other = other)),
         }
     }
 }

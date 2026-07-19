@@ -1,4 +1,4 @@
-use echo_api::{NetView, Priv, Sender, ServiceCtx};
+use echo_api::{t, NetView, Priv, Sender, ServiceCtx};
 
 // KICK <#channel> <nick> [reason]: remove a user from a channel, sourced from
 // OperServ so it's clearly a staff action. Admin-only.
@@ -16,11 +16,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         return;
     };
     let Some(uid) = net.uid_by_nick(target).map(str::to_string) else {
-        ctx.notice(me, from.uid, format!("There's no \x02{target}\x02 online."));
+        ctx.notice(me, from.uid, t!(ctx, "There's no \x02{target}\x02 online.", target = target));
         return;
     };
     let by = from.account.unwrap_or(from.nick);
     let reason = if args.len() > 3 { args[3..].join(" ") } else { "Removed by services".to_string() };
     ctx.kick(me, chan, &uid, &format!("({by}) {reason}"));
-    ctx.notice(me, from.uid, format!("\x02{target}\x02 kicked from \x02{chan}\x02."));
+    ctx.notice(me, from.uid, t!(ctx, "\x02{target}\x02 kicked from \x02{chan}\x02.", target = target, chan = chan));
 }

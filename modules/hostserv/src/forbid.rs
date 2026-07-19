@@ -1,4 +1,4 @@
-use echo_api::{Sender, ServiceCtx, Store};
+use echo_api::{t, Sender, ServiceCtx, Store};
 
 // FORBID <pattern>: block user-requested vhosts matching this regex (operators),
 // e.g. (?i)(oper|admin|staff|services) to stop impersonation.
@@ -12,9 +12,9 @@ pub fn add(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mu
     }
     let pattern = args[1..].join(" ");
     match db.vhost_forbid_add(&pattern) {
-        Ok(true) => ctx.notice(me, from.uid, format!("Forbidden vhost pattern added: {pattern}")),
+        Ok(true) => ctx.notice(me, from.uid, t!(ctx, "Forbidden vhost pattern added: {pattern}", pattern = pattern)),
         Ok(false) => ctx.notice(me, from.uid, "That pattern is already forbidden."),
-        Err(_) => ctx.notice(me, from.uid, format!("\x02{pattern}\x02 isn't a valid regular expression.")),
+        Err(_) => ctx.notice(me, from.uid, t!(ctx, "\x02{pattern}\x02 isn't a valid regular expression.", pattern = pattern)),
     }
 }
 
@@ -28,9 +28,9 @@ pub fn list(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &dyn Store) {
         ctx.notice(me, from.uid, "No vhost patterns are forbidden.");
         return;
     }
-    ctx.notice(me, from.uid, format!("Forbidden vhost patterns ({}):", forbidden.len()));
+    ctx.notice(me, from.uid, t!(ctx, "Forbidden vhost patterns ({count}):", count = forbidden.len()));
     for (i, p) in forbidden.iter().enumerate() {
-        ctx.notice(me, from.uid, format!("  {}. {p}", i + 1));
+        ctx.notice(me, from.uid, t!(ctx, "  {n}. {p}", n = i + 1, p = p));
     }
 }
 
@@ -44,8 +44,8 @@ pub fn del(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mu
         return;
     };
     match db.vhost_forbid_del(n) {
-        Ok(Some(pattern)) => ctx.notice(me, from.uid, format!("Removed forbidden pattern: {pattern}")),
-        Ok(None) => ctx.notice(me, from.uid, format!("There's no forbidden pattern #\x02{n}\x02.")),
+        Ok(Some(pattern)) => ctx.notice(me, from.uid, t!(ctx, "Removed forbidden pattern: {pattern}", pattern = pattern)),
+        Ok(None) => ctx.notice(me, from.uid, t!(ctx, "There's no forbidden pattern #\x02{n}\x02.", n = n)),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
 }

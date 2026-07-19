@@ -1,4 +1,5 @@
 use echo_api::{parse_duration, NetView, Priv, Sender, ServiceCtx, Store};
+use echo_api::t;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // SUSPEND <#channel> [+expiry] [reason] / UNSUSPEND <#channel>: freeze or unfreeze
@@ -15,14 +16,14 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         return;
     };
     if db.channel(chan).is_none() {
-        ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan));
         return;
     }
 
     if !suspending {
         match db.unsuspend_channel(chan) {
-            Ok(true) => ctx.notice(me, from.uid, format!("\x02{chan}\x02 is no longer suspended.")),
-            Ok(false) => ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't suspended.")),
+            Ok(true) => ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 is no longer suspended.", chan = chan)),
+            Ok(false) => ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't suspended.", chan = chan)),
             Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
         }
         return;
@@ -42,7 +43,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
                 ctx.kick(me, chan, &uid, &reason);
             }
             let expiry = if expires.is_some() { " (with expiry)" } else { "" };
-            ctx.notice(me, from.uid, format!("\x02{chan}\x02 is now suspended{expiry}."));
+            ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 is now suspended{expiry}.", chan = chan, expiry = expiry));
         }
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }

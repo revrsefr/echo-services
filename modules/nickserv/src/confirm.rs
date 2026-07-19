@@ -1,5 +1,6 @@
 use echo_api::{CodeKind, Store};
 use echo_api::{Sender, ServiceCtx};
+use echo_api::t;
 
 // CONFIRM <code>: confirm your account's email with the code you were emailed.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -12,7 +13,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         return;
     };
     if db.is_verified(&account) {
-        ctx.notice(me, from.uid, format!("\x02{account}\x02 is already confirmed."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 is already confirmed.", account = account));
         return;
     }
     if !db.take_code(&account, CodeKind::Confirm, code) {
@@ -20,7 +21,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         return;
     }
     match db.verify_account(&account) {
-        Ok(()) => ctx.notice(me, from.uid, format!("\x02{account}\x02 is now confirmed. Thanks!")),
+        Ok(()) => ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 is now confirmed. Thanks!", account = account)),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
 }

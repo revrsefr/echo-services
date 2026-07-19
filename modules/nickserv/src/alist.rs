@@ -1,4 +1,5 @@
 use echo_api::{access_role, Sender, ServiceCtx, Store};
+use echo_api::t;
 
 // ALIST: list the channels the sender's account founds or has access on.
 pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &dyn Store) {
@@ -21,8 +22,8 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &dyn Store) {
         return;
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0));
-    ctx.notice(me, from.uid, format!("Channels you have access on ({}):", rows.len()));
+    ctx.notice(me, from.uid, t!(ctx, "Channels you have access on ({count}):", count = rows.len()));
     for (chan, role) in rows {
-        ctx.notice(me, from.uid, format!("  \x02{chan}\x02 ({role})"));
+        ctx.notice(me, from.uid, t!(ctx, "  \x02{chan}\x02 ({role})", chan = chan, role = role));
     }
 }

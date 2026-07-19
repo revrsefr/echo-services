@@ -1,6 +1,7 @@
 use echo_api::Store;
 use echo_api::{Sender, ServiceCtx};
 use echo_api::NetView;
+use echo_api::t;
 
 // KICK <#channel> <nick> [reason]: kick a user.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &dyn Store) {
@@ -12,7 +13,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         return;
     }
     let Some(target) = net.uid_by_nick(nick) else {
-        ctx.notice(me, from.uid, format!("\x02{nick}\x02 isn't here."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{nick}\x02 isn't here.", nick = nick));
         return;
     };
     if super::peace_blocks(me, from, chan, target, ctx, net, db) {

@@ -1,5 +1,6 @@
 use echo_api::Store;
 use echo_api::{Sender, ServiceCtx};
+use echo_api::t;
 
 // AKICK <#channel> ADD <mask> [reason] | DEL <mask> | LIST | CLEAR
 // A mask is a nick!user@host glob or any extban the ircd advertises (named or by
@@ -14,12 +15,12 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     };
     match args.get(2).map(|s| s.to_ascii_uppercase()).as_deref() {
         None | Some("LIST") => match db.channel(chan) {
-            None => ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered.")),
-            Some(info) if info.akick.is_empty() => ctx.notice(me, from.uid, format!("\x02{chan}\x02 has an empty auto-kick list.")),
+            None => ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan)),
+            Some(info) if info.akick.is_empty() => ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 has an empty auto-kick list.", chan = chan)),
             Some(info) => {
-                ctx.notice(me, from.uid, format!("Auto-kick list for \x02{}\x02:", info.name));
+                ctx.notice(me, from.uid, t!(ctx, "Auto-kick list for \x02{name}\x02:", name = info.name));
                 for k in &info.akick {
-                    ctx.notice(me, from.uid, format!("  \x02{}\x02 ({})", k.mask, k.reason));
+                    ctx.notice(me, from.uid, t!(ctx, "  \x02{mask}\x02 ({reason})", mask = k.mask, reason = k.reason));
                 }
             }
         },
@@ -37,25 +38,25 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 echo_api::AkickMask::Host(_) => {}
                 echo_api::AkickMask::Ext(eb, _) => {
                     if !db.extban_offered(eb.name) {
-                        ctx.notice(me, from.uid, format!("This network's ircd doesn't offer the \x02{}\x02 extban.", eb.name));
+                        ctx.notice(me, from.uid, t!(ctx, "This network's ircd doesn't offer the \x02{name}\x02 extban.", name = eb.name));
                         return;
                     }
                     if !db.extban_enabled(eb.name) {
-                        ctx.notice(me, from.uid, format!("The \x02{}\x02 extban isn't enabled on this network.", eb.name));
+                        ctx.notice(me, from.uid, t!(ctx, "The \x02{name}\x02 extban isn't enabled on this network.", name = eb.name));
                         return;
                     }
                 }
                 echo_api::AkickMask::Unknown(token) => match db.extban_lookup(token) {
                     None => {
-                        ctx.notice(me, from.uid, format!("\x02{token}\x02 isn't a host mask or an extban this network offers."));
+                        ctx.notice(me, from.uid, t!(ctx, "\x02{token}\x02 isn't a host mask or an extban this network offers.", token = token));
                         return;
                     }
                     Some(cap) if cap.acting => {
-                        ctx.notice(me, from.uid, format!("\x02{}\x02 is an acting extban; auto-kick needs a matching extban or a host mask.", cap.name));
+                        ctx.notice(me, from.uid, t!(ctx, "\x02{name}\x02 is an acting extban; auto-kick needs a matching extban or a host mask.", name = cap.name));
                         return;
                     }
                     Some(cap) if !db.extban_enabled(&cap.name) => {
-                        ctx.notice(me, from.uid, format!("The \x02{}\x02 extban isn't enabled on this network.", cap.name));
+                        ctx.notice(me, from.uid, t!(ctx, "The \x02{name}\x02 extban isn't enabled on this network.", name = cap.name));
                         return;
                     }
                     Some(_) => {}
@@ -73,7 +74,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                     if echo_api::ircd_enforced(mask) {
                         ctx.channel_mode(me, chan, &format!("+b {mask}"));
                     }
-                    ctx.notice(me, from.uid, format!("Added \x02{mask}\x02 to \x02{chan}\x02's auto-kick list."));
+                    ctx.notice(me, from.uid, t!(ctx, "Added \x02{mask}\x02 to \x02{chan}\x02's auto-kick list.", mask = mask, chan = chan));
                 }
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
@@ -92,9 +93,9 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                     if echo_api::ircd_enforced(mask) {
                         ctx.channel_mode(me, chan, &format!("-b {mask}"));
                     }
-                    ctx.notice(me, from.uid, format!("Removed \x02{mask}\x02 from \x02{chan}\x02's auto-kick list."));
+                    ctx.notice(me, from.uid, t!(ctx, "Removed \x02{mask}\x02 from \x02{chan}\x02's auto-kick list.", mask = mask, chan = chan));
                 }
-                Ok(false) => ctx.notice(me, from.uid, format!("\x02{mask}\x02 isn't on \x02{chan}\x02's auto-kick list.")),
+                Ok(false) => ctx.notice(me, from.uid, t!(ctx, "\x02{mask}\x02 isn't on \x02{chan}\x02's auto-kick list.", mask = mask, chan = chan)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
@@ -110,7 +111,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                     ctx.channel_mode(me, chan, &format!("-b {mask}"));
                 }
             }
-            ctx.notice(me, from.uid, format!("Cleared \x02{}\x02 entr{} from \x02{chan}\x02's auto-kick list.", masks.len(), if masks.len() == 1 { "y" } else { "ies" }));
+            ctx.notice(me, from.uid, t!(ctx, "Cleared \x02{count}\x02 entr{suffix} from \x02{chan}\x02's auto-kick list.", count = masks.len(), suffix = if masks.len() == 1 { "y" } else { "ies" }, chan = chan));
         }
         _ => ctx.notice(me, from.uid, "Syntax: AKICK <#channel> ADD <mask> [reason] | DEL <mask> | LIST | CLEAR"),
     }

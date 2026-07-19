@@ -1,5 +1,6 @@
 use echo_api::Store;
 use echo_api::{Sender, ServiceCtx};
+use echo_api::t;
 
 // LIST: show all registered channels.
 pub fn handle(me: &str, from: &Sender, _args: &[&str], ctx: &mut ServiceCtx, db: &dyn Store) {
@@ -10,8 +11,8 @@ pub fn handle(me: &str, from: &Sender, _args: &[&str], ctx: &mut ServiceCtx, db:
         return;
     }
     names.sort_unstable();
-    ctx.notice(me, from.uid, format!("Registered channels ({}):", names.len()));
+    ctx.notice(me, from.uid, t!(ctx, "Registered channels ({count}):", count = names.len()));
     for n in names {
-        ctx.notice(me, from.uid, format!("  \x02{n}\x02"));
+        ctx.notice(me, from.uid, t!(ctx, "  \x02{n}\x02", n = n));
     }
 }

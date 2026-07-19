@@ -1,4 +1,5 @@
 use echo_api::{ChanSetting, Sender, ServiceCtx, Store};
+use echo_api::t;
 
 // SET <#channel> FOUNDER <account> | DESC <text>: founder-only channel settings.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -8,13 +9,13 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     };
     let founder = match db.channel(chan) {
         None => {
-            ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
+            ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan));
             return;
         }
         Some(info) => info.founder.clone(),
     };
     if from.account != Some(founder.as_str()) {
-        ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can change its settings."));
+        ctx.notice(me, from.uid, t!(ctx, "Only \x02{chan}\x02's founder can change its settings.", chan = chan));
         return;
     }
     if super::suspended_block(me, from, chan, ctx, db) {
@@ -27,11 +28,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             };
             if !db.exists(account) {
-                ctx.notice(me, from.uid, format!("\x02{account}\x02 isn't a registered account."));
+                ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 isn't a registered account.", account = account));
                 return;
             }
             match db.set_founder(chan, account) {
-                Ok(()) => ctx.notice(me, from.uid, format!("Founder of \x02{chan}\x02 transferred to \x02{account}\x02.")),
+                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Founder of \x02{chan}\x02 transferred to \x02{account}\x02.", chan = chan, account = account)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
@@ -39,7 +40,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             match args.get(3) {
                 Some(&acct) if !acct.eq_ignore_ascii_case("OFF") => {
                     if !db.exists(acct) {
-                        ctx.notice(me, from.uid, format!("\x02{acct}\x02 isn't a registered account."));
+                        ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 isn't a registered account.", account = acct));
                         return;
                     }
                     if acct.eq_ignore_ascii_case(&founder) {
@@ -47,12 +48,12 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                         return;
                     }
                     match db.set_successor(chan, Some(acct)) {
-                        Ok(()) => ctx.notice(me, from.uid, format!("Successor of \x02{chan}\x02 set to \x02{acct}\x02. They inherit it if your account is dropped or expires.")),
+                        Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Successor of \x02{chan}\x02 set to \x02{acct}\x02. They inherit it if your account is dropped or expires.", chan = chan, acct = acct)),
                         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
                     }
                 }
                 _ => match db.set_successor(chan, None) {
-                    Ok(()) => ctx.notice(me, from.uid, format!("Successor of \x02{chan}\x02 cleared.")),
+                    Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Successor of \x02{chan}\x02 cleared.", chan = chan)),
                     Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
                 },
             }
@@ -60,23 +61,23 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         Some("DESC") => {
             let desc = if args.len() > 3 { args[3..].join(" ") } else { String::new() };
             match db.set_desc(chan, &desc) {
-                Ok(()) => ctx.notice(me, from.uid, format!("Description for \x02{chan}\x02 updated.")),
+                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Description for \x02{chan}\x02 updated.", chan = chan)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
         Some("URL") => {
             let url = if args.len() > 3 { args[3..].join(" ") } else { String::new() };
             match db.set_url(chan, &url) {
-                Ok(()) if url.is_empty() => ctx.notice(me, from.uid, format!("URL for \x02{chan}\x02 cleared.")),
-                Ok(()) => ctx.notice(me, from.uid, format!("URL for \x02{chan}\x02 updated.")),
+                Ok(()) if url.is_empty() => ctx.notice(me, from.uid, t!(ctx, "URL for \x02{chan}\x02 cleared.", chan = chan)),
+                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "URL for \x02{chan}\x02 updated.", chan = chan)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
         Some("EMAIL") => {
             let email = args.get(3).copied().unwrap_or("");
             match db.set_channel_email(chan, email) {
-                Ok(()) if email.is_empty() => ctx.notice(me, from.uid, format!("Contact email for \x02{chan}\x02 cleared.")),
-                Ok(()) => ctx.notice(me, from.uid, format!("Contact email for \x02{chan}\x02 updated.")),
+                Ok(()) if email.is_empty() => ctx.notice(me, from.uid, t!(ctx, "Contact email for \x02{chan}\x02 cleared.", chan = chan)),
+                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Contact email for \x02{chan}\x02 updated.", chan = chan)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
@@ -115,12 +116,12 @@ fn toggle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store, cha
         Some("ON") => true,
         Some("OFF") => false,
         _ => {
-            ctx.notice(me, from.uid, format!("Syntax: SET <#channel> {name} {{ON|OFF}}"));
+            ctx.notice(me, from.uid, t!(ctx, "Syntax: SET <#channel> {name} {ON|OFF}", name = name));
             return;
         }
     };
     match db.set_channel_setting(chan, setting, on) {
-        Ok(()) => ctx.notice(me, from.uid, format!("\x02{name}\x02 for \x02{chan}\x02 is now \x02{}\x02.", if on { "on" } else { "off" })),
+        Ok(()) => ctx.notice(me, from.uid, t!(ctx, "\x02{name}\x02 for \x02{chan}\x02 is now \x02{state}\x02.", name = name, chan = chan, state = if on { "on" } else { "off" })),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
 }

@@ -1,4 +1,4 @@
-use echo_api::{Sender, ServiceCtx, Store};
+use echo_api::{t, Sender, ServiceCtx, Store};
 
 // LIST: every account with an assigned vhost. Operators only.
 pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &dyn Store) {
@@ -10,9 +10,9 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &dyn Store) {
         ctx.notice(me, from.uid, "No vhosts have been assigned.");
         return;
     }
-    ctx.notice(me, from.uid, format!("Assigned vhosts ({}):", vhosts.len()));
+    ctx.notice(me, from.uid, t!(ctx, "Assigned vhosts ({count}):", count = vhosts.len()));
     for v in &vhosts {
-        let temp = if v.expires.is_some() { ", temporary" } else { "" };
-        ctx.notice(me, from.uid, format!("  \x02{}\x02 — {} (by {}{temp})", v.account, v.host, v.setter));
+        let temp = if v.expires.is_some() { t!(ctx, ", temporary") } else { String::new() };
+        ctx.notice(me, from.uid, t!(ctx, "  \x02{account}\x02 — {host} (by {setter}{temp})", account = v.account, host = v.host, setter = v.setter, temp = temp));
     }
 }

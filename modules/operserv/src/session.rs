@@ -1,4 +1,4 @@
-use echo_api::{NetView, Priv, Sender, ServiceCtx, Store};
+use echo_api::{t, NetView, Priv, Sender, ServiceCtx, Store};
 
 // SESSION LIST <min> | SESSION VIEW <ip>: inspect live per-IP session counts.
 // EXCEPTION ADD <ip-mask> <limit> [reason] | DEL <ip-mask> | LIST: manage the
@@ -13,20 +13,20 @@ pub fn handle_session(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceC
             let min = args.get(2).and_then(|n| n.parse::<u32>().ok()).unwrap_or(2);
             let over = net.sessions_over(min);
             if over.is_empty() {
-                ctx.notice(me, from.uid, format!("No IP has {min} or more sessions."));
+                ctx.notice(me, from.uid, t!(ctx, "No IP has {min} or more sessions.", min = min));
                 return;
             }
             for (ip, n) in &over {
-                ctx.notice(me, from.uid, format!("  \x02{n}\x02 sessions from \x02{ip}\x02"));
+                ctx.notice(me, from.uid, t!(ctx, "  \x02{n}\x02 sessions from \x02{ip}\x02", n = n, ip = ip));
             }
-            ctx.notice(me, from.uid, format!("End of session list ({} IP(s)).", over.len()));
+            ctx.notice(me, from.uid, t!(ctx, "End of session list ({count} IP(s)).", count = over.len()));
         }
         Some("VIEW") => {
             let Some(&ip) = args.get(2) else {
                 ctx.notice(me, from.uid, "Syntax: SESSION VIEW <ip>");
                 return;
             };
-            ctx.notice(me, from.uid, format!("\x02{ip}\x02 has \x02{}\x02 live session(s).", net.session_count(ip)));
+            ctx.notice(me, from.uid, t!(ctx, "\x02{ip}\x02 has \x02{count}\x02 live session(s).", ip = ip, count = net.session_count(ip)));
         }
         _ => ctx.notice(me, from.uid, "Syntax: SESSION LIST <min> | SESSION VIEW <ip>"),
     }
@@ -45,8 +45,12 @@ pub fn handle_exception(me: &str, from: &Sender, args: &[&str], ctx: &mut Servic
             };
             let reason = if args.len() > 4 { args[4..].join(" ") } else { "No reason given".to_string() };
             db.session_except_add(mask, limit, &reason);
-            let note = if limit == 0 { " (unlimited)".to_string() } else { format!(" (limit {limit})") };
-            ctx.notice(me, from.uid, format!("Session exception for \x02{mask}\x02 set{note}."));
+            let msg = if limit == 0 {
+                t!(ctx, "Session exception for \x02{mask}\x02 set (unlimited).", mask = mask)
+            } else {
+                t!(ctx, "Session exception for \x02{mask}\x02 set (limit {limit}).", mask = mask, limit = limit)
+            };
+            ctx.notice(me, from.uid, msg);
         }
         Some("DEL") | Some("REMOVE") => {
             let Some(&mask) = args.get(2) else {
@@ -54,9 +58,9 @@ pub fn handle_exception(me: &str, from: &Sender, args: &[&str], ctx: &mut Servic
                 return;
             };
             if db.session_except_del(mask) {
-                ctx.notice(me, from.uid, format!("Session exception for \x02{mask}\x02 removed."));
+                ctx.notice(me, from.uid, t!(ctx, "Session exception for \x02{mask}\x02 removed.", mask = mask));
             } else {
-                ctx.notice(me, from.uid, format!("No session exception matches \x02{mask}\x02."));
+                ctx.notice(me, from.uid, t!(ctx, "No session exception matches \x02{mask}\x02.", mask = mask));
             }
         }
         Some("LIST") => {
@@ -66,10 +70,10 @@ pub fn handle_exception(me: &str, from: &Sender, args: &[&str], ctx: &mut Servic
                 return;
             }
             for (mask, limit, reason) in &list {
-                let lim = if *limit == 0 { "unlimited".to_string() } else { limit.to_string() };
-                ctx.notice(me, from.uid, format!("  \x02{mask}\x02 → {lim} — {reason}"));
+                let lim = if *limit == 0 { t!(ctx, "unlimited") } else { limit.to_string() };
+                ctx.notice(me, from.uid, t!(ctx, "  \x02{mask}\x02 → {lim} — {reason}", mask = mask, lim = lim, reason = reason));
             }
-            ctx.notice(me, from.uid, format!("End of exception list ({} shown).", list.len()));
+            ctx.notice(me, from.uid, t!(ctx, "End of exception list ({count} shown).", count = list.len()));
         }
         _ => ctx.notice(me, from.uid, "Syntax: EXCEPTION ADD <ip-mask> <limit> [reason] | EXCEPTION DEL <ip-mask> | EXCEPTION LIST"),
     }

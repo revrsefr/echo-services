@@ -3,7 +3,7 @@
 //! (a #channel argument, for its founder). `lib.rs` holds the dispatcher; each
 //! view lives in its own file.
 
-use echo_api::{HelpEntry, NetView, Priv, Sender, Service, ServiceCtx, Store};
+use echo_api::{t, HelpEntry, NetView, Priv, Sender, Service, ServiceCtx, Store};
 
 #[path = "global.rs"]
 mod global;
@@ -43,7 +43,7 @@ impl Service for StatServ {
             Some(cmd) if cmd.eq_ignore_ascii_case("SERVER") || cmd.eq_ignore_ascii_case("GLOBAL") => global::handle(me, from, ctx, net, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("HELP") => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
             None => echo_api::help(me, from, ctx, BLURB, TOPICS, None),
-            Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02SERVER\x02, a \x02#channel\x02, or \x02HELP\x02.")),
+            Some(other) => ctx.notice(me, from.uid, t!(ctx, "I don't know \x02{other}\x02. Try \x02SERVER\x02, a \x02#channel\x02, or \x02HELP\x02.", other = other)),
         }
     }
 }
@@ -52,11 +52,11 @@ impl Service for StatServ {
 // services admin.
 fn require_channel_admin(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &dyn Store) -> bool {
     let Some(founder) = db.channel(chan).map(|c| c.founder) else {
-        ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan));
         return false;
     };
     if from.account != Some(founder.as_str()) && !from.privs.has(Priv::Oper) {
-        ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can see its stats."));
+        ctx.notice(me, from.uid, t!(ctx, "Only \x02{chan}\x02's founder can see its stats.", chan = chan));
         return false;
     }
     true

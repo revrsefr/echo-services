@@ -134,7 +134,7 @@ impl Service for NickServ {
             Some("LIST") => list::handle(me, from, args, ctx, db),
             Some("GETEMAIL") => getemail::handle(me, from, args, ctx, db),
             Some("HELP") => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
-            Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
+            Some(other) => ctx.notice(me, from.uid, echo_api::t!(ctx, "I don't know the command \x02{other}\x02. Try \x02HELP\x02.", other = other)),
             None => {}
         }
     }

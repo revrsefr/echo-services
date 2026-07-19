@@ -1,4 +1,4 @@
-use echo_api::{human_time, MemoView, Sender, ServiceCtx, Store};
+use echo_api::{human_time, t, MemoView, Sender, ServiceCtx, Store};
 
 // READ <num>|NEW|ALL: display memos and mark them read.
 pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -33,7 +33,7 @@ pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut S
                     show(me, from, n - 1, &m, ctx);
                     send_receipt(account, &m, db);
                 }
-                None => ctx.notice(me, from.uid, format!("You have no memo #\x02{n}\x02.")),
+                None => ctx.notice(me, from.uid, t!(ctx, "You have no memo #\x02{n}\x02.", n = n)),
             }
         }
         None => ctx.notice(me, from.uid, "Syntax: READ <num>|NEW|ALL"),
@@ -41,8 +41,8 @@ pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut S
 }
 
 fn show(me: &str, from: &Sender, index: usize, m: &MemoView, ctx: &mut ServiceCtx) {
-    ctx.notice(me, from.uid, format!("Memo #\x02{}\x02 from \x02{}\x02 ({}):", index + 1, m.from, human_time(m.ts)));
-    ctx.notice(me, from.uid, format!("  {}", m.text));
+    ctx.notice(me, from.uid, t!(ctx, "Memo #\x02{num}\x02 from \x02{from}\x02 ({when}):", num = index + 1, from = m.from, when = human_time(m.ts)));
+    ctx.notice(me, from.uid, t!(ctx, "  {text}", text = m.text));
 }
 
 // If this was an unread RSEND memo, memo the sender that it's now been read.

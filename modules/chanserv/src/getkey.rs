@@ -1,6 +1,7 @@
 use echo_api::Store;
 use echo_api::{Sender, ServiceCtx};
 use echo_api::NetView;
+use echo_api::t;
 
 // GETKEY <#channel>: report the channel key (+k), for ops who need to let
 // someone in.
@@ -13,7 +14,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         return;
     }
     match net.channel_key(chan) {
-        Some(key) => ctx.notice(me, from.uid, format!("Key for \x02{chan}\x02 is \x02{key}\x02.")),
-        None => ctx.notice(me, from.uid, format!("\x02{chan}\x02 has no key set.")),
+        Some(key) => ctx.notice(me, from.uid, t!(ctx, "Key for \x02{chan}\x02 is \x02{key}\x02.", chan = chan, key = key)),
+        None => ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 has no key set.", chan = chan)),
     }
 }

@@ -8,7 +8,7 @@
 //! `lib.rs` holds the dispatcher and the two shared guards; each command lives
 //! in its own file.
 
-use echo_api::{HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{t, HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "register.rs"]
 mod register;
@@ -67,7 +67,7 @@ impl Service for GroupServ {
             Some("DEL") => del::handle(me, from, args.get(1).copied(), args.get(2).copied(), ctx, db),
             Some("FLAGS") => flags::handle(me, from, args.get(1).copied(), args.get(2).copied(), args.get(3).copied(), ctx, db),
             Some("HELP") | None => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
-            Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02HELP\x02.")),
+            Some(other) => ctx.notice(me, from.uid, t!(ctx, "I don't know \x02{other}\x02. Try \x02HELP\x02.", other = other)),
         }
     }
 }

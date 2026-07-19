@@ -1,4 +1,4 @@
-use echo_api::{NewsKind, Priv, Sender, ServiceCtx, Store};
+use echo_api::{t, NewsKind, Priv, Sender, ServiceCtx, Store};
 
 // POST/OPOST <message>: add a bulletin (public or oper). Admin only.
 pub fn handle(me: &str, from: &Sender, kind: NewsKind, rest: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -8,11 +8,11 @@ pub fn handle(me: &str, from: &Sender, kind: NewsKind, rest: &[&str], ctx: &mut 
     }
     let message = rest.join(" ");
     if message.trim().is_empty() {
-        ctx.notice(me, from.uid, format!("Syntax: {} <message>", if kind == super::OPER { "OPOST" } else { "POST" }));
+        ctx.notice(me, from.uid, t!(ctx, "Syntax: {cmd} <message>", cmd = if kind == super::OPER { "OPOST" } else { "POST" }));
         return;
     }
     let setter = from.account.unwrap_or(from.nick);
     db.news_add(kind, &message, setter);
     let which = if kind == super::OPER { "oper" } else { "public" };
-    ctx.notice(me, from.uid, format!("Added a \x02{which}\x02 bulletin."));
+    ctx.notice(me, from.uid, t!(ctx, "Added a \x02{which}\x02 bulletin.", which = which));
 }

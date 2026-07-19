@@ -1,4 +1,4 @@
-use echo_api::{Sender, ServiceCtx, Store};
+use echo_api::{t, Sender, ServiceCtx, Store};
 
 // A friendly one-liner (with an example) for each extban, keyed by its ircd name.
 // The letter and whether it's offered come live from the ircd's CAPAB set, so this
@@ -53,8 +53,14 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &dyn Store) {
     let line = |ctx: &mut ServiceCtx, e: &echo_api::ExtbanCap| {
         let letter = e.letter.map_or_else(|| "-".to_string(), |c| c.to_string());
         match DESC.iter().find(|(n, _)| n.eq_ignore_ascii_case(&e.name)) {
-            Some((_, desc)) => say(ctx, format!("  \x02{}\x02 (\x02{}\x02) — {}", e.name, letter, desc)),
-            None => say(ctx, format!("  \x02{}\x02 (\x02{}\x02)", e.name, letter)),
+            Some((_, desc)) => {
+                let s = t!(ctx, "  \x02{name}\x02 (\x02{letter}\x02) — {desc}", name = e.name, letter = letter, desc = desc);
+                say(ctx, s)
+            }
+            None => {
+                let s = t!(ctx, "  \x02{name}\x02 (\x02{letter}\x02)", name = e.name, letter = letter);
+                say(ctx, s)
+            }
         }
     };
 
@@ -62,7 +68,8 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &dyn Store) {
         // We haven't learned the ircd's set yet — show the reference from DESC.
         say(ctx, "\x02Extban types\x02 (your network's exact set is confirmed on link):".to_string());
         for (name, desc) in DESC {
-            say(ctx, format!("  \x02{name}\x02 — {desc}"));
+            let s = t!(ctx, "  \x02{name}\x02 — {desc}", name = name, desc = desc);
+            say(ctx, s);
         }
         return;
     }

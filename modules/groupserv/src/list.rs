@@ -1,4 +1,4 @@
-use echo_api::{Sender, ServiceCtx, Store};
+use echo_api::{t, Sender, ServiceCtx, Store};
 
 // LIST: operators see every group; others see the ones they belong to.
 pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -14,7 +14,7 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store)
         return;
     }
     for n in &names {
-        ctx.notice(me, from.uid, format!("  \x02{n}\x02"));
+        ctx.notice(me, from.uid, t!(ctx, "  \x02{n}\x02", n = n));
     }
-    ctx.notice(me, from.uid, format!("End of list ({} group(s)).", names.len()));
+    ctx.notice(me, from.uid, t!(ctx, "End of list ({count} group(s)).", count = names.len()));
 }

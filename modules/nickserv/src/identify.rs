@@ -1,5 +1,6 @@
 use echo_api::{human_time, AuthThen, Store};
 use echo_api::{Sender, ServiceCtx};
+use echo_api::t;
 
 // IDENTIFY [account] <password>: log in. The account defaults to the current
 // nick, so both the bare-password and account+password forms work.
@@ -14,7 +15,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     };
     // Distinguish an unregistered account from a wrong password.
     if !db.exists(account_name) {
-        ctx.fail(me, from.uid, "IDENTIFY", "ACCOUNT_NOT_REGISTERED", format!("\x02{account_name}\x02 isn't registered."));
+        ctx.fail(me, from.uid, "IDENTIFY", "ACCOUNT_NOT_REGISTERED", t!(ctx, "\x02{account_name}\x02 isn't registered.", account_name = account_name));
         return;
     }
     // A suspended account can't be logged into (checked before the password so it
@@ -23,16 +24,16 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     if let Some(acc) = db.resolve_account(account_name).map(str::to_string) {
         if db.is_suspended(&acc) {
             if let Some(s) = db.suspension(&acc) {
-                let mut msg = format!("\x02{acc}\x02 is suspended, so you can't log in to it right now. It was suspended by \x02{}\x02 on {}", s.by, human_time(s.ts));
+                let mut msg = t!(ctx, "\x02{acc}\x02 is suspended, so you can't log in to it right now. It was suspended by \x02{by}\x02 on {when}", acc = acc, by = s.by, when = human_time(s.ts));
                 if s.reason.trim().is_empty() {
                     msg.push('.');
                 } else {
-                    msg.push_str(&format!(" — reason: {}", s.reason));
+                    msg.push_str(&t!(ctx, " — reason: {reason}", reason = s.reason));
                 }
                 if let Some(exp) = s.expires {
-                    msg.push_str(&format!(" The suspension is due to lift on {}.", human_time(exp)));
+                    msg.push_str(&t!(ctx, " The suspension is due to lift on {when}.", when = human_time(exp)));
                 }
-                msg.push_str(" If you think this is a mistake, please contact the network staff.");
+                msg.push_str(&t!(ctx, " If you think this is a mistake, please contact the network staff."));
                 ctx.fail(me, from.uid, "IDENTIFY", "ACCOUNT_SUSPENDED", msg);
             }
             return;
@@ -40,7 +41,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     }
     // Refuse while throttled, so a password can't be brute-forced.
     if let Some(secs) = db.auth_lockout(account_name) {
-        ctx.fail(me, from.uid, "IDENTIFY", "RATE_LIMITED", format!("Too many failed attempts. Please wait {secs}s and try again."));
+        ctx.fail(me, from.uid, "IDENTIFY", "RATE_LIMITED", t!(ctx, "Too many failed attempts. Please wait {secs}s and try again.", secs = secs));
         return;
     }
     // Fetch the verifier cheaply and hand the (~1s) PBKDF2 verify to the engine to
@@ -59,7 +60,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         Some((account, verifier)) => {
             // Already identified to this account: skip the (wasted) verify.
             if from.account == Some(account.as_str()) {
-                ctx.notice(me, from.uid, format!("You're already identified as \x02{}\x02.", account));
+                ctx.notice(me, from.uid, t!(ctx, "You're already identified as \x02{account}\x02.", account = account));
                 return;
             }
             ctx.defer_authenticate(

@@ -2,7 +2,7 @@
 //! and (in later slices) run fantasy commands. `lib.rs` holds the dispatcher;
 //! each command lives in its own file, matching NickServ/ChanServ.
 
-use echo_api::{HelpEntry, NetView, Priv, Sender, Service, ServiceCtx, Store};
+use echo_api::{t, HelpEntry, NetView, Priv, Sender, Service, ServiceCtx, Store};
 
 #[path = "bot.rs"]
 mod bot;
@@ -31,11 +31,11 @@ mod trigger;
 // founder or a services admin. Notices and returns false on failure.
 fn require_channel_admin(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &dyn Store) -> bool {
     let Some(founder) = db.channel(chan).map(|c| c.founder) else {
-        ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan));
         return false;
     };
     if from.account != Some(founder.as_str()) && !from.privs.has(Priv::Admin) {
-        ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can change that."));
+        ctx.notice(me, from.uid, t!(ctx, "Only \x02{chan}\x02's founder can change that.", chan = chan));
         return false;
     }
     true
@@ -95,7 +95,7 @@ impl Service for BotServ {
             Some("COPY") => copy::handle(me, from, args, ctx, db),
             Some("TRIGGER") => trigger::handle(me, from, args, ctx, db),
             Some("HELP") | None => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
-            Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
+            Some(other) => ctx.notice(me, from.uid, t!(ctx, "I don't know the command \x02{other}\x02. Try \x02HELP\x02.", other = other)),
         }
     }
 }

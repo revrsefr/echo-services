@@ -1,5 +1,6 @@
 use echo_api::Store;
 use echo_api::{Sender, ServiceCtx};
+use echo_api::t;
 
 // TOPIC <#channel> <text>: set the channel topic (empty clears it).
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -16,5 +17,5 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     // stored topic stays stale and KEEPTOPIC/TOPICLOCK restore the old one on
     // recreation/restart. Ignore NoChannel (require_op already proved it exists).
     let _ = db.set_channel_topic(chan, &text);
-    ctx.notice(me, from.uid, format!("Topic for \x02{chan}\x02 updated."));
+    ctx.notice(me, from.uid, t!(ctx, "Topic for \x02{chan}\x02 updated.", chan = chan));
 }

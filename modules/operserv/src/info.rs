@@ -1,4 +1,4 @@
-use echo_api::{Priv, Sender, ServiceCtx, Store};
+use echo_api::{t, Priv, Sender, ServiceCtx, Store};
 
 // INFO <target> | INFO ADD <target> <note> | INFO DEL <target>: attach a staff
 // note to an account or channel (a `#name` is a channel, else an account). The
@@ -38,11 +38,11 @@ fn set(me: &str, from: &Sender, target: Option<&str>, note: &[&str], ctx: &mut S
         (false, "account")
     };
     if !ok {
-        ctx.notice(me, from.uid, format!("There's no {kind} \x02{target}\x02."));
+        ctx.notice(me, from.uid, t!(ctx, "There's no {kind} \x02{target}\x02.", kind = kind, target = target));
     } else if value.is_some() {
-        ctx.notice(me, from.uid, format!("Staff note set on \x02{target}\x02."));
+        ctx.notice(me, from.uid, t!(ctx, "Staff note set on \x02{target}\x02.", target = target));
     } else {
-        ctx.notice(me, from.uid, format!("Staff note on \x02{target}\x02 cleared."));
+        ctx.notice(me, from.uid, t!(ctx, "Staff note on \x02{target}\x02 cleared.", target = target));
     }
 }
 
@@ -53,7 +53,7 @@ fn show(me: &str, from: &Sender, target: &str, ctx: &mut ServiceCtx, db: &mut dy
         db.resolve_account(target).map(str::to_string).and_then(|a| db.account_note(&a))
     };
     match note {
-        Some(n) => ctx.notice(me, from.uid, format!("Staff note on \x02{target}\x02: {n}")),
-        None => ctx.notice(me, from.uid, format!("No staff note on \x02{target}\x02.")),
+        Some(n) => ctx.notice(me, from.uid, t!(ctx, "Staff note on \x02{target}\x02: {note}", target = target, note = n)),
+        None => ctx.notice(me, from.uid, t!(ctx, "No staff note on \x02{target}\x02.", target = target)),
     }
 }

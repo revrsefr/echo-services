@@ -4,7 +4,7 @@
 //! account data. `lib.rs` holds the dispatcher; each command lives in its own
 //! file, matching NickServ/ChanServ.
 
-use echo_api::{HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{t, HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "send.rs"]
 mod send;
@@ -93,7 +93,7 @@ impl Service for MemoServ {
             Some("STAFF") => staff::handle(me, from, account, args, ctx, net, db),
             Some("IGNORE") => ignore::handle(me, from, account, args, ctx, db),
             Some("SET") => set::handle(me, from, account, args, ctx, db),
-            Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
+            Some(other) => ctx.notice(me, from.uid, t!(ctx, "I don't know the command \x02{other}\x02. Try \x02HELP\x02.", other = other)),
             None => {}
         }
     }

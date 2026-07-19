@@ -1,4 +1,4 @@
-use echo_api::{parse_duration, Priv, Sender, ServiceCtx, Store, XlineKind};
+use echo_api::{parse_duration, t, Priv, Sender, ServiceCtx, Store, XlineKind};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // A network-ban command family (AKILL, SQLINE, …): the ircd X-line `kind`, the
@@ -14,14 +14,14 @@ pub struct Xline {
 impl Xline {
     pub fn handle(&self, me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
         if !from.privs.has(Priv::Oper) {
-            ctx.notice(me, from.uid, format!("Access denied — {} needs the \x02operator\x02 privilege.", self.name));
+            ctx.notice(me, from.uid, t!(ctx, "Access denied — {name} needs the \x02operator\x02 privilege.", name = self.name));
             return;
         }
         match args.get(1).map(|s| s.to_ascii_uppercase()).as_deref() {
             Some("ADD") => self.add(me, from, &args[2..], ctx, db),
             Some("DEL") | Some("REMOVE") => self.del(me, from, args.get(2).copied(), ctx, db),
             Some("LIST") | Some("VIEW") => self.list(me, from, args.get(2).copied(), ctx, db),
-            _ => ctx.notice(me, from.uid, format!("Syntax: {0} ADD [+expiry] <{1}> <reason> | {0} DEL <{1}|number> | {0} LIST [pattern]", self.name, self.target)),
+            _ => ctx.notice(me, from.uid, t!(ctx, "Syntax: {name} ADD [+expiry] <{target}> <reason> | {name} DEL <{target}|number> | {name} LIST [pattern]", name = self.name, target = self.target)),
         }
     }
 
@@ -33,11 +33,11 @@ impl Xline {
             rest = &rest[1..];
         }
         let Some((&raw, reason_words)) = rest.split_first() else {
-            ctx.notice(me, from.uid, format!("Syntax: {} ADD [+expiry] <{}> <reason>", self.name, self.target));
+            ctx.notice(me, from.uid, t!(ctx, "Syntax: {name} ADD [+expiry] <{target}> <reason>", name = self.name, target = self.target));
             return;
         };
         let Some(mask) = (self.normalize)(raw) else {
-            ctx.notice(me, from.uid, format!("\x02{raw}\x02 isn't a valid \x02{}\x02 mask.", self.target));
+            ctx.notice(me, from.uid, t!(ctx, "\x02{raw}\x02 isn't a valid \x02{target}\x02 mask.", raw = raw, target = self.target));
             return;
         };
         if reason_words.is_empty() {
@@ -54,9 +54,13 @@ impl Xline {
         match db.akill_add(self.kind, &mask, setter, &reason, expires) {
             Ok(fresh) => {
                 ctx.add_line(self.kind, &mask, from.nick, duration.unwrap_or(0), &reason);
-                let word = if fresh { "added" } else { "updated" };
-                let expiry = if expires.is_some() { " (temporary)" } else { "" };
-                ctx.notice(me, from.uid, format!("{} {word} for \x02{mask}\x02{expiry}.", self.name));
+                let msg = match (fresh, expires.is_some()) {
+                    (true, true) => t!(ctx, "{name} added for \x02{mask}\x02 (temporary).", name = self.name, mask = mask),
+                    (true, false) => t!(ctx, "{name} added for \x02{mask}\x02.", name = self.name, mask = mask),
+                    (false, true) => t!(ctx, "{name} updated for \x02{mask}\x02 (temporary).", name = self.name, mask = mask),
+                    (false, false) => t!(ctx, "{name} updated for \x02{mask}\x02.", name = self.name, mask = mask),
+                };
+                ctx.notice(me, from.uid, msg);
             }
             Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
         }
@@ -64,7 +68,7 @@ impl Xline {
 
     fn del(&self, me: &str, from: &Sender, arg: Option<&str>, ctx: &mut ServiceCtx, db: &mut dyn Store) {
         let Some(arg) = arg else {
-            ctx.notice(me, from.uid, format!("Syntax: {} DEL <{}|number>", self.name, self.target));
+            ctx.notice(me, from.uid, t!(ctx, "Syntax: {name} DEL <{target}|number>", name = self.name, target = self.target));
             return;
         };
         // A number targets the nth entry of this kind in the list; else a mask.
@@ -72,7 +76,7 @@ impl Xline {
             Ok(n) if n >= 1 => match self.mine(db).get(n - 1) {
                 Some(mask) => mask.clone(),
                 None => {
-                    ctx.notice(me, from.uid, format!("There's no {} number \x02{n}\x02.", self.name));
+                    ctx.notice(me, from.uid, t!(ctx, "There's no {name} number \x02{n}\x02.", name = self.name, n = n));
                     return;
                 }
             },
@@ -81,9 +85,9 @@ impl Xline {
         match db.akill_del(self.kind, &mask) {
             Ok(true) => {
                 ctx.del_line(self.kind, &mask);
-                ctx.notice(me, from.uid, format!("{} for \x02{mask}\x02 removed.", self.name));
+                ctx.notice(me, from.uid, t!(ctx, "{name} for \x02{mask}\x02 removed.", name = self.name, mask = mask));
             }
-            Ok(false) => ctx.notice(me, from.uid, format!("No {} matches \x02{mask}\x02.", self.name)),
+            Ok(false) => ctx.notice(me, from.uid, t!(ctx, "No {name} matches \x02{mask}\x02.", name = self.name, mask = mask)),
             Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
         }
     }
@@ -97,17 +101,17 @@ impl Xline {
                     continue;
                 }
             }
-            let expiry = match a.expires {
-                Some(e) => format!(", expires in {}", human_secs(e.saturating_sub(now()))),
-                None => String::new(),
+            let msg = match a.expires {
+                Some(e) => t!(ctx, "{n}. \x02{mask}\x02 by {setter} — {reason}, expires in {ttl}", n = i + 1, mask = a.mask, setter = a.setter, reason = a.reason, ttl = human_secs(e.saturating_sub(now()))),
+                None => t!(ctx, "{n}. \x02{mask}\x02 by {setter} — {reason}", n = i + 1, mask = a.mask, setter = a.setter, reason = a.reason),
             };
-            ctx.notice(me, from.uid, format!("{}. \x02{}\x02 by {} — {}{}", i + 1, a.mask, a.setter, a.reason, expiry));
+            ctx.notice(me, from.uid, msg);
             shown += 1;
         }
         if shown == 0 {
-            ctx.notice(me, from.uid, format!("No matching {} entries.", self.name));
+            ctx.notice(me, from.uid, t!(ctx, "No matching {name} entries.", name = self.name));
         } else {
-            ctx.notice(me, from.uid, format!("End of {} list ({shown} shown).", self.name));
+            ctx.notice(me, from.uid, t!(ctx, "End of {name} list ({shown} shown).", name = self.name, shown = shown));
         }
     }
 

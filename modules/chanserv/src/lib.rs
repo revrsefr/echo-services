@@ -1,6 +1,7 @@
 use echo_api::{ChanError, ChannelView, ForbidKind, Priv, Store};
 use echo_api::{HelpEntry, Sender, Service, ServiceCtx};
 use echo_api::NetView;
+use echo_api::t;
 
 #[path = "mode.rs"]
 mod mode;
@@ -141,11 +142,11 @@ impl Service for ChanServ {
                 };
                 // You can only register a channel you actually control right now.
                 if !net.is_op(chan, from.uid) {
-                    ctx.notice(me, from.uid, format!("You must be a channel operator (\x02@\x02) in \x02{chan}\x02 to register it."));
+                    ctx.notice(me, from.uid, t!(ctx, "You must be a channel operator (\x02@\x02) in \x02{chan}\x02 to register it.", chan = chan));
                     return;
                 }
                 if let Some(reason) = db.is_forbidden(ForbidKind::Chan, chan) {
-                    ctx.notice(me, from.uid, format!("\x02{chan}\x02 can't be registered: {reason}"));
+                    ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 can't be registered: {reason}", chan = chan, reason = reason));
                     return;
                 }
                 // Refuse a look-alike / mixed-script channel name (e.g. a Cyrillic
@@ -161,15 +162,15 @@ impl Service for ChanServ {
                     Ok(()) => {
                         ctx.channel_mode(me, chan, "+r"); // mark the channel registered
                         ctx.count("chanserv.register");
-                        ctx.notice(me, from.uid, format!("\x02{chan}\x02 is now registered and you are its founder. Enjoy!"));
+                        ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 is now registered and you are its founder. Enjoy!", chan = chan));
                         // Auto-assign the network's default bot, if one is set (BotServ AUTOASSIGN).
                         if let Some(bot) = db.default_bot() {
                             if db.assign_bot(chan, &bot).is_ok() {
-                                ctx.notice(me, from.uid, format!("Assigned \x02{bot}\x02 to \x02{chan}\x02. Change it with \x02/msg BotServ ASSIGN\x02."));
+                                ctx.notice(me, from.uid, t!(ctx, "Assigned \x02{bot}\x02 to \x02{chan}\x02. Change it with \x02/msg BotServ ASSIGN\x02.", bot = bot, chan = chan));
                             }
                         }
                     }
-                    Err(ChanError::Exists) => ctx.notice(me, from.uid, format!("\x02{chan}\x02 is already registered. Try \x02INFO {chan}\x02 to see who owns it.")),
+                    Err(ChanError::Exists) => ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 is already registered. Try \x02INFO {chan}\x02 to see who owns it.", chan = chan)),
                     Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
                 }
             }
@@ -180,20 +181,20 @@ impl Service for ChanServ {
                 };
                 match db.channel(chan) {
                     Some(info) => {
-                        ctx.notice(me, from.uid, format!("Information for \x02{}\x02:", info.name));
-                        ctx.notice(me, from.uid, format!("  Founder    : \x02{}\x02", info.founder));
+                        ctx.notice(me, from.uid, t!(ctx, "Information for \x02{name}\x02:", name = info.name));
+                        ctx.notice(me, from.uid, t!(ctx, "  Founder    : \x02{founder}\x02", founder = info.founder));
                         if !info.desc.is_empty() {
-                            ctx.notice(me, from.uid, format!("  Description: {}", info.desc));
+                            ctx.notice(me, from.uid, t!(ctx, "  Description: {desc}", desc = info.desc));
                         }
                         if !info.url.is_empty() {
-                            ctx.notice(me, from.uid, format!("  URL        : {}", info.url));
+                            ctx.notice(me, from.uid, t!(ctx, "  URL        : {url}", url = info.url));
                         }
                         if !info.email.is_empty() {
-                            ctx.notice(me, from.uid, format!("  Email      : {}", info.email));
+                            ctx.notice(me, from.uid, t!(ctx, "  Email      : {email}", email = info.email));
                         }
-                        ctx.notice(me, from.uid, format!("  Registered : {}", echo_api::human_time(info.ts)));
+                        ctx.notice(me, from.uid, t!(ctx, "  Registered : {when}", when = echo_api::human_time(info.ts)));
                         if let Some(s) = db.channel_suspension(chan) {
-                            ctx.notice(me, from.uid, format!("  Suspended  : by \x02{}\x02 — {}", s.by, s.reason));
+                            ctx.notice(me, from.uid, t!(ctx, "  Suspended  : by \x02{by}\x02 — {reason}", by = s.by, reason = s.reason));
                         }
                         let mut opts = Vec::new();
                         if info.signkick { opts.push("SIGNKICK"); }
@@ -203,16 +204,16 @@ impl Service for ChanServ {
                         if info.keeptopic { opts.push("KEEPTOPIC"); }
                         if info.topiclock { opts.push("TOPICLOCK"); }
                         if !opts.is_empty() {
-                            ctx.notice(me, from.uid, format!("  Options    : {}", opts.join(", ")));
+                            ctx.notice(me, from.uid, t!(ctx, "  Options    : {options}", options = opts.join(", ")));
                         }
                         // A staff note is shown to operators only.
                         if from.privs.has(Priv::Auspex) {
                             if let Some(note) = db.channel_note(chan) {
-                                ctx.notice(me, from.uid, format!("  Staff note : {note}"));
+                                ctx.notice(me, from.uid, t!(ctx, "  Staff note : {note}", note = note));
                             }
                         }
                     }
-                    None => ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered.")),
+                    None => ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan)),
                 }
             }
             Some("DROP") => {
@@ -224,12 +225,12 @@ impl Service for ChanServ {
                 let founder = match db.channel(chan) {
                     Some(info) => info.founder.clone(),
                     None => {
-                        ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
+                        ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan));
                         return;
                     }
                 };
                 if from.account != Some(founder.as_str()) {
-                    ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can drop it."));
+                    ctx.notice(me, from.uid, t!(ctx, "Only \x02{chan}\x02's founder can drop it.", chan = chan));
                     return;
                 }
                 if suspended_block(me, from, chan, ctx, db) {
@@ -239,7 +240,7 @@ impl Service for ChanServ {
                     Ok(()) => {
                         ctx.channel_mode(me, chan, "-r"); // no longer registered
                         ctx.count("chanserv.drop");
-                        ctx.notice(me, from.uid, format!("\x02{chan}\x02 has been dropped and is no longer registered."));
+                        ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 has been dropped and is no longer registered.", chan = chan));
                     }
                     Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
                 }
@@ -252,11 +253,11 @@ impl Service for ChanServ {
                 // No modes given: show the current lock.
                 if args.len() <= 2 {
                     match db.channel(chan) {
-                        None => ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered.")),
+                        None => ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan)),
                         Some(info) if info.lock_on.is_empty() && info.lock_off.is_empty() => {
-                            ctx.notice(me, from.uid, format!("\x02{}\x02 has no mode lock set.", info.name));
+                            ctx.notice(me, from.uid, t!(ctx, "\x02{name}\x02 has no mode lock set.", name = info.name));
                         }
-                        Some(info) => ctx.notice(me, from.uid, format!("Mode lock for \x02{}\x02: \x02{}\x02", info.name, show_mlock(&info))),
+                        Some(info) => ctx.notice(me, from.uid, t!(ctx, "Mode lock for \x02{name}\x02: \x02{lock}\x02", name = info.name, lock = show_mlock(&info))),
                     }
                     return;
                 }
@@ -264,12 +265,12 @@ impl Service for ChanServ {
                 let founder = match db.channel(chan) {
                     Some(info) => info.founder.clone(),
                     None => {
-                        ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
+                        ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan));
                         return;
                     }
                 };
                 if from.account != Some(founder.as_str()) {
-                    ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can set its mode lock."));
+                    ctx.notice(me, from.uid, t!(ctx, "Only \x02{chan}\x02's founder can set its mode lock.", chan = chan));
                     return;
                 }
                 if suspended_block(me, from, chan, ctx, db) {
@@ -281,7 +282,7 @@ impl Service for ChanServ {
                         if let Some(info) = db.channel(chan) {
                             ctx.channel_mode(me, chan, &info.lock_modes()); // apply it now
                         }
-                        ctx.notice(me, from.uid, format!("Mode lock for \x02{chan}\x02 updated."));
+                        ctx.notice(me, from.uid, t!(ctx, "Mode lock for \x02{chan}\x02 updated.", chan = chan));
                     }
                     Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
                 }
@@ -334,7 +335,7 @@ impl Service for ChanServ {
             Some("HELP") => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
             // Direct `/msg ChanServ FOO` earns this reply; the fantasy router
             // gates on COMMANDS first so an in-channel `!foo` stays silent.
-            Some(other) => ctx.notice(me, from.uid, format!("I don't know the command \x02{other}\x02. Try \x02HELP\x02.")),
+            Some(other) => ctx.notice(me, from.uid, t!(ctx, "I don't know the command \x02{other}\x02. Try \x02HELP\x02.", other = other)),
             None => {}
         }
     }
@@ -347,12 +348,12 @@ fn require_founder(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db
     }
     match db.channel(chan) {
         None => {
-            ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
+            ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan));
             false
         }
         Some(info) if from.account == Some(info.founder.as_str()) => true,
         _ => {
-            ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can do that."));
+            ctx.notice(me, from.uid, t!(ctx, "Only \x02{chan}\x02's founder can do that.", chan = chan));
             false
         }
     }
@@ -365,12 +366,12 @@ fn require_op(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &dy
     }
     match (from.account, db.channel(chan)) {
         (_, None) => {
-            ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
+            ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan));
             false
         }
         (Some(acc), Some(info)) if info.is_op(acc) => true,
         _ => {
-            ctx.notice(me, from.uid, format!("You need operator access to \x02{chan}\x02."));
+            ctx.notice(me, from.uid, t!(ctx, "You need operator access to \x02{chan}\x02.", chan = chan));
             false
         }
     }
@@ -379,7 +380,7 @@ fn require_op(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &dy
 // A suspended channel is frozen: ChanServ won't manage it (returns true + notices).
 fn suspended_block(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, db: &dyn Store) -> bool {
     if db.is_channel_suspended(chan) {
-        ctx.notice(me, from.uid, format!("\x02{chan}\x02 is suspended by network staff and can't be managed right now."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 is suspended by network staff and can't be managed right now.", chan = chan));
         return true;
     }
     false

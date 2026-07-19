@@ -1,4 +1,4 @@
-use echo_api::{Sender, ServiceCtx, Store};
+use echo_api::{t, Sender, ServiceCtx, Store};
 
 // DEL <num>|ALL: remove a memo (or the whole mailbox).
 pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -9,7 +9,7 @@ pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut S
             for i in (0..count).rev() {
                 db.memo_del(account, i);
             }
-            ctx.notice(me, from.uid, format!("Deleted all \x02{count}\x02 memo(s)."));
+            ctx.notice(me, from.uid, t!(ctx, "Deleted all \x02{count}\x02 memo(s).", count = count));
         }
         Some(numstr) => {
             let Some(n) = numstr.parse::<usize>().ok().filter(|n| *n >= 1) else {
@@ -17,9 +17,9 @@ pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut S
                 return;
             };
             if db.memo_del(account, n - 1) {
-                ctx.notice(me, from.uid, format!("Memo #\x02{n}\x02 deleted."));
+                ctx.notice(me, from.uid, t!(ctx, "Memo #\x02{n}\x02 deleted.", n = n));
             } else {
-                ctx.notice(me, from.uid, format!("You have no memo #\x02{n}\x02."));
+                ctx.notice(me, from.uid, t!(ctx, "You have no memo #\x02{n}\x02.", n = n));
             }
         }
         None => ctx.notice(me, from.uid, "Syntax: DEL <num>|ALL"),

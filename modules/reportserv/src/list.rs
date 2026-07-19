@@ -1,4 +1,4 @@
-use echo_api::{Sender, ServiceCtx, Store};
+use echo_api::{t, Sender, ServiceCtx, Store};
 
 // LIST [ALL]: operators list the open reports (or every report with ALL).
 pub fn handle(me: &str, from: &Sender, arg: Option<&str>, ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -14,7 +14,7 @@ pub fn handle(me: &str, from: &Sender, arg: Option<&str>, ctx: &mut ServiceCtx, 
     for r in &reports {
         let flag = if r.open { "" } else { " (closed)" };
         let short: String = r.reason.chars().take(60).collect();
-        ctx.notice(me, from.uid, format!("\x02#{}\x02 {} → \x02{}\x02: {}{}", r.id, r.reporter, r.target, short, flag));
+        ctx.notice(me, from.uid, t!(ctx, "\x02#{id}\x02 {reporter} → \x02{target}\x02: {short}{flag}", id = r.id, reporter = r.reporter, target = r.target, short = short, flag = flag));
     }
-    ctx.notice(me, from.uid, format!("{} report(s). \x02VIEW\x02 <id> for detail.", reports.len()));
+    ctx.notice(me, from.uid, t!(ctx, "{n} report(s). \x02VIEW\x02 <id> for detail.", n = reports.len()));
 }

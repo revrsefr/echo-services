@@ -1,6 +1,7 @@
 use echo_api::Store;
 use echo_api::{access_role, Sender, ServiceCtx};
 use echo_api::NetView;
+use echo_api::t;
 
 // STATUS <#channel> [nick]: show a user's access level (self if no nick).
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &dyn Store) {
@@ -9,7 +10,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         return;
     };
     let Some(info) = db.channel(chan) else {
-        ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan));
         return;
     };
     let (label, account) = match args.get(2) {
@@ -26,5 +27,5 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
             None => "none",
         },
     };
-    ctx.notice(me, from.uid, format!("\x02{label}\x02 access on \x02{chan}\x02: \x02{level}\x02"));
+    ctx.notice(me, from.uid, t!(ctx, "\x02{label}\x02 access on \x02{chan}\x02: \x02{level}\x02", label = label, chan = chan, level = level));
 }

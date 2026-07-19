@@ -1,4 +1,4 @@
-use echo_api::{NetView, Priv, Sender, ServiceCtx, Store};
+use echo_api::{t, NetView, Priv, Sender, ServiceCtx, Store};
 
 // SERVER: the shared, cross-service counter registry plus a couple of live
 // gauges. Operators only (Priv::Auspex), since it is network-wide.
@@ -47,7 +47,7 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, net: &dyn NetView, 
                 ctx.notice(me, from.uid, "  games:");
                 header = true;
             }
-            ctx.notice(me, from.uid, format!("    {ty}: {games} games, {} players", players.len()));
+            ctx.notice(me, from.uid, t!(ctx, "    {ty}: {games} games, {n} players", ty = ty, games = games, n = players.len()));
         }
     }
 }

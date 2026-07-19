@@ -1,4 +1,4 @@
-use echo_api::{NetView, Priv, Sender, ServiceCtx, Store, XlineKind};
+use echo_api::{t, NetView, Priv, Sender, ServiceCtx, Store, XlineKind};
 use std::collections::HashSet;
 
 // CHANKILL <#channel> [reason]: AKILL every user in a channel by host, clearing
@@ -15,7 +15,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
     };
     let members = net.channel_members(chan);
     if members.is_empty() {
-        ctx.notice(me, from.uid, format!("No one is in \x02{chan}\x02 (or it isn't tracked)."));
+        ctx.notice(me, from.uid, t!(ctx, "No one is in \x02{chan}\x02 (or it isn't tracked).", chan = chan));
         return;
     }
     let reason = if args.len() > 2 { args[2..].join(" ") } else { "Channel cleared by services".to_string() };
@@ -34,5 +34,5 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
             banned += 1;
         }
     }
-    ctx.notice(me, from.uid, format!("CHANKILL on \x02{chan}\x02: \x02{banned}\x02 host(s) AKILL'd."));
+    ctx.notice(me, from.uid, t!(ctx, "CHANKILL on \x02{chan}\x02: \x02{banned}\x02 host(s) AKILL'd.", chan = chan, banned = banned));
 }
