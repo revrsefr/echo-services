@@ -1170,6 +1170,10 @@ impl Db {
         });
         // A freshly applied network ban must be pushed to the local ircd now.
         let ban = applied.as_ref().and_then(|e| match e {
+            // A gossiped akill whose `expires` is already in the past must NOT be
+            // installed: `saturating_sub` would floor to 0, which most ircds read as
+            // a permanent ban. Skip it entirely instead.
+            Event::AkillAdded { expires: Some(x), .. } if *x <= now() => None,
             Event::AkillAdded { kind, mask, setter, reason, expires, .. } => Some(IngestEffect::BanAdded {
                 kind: kind.clone(),
                 mask: mask.clone(),
