@@ -13,8 +13,28 @@ impl Engine {
         if self.db.exists(name) {
             return Err(AuthorityStatus::AlreadyExists);
         }
+        // A website write must obey the same namespace guards as an IRC REGISTER, or
+        // it becomes a hole around them (a look-alike "аdmin" that impersonates, a
+        // FORBIDden/reserved nick, or a registration created while frozen).
+        if self.db.registrations_frozen() || self.db.readonly() {
+            return Err(AuthorityStatus::Invalid);
+        }
+        self.authority_name_ok(name)?;
         if !self.reg_limiter.allow() {
             return Err(AuthorityStatus::RateLimited);
+        }
+        Ok(())
+    }
+
+    // The namespace guards the IRC REGISTER path enforces (FORBID list + look-alike/
+    // confusable check), applied to every authority write so it can't create a name
+    // IRC would have rejected.
+    fn authority_name_ok(&self, name: &str) -> Result<(), AuthorityStatus> {
+        if self.db.is_forbidden(echo_api::ForbidKind::Nick, name).is_some() {
+            return Err(AuthorityStatus::Invalid);
+        }
+        if self.db.confusable_check_enabled() && echo_api::confusable_reason(name).is_some() {
+            return Err(AuthorityStatus::Invalid);
         }
         Ok(())
     }
@@ -22,6 +42,13 @@ impl Engine {
     // Provision an account from pre-derived SCRAM verifiers (bulk backfill from
     // the authority). No email confirmation — the authority already vouches for it.
     pub fn authority_provision(&mut self, name: &str, scram256: &str, scram512: &str, email: Option<String>) -> AuthorityStatus {
+        // Backfill still can't mint a forbidden/look-alike name (skip only the
+        // frozen/rate-limit gates, which don't apply to an authority backfill).
+        if !self.db.exists(name) {
+            if let Err(status) = self.authority_name_ok(name) {
+                return status;
+            }
+        }
         match self.db.provision_account(name, scram256, scram512, email) {
             Ok(()) => AuthorityStatus::Ok,
             Err(RegError::Exists) => AuthorityStatus::AlreadyExists,

@@ -343,6 +343,10 @@ impl Db {
         self.confusable_check = on;
     }
 
+    pub fn confusable_check_enabled(&self) -> bool {
+        self.confusable_check
+    }
+
     /// The network defence level (5 = normal, 1 = full lockdown).
     pub fn defcon(&self) -> u8 {
         self.defcon
