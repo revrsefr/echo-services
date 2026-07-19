@@ -112,9 +112,10 @@ fn access_role(data: &str, op_at: i64, voice_at: i64) -> Option<&'static str> {
         return if level >= op_at { Some("op") } else if level >= voice_at { Some("voice") } else { None };
     }
     match d.to_ascii_uppercase().as_str() {
-        // XOP tiers: everything op-or-above collapses to op; VOP is voice.
-        "QOP" | "OWNER" | "FOUNDER" | "COFOUNDER" | "SOP" | "AOP" | "HOP" => Some("op"),
-        "VOP" => Some("voice"),
+        // XOP tiers: op-or-above collapses to op; halfop and VOP map to voice, to
+        // agree with the flags path (`h` → voice) in echo's two-tier model.
+        "QOP" | "OWNER" | "FOUNDER" | "COFOUNDER" | "SOP" | "AOP" => Some("op"),
+        "HOP" | "VOP" => Some("voice"),
         _ => {
             // flags/flags: privilege letters. Owner/protect/op ⇒ op; halfop/voice ⇒ voice.
             let has = |set: &str| d.chars().any(|c| set.contains(c.to_ascii_lowercase()));
@@ -129,7 +130,10 @@ fn thresholds(levels: &str) -> (i64, i64) {
     let find = |name: &str, dflt: i64| {
         toks.windows(2)
             .find(|w| w[0] == name)
-            .and_then(|w| w[1].parse().ok())
+            .and_then(|w| w[1].parse::<i64>().ok())
+            // A disabled level is stored as a large negative sentinel; treating it as
+            // the threshold would make `level >= op_at` true for everyone (mass op).
+            .filter(|n| *n > 0)
             .unwrap_or(dflt)
     };
     (find("AUTOOP", 5), find("AUTOVOICE", 3))
@@ -483,5 +487,17 @@ mod tests {
         assert_eq!(access_role("+qao", 5, 3), Some("op"));
         // unknown format is unmapped (reported, not silently dropped)
         assert_eq!(access_role("weird", 5, 3), None);
+        // halfop maps to voice in BOTH the XOP and the flags path (echo has no halfop tier)
+        assert_eq!(access_role("HOP", 5, 3), Some("voice"));
+        assert_eq!(access_role("+h", 5, 3), Some("voice"));
+    }
+
+    #[test]
+    fn thresholds_ignore_a_disabled_negative_level() {
+        // A disabled AUTOOP (stored as a big negative sentinel) must fall back to the
+        // default, not become the threshold — else `level >= op_at` ops everyone.
+        assert_eq!(thresholds("AUTOOP -10000 AUTOVOICE 3"), (5, 3));
+        assert_eq!(thresholds("AUTOOP 8 AUTOVOICE 4"), (8, 4));
+        assert_eq!(thresholds(""), (5, 3), "missing levels use the defaults");
     }
 }
