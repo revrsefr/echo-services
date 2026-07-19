@@ -159,7 +159,10 @@ impl GameServ {
             ctx.notice(me, from.uid, "The game server is at capacity right now. Please try again shortly.");
             return;
         }
-        let mine = self.games.values().filter(|g| g.acc_a == meid || g.acc_b == meid).count();
+        // Count games I started (any status) plus ones I accepted (active) — but NOT
+        // pending challenges sent TO me, or an attacker could spend their own budget
+        // flooding a victim with offers to exhaust the victim's slots.
+        let mine = self.games.values().filter(|g| g.acc_a == meid || (g.acc_b == meid && g.status == Status::Active)).count();
         if mine >= MAX_GAMES_PER_USER {
             ctx.notice(me, from.uid, format!("You have too many games in progress (max {MAX_GAMES_PER_USER}). Finish or resign one first."));
             return;
