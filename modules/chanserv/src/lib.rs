@@ -131,6 +131,12 @@ impl Service for ChanServ {
                     ctx.notice(me, from.uid, format!("\x02{chan}\x02 can't be registered: {reason}"));
                     return;
                 }
+                // Refuse a look-alike / mixed-script channel name (e.g. a Cyrillic
+                // homoglyph of a real channel).
+                if let Some(reason) = echo_api::confusable_reason(chan) {
+                    ctx.notice(me, from.uid, reason);
+                    return;
+                }
                 match db.register_channel(chan, account) {
                     Ok(()) => {
                         ctx.channel_mode(me, chan, "+r"); // mark the channel registered

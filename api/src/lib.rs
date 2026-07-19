@@ -2143,6 +2143,86 @@ pub trait Service: Send {
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, store: &mut dyn Store);
 }
 
+// Reject a look-alike / mixed-script registration name (nick or channel): the
+// impersonation trick that a message-content filter never sees at the registration
+// seam. Returns a rejection reason, or None if the name is fine. Genuine
+// monolingual text in any script passes — including accented French, which is
+// Latin — so only three things are caught: invisible/text-direction characters,
+// mixing two alphabets in one name, and an all-homoglyph name imitating Latin.
+pub fn confusable_reason(name: &str) -> Option<&'static str> {
+    #[derive(PartialEq, Clone, Copy)]
+    enum Script {
+        Latin,
+        Other, // Greek/Cyrillic/Armenian/Hebrew/Arabic/CJK — one distinct non-Latin script per range
+    }
+    // A letter's script, coarse: Latin vs a single non-Latin bucket per range. We
+    // only need "is it Latin" and "how many distinct scripts", so non-Latin ranges
+    // map to distinct discriminants via the range id.
+    fn script_id(cp: u32) -> Option<(Script, u8)> {
+        match cp {
+            0x41..=0x5A | 0x61..=0x7A | 0xC0..=0x24F => Some((Script::Latin, 0)),
+            0x370..=0x3FF => Some((Script::Other, 1)), // Greek
+            0x400..=0x4FF => Some((Script::Other, 2)), // Cyrillic
+            0x530..=0x58F => Some((Script::Other, 3)), // Armenian
+            0x590..=0x5FF => Some((Script::Other, 4)), // Hebrew
+            0x600..=0x6FF => Some((Script::Other, 5)), // Arabic
+            0x4E00..=0x9FFF | 0x3040..=0x30FF => Some((Script::Other, 6)), // CJK
+            _ => None,
+        }
+    }
+    // Invisible / zero-width / bidi-control characters: no legitimate use in a name,
+    // and a classic way to hide a spoof or reverse how a name renders.
+    fn is_invisible(cp: u32) -> bool {
+        matches!(cp, 0xAD | 0x180E | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060 | 0x2066..=0x2069 | 0xFEFF)
+    }
+    // Non-Latin letters that look like an ASCII Latin letter — the homoglyphs a
+    // spoofer swaps in. Catches an all-look-alike name that pure script-mixing
+    // would miss (e.g. an entirely-Cyrillic name that reads as Latin).
+    fn is_latin_confusable(cp: u32) -> bool {
+        matches!(cp,
+            0x0430 | 0x0410 | 0x0435 | 0x0415 | 0x043E | 0x041E | 0x0440 | 0x0420 |
+            0x0441 | 0x0421 | 0x0443 | 0x0423 | 0x0445 | 0x0425 | 0x0456 | 0x0406 |
+            0x0455 | 0x0405 | 0x0458 | 0x0408 | 0x043A | 0x041A | 0x043C | 0x041C |
+            0x043D | 0x041D | 0x0432 | 0x0412 | 0x0442 | 0x0422 |
+            0x03BF | 0x039F | 0x03B1 | 0x0391 | 0x03B5 | 0x0395 | 0x03C1 | 0x03A1 |
+            0x03C5 | 0x03A5 | 0x03BD | 0x03BA | 0x039A | 0x03B9 | 0x0399 | 0x03BC |
+            0x0392 | 0x039D | 0x03A4 | 0x0397 | 0x03A7 | 0x0396)
+    }
+
+    let mut scripts: Vec<u8> = Vec::new();
+    let mut has_latin = false;
+    let mut letters = 0usize;
+    let mut confusables = 0usize;
+    for ch in name.chars() {
+        let cp = ch as u32;
+        if is_invisible(cp) {
+            return Some("That name uses invisible or text-direction characters. Please choose a plain name.");
+        }
+        if let Some((script, id)) = script_id(cp) {
+            letters += 1;
+            if script == Script::Latin {
+                has_latin = true;
+            }
+            if !scripts.contains(&id) {
+                scripts.push(id);
+            }
+            if is_latin_confusable(cp) {
+                confusables += 1;
+            }
+        }
+    }
+    if scripts.len() > 1 {
+        return Some("That name mixes characters from different alphabets, a look-alike trick used to impersonate others. Please choose a plain name.");
+    }
+    // A single non-Latin script whose every letter is a Latin look-alike is a
+    // homoglyph spoof even without mixing; genuine monolingual text isn't all
+    // look-alikes, so it passes.
+    if letters > 0 && !has_latin && confusables == letters {
+        return Some("That name is made of look-alike characters imitating Latin letters. Please choose a plain name.");
+    }
+    None
+}
+
 // Parse a duration like "30d", "12h", "45m", "90s", or bare seconds. Shared by
 // the SUSPEND commands.
 pub fn parse_duration(s: &str) -> Option<u64> {
@@ -2254,6 +2334,25 @@ pub fn human_time(ts: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn confusable_names_rejected_but_french_passes() {
+        // Genuine names pass — including accented French (which is Latin), other
+        // monolingual scripts, digits/symbols, and emoji.
+        for ok in ["Zoé", "José", "Amélie", "sœur", "Noël", "#café", "crème-brûlée", "user_42", "привет", "日本語", "Ελληνικά", "Zoé😀", "#général"] {
+            assert!(confusable_reason(ok).is_none(), "should pass: {ok}");
+        }
+        // Look-alike / spoof names are rejected.
+        for bad in [
+            "аdmin",      // Cyrillic а + Latin — mixed script
+            "#frее",      // Latin fr + Cyrillic ее — mixed script
+            "аеосх",      // all-Cyrillic Latin look-alikes — homoglyph
+            "ad\u{200b}min", // zero-width space
+            "\u{202e}nimda", // right-to-left override
+        ] {
+            assert!(confusable_reason(bad).is_some(), "should be rejected: {bad}");
+        }
+    }
 
     #[test]
     fn akick_extbans_parse_and_match() {

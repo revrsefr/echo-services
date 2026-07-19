@@ -12,6 +12,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx) {
         ctx.notice(me, from.uid, reason);
         return;
     }
+    // Refuse a look-alike / mixed-script nick before it can be used to impersonate.
+    if let Some(reason) = echo_api::confusable_reason(from.nick) {
+        ctx.notice(me, from.uid, reason);
+        return;
+    }
     let email = args.get(2).map(|s| s.to_string());
     ctx.defer_register(from.nick, *password, email, RegReply::NickServ {
         agent: me.to_string(),
