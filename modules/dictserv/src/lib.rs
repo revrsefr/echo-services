@@ -6,7 +6,7 @@
 //! Works two ways: `/msg DictServ dict cat` (DictServ replies), or the fantasy
 //! `!dict cat` in a channel with an assigned bot (the bot speaks the answer).
 
-use echo_api::{HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{t, HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
 
 // One lookup command: the fantasy/word, the DICT database it queries, and a human
 // label shown in the reply. Shared by DictServ and the engine's fantasy router so
@@ -75,7 +75,7 @@ impl Service for DictServ {
         if let Some(l) = lookup_for(cmd) {
             let query = args[1..].join(" ");
             if query.trim().is_empty() {
-                ctx.notice(me, from.uid, format!("Give a term to look up, e.g. \x02{} cat\x02.", l.cmd));
+                ctx.notice(me, from.uid, t!(ctx, "Give a term to look up, e.g. \x02{cmd} cat\x02.", cmd = l.cmd));
                 return;
             }
             ctx.dict_lookup(me, from.uid, l.database, l.label, query);
@@ -85,11 +85,11 @@ impl Service for DictServ {
             "LOOKUP" | "LIST" => {
                 ctx.notice(me, from.uid, "Lookup commands (use in a channel as \x02!cmd <term>\x02, or here as \x02/msg DictServ cmd <term>\x02):");
                 for l in LOOKUPS {
-                    ctx.notice(me, from.uid, format!("  \x02{}\x02 — {}", l.cmd, l.label));
+                    ctx.notice(me, from.uid, t!(ctx, "  \x02{cmd}\x02 — {label}", cmd = l.cmd, label = l.label));
                 }
             }
             "HELP" | "" => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
-            other => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02LOOKUP\x02 for the list, or \x02HELP\x02.")),
+            other => ctx.notice(me, from.uid, t!(ctx, "I don't know \x02{other}\x02. Try \x02LOOKUP\x02 for the list, or \x02HELP\x02.", other = other)),
         }
     }
 }

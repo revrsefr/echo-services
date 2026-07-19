@@ -1,4 +1,4 @@
-use echo_api::{Sender, ServiceCtx};
+use echo_api::{t, Sender, ServiceCtx};
 
 use super::expr;
 
@@ -19,7 +19,7 @@ pub fn handle(me: &str, from: &Sender, rest: &[&str], ctx: &mut ServiceCtx, exte
         Some((n, body)) => match n.trim().parse::<u32>() {
             Ok(t) if (1..=MAX_REPEATS).contains(&t) => (t, body.trim()),
             _ => {
-                ctx.notice(me, from.uid, format!("The repeat count before \x02~\x02 must be a number from 1 to {MAX_REPEATS}."));
+                ctx.notice(me, from.uid, t!(ctx, "The repeat count before \x02~\x02 must be a number from 1 to {max}.", max = MAX_REPEATS));
                 return;
             }
         },
@@ -50,7 +50,7 @@ pub fn handle(me: &str, from: &Sender, rest: &[&str], ctx: &mut ServiceCtx, exte
                 }
             }
             Err(why) => {
-                ctx.notice(me, from.uid, format!("I couldn't roll \x02{body}\x02: {why}."));
+                ctx.notice(me, from.uid, t!(ctx, "I couldn't roll \x02{body}\x02: {why}.", body = body, why = why));
                 return; // the whole batch shares the expression, so it'll fail the same way
             }
         }

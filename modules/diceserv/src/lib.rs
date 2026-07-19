@@ -6,7 +6,7 @@
 //! `lib.rs` holds the dispatcher; the command lives in roll.rs and the
 //! expression evaluator in expr.rs.
 
-use echo_api::{HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{t, HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "expr.rs"]
 mod expr;
@@ -49,7 +49,7 @@ impl Service for DiceServ {
             Some("CALC") => roll::handle(me, from, &args[1..], ctx, false, false),
             Some("EXCALC") => roll::handle(me, from, &args[1..], ctx, true, false),
             Some("HELP") | None => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
-            Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02ROLL\x02, \x02CALC\x02, or \x02HELP\x02.")),
+            Some(other) => ctx.notice(me, from.uid, t!(ctx, "I don't know \x02{other}\x02. Try \x02ROLL\x02, \x02CALC\x02, or \x02HELP\x02.", other = other)),
         }
     }
 }
