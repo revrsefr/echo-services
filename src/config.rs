@@ -24,6 +24,11 @@ pub struct Config {
     // start. Bind to localhost; unauthenticated by design (read-only gauges).
     #[serde(default)]
     pub health: Option<Health>,
+    // Localization. Absent = English only. `default` is the reply language for
+    // users with no preference; `dir` holds `<code>.json` catalogs; `available`
+    // lists the codes a user may pick with NickServ SET LANGUAGE.
+    #[serde(default)]
+    pub language: Option<Language>,
     // Which service modules to start. Absent = the full standard suite (all the
     // pseudo-clients); listing it trims that set. Every service is first-class.
     #[serde(default)]
@@ -61,6 +66,27 @@ pub struct Config {
     // ones your ircd doesn't provide.
     #[serde(default)]
     pub extban: Option<Extban>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Language {
+    // Reply language for users who haven't picked one (a code like "en" or "fr").
+    #[serde(default = "default_language")]
+    pub default: String,
+    // Directory holding the `<code>.json` translation catalogs (english id -> text).
+    #[serde(default = "default_language_dir")]
+    pub dir: String,
+    // Codes a user may select with NickServ SET LANGUAGE. Empty = only the default.
+    #[serde(default)]
+    pub available: Vec<String>,
+}
+
+fn default_language() -> String {
+    "en".to_string()
+}
+
+fn default_language_dir() -> String {
+    "lang".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone)]

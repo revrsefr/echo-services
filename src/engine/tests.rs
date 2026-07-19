@@ -418,6 +418,42 @@
         e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "LOGOUT".into() })
     }
 
+    // SET LANGUAGE stores the preference and switches replies to that language:
+    // the confirmation renders in the newly-chosen language, and a later command
+    // resolves the language from the account via the dispatch path.
+    #[test]
+    fn set_language_switches_reply_language() {
+        use echo_nickserv::NickServ;
+        // Minimal French catalog for this test process. English tests are unaffected:
+        // they resolve to "en" and fall back to the English source string.
+        let mut fr = std::collections::HashMap::new();
+        fr.insert("Your language is now \x02{lang}\x02.".to_string(), "Votre langue est maintenant \x02{lang}\x02.".to_string());
+        fr.insert(
+            "Your language is \x02{lang}\x02. Available: {list}. Change it with \x02SET LANGUAGE <code>\x02.".to_string(),
+            "Votre langue est \x02{lang}\x02. Disponibles : {list}.".to_string(),
+        );
+        echo_api::load_catalog(std::collections::HashMap::from([("fr".to_string(), fr)]));
+
+        let path = std::env::temp_dir().join("echo-setlang.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.set_available_languages(vec!["fr".to_string()]);
+        db.register("bob", "password1", None).unwrap();
+        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "bob".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
+
+        let out = ns(&mut e, "SET LANGUAGE fr");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Votre langue est maintenant"))), "confirmation is French: {out:?}");
+        assert_eq!(e.db.language_of("bob").as_deref(), Some("fr"), "the preference is stored");
+
+        // A later command now resolves to French via the dispatch path (bob's pref).
+        let out2 = ns(&mut e, "SET LANGUAGE");
+        assert!(out2.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Disponibles"))), "later reply is French via ctx.lang: {out2:?}");
+    }
+
     // A guest rename must skip a nick that's already online, or it would collide
     // with (and get) an innocent user instead of freeing the name.
     #[test]
@@ -902,7 +938,7 @@
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None, vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)));
         e.gossip_ingest(entry).unwrap();

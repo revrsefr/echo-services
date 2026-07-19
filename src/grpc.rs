@@ -128,6 +128,7 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::CertRemoved { .. }
         | Event::AccountPasswordSet { .. }
         | Event::AccountGreetSet { .. }
+        | Event::AccountLanguageSet { .. }
         | Event::AccountAutoOpSet { .. }
         | Event::AccountKillSet { .. }
         | Event::AccountHideStatusSet { .. }
@@ -493,7 +494,7 @@ mod tests {
             memo_ignore: vec![],
             memo_notify: true,
             memo_limit: None,
-            greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false,
+            greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None,
             vhost: None,
             vhost_request: None,
             last_seen: 111,

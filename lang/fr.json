@@ -1,0 +1,6 @@
+{
+  "Your language is \u0002{lang}\u0002. Available: {list}. Change it with \u0002SET LANGUAGE <code>\u0002.": "Votre langue est \u0002{lang}\u0002. Disponibles : {list}. Changez-la avec \u0002SET LANGUAGE <code>\u0002.",
+  "\u0002{code}\u0002 isn't an available language. Available: {list}.": "\u0002{code}\u0002 n'est pas une langue disponible. Disponibles : {list}.",
+  "Your language is now \u0002{lang}\u0002.": "Votre langue est maintenant \u0002{lang}\u0002.",
+  "Sorry, that didn't work. Please try again in a moment.": "Désolé, une erreur est survenue. Veuillez réessayer dans un instant."
+}

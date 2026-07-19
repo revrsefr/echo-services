@@ -7,7 +7,10 @@ impl Engine {
         let nick = self.network.nick_of(from).unwrap_or(from).to_string();
         let account = self.network.account_of(from).map(str::to_string);
         let privs = account.as_deref().map(|a| self.oper_privs(a)).unwrap_or_default();
-        let mut ctx = ServiceCtx::default();
+        // Render this command's replies in the sender's language: their account
+        // preference if set, otherwise the network default.
+        let lang = account.as_deref().and_then(|a| self.db.language_of(a)).unwrap_or_else(|| self.db.default_language());
+        let mut ctx = ServiceCtx { lang, ..Default::default() };
         // Mark the log so we can tell exactly which events this command appends.
         let audit_mark = self.db.log_len();
         let sender = Sender { uid: from, nick: &nick, account: account.as_deref(), privs };

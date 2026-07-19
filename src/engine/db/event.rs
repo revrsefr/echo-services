@@ -15,6 +15,7 @@ pub enum Event {
     CertRemoved { account: String, fp: String },
     AccountEmailSet { account: String, email: Option<String> },
     AccountGreetSet { account: String, greet: String },
+    AccountLanguageSet { account: String, language: Option<String> },
     AccountAutoOpSet { account: String, on: bool },
     AccountKillSet { account: String, on: bool },
     AccountHideStatusSet { account: String, on: bool },
@@ -186,6 +187,7 @@ impl Event {
             | Event::CertRemoved { .. }
             | Event::AccountEmailSet { .. }
             | Event::AccountGreetSet { .. }
+            | Event::AccountLanguageSet { .. }
             | Event::AccountAutoOpSet { .. }
             | Event::AccountKillSet { .. }
             | Event::AccountHideStatusSet { .. }
@@ -356,6 +358,11 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         Event::AccountGreetSet { account, greet } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {
                 a.greet = greet;
+            }
+        }
+        Event::AccountLanguageSet { account, language } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.language = language;
             }
         }
         Event::AccountAutoOpSet { account, on } => {

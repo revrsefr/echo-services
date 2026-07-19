@@ -473,6 +473,53 @@ pub struct Sender<'a> {
     pub privs: Privs,
 }
 
+// ── Localization (i18n) ─────────────────────────────────────────────────────
+// Messages are authored in English at the call site (the English string is the
+// message id). A per-language catalog maps that id to a translation; `render`
+// looks it up for the target language and substitutes `{name}` placeholders. With
+// no catalog loaded, or no entry, the English id is used verbatim — so English is
+// always the zero-config fallback and untranslated messages degrade gracefully.
+static CATALOG: std::sync::OnceLock<std::collections::HashMap<String, std::collections::HashMap<String, String>>> = std::sync::OnceLock::new();
+
+/// Install the translation catalog: `lang code -> (english msgid -> translation)`.
+/// Called once at startup; a no-op if already set.
+pub fn load_catalog(catalog: std::collections::HashMap<String, std::collections::HashMap<String, String>>) {
+    let _ = CATALOG.set(catalog);
+}
+
+/// Render `msgid` (the English template) into `lang`, substituting `{name}`
+/// placeholders from `args`. Falls back to the English `msgid` when there is no
+/// translation. Used via the [`t!`] macro; rarely called directly.
+pub fn render(lang: &str, msgid: &str, args: &[(&str, String)]) -> String {
+    let template = CATALOG
+        .get()
+        .and_then(|c| c.get(lang))
+        .and_then(|m| m.get(msgid))
+        .map(String::as_str)
+        .unwrap_or(msgid);
+    if args.is_empty() {
+        return template.to_string();
+    }
+    let mut out = template.to_string();
+    for (name, val) in args {
+        out = out.replace(&format!("{{{name}}}"), val);
+    }
+    out
+}
+
+/// Localize a reply. `t!(ctx, "english template", name = value, …)` looks the
+/// template up for `ctx`'s language and fills its `{name}` placeholders. The
+/// English string IS the message id, so it also reads as the source text.
+#[macro_export]
+macro_rules! t {
+    ($ctx:expr, $msgid:literal $(,)?) => {
+        $crate::render($ctx.lang(), $msgid, &[])
+    };
+    ($ctx:expr, $msgid:literal, $($name:ident = $val:expr),+ $(,)?) => {
+        $crate::render($ctx.lang(), $msgid, &[$((stringify!($name), format!("{}", $val))),+])
+    };
+}
+
 /// The intent sink a service writes to. A service never mutates the network or
 /// the store itself; it pushes normalized actions (via [`ServiceCtx::notice`]
 /// and friends) that the engine drains and applies.
@@ -492,6 +539,10 @@ pub struct ServiceCtx {
     // module can report a reject the engine's verify path never sees — e.g. a
     // failed IDENTIFY against a cert-only account with no password verifier.
     pub auth_reports: Vec<AuthReport>,
+    // The language to render this command's replies in (the sender's account
+    // preference, else the network default). Set by the engine before dispatch;
+    // empty means English. Read via [`ServiceCtx::lang`] / the `t!` macro.
+    pub lang: String,
 }
 
 // A login-attempt outcome a module hands back for the auth audit feed.
@@ -505,6 +556,15 @@ pub struct AuthReport {
 }
 
 impl ServiceCtx {
+    /// The language replies should render in (defaults to English).
+    pub fn lang(&self) -> &str {
+        if self.lang.is_empty() {
+            "en"
+        } else {
+            &self.lang
+        }
+    }
+
     pub fn notice(&mut self, from: &str, to: &str, text: impl Into<String>) {
         self.actions.push(NetAction::Notice {
             from: from.to_string(),
@@ -1948,6 +2008,10 @@ pub trait Store {
     fn verify_account(&mut self, account: &str) -> Result<(), RegError>;
     fn set_email(&mut self, account: &str, email: Option<String>) -> Result<(), RegError>;
     fn set_greet(&mut self, account: &str, greet: &str) -> Result<(), RegError>;
+    fn set_language(&mut self, account: &str, language: Option<String>) -> Result<(), RegError>;
+    fn language_of(&self, account: &str) -> Option<String>;
+    fn available_languages(&self) -> Vec<String>;
+    fn default_language(&self) -> String;
     // NickServ SET AUTOOP: whether this account is auto-opped on join.
     fn set_account_autoop(&mut self, account: &str, on: bool) -> Result<(), RegError>;
     fn account_wants_autoop(&self, account: &str) -> bool;
@@ -2796,6 +2860,22 @@ mod help_tests {
         let mut ctx = ServiceCtx::default();
         help("Svc", &sender(), &mut ctx, "b", T, Some("nope"));
         assert!(texts(&ctx)[0].contains("No help"));
+    }
+
+    #[test]
+    fn render_translates_substitutes_and_falls_back() {
+        // No/other catalog: the English msgid is used, with args substituted.
+        assert_eq!(render("en", "Hello \x02{name}\x02!", &[("name", "world".into())]), "Hello \x02world\x02!");
+        // Load a French catalog, then translate + substitute.
+        let mut fr = std::collections::HashMap::new();
+        fr.insert("Your language is now \x02{lang}\x02.".to_string(), "Votre langue est désormais \x02{lang}\x02.".to_string());
+        load_catalog(std::collections::HashMap::from([("fr".to_string(), fr)]));
+        assert_eq!(
+            render("fr", "Your language is now \x02{lang}\x02.", &[("lang", "fr".into())]),
+            "Votre langue est désormais \x02fr\x02."
+        );
+        // An untranslated id still falls back to the English source even in fr.
+        assert_eq!(render("fr", "not translated", &[]), "not translated");
     }
 
     #[test]

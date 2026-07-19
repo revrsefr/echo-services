@@ -355,6 +355,29 @@ impl Db {
         self.confusable_check = on;
     }
 
+    /// The network-wide reply language for users who haven't set a preference.
+    pub fn set_default_language(&mut self, lang: &str) {
+        if !lang.is_empty() {
+            self.default_language = lang.to_string();
+        }
+    }
+
+    pub fn default_language(&self) -> String {
+        self.default_language.clone()
+    }
+
+    /// The language codes a user may select (always includes the default).
+    pub fn set_available_languages(&mut self, langs: Vec<String>) {
+        self.available_languages = langs;
+        if !self.available_languages.contains(&self.default_language) {
+            self.available_languages.push(self.default_language.clone());
+        }
+    }
+
+    pub fn available_languages(&self) -> &[String] {
+        &self.available_languages
+    }
+
     pub fn confusable_check_enabled(&self) -> bool {
         self.confusable_check
     }

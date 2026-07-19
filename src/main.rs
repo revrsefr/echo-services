@@ -209,6 +209,29 @@ async fn main() -> Result<()> {
     db.set_email_enabled(cfg.email.is_some());
     db.set_external_accounts(cfg.auth.as_ref().is_some_and(|a| a.external));
     db.set_confusable_check(cfg.register.confusable_check);
+    if let Some(lang) = &cfg.language {
+        db.set_default_language(&lang.default);
+        db.set_available_languages(lang.available.clone());
+        // Load a JSON catalog (english msgid -> translation) per non-English code.
+        let mut catalog = std::collections::HashMap::new();
+        for code in db.available_languages().to_vec() {
+            if code == "en" {
+                continue; // English needs no catalog: the msgid is the English text
+            }
+            let path = format!("{}/{}.json", lang.dir, code);
+            match std::fs::read_to_string(&path) {
+                Ok(data) => match serde_json::from_str::<std::collections::HashMap<String, String>>(&data) {
+                    Ok(map) => {
+                        tracing::info!(code = %code, entries = map.len(), "loaded translation catalog");
+                        catalog.insert(code, map);
+                    }
+                    Err(e) => tracing::error!(%e, %path, "invalid translation catalog JSON"),
+                },
+                Err(e) => tracing::warn!(%e, %path, "translation catalog not found"),
+            }
+        }
+        echo_api::load_catalog(catalog);
+    }
     match cfg.extban.as_ref().map(|e| e.enabled.as_slice()) {
         Some(list) if !list.is_empty() => {
             db.set_extban_enabled(list.to_vec());

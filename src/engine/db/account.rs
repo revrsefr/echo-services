@@ -22,7 +22,7 @@ impl Db {
             ajoin: Vec::new(),
             suspension: None,
             memos: Vec::new(), memo_ignore: Vec::new(), memo_notify: true, memo_limit: None,
-            greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false,
+            greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None,
             vhost: None,
             vhost_request: None,
             last_seen: ts,
@@ -78,7 +78,7 @@ impl Db {
             ajoin: Vec::new(),
             suspension: None,
             memos: Vec::new(), memo_ignore: Vec::new(), memo_notify: true, memo_limit: None,
-            greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false,
+            greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None,
             vhost: None,
             vhost_request: None,
             last_seen: ts,
@@ -522,6 +522,22 @@ impl Db {
         self.log.append(Event::AccountGreetSet { account: account.to_string(), greet: greet.to_string() }).map_err(|_| RegError::Internal)?;
         self.accounts.get_mut(&k).unwrap().greet = greet.to_string();
         Ok(())
+    }
+
+    /// Set (or clear, with None) `account`'s preferred reply language (SET LANGUAGE).
+    pub fn set_language(&mut self, account: &str, language: Option<String>) -> Result<(), RegError> {
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return Err(RegError::Internal);
+        }
+        self.log.append(Event::AccountLanguageSet { account: account.to_string(), language: language.clone() }).map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().language = language;
+        Ok(())
+    }
+
+    /// `account`'s preferred language, if it set one.
+    pub fn language_of(&self, account: &str) -> Option<String> {
+        self.accounts.get(&key(account)).and_then(|a| a.language.clone())
     }
 
     /// Set whether `account` wants to be auto-opped on join (NickServ SET AUTOOP).

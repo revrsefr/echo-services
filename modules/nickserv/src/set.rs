@@ -1,5 +1,6 @@
 use echo_api::{ForbidKind, Store};
 use echo_api::{Sender, ServiceCtx};
+use echo_api::t;
 
 // SET PASSWORD <newpassword> | SET EMAIL [address]: change your account settings.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -43,6 +44,27 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 Ok(()) if cleared => ctx.notice(me, from.uid, format!("Email for \x02{account}\x02 cleared.")),
                 Ok(()) => ctx.notice(me, from.uid, format!("Email for \x02{account}\x02 updated.")),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+            }
+        }
+        Some("LANGUAGE") | Some("LANG") => {
+            let available = db.available_languages();
+            match args.get(2) {
+                None => {
+                    let current = db.language_of(account).unwrap_or_else(|| db.default_language());
+                    ctx.notice(me, from.uid, t!(ctx, "Your language is \x02{lang}\x02. Available: {list}. Change it with \x02SET LANGUAGE <code>\x02.", lang = current, list = available.join(", ")));
+                }
+                Some(&code) => {
+                    let code = code.to_ascii_lowercase();
+                    if !available.contains(&code) {
+                        ctx.notice(me, from.uid, t!(ctx, "\x02{code}\x02 isn't an available language. Available: {list}.", code = code, list = available.join(", ")));
+                        return;
+                    }
+                    match db.set_language(account, Some(code.clone())) {
+                        // Confirm in the NEWLY chosen language, so it's visibly applied.
+                        Ok(()) => ctx.notice(me, from.uid, echo_api::render(&code, "Your language is now \x02{lang}\x02.", &[("lang", code.clone())])),
+                        Err(_) => ctx.notice(me, from.uid, t!(ctx, "Sorry, that didn't work. Please try again in a moment.")),
+                    }
+                }
             }
         }
         Some("HIDE") => {

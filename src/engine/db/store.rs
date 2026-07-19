@@ -105,6 +105,18 @@ impl Store for Db {
     fn set_greet(&mut self, account: &str, greet: &str) -> Result<(), RegError> {
         Db::set_greet(self, account, greet)
     }
+    fn set_language(&mut self, account: &str, language: Option<String>) -> Result<(), RegError> {
+        Db::set_language(self, account, language)
+    }
+    fn language_of(&self, account: &str) -> Option<String> {
+        Db::language_of(self, account)
+    }
+    fn available_languages(&self) -> Vec<String> {
+        Db::available_languages(self).to_vec()
+    }
+    fn default_language(&self) -> String {
+        Db::default_language(self)
+    }
     fn set_account_autoop(&mut self, account: &str, on: bool) -> Result<(), RegError> {
         Db::set_account_autoop(self, account, on)
     }
