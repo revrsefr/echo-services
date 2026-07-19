@@ -2,13 +2,42 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use anyhow::Result;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 
 use crate::engine::db::Db;
 use crate::engine::Engine;
 use crate::proto::{NetAction, Protocol};
+
+// Cap on one uplink line (well above IRC's 512 + generous room for message tags),
+// so a misbehaving uplink can't grow an unbounded read buffer.
+const MAX_UPLINK_LINE: usize = 16 * 1024;
+
+// Read one newline-delimited uplink line, bounded and decoded UTF-8-LOSSILY. IRC is
+// byte-oriented and any user's PRIVMSG relayed to a service can carry raw non-UTF-8
+// bytes; the old `.lines()` returned an Err on those, which propagated out of the
+// reactor and CRASHED the whole daemon. `None` on EOF; io::Error only on a genuine
+// read failure. Bytes past the cap are dropped until the newline.
+async fn read_uplink_line<R: tokio::io::AsyncRead + Unpin>(reader: &mut R, max: usize) -> std::io::Result<Option<String>> {
+    let mut buf = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        if reader.read(&mut byte).await? == 0 {
+            return Ok((!buf.is_empty()).then(|| decode_uplink_line(&buf)));
+        }
+        if byte[0] == b'\n' {
+            return Ok(Some(decode_uplink_line(&buf)));
+        }
+        if buf.len() < max {
+            buf.push(byte[0]);
+        }
+    }
+}
+
+fn decode_uplink_line(buf: &[u8]) -> String {
+    String::from_utf8_lossy(buf.strip_suffix(b"\r").unwrap_or(buf)).into_owned()
+}
 
 // NickServ commands whose arguments are a password and must never be logged.
 const SECRET_CMDS: &[&str] = &[
@@ -79,7 +108,7 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
     // HELP visibly lags before it lands. Every ircd sets this on every socket.
     stream.set_nodelay(true)?;
     let (read, mut write) = stream.into_split();
-    let mut lines = BufReader::new(read).lines();
+    let mut reader = BufReader::new(read);
 
     for line in proto.handshake() {
         send(&mut write, &line).await?;
@@ -94,7 +123,7 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
     loop {
         tokio::select! {
             // A line from the uplink: translate it and answer.
-            line = lines.next_line() => {
+            line = read_uplink_line(&mut reader, MAX_UPLINK_LINE) => {
                 let Some(line) = line? else { break };
                 tracing::debug!(dir = "<<", line = %redact(&line));
                 for event in proto.parse(&line) {
@@ -137,16 +166,23 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
                                 engine.lock().await.complete_authenticate(ok, then)
                             }
                             NetAction::DeferKeycard { token, account, then } => {
-                                // Redeem a website login keycard off the reactor (a localhost
-                                // HTTP round-trip), then finish the login under the lock — the
-                                // completion is identical to a password auth once we know the
-                                // outcome.
-                                let kc = keycard.clone();
-                                let ok = tokio::task::spawn_blocking(move || {
-                                    crate::keycard::redeem(kc.as_ref(), &account, &token)
-                                })
-                                .await?;
-                                engine.lock().await.complete_authenticate(ok, then)
+                                // Redeem a website login keycard fully OFF the reactor loop: the
+                                // localhost HTTP round-trip can take up to ~7s on a slow Django,
+                                // and inline-awaiting it here froze ALL uplink processing for that
+                                // long. Keycards arrive mid-SASL (no user commands pending), so
+                                // completing asynchronously via irc_tx can't reorder anything. A
+                                // redeem panic now fails the login instead of crashing the daemon.
+                                let (kc, engine2, tx) = (keycard.clone(), engine.clone(), irc_tx.clone());
+                                tokio::spawn(async move {
+                                    let ok = tokio::task::spawn_blocking(move || crate::keycard::redeem(kc.as_ref(), &account, &token))
+                                        .await
+                                        .unwrap_or(false);
+                                    let actions = engine2.lock().await.complete_authenticate(ok, then);
+                                    for a in actions {
+                                        let _ = tx.send(a);
+                                    }
+                                });
+                                Vec::new()
                             }
                             // OperServ REHASH: re-read config.toml and apply the
                             // reloadable settings live, reporting back to the oper.
@@ -289,6 +325,30 @@ async fn send(write: &mut (impl AsyncWriteExt + Unpin), line: &str) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::redact;
+
+    #[test]
+    fn decode_uplink_line_is_lossy_and_strips_cr() {
+        assert_eq!(super::decode_uplink_line(b"PING abc\r"), "PING abc");
+        // A non-UTF-8 line must decode (lossily), not error — the old `.lines()`
+        // returned Err here and crashed the whole daemon.
+        assert_eq!(super::decode_uplink_line(b"PRIVMSG x :\xff\xfe hi"), "PRIVMSG x :\u{fffd}\u{fffd} hi");
+    }
+
+    #[tokio::test]
+    async fn read_uplink_line_survives_bad_utf8_and_bounds_length() {
+        use tokio::io::BufReader;
+        let data: Vec<u8> = b"NICK a\r\nPRIVMSG NickServ :\xff\xff q\nQUIT\n".to_vec();
+        let mut r = BufReader::new(&data[..]);
+        let cap = super::MAX_UPLINK_LINE;
+        assert_eq!(super::read_uplink_line(&mut r, cap).await.unwrap(), Some("NICK a".to_string()));
+        assert_eq!(super::read_uplink_line(&mut r, cap).await.unwrap(), Some("PRIVMSG NickServ :\u{fffd}\u{fffd} q".to_string()), "bad UTF-8 decodes, no crash");
+        assert_eq!(super::read_uplink_line(&mut r, cap).await.unwrap(), Some("QUIT".to_string()));
+        assert_eq!(super::read_uplink_line(&mut r, cap).await.unwrap(), None, "EOF");
+        // An over-long line is truncated to the cap, not accumulated unbounded.
+        let long: Vec<u8> = [vec![b'X'; 50], vec![b'\n']].concat();
+        let mut r2 = BufReader::new(&long[..]);
+        assert_eq!(super::read_uplink_line(&mut r2, 10).await.unwrap().unwrap().len(), 10);
+    }
 
     #[test]
     fn redacts_identify_password() {
