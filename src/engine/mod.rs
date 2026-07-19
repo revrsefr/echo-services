@@ -809,8 +809,10 @@ impl Engine {
         }
         if let Some(ttl) = self.account_ttl {
             for account in self.db.expired_accounts(now, ttl) {
-                // Never expire an operator's account or one still in use.
-                if self.opers.contains_key(&account.to_ascii_lowercase()) || !self.network.uids_logged_into(&account).is_empty() {
+                // Never expire an operator's account or one still in use. oper_privs
+                // unions config [[oper]] AND runtime OperServ OPER grants — self.opers
+                // is config-only, so a runtime-granted oper was being dropped.
+                if self.oper_privs(&account).any() || !self.network.uids_logged_into(&account).is_empty() {
                     continue;
                 }
                 if self.db.drop_account(&account).unwrap_or(false) {

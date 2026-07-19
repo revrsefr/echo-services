@@ -539,7 +539,7 @@ pub struct Trigger {
 
 // BotServ's per-channel "kickers": the assigned bot kicks a message that trips
 // an enabled rule. Typed, like ChanSettings — a new kicker is one field.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct KickerSettings {
     #[serde(default)]
     pub caps: bool,
@@ -1276,7 +1276,10 @@ impl Db {
             if let Some(bot) = &c.assigned_bot {
                 snapshot.push(Event::ChannelBotAssigned { channel: c.name.clone(), bot: bot.clone() });
             }
-            if c.kickers.any() || c.kickers.dontkickops || c.kickers.ttb > 0 || c.kickers.ban_expire > 0 || c.kickers.votekick > 0 {
+            // Snapshot whenever any kicker field differs from default, so standalone
+            // flags (warn, dontkickvoices) survive compaction too, not just the ones
+            // that force a kicker on.
+            if c.kickers != KickerSettings::default() {
                 snapshot.push(Event::ChannelKickerSet { channel: c.name.clone(), kickers: c.kickers.clone() });
             }
             if !c.badwords.is_empty() {
