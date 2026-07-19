@@ -133,6 +133,24 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::Sasl { mode, data, .. } if mode == "D" && data.as_slice() == ["F"])), "{out:?}");
     }
 
+    // SCRAM (Orbit's default mech) must honour the brute-force lockout — else a
+    // throttled attacker could switch to SCRAM and keep guessing unthrottled.
+    #[test]
+    fn sasl_scram_refuses_a_locked_out_account() {
+        let mut e = engine_with("scramlock", "foo", "sesame");
+        for _ in 0..10 {
+            e.db.note_auth("foo", false);
+        }
+        assert!(e.db.auth_lockout("foo").is_some(), "account is throttled after repeated failures");
+        // A SCRAM client-first for the locked account is refused (D/F), never challenged.
+        sasl(&mut e, "S", "SCRAM-SHA-256");
+        let out = sasl(&mut e, "C", &STANDARD.encode("n,,n=foo,r=cnonce"));
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::Sasl { mode, data, .. } if mode == "D" && data.as_slice() == ["F"])),
+            "locked-out SCRAM is refused, not challenged: {out:?}"
+        );
+    }
+
     // The single reply datum of a C/D action (SCRAM messages are single-chunk).
     fn datum(out: &[NetAction]) -> (&str, &str) {
         match out.first() {
