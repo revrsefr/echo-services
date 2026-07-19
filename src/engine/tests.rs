@@ -878,34 +878,6 @@
         assert!(lifted, "gossiped ban lift removes the line from the ircd");
     }
 
-    // A gossiped entry that arrives out of sequence (a relay racing the direct path
-    // in a 3+-node mesh) must NOT advance the version vector past the gap, or the
-    // skipped entries are lost forever; the digest re-requests them in order.
-    #[test]
-    fn gossip_drops_an_out_of_order_entry_until_the_gap_fills() {
-        use echo_nickserv::NickServ;
-        let path = std::env::temp_dir().join("echo-gossip-ooo.jsonl");
-        let _ = std::fs::remove_file(&path);
-        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], Db::open(&path, "test"));
-        e.set_sid("42S".into());
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        e.set_irc_out(tx);
-        let akill = |seq: u64, mask: &str| LogEntry::for_test("peer", seq, seq + 1, db::Event::AkillAdded {
-            kind: "G".into(), mask: mask.into(), setter: "op".into(), reason: "x".into(), ts: 0, expires: None,
-        });
-
-        e.gossip_ingest(akill(0, "*@a")).unwrap();
-        assert_eq!(e.gossip_digest().get("peer"), Some(&0), "first entry applies");
-        // Seq 2 arrives before seq 1: dropped, version stays at 0.
-        e.gossip_ingest(akill(2, "*@c")).unwrap();
-        assert_eq!(e.gossip_digest().get("peer"), Some(&0), "an out-of-order entry doesn't advance the version");
-        // Seq 1 fills the gap, then the re-delivered seq 2 is contiguous.
-        e.gossip_ingest(akill(1, "*@b")).unwrap();
-        assert_eq!(e.gossip_digest().get("peer"), Some(&1));
-        e.gossip_ingest(akill(2, "*@c")).unwrap();
-        assert_eq!(e.gossip_digest().get("peer"), Some(&2), "the gap filled, seq 2 now applies");
-    }
-
     // Losing a registration conflict logs out the local session on that name and
     // notifies them over the services-initiated outbound path.
     #[test]

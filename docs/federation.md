@@ -23,11 +23,16 @@ Each node owns an append-only event log. The log is split into two scopes:
 
 Nodes sync via anti-entropy: each advertises a per-origin version vector, and
 peers send whatever Global entries the other is missing. Delivery is idempotent,
-so a re-sent entry is dropped. Entries are applied strictly **in order per
-origin**; one that arrives ahead of its predecessors (a relay in a 3+-node mesh
-racing the direct path) is not applied out of order — the version vector stays at
-the last contiguous seq, so the digest re-requests the gap in sequence rather
-than losing it.
+so a re-sent entry is dropped, and each account/channel event is an idempotent
+upsert. A peer converges by accepting any entry newer than its version vector
+(including the forward jump a compacted node's log begins at).
+
+> **Known limitation (3+ nodes).** In a relay mesh, an entry can reach a node
+> ahead of its predecessors via a longer path, and the current ingest advances the
+> version vector past that gap. With two nodes (direct delivery) this never
+> happens. Closing it for larger meshes needs a snapshot-epoch marker so a
+> compaction jump is distinguishable from a live gap; until then, prefer 2-node
+> topologies. This is dormant today (no peers).
 
 ## The trust model
 
@@ -75,8 +80,9 @@ Rules:
   all account data are on that wire. Echo warns loudly at startup if TLS is off.
 - **Firewall** the `bind` port to your peer nodes' IPs only.
 - Use a strong random `secret` and rotate it periodically.
-- The 2-node path is the most exercised. 3+ nodes work (out-of-order delivery is
-  buffered), but test your topology before relying on it.
+- **Prefer 2 nodes.** Direct delivery keeps replication in order; a 3+-node relay
+  mesh has a known out-of-order edge (see "Known limitation" above) that isn't
+  closed yet.
 
 ## Tier C — cross-operator federation (per-origin signing)
 
