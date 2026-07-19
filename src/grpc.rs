@@ -302,7 +302,7 @@ impl Accounts for AccountsService {
         // Fetch the verifier under the lock (cheap), then run the ~1s PBKDF2 on a
         // blocking thread — never hold the engine lock across it, or every login
         // freezes the whole daemon (IRC link, gossip, all RPCs).
-        let Some((account, verifier)) = self.engine.lock().await.scram_verifier(&msg.name) else {
+        let Some((account, verifier)) = self.engine.lock().await.authority_auth_begin(&msg.name) else {
             return Ok(Response::new(AuthenticateReply { status: PbStatus::Invalid as i32, account: String::new() }));
         };
         let password = msg.password;
@@ -311,6 +311,9 @@ impl Accounts for AccountsService {
         })
         .await
         .unwrap_or(false);
+        // Feed the brute-force backoff just like IDENTIFY, so the website login
+        // can't be used as an unthrottled password oracle against echo.
+        self.engine.lock().await.authority_note_auth(&msg.name, ok);
         if ok {
             Ok(Response::new(AuthenticateReply { status: PbStatus::Ok as i32, account }))
         } else {
@@ -619,6 +622,24 @@ mod tests {
             .unwrap()
             .into_inner();
         assert_eq!(bad.status, PbStatus::Invalid as i32);
+    }
+
+    // The website login feeds the same brute-force backoff as IRC IDENTIFY, so it
+    // can't be used as an unthrottled password oracle: after enough wrong guesses
+    // even the correct password is refused while the lockout holds.
+    #[tokio::test]
+    async fn authenticate_throttles_repeated_failures() {
+        let (engine, _tx) = engine_with("acct-throttle");
+        let svc = accounts_svc(engine);
+        svc.register(authed(RegisterRequest { name: "carol".into(), password: "hunter2".into(), email: String::new() }, "t")).await.unwrap();
+
+        for _ in 0..10 {
+            let out = svc.authenticate(authed(AuthenticateRequest { name: "carol".into(), password: "nope".into() }, "t")).await.unwrap().into_inner();
+            assert_eq!(out.status, PbStatus::Invalid as i32);
+        }
+        // Correct password, but the account is now locked out.
+        let locked = svc.authenticate(authed(AuthenticateRequest { name: "carol".into(), password: "hunter2".into() }, "t")).await.unwrap().into_inner();
+        assert_eq!(locked.status, PbStatus::Invalid as i32, "throttled even with the right password");
     }
 
     #[tokio::test]

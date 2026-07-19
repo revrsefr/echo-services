@@ -58,6 +58,11 @@ impl Engine {
 
     pub fn authority_register(&mut self, name: &str, creds: Option<db::Credentials>, email: Option<String>) -> AuthorityStatus {
         let Some(creds) = creds else { return AuthorityStatus::Internal };
+        // Re-check the freeze pre_check saw: defcon may have frozen registrations
+        // during the ~1s off-lock derivation between the two calls.
+        if self.db.registrations_frozen() || self.db.readonly() {
+            return AuthorityStatus::Invalid;
+        }
         // The IRC REGISTER rejects a FORBIDden email; a website write must too.
         if let Some(addr) = &email {
             if self.db.is_forbidden(echo_api::ForbidKind::Email, addr).is_some() {
@@ -87,6 +92,28 @@ impl Engine {
     /// on a blocking thread.
     pub fn scram_verifier(&self, name: &str) -> Option<(String, String)> {
         self.db.scram_lookup(name, "SCRAM-SHA-256").map(|(a, v)| (a.to_string(), v.to_string()))
+    }
+
+    /// gRPC login pre-check: apply the same guards the IRC IDENTIFY/SASL paths do
+    /// before the ~1s verify. Refuses a suspended or throttled account — the
+    /// website only sees a plain failure, so it can't tell these from a bad
+    /// password — and otherwise returns the canonical name + verifier to check
+    /// off the engine lock. Feed the result back through [`Self::authority_note_auth`].
+    pub fn authority_auth_begin(&self, name: &str) -> Option<(String, String)> {
+        if let Some(acc) = self.db.resolve_account(name) {
+            if self.db.is_suspended(acc) {
+                return None;
+            }
+        }
+        if self.db.auth_lockout(name).is_some() {
+            return None;
+        }
+        self.scram_verifier(name)
+    }
+
+    /// Record a gRPC login attempt in the brute-force backoff, exactly like IDENTIFY.
+    pub fn authority_note_auth(&mut self, name: &str, ok: bool) {
+        self.db.note_auth(name, ok);
     }
 
     pub fn authority_set_password(&mut self, account: &str, creds: Option<db::Credentials>) -> AuthorityStatus {
