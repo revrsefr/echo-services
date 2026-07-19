@@ -1858,6 +1858,7 @@ pub enum CertError {
     Invalid,    // not a plausible fingerprint
     InUse,      // already registered (to any account)
     NoAccount,  // target account does not exist
+    Full,       // the account's fingerprint list is at its cap
     Internal,   // persistence failed
 }
 
@@ -1866,6 +1867,7 @@ pub enum ChanError {
     Exists,         // channel already registered
     NoChannel,      // channel is not registered
     InvalidPattern, // a badword regex didn't compile
+    Full,           // the list (access / akick) is at its cap
     Internal,       // persistence failed
 }
 

@@ -632,8 +632,14 @@ impl Db {
             return Err(CertError::InUse);
         }
         let k = key(account);
-        if !self.accounts.contains_key(&k) {
+        let Some(acct) = self.accounts.get(&k) else {
             return Err(CertError::NoAccount);
+        };
+        // Cap the list so an account can't grow certfps (and the replicated log)
+        // without bound by looping CERT ADD with fabricated fingerprints.
+        const MAX_CERTFP: usize = 25;
+        if acct.certfps.len() >= MAX_CERTFP {
+            return Err(CertError::Full);
         }
         self.log.append(Event::CertAdded { account: account.to_string(), fp: fp.clone() }).map_err(|_| CertError::Internal)?;
         self.accounts.get_mut(&k).unwrap().certfps.push(fp);

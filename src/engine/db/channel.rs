@@ -1,5 +1,9 @@
 use super::*;
 
+// Per-channel cap on the access and akick lists, bounding the event-log growth an
+// op can drive (an event-sourced log is never reclaimed, even by later DEL).
+const MAX_CHAN_LIST: usize = 256;
+
 impl Db {
     /// Register `name` to `founder` (an account name).
     pub fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError> {
@@ -68,8 +72,12 @@ impl Db {
     /// Grant `account` a level ("op"/"voice") on `channel`.
     pub fn access_add(&mut self, channel: &str, account: &str, level: &str) -> Result<(), ChanError> {
         let k = key(channel);
-        if !self.channels.contains_key(&k) {
+        let Some(c0) = self.channels.get(&k) else {
             return Err(ChanError::NoChannel);
+        };
+        // Same unbounded-growth cap as akick; updating an existing entry is exempt.
+        if c0.access.len() >= MAX_CHAN_LIST && !c0.access.iter().any(|a| a.account.eq_ignore_ascii_case(account)) {
+            return Err(ChanError::Full);
         }
         self.log
             .append(Event::ChannelAccessAdd { channel: channel.to_string(), account: account.to_string(), level: level.to_string() })
@@ -99,8 +107,13 @@ impl Db {
     /// Add an auto-kick `mask` (with `reason`) to `channel`.
     pub fn akick_add(&mut self, channel: &str, mask: &str, reason: &str) -> Result<(), ChanError> {
         let k = key(channel);
-        if !self.channels.contains_key(&k) {
+        let Some(c0) = self.channels.get(&k) else {
             return Err(ChanError::NoChannel);
+        };
+        // Cap the list (and the append-only log) so an op can't grow it without
+        // bound; a replace of an existing mask doesn't count toward the limit.
+        if c0.akick.len() >= MAX_CHAN_LIST && !c0.akick.iter().any(|a| a.mask.eq_ignore_ascii_case(mask)) {
+            return Err(ChanError::Full);
         }
         self.log
             .append(Event::ChannelAkickAdd { channel: channel.to_string(), mask: mask.to_string(), reason: reason.to_string() })
