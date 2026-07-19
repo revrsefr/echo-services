@@ -22,6 +22,12 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     }
     for k in &sinfo.akick {
         let _ = db.akick_add(dest, &k.mask, &k.reason);
+        // Host-mask and passive-extban akicks are enforced only by a standing +b
+        // (echo can't match them itself); place it as AKICK ADD does, or the cloned
+        // entry sits inert on the target until someone runs ENFORCE.
+        if echo_api::ircd_enforced(&k.mask) {
+            ctx.channel_mode(me, dest, &format!("+b {}", k.mask));
+        }
     }
     let _ = db.set_desc(dest, &sinfo.desc);
     let _ = db.set_entrymsg(dest, &sinfo.entrymsg);
