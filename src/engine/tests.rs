@@ -5552,6 +5552,8 @@ fn confusable_register_alerts_the_staff_feed() {
             if from == "42SAAAAAO" && to == "#services" && text.contains("[REGISTER]") && text.contains("boss") && text.contains("look-alike"))),
         "staff feed alert: {out:?}"
     );
+    // ...and it's recorded to the searchable incident log (OperServ LOGSEARCH).
+    assert!(!e.network.search_incidents("look-alike", 10).is_empty(), "recorded for LOGSEARCH");
 }
 
 // Perf harness — not part of the normal suite. Run:

@@ -105,7 +105,11 @@ impl Engine {
         // Announce whatever this command changed to the staff audit channel.
         out.extend(self.audit_feed(audit_mark, &nick, account.as_deref()));
         for (cat, text) in alerts {
-            if let Some(line) = self.feed(&cat, format!("{} {text}", self.who(from))) {
+            let full = format!("{} {text}", self.who(from));
+            // Record to the searchable incident log (OperServ LOGSEARCH) and announce.
+            let now = self.now_secs();
+            self.network.record_incident(format!("[{cat}] {full}"), now);
+            if let Some(line) = self.feed(&cat, full) {
                 out.push(line);
             }
         }
