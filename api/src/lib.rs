@@ -2276,8 +2276,8 @@ pub fn confusable_reason(name: &str) -> Option<&'static str> {
     fn script_id(cp: u32) -> Option<(Script, u8)> {
         match cp {
             0x41..=0x5A | 0x61..=0x7A | 0xC0..=0x24F => Some((Script::Latin, 0)),
-            0x370..=0x3FF => Some((Script::Other, 1)), // Greek
-            0x400..=0x4FF => Some((Script::Other, 2)), // Cyrillic
+            0x370..=0x3FF | 0x1F00..=0x1FFF => Some((Script::Other, 1)), // Greek (+ Greek Extended)
+            0x400..=0x52F | 0x1C80..=0x1C8F | 0x2DE0..=0x2DFF | 0xA640..=0xA69F => Some((Script::Other, 2)), // Cyrillic (+ Supplement/Extended)
             0x530..=0x58F => Some((Script::Other, 3)), // Armenian
             0x590..=0x5FF => Some((Script::Other, 4)), // Hebrew
             0x600..=0x6FF => Some((Script::Other, 5)), // Arabic
@@ -2332,6 +2332,16 @@ pub fn confusable_reason(name: &str) -> Option<&'static str> {
             }
             if is_latin_confusable(cp) {
                 confusables += 1;
+            }
+        } else if ch.is_alphabetic() {
+            // A letter outside every listed range (e.g. a Cyrillic Supplement
+            // homoglyph, or any other non-Latin script) still counts as a distinct
+            // non-Latin alphabet — so a Latin + look-alike mix is caught rather than
+            // silently skipped. Monolingual text in such a script stays one bucket.
+            const UNKNOWN: u8 = 99;
+            letters += 1;
+            if !scripts.contains(&UNKNOWN) {
+                scripts.push(UNKNOWN);
             }
         }
     }
@@ -2465,12 +2475,13 @@ mod tests {
     fn confusable_names_rejected_but_french_passes() {
         // Genuine names pass — including accented French (which is Latin), other
         // monolingual scripts, digits/symbols, and emoji.
-        for ok in ["Zoé", "José", "Amélie", "sœur", "Noël", "#café", "crème-brûlée", "user_42", "привет", "日本語", "Ελληνικά", "Zoé😀", "#général"] {
+        for ok in ["Zoé", "José", "Amélie", "sœur", "Noël", "#café", "crème-brûlée", "user_42", "привет", "приве\u{0501}", "日本語", "Ελληνικά", "Zoé😀", "#général"] {
             assert!(confusable_reason(ok).is_none(), "should pass: {ok}");
         }
         // Look-alike / spoof names are rejected.
         for bad in [
             "аdmin",      // Cyrillic а + Latin — mixed script
+            "a\u{0501}ice", // Latin + Cyrillic-Supplement ԁ (U+0501) — an unlisted-block homoglyph mix
             "#frее",      // Latin fr + Cyrillic ее — mixed script
             "аеосх",      // all-Cyrillic Latin look-alikes — homoglyph
             "ad\u{200b}min", // zero-width space
