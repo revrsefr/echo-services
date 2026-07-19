@@ -148,6 +148,14 @@ impl Engine {
         if self.db.account(nick).is_some() {
             return AuthorityStatus::Invalid; // nick is itself a registered account
         }
+        // Same namespace guards as REGISTER: grouping reserves the nick, so a website
+        // can't group a look-alike/forbidden nick, and one account can't squat many.
+        if let Err(status) = self.authority_name_ok(nick) {
+            return status;
+        }
+        if self.db.grouped_nicks(account).len() >= 25 {
+            return AuthorityStatus::Invalid;
+        }
         match self.db.group_nick(nick, account) {
             Ok(()) => AuthorityStatus::Ok,
             Err(_) => AuthorityStatus::NotFound, // group_nick's only Err means the account doesn't exist

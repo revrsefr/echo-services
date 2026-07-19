@@ -11,6 +11,14 @@ pub fn handle(me: &str, from: &Sender, name: Option<&str>, ctx: &mut ServiceCtx,
         ctx.notice(me, from.uid, "A group name starts with \x02!\x02, e.g. \x02!staff\x02.");
         return;
     }
+    // Guard the group namespace like NickServ/ChanServ REGISTER: a look-alike group
+    // name (!аdmin) could impersonate a real one that opers grant channel access to.
+    if db.confusable_check_enabled() {
+        if let Some(reason) = echo_api::confusable_reason(name) {
+            ctx.notice(me, from.uid, reason);
+            return;
+        }
+    }
     let acc = acc.to_string();
     match db.group_register(name, &acc) {
         Ok(()) => ctx.notice(me, from.uid, format!("Group \x02{name}\x02 registered — you're the founder.")),

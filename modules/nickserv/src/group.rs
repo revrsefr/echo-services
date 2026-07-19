@@ -26,6 +26,24 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         ctx.notice(me, from.uid, format!("\x02{}\x02 is itself a registered account.", from.nick));
         return;
     }
+    // Guard the namespace like REGISTER does: grouping RESERVES from.nick (SET KILL
+    // enforces it), so a look-alike or FORBIDden nick must not be groupable, and one
+    // account can't squat an unbounded number of nicks (each grows the log forever).
+    if db.confusable_check_enabled() {
+        if let Some(reason) = echo_api::confusable_reason(from.nick) {
+            ctx.notice(me, from.uid, reason);
+            return;
+        }
+    }
+    if db.is_forbidden(echo_api::ForbidKind::Nick, from.nick).is_some() {
+        ctx.notice(me, from.uid, format!("The nick \x02{}\x02 is reserved and can't be grouped.", from.nick));
+        return;
+    }
+    const MAX_GROUPED: usize = 25;
+    if db.grouped_nicks(&canonical).len() >= MAX_GROUPED {
+        ctx.notice(me, from.uid, format!("\x02{canonical}\x02 already has the maximum of {MAX_GROUPED} grouped nicks."));
+        return;
+    }
     match db.group_nick(from.nick, &canonical) {
         Ok(()) => ctx.notice(me, from.uid, format!("Your nick \x02{}\x02 is now grouped to \x02{canonical}\x02.", from.nick)),
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
