@@ -171,24 +171,24 @@ impl Engine {
 
     // Get (or lazily create) a speaker's counters in a channel. get_mut avoids
     // any allocation for a channel/user already being tracked.
+    // Keyed by lowercase channel so insert (here) and removal (forget_chatter)
+    // always match, even if the ircd ever varies the channel's case.
     fn chatter_entry(&mut self, channel: &str, from: &str) -> &mut ChatterState {
-        if !self.chatter.contains_key(channel) {
-            self.chatter.insert(channel.to_string(), HashMap::new());
-        }
-        let bucket = self.chatter.get_mut(channel).unwrap();
-        if !bucket.contains_key(from) {
-            bucket.insert(from.to_string(), ChatterState::default());
-        }
-        bucket.get_mut(from).unwrap()
+        self.chatter
+            .entry(channel.to_ascii_lowercase())
+            .or_default()
+            .entry(from.to_string())
+            .or_default()
     }
 
     // Drop a user's chatter counters for a channel (on part), and the channel's
     // bucket once empty, so kicker state never outlives the people it tracks.
     pub(crate) fn forget_chatter(&mut self, channel: &str, uid: &str) {
-        if let Some(bucket) = self.chatter.get_mut(channel) {
+        let channel = channel.to_ascii_lowercase();
+        if let Some(bucket) = self.chatter.get_mut(&channel) {
             bucket.remove(uid);
             if bucket.is_empty() {
-                self.chatter.remove(channel);
+                self.chatter.remove(&channel);
             }
         }
     }
