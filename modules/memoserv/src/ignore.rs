@@ -10,6 +10,13 @@ pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut S
                 return;
             };
             let target = db.resolve_account(nick).map(str::to_string).unwrap_or_else(|| nick.to_string());
+            // Cap the list so it (and the replicated event log) can't grow without
+            // bound — mirrors AJOIN/CERT; unthrottled for identified users otherwise.
+            const MAX_IGNORE: usize = 50;
+            if db.memo_ignores(account).len() >= MAX_IGNORE {
+                ctx.notice(me, from.uid, format!("Your memo-ignore list is full (max {MAX_IGNORE})."));
+                return;
+            }
             if db.memo_ignore_add(account, &target) {
                 ctx.notice(me, from.uid, format!("Now ignoring memos from \x02{target}\x02."));
             } else {

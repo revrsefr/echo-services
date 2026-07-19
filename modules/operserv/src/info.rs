@@ -18,6 +18,12 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
 
 // `note` empty clears; otherwise it's the joined note words.
 fn set(me: &str, from: &Sender, target: Option<&str>, note: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
+    // Changing a staff note mutates account/channel data (an operator viewing it is
+    // fine, but not overwriting an administrator's note, e.g. a ban-evader flag).
+    if !from.privs.has(Priv::Admin) {
+        ctx.notice(me, from.uid, "Access denied — changing a staff note needs the \x02admin\x02 privilege.");
+        return;
+    }
     let Some(target) = target else {
         ctx.notice(me, from.uid, "Syntax: INFO ADD <target> <note> | INFO DEL <target>");
         return;
