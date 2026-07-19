@@ -243,8 +243,10 @@ pub enum AuthThen {
     // NickServ IDENTIFY: `uid` logs in, `agent` (NickServ uid) sends the notices,
     // `name` is what the user typed (for lockout/note_auth), `account` is canonical.
     Identify { uid: String, agent: String, name: String, account: String },
-    // SASL PLAIN: finish the SASL exchange for `client`, sourced from `agent`.
-    Sasl { agent: String, client: String, account: String },
+    // SASL: finish the exchange for `client`, sourced from `agent`. `password` is
+    // whether this was a password verify (feeds the brute-force throttle) vs a
+    // one-time keycard redemption (which must not touch the password lockout).
+    Sasl { agent: String, client: String, account: String, password: bool },
 }
 
 /// The ircd link layer. The engine only ever sees [`NetEvent`] / [`NetAction`];

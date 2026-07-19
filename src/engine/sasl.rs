@@ -74,7 +74,7 @@ impl Engine {
                                 vec![NetAction::DeferKeycard {
                                     token: passwd,
                                     account: account.clone(),
-                                    then: AuthThen::Sasl { agent: agent.clone(), client: client.clone(), account },
+                                    then: AuthThen::Sasl { agent: agent.clone(), client: client.clone(), account, password: false },
                                 }]
                             }
                             Some((authcid, passwd)) => match self.scram_verifier(&authcid) {
@@ -88,7 +88,7 @@ impl Engine {
                                 Some((account, verifier)) => vec![NetAction::DeferAuthenticate {
                                     verifier,
                                     password: passwd,
-                                    then: AuthThen::Sasl { agent: agent.clone(), client: client.clone(), account },
+                                    then: AuthThen::Sasl { agent: agent.clone(), client: client.clone(), account, password: true },
                                 }],
                                 None => {
                                     let mut out = mk("D", vec!["F".to_string()]);
@@ -134,6 +134,11 @@ impl Engine {
                 let (account, Some(verifier)) = (account.to_string(), scram::parse_verifier(verifier)) else {
                     return fail();
                 };
+                // Refuse while throttled, so SCRAM (Orbit's default mech) can't be used
+                // to brute-force past the IDENTIFY/PLAIN lockout.
+                if self.db.auth_lockout(&account).is_some() {
+                    return fail();
+                }
                 let (server_first, nonce) = scram::server_first(&cf.cnonce, &verifier);
                 let out = challenge(server_first.clone());
                 self.stash_sasl(client.to_string(), SaslSession::Scram {
@@ -153,11 +158,17 @@ impl Engine {
                 let Some(msg) = decode(chunk) else { return fail() };
                 match scram::verify_final(hash, &verifier, &client_first_bare, &server_first, &gs2_header, &nonce, &msg) {
                     Some(server_final) => {
+                        // Feed the same brute-force throttle as IDENTIFY/PLAIN: clear it
+                        // on success, grow the backoff on a wrong password.
+                        self.db.note_auth(&account, true);
                         let out = challenge(server_final);
                         self.stash_sasl(client.to_string(), SaslSession::Scram { hash, step: ScramStep::Ack { account } });
                         out
                     }
-                    None => fail(),
+                    None => {
+                        self.db.note_auth(&account, false);
+                        fail()
+                    }
                 }
             }
             // Client acknowledged our server-final ("+"); apply the login.

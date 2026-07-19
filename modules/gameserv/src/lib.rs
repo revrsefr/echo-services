@@ -165,7 +165,9 @@ impl GameServ {
             gt,
             meid,
             from.account.is_some(),
-            target_acc.clone().unwrap_or_else(|| target.to_string()),
+            // Key the target by the same identity ident() uses (account, else UID),
+            // or a guest target's acc_b (their nick) never matches their later meid.
+            target_acc.clone().unwrap_or_else(|| tuid.clone()),
             target_acc.is_some(),
             from.nick.to_string(),
             target.to_string(),
