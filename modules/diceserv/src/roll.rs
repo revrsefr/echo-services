@@ -27,9 +27,11 @@ pub fn handle(me: &str, from: &Sender, rest: &[&str], ctx: &mut ServiceCtx, exte
     };
 
     let mut rng = rand::thread_rng();
+    let mut spent = 0u64; // dice rolled across the whole repeat batch
     for i in 0..times {
         match expr::evaluate(body, &mut rng) {
             Ok(ev) => {
+                spent += ev.total;
                 let result = format_value(ev.value, round_result);
                 let prefix = if times > 1 { format!("[{}/{}] ", i + 1, times) } else { String::new() };
                 let detail = if extended && !ev.rolls.is_empty() {
@@ -38,6 +40,14 @@ pub fn handle(me: &str, from: &Sender, rest: &[&str], ctx: &mut ServiceCtx, exte
                     String::new()
                 };
                 ctx.notice(me, from.uid, format!("{prefix}\x02{body}\x02 = \x02{result}\x02{detail}"));
+                // Bound total work across the whole `N~` batch, not per-evaluate, so
+                // `25~99999d1+…` can't multiply the per-roll cap into tens of millions.
+                if spent >= expr::MAX_TOTAL {
+                    if i + 1 < times {
+                        ctx.notice(me, from.uid, "That's a lot of dice — stopping the repeats here.");
+                    }
+                    break;
+                }
             }
             Err(why) => {
                 ctx.notice(me, from.uid, format!("I couldn't roll \x02{body}\x02: {why}."));

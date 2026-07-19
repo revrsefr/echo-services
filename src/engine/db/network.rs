@@ -1,5 +1,17 @@
 use super::*;
 
+// Bound a moderation queue (reports / help tickets): when it's at the cap, drop the
+// oldest resolved entry — or the oldest entry if all are still open — so a flood
+// can't grow it without limit. Called before each push.
+fn prune_queue<T>(q: &mut Vec<T>, is_open: impl Fn(&T) -> bool) {
+    const MAX_QUEUE: usize = 2000;
+    if q.len() < MAX_QUEUE {
+        return;
+    }
+    let pos = q.iter().position(|e| !is_open(e)).unwrap_or(0);
+    q.remove(pos);
+}
+
 impl Db {
     /// Add (or refresh) a `kind` network ban. Returns whether it was newly added.
     pub fn akill_add(&mut self, kind: XlineKind, mask: &str, setter: &str, reason: &str, expires: Option<u64>) -> Result<bool, RegError> {
@@ -456,6 +468,7 @@ impl Db {
             return None;
         }
         self.report_times.insert(key, now);
+        prune_queue(&mut self.net.reports, |r| r.open);
         let id = self.net.report_seq;
         let _ = self.log.append(Event::ReportFiled { id, reporter: reporter.to_string(), target: target.to_string(), reason: reason.to_string(), ts: now });
         self.net.report_seq = id + 1;
@@ -511,6 +524,7 @@ impl Db {
             return None;
         }
         self.report_times.insert(tkey, now);
+        prune_queue(&mut self.net.help, |h| h.open);
         let id = self.net.help_seq;
         let _ = self.log.append(Event::HelpRequested { id, requester: requester.to_string(), message: message.to_string(), ts: now });
         self.net.help_seq = id + 1;

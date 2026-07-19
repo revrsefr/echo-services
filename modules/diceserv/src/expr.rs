@@ -9,7 +9,7 @@ use rand::Rng;
 // Guardrails so a single expression can't ask us to roll forever.
 const MAX_DICE: u64 = 99_999; // dice in one NdM roll
 const MAX_SIDES: u64 = 99_999; // sides on a die
-const MAX_TOTAL: u64 = 1_000_000; // dice rolled across the whole expression
+pub const MAX_TOTAL: u64 = 1_000_000; // dice rolled across the whole expression
 
 // One resolved dice roll, kept for the extended (EX) output.
 pub struct Roll {
@@ -21,6 +21,7 @@ pub struct Roll {
 pub struct Evaluated {
     pub value: f64,
     pub rolls: Vec<Roll>,
+    pub total: u64, // dice rolled in this evaluation, for cross-repeat budgeting
 }
 
 // ---- tokens ----------------------------------------------------------------
@@ -230,7 +231,7 @@ pub fn evaluate(input: &str, rng: &mut impl Rng) -> Result<Evaluated, String> {
     if !value.is_finite() {
         return Err("that doesn't come out to a real number".to_string());
     }
-    Ok(Evaluated { value, rolls })
+    Ok(Evaluated { value, rolls, total: total_dice })
 }
 
 fn eval(ast: &Ast, rng: &mut impl Rng, rolls: &mut Vec<Roll>, total: &mut u64) -> Result<f64, String> {

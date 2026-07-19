@@ -141,6 +141,14 @@ impl GameServ {
             ctx.notice(me, from.uid, "You cannot challenge yourself.");
             return;
         }
+        // Global cap: the per-user cap keys on a churnable identity (a guest's nick),
+        // so a single connection could otherwise cycle nicks to grow the games map
+        // without bound. Bounding the total makes that impossible regardless.
+        const MAX_GAMES_TOTAL: usize = 500;
+        if self.games.len() >= MAX_GAMES_TOTAL {
+            ctx.notice(me, from.uid, "The game server is at capacity right now. Please try again shortly.");
+            return;
+        }
         let meid = Self::ident(from).to_string();
         let mine = self.games.values().filter(|g| g.acc_a == meid || g.acc_b == meid).count();
         if mine >= MAX_GAMES_PER_USER {

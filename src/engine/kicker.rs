@@ -213,16 +213,25 @@ impl Engine {
         };
         let target_nick = target_raw.trim();
         if target_nick.is_empty() || target_nick.contains(' ') {
-            return Some(Vec::new());
+            return None; // not a real vote — let the line reach the flood/badword kicker
         }
         let threshold = self.db.channel(channel).map(|c| c.kickers.votekick).unwrap_or(0);
         let botnick = self.db.channel(channel).and_then(|c| c.assigned_bot.clone());
-        let (Some(botnick), true) = (botnick, threshold > 0) else { return Some(Vec::new()) };
-        let Some(botuid) = self.network.uid_by_nick(&botnick).map(str::to_string) else { return Some(Vec::new()) };
+        let (Some(botnick), true) = (botnick, threshold > 0) else { return None };
+        let Some(botuid) = self.network.uid_by_nick(&botnick).map(str::to_string) else { return None };
         let Some(target_uid) = self.network.uid_by_nick(target_nick).map(str::to_string) else {
             return Some(vec![NetAction::Privmsg { from: botuid, to: channel.to_string(), text: format!("There's no \x02{target_nick}\x02 here to vote on.") }]);
         };
         let target_display = self.network.nick_of(&target_uid).unwrap_or(target_nick).to_string();
+        // Never let the community vote out a service bot, an oper, or a user with
+        // channel op-access — moderation authority isn't a valid vote target.
+        let target_account = self.network.account_of(&target_uid).map(str::to_string);
+        let is_bot = self.bot_uids.values().any(|b| b == &target_uid);
+        let is_oper = target_account.as_deref().is_some_and(|a| self.oper_privs(a).any());
+        let is_chanop = target_account.as_deref().is_some_and(|a| self.db.channel(channel).is_some_and(|c| c.is_op(a)));
+        if is_bot || is_oper || is_chanop {
+            return Some(vec![NetAction::Privmsg { from: botuid.clone(), to: channel.to_string(), text: format!("\x02{target_display}\x02 can't be voted out.") }]);
+        }
         let now = self.now_secs();
         let key = (channel.to_ascii_lowercase(), target_display.to_ascii_lowercase());
 
