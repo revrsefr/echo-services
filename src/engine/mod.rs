@@ -639,11 +639,11 @@ impl Engine {
     }
 
     // Gossip pass-throughs to the account store, used by the replication layer.
-    pub fn gossip_digest(&self) -> HashMap<String, u64> {
+    pub fn gossip_digest(&self) -> HashMap<String, (u64, u64)> {
         self.db.version_vector()
     }
 
-    pub fn gossip_missing(&self, peer: &HashMap<String, u64>) -> Vec<LogEntry> {
+    pub fn gossip_missing(&self, peer: &HashMap<String, (u64, u64)>) -> Vec<LogEntry> {
         self.db.missing_for(peer)
     }
 

@@ -84,7 +84,7 @@
             hide_status: false, snotice: false, vhost: None, vhost_request: None, last_seen: ts, noexpire: false,
             expiry_warned: false, oper_note: None,
         };
-        let reg = |origin: &str, a: Account| LogEntry::for_test(origin, 1, 1, Event::AccountRegistered(Box::new(a)));
+        let reg = |origin: &str, a: Account| LogEntry::for_test(origin, 0, 1, Event::AccountRegistered(Box::new(a)));
 
         // Same account, re-homed to B with the SAME verifier — not a takeover.
         let mut db = Db::open(tmp("rehome-same"), "A");
@@ -108,7 +108,7 @@
             db.register_channel("#c", "alice").unwrap(); // local
             db.set_mlock("#c", "nt", "").unwrap(); // local
             // Only the account advances the version vector.
-            assert_eq!(db.version_vector().get("N1"), Some(&0), "channels don't advance the vector");
+            assert_eq!(db.version_vector().get("N1"), Some(&(0, 0)), "channels don't advance the vector");
             // A fresh peer is offered the account, never the channel.
             let missing = db.missing_for(&HashMap::new());
             assert_eq!(missing.len(), 1, "only the global account entry is offered: {missing:?}");
@@ -118,7 +118,7 @@
         let db = Db::open(&path, "N1");
         assert!(db.exists("alice"));
         assert_eq!(db.channel("#c").map(|c| c.lock_on.clone()), Some("nt".to_string()), "channel state persists locally");
-        assert_eq!(db.version_vector().get("N1"), Some(&0), "vector unchanged after replay");
+        assert_eq!(db.version_vector().get("N1"), Some(&(0, 0)), "vector unchanged after replay");
     }
 
     #[test]
@@ -399,7 +399,7 @@
         assert!(ev.is_empty());
         log.append(cert("x", "f1")).unwrap();
         log.append(cert("x", "f2")).unwrap();
-        assert_eq!(log.versions.get("nodeA"), Some(&1)); // seqs 0 then 1
+        assert_eq!(log.versions.get("nodeA"), Some(&(0, 1))); // epoch 0, seqs 0 then 1
         assert_eq!(log.lamport, 2);
         assert_eq!(log.next_seq(), 2);
     }
@@ -424,9 +424,9 @@
     #[test]
     fn ingest_is_idempotent() {
         let (mut log, _) = EventLog::open(tmp("ingest"), "local".into());
-        let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 5, sig: None, event: cert("x", "f") };
+        let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 5, epoch: 0, sig: None, event: cert("x", "f") };
         assert!(log.ingest(entry.clone()).unwrap().is_some(), "first ingest applies");
-        assert_eq!(log.versions.get("peer"), Some(&0));
+        assert_eq!(log.versions.get("peer"), Some(&(0, 0)));
         assert_eq!(log.lamport, 6, "receive rule: max(local, remote) + 1");
         assert!(log.ingest(entry).unwrap().is_none(), "duplicate ingest is a no-op");
     }
@@ -441,7 +441,7 @@
             name: "bob".into(), email: None,
             ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
         };
-        let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, sig: None, event: Event::AccountRegistered(Box::new(bob)) };
+        let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, epoch: 0, sig: None, event: Event::AccountRegistered(Box::new(bob)) };
         db.ingest(entry).unwrap();
         assert!(db.exists("bob"), "peer's account is present locally");
         assert!(db.exists("alice"), "local account still there");
@@ -580,6 +580,112 @@
         }
         assert!(b.exists("alice"), "B converges from a compacted node");
         assert_eq!(b.certfps("alice"), &[fp][..], "certs arrive folded into the snapshot");
+    }
+
+    fn akill(origin: &str, epoch: u64, seq: u64, mask: &str) -> LogEntry {
+        LogEntry::for_test_epoch(origin, epoch, seq, seq + 1, Event::AkillAdded {
+            kind: "G".into(), mask: mask.into(), setter: "op".into(), reason: "x".into(), ts: 0, expires: None,
+        })
+    }
+
+    // The snapshot-epoch fix, part 1: a peer holding an origin's PARTIAL state still
+    // converges across that origin's compaction (the forward epoch jump is accepted).
+    // This is exactly the case the earlier strict-ordering attempt broke.
+    #[test]
+    fn lagging_peer_converges_across_a_compaction() {
+        let mut a = Db::open(tmp("epochA"), "AAA");
+        a.scram_iterations = 4096;
+        a.register("u0", "pw", None).unwrap();
+        a.register("u1", "pw", None).unwrap();
+
+        // B syncs A's initial (epoch 0) state, then lags.
+        let mut b = Db::open(tmp("epochB"), "BBB");
+        b.scram_iterations = 4096;
+        for e in a.missing_for(&b.version_vector()) {
+            b.ingest(e).unwrap();
+        }
+        assert!(b.exists("u0") && b.exists("u1"), "B has A's initial state");
+
+        // A advances and COMPACTS (epoch 0 -> 1, seqs reset to 0).
+        a.register("u2", "pw", None).unwrap();
+        a.compact().unwrap();
+
+        // B, still at epoch 0, must converge across the epoch jump.
+        for e in a.missing_for(&b.version_vector()) {
+            b.ingest(e).unwrap();
+        }
+        assert!(b.exists("u2"), "B converges across A's compaction (epoch jump adopted)");
+    }
+
+    // Live-critical: after a compaction bumps the epoch and resets seqs, further local
+    // appends continue correctly, and the epoch/next-seq reconstruct across a reopen.
+    #[test]
+    fn append_after_compaction_continues_and_survives_reopen() {
+        let path = tmp("epochAppend");
+        {
+            let mut db = Db::open(&path, "AAA");
+            db.scram_iterations = 4096;
+            db.register("u0", "pw", None).unwrap();
+            db.compact().unwrap(); // epoch 0 -> 1, seqs reset
+            db.register("u1", "pw", None).unwrap();
+            assert!(db.exists("u0") && db.exists("u1"));
+        }
+        let mut db = Db::open(&path, "AAA");
+        db.scram_iterations = 4096;
+        db.register("u2", "pw", None).unwrap();
+        assert!(db.exists("u0") && db.exists("u1") && db.exists("u2"), "state survives compaction + reopen + append");
+        assert_eq!(db.version_vector().get("AAA").map(|c| c.0), Some(1), "epoch stays 1 after one compaction (reopen doesn't re-bump)");
+    }
+
+    // Durability: a compaction whose snapshot has NO Global events (only channels)
+    // must still persist the bumped epoch, or a restart resets it to 0 and later
+    // writes diverge from peers.
+    #[test]
+    fn epoch_survives_restart_after_an_all_local_compaction() {
+        let path = tmp("epochLocal");
+        {
+            let mut db = Db::open(&path, "AAA");
+            db.scram_iterations = 4096;
+            db.register_channel("#c", "founder").unwrap(); // Local only — no Global entry
+            db.compact().unwrap(); // epoch 0 -> 1, all-Local snapshot
+        }
+        let mut db = Db::open(&path, "AAA");
+        db.scram_iterations = 4096;
+        db.register("alice", "pw", None).unwrap(); // first Global entry after restart
+        assert_eq!(db.version_vector().get("AAA").map(|c| c.0), Some(1), "epoch recovered from Local entries, not reset to 0");
+    }
+
+    // The snapshot-epoch fix, part 2: an out-of-order relay WITHIN an epoch (a future
+    // seq ahead of ours) is deferred — the version vector doesn't advance past the
+    // gap — and the entries apply once the gap fills in order.
+    #[test]
+    fn out_of_order_within_an_epoch_is_deferred_then_fills() {
+        let mut b = Db::open(tmp("epochOOO"), "BBB");
+        b.ingest(akill("CCC", 0, 0, "*@a")).unwrap();
+        assert_eq!(b.version_vector().get("CCC"), Some(&(0, 0)));
+        // seq 2 before seq 1: dropped, version stays at (0,0).
+        b.ingest(akill("CCC", 0, 2, "*@c")).unwrap();
+        assert_eq!(b.version_vector().get("CCC"), Some(&(0, 0)), "a gap within the epoch is not applied");
+        // seq 1 fills the gap, then the re-delivered seq 2 is contiguous.
+        b.ingest(akill("CCC", 0, 1, "*@b")).unwrap();
+        assert_eq!(b.version_vector().get("CCC"), Some(&(0, 1)));
+        b.ingest(akill("CCC", 0, 2, "*@c")).unwrap();
+        assert_eq!(b.version_vector().get("CCC"), Some(&(0, 2)), "the gap filled, seq 2 applies");
+    }
+
+    // The snapshot-epoch fix, part 3: a higher epoch is adopted ONLY from its seq 0,
+    // so a relayed higher-epoch entry arriving before the snapshot's start is deferred.
+    #[test]
+    fn a_new_epoch_is_adopted_only_from_seq_zero() {
+        let mut b = Db::open(tmp("epochNew"), "BBB");
+        b.ingest(akill("CCC", 0, 0, "*@a")).unwrap();
+        assert_eq!(b.version_vector().get("CCC"), Some(&(0, 0)));
+        // Epoch 1 seq 3 arrives (relay ahead of the new snapshot's seq 0): deferred.
+        b.ingest(akill("CCC", 1, 3, "*@x")).unwrap();
+        assert_eq!(b.version_vector().get("CCC"), Some(&(0, 0)), "new epoch not adopted before its seq 0");
+        // Its seq 0 arrives: adopt the new epoch (the compaction reset).
+        b.ingest(akill("CCC", 1, 0, "*@y")).unwrap();
+        assert_eq!(b.version_vector().get("CCC"), Some(&(1, 0)), "new epoch adopted from seq 0");
     }
 
     // Tier C: a node accepts a signed entry from a trusted origin, and rejects one

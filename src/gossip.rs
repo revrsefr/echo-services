@@ -65,7 +65,7 @@ enum Msg {
     // A version vector. `reply` asks the peer to answer with its own digest, so a
     // node that dropped a push can pull back exactly what the peer is missing.
     Digest {
-        versions: HashMap<String, u64>,
+        versions: HashMap<String, (u64, u64)>,
         #[serde(default)]
         reply: bool,
     },

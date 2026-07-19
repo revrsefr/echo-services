@@ -23,16 +23,19 @@ Each node owns an append-only event log. The log is split into two scopes:
 
 Nodes sync via anti-entropy: each advertises a per-origin version vector, and
 peers send whatever Global entries the other is missing. Delivery is idempotent,
-so a re-sent entry is dropped, and each account/channel event is an idempotent
-upsert. A peer converges by accepting any entry newer than its version vector
-(including the forward jump a compacted node's log begins at).
+so a re-sent entry is dropped, and each account event is an idempotent upsert.
 
-> **Known limitation (3+ nodes).** In a relay mesh, an entry can reach a node
-> ahead of its predecessors via a longer path, and the current ingest advances the
-> version vector past that gap. With two nodes (direct delivery) this never
-> happens. Closing it for larger meshes needs a snapshot-epoch marker so a
-> compaction jump is distinguishable from a live gap; until then, prefer 2-node
-> topologies. This is dormant today (no peers).
+Entries are applied **strictly in order per origin**, tracked by a `(epoch, seq)`
+cursor. Each node's seq increments per event; a **compaction** bumps that node's
+`epoch` and resets its seq to 0. A receiver therefore distinguishes the two forward
+jumps cleanly:
+
+- **A relay gap** (same epoch, a seq ahead of the receiver's) is *deferred* — the
+  cursor doesn't advance, so the digest re-requests the missing seqs in order. This
+  keeps a 3+-node relay mesh from silently dropping updates.
+- **A compaction** (a higher epoch beginning at seq 0) is *adopted* — the receiver
+  takes the reset as the new authoritative baseline, so a peer converges across a
+  compaction even if it was mid-sync.
 
 ## The trust model
 
@@ -80,9 +83,9 @@ Rules:
   all account data are on that wire. Echo warns loudly at startup if TLS is off.
 - **Firewall** the `bind` port to your peer nodes' IPs only.
 - Use a strong random `secret` and rotate it periodically.
-- **Prefer 2 nodes.** Direct delivery keeps replication in order; a 3+-node relay
-  mesh has a known out-of-order edge (see "Known limitation" above) that isn't
-  closed yet.
+- 3+-node relay meshes converge correctly (out-of-order delivery is deferred and
+  re-requested; compaction is handled by the epoch cursor — see "How gossip
+  works"). The 2-node path is still the most exercised, so test your topology.
 
 ## Tier C — cross-operator federation (per-origin signing)
 

@@ -15,10 +15,11 @@ use super::Event;
 // The bytes a signature covers: everything that fixes the entry's identity and
 // content. `serde_json` is deterministic for the Global event set (all `Vec`/scalar
 // fields — no unordered maps), so sender and receiver derive the same bytes.
-fn payload(origin: &str, seq: u64, lamport: u64, event: &Event) -> Vec<u8> {
+fn payload(origin: &str, epoch: u64, seq: u64, lamport: u64, event: &Event) -> Vec<u8> {
     let mut v = Vec::new();
     v.extend_from_slice(origin.as_bytes());
     v.push(0);
+    v.extend_from_slice(&epoch.to_le_bytes());
     v.extend_from_slice(&seq.to_le_bytes());
     v.extend_from_slice(&lamport.to_le_bytes());
     v.push(0);
@@ -51,19 +52,19 @@ impl Signing {
     }
 
     // Sign an entry we're authoring; base64 of the 64-byte signature.
-    pub fn sign(&self, origin: &str, seq: u64, lamport: u64, event: &Event) -> String {
-        B64.encode(self.signer.sign(&payload(origin, seq, lamport, event)).to_bytes())
+    pub fn sign(&self, origin: &str, epoch: u64, seq: u64, lamport: u64, event: &Event) -> String {
+        B64.encode(self.signer.sign(&payload(origin, epoch, seq, lamport, event)).to_bytes())
     }
 
     // True if `sig` is a valid signature over the entry by the trusted key for its
     // origin. False if the origin isn't trusted, the signature is missing, or it
     // doesn't verify (`verify_strict` also rejects malleable/degenerate signatures).
-    pub fn verify(&self, origin: &str, seq: u64, lamport: u64, event: &Event, sig: Option<&str>) -> bool {
+    pub fn verify(&self, origin: &str, epoch: u64, seq: u64, lamport: u64, event: &Event, sig: Option<&str>) -> bool {
         let Some(vk) = self.trust.get(origin) else { return false };
         let Some(sig) = sig else { return false };
         let Ok(raw) = B64.decode(sig.trim()) else { return false };
         let Ok(bytes) = <[u8; 64]>::try_from(raw.as_slice()) else { return false };
-        vk.verify_strict(&payload(origin, seq, lamport, event), &Signature::from_bytes(&bytes)).is_ok()
+        vk.verify_strict(&payload(origin, epoch, seq, lamport, event), &Signature::from_bytes(&bytes)).is_ok()
     }
 }
 
@@ -88,13 +89,14 @@ mod tests {
         let trust = HashMap::from([("A".to_string(), pubk)]);
         let s = Signing::new(&sec, &trust).unwrap();
 
-        let sig = s.sign("A", 3, 4, &ev());
-        assert!(s.verify("A", 3, 4, &ev(), Some(&sig)), "a genuine signature verifies");
+        let sig = s.sign("A", 5, 3, 4, &ev());
+        assert!(s.verify("A", 5, 3, 4, &ev(), Some(&sig)), "a genuine signature verifies");
         // Any change to the covered fields invalidates it.
-        assert!(!s.verify("A", 4, 4, &ev(), Some(&sig)), "a different seq is rejected");
-        assert!(!s.verify("A", 3, 4, &Event::AccountDropped { account: "bob".into() }, Some(&sig)), "a different event is rejected");
-        assert!(!s.verify("A", 3, 4, &ev(), None), "a missing signature is rejected");
-        assert!(!s.verify("B", 3, 4, &ev(), Some(&sig)), "an untrusted origin is rejected");
+        assert!(!s.verify("A", 5, 4, 4, &ev(), Some(&sig)), "a different seq is rejected");
+        assert!(!s.verify("A", 6, 3, 4, &ev(), Some(&sig)), "a different epoch is rejected");
+        assert!(!s.verify("A", 5, 3, 4, &Event::AccountDropped { account: "bob".into() }, Some(&sig)), "a different event is rejected");
+        assert!(!s.verify("A", 5, 3, 4, &ev(), None), "a missing signature is rejected");
+        assert!(!s.verify("B", 5, 3, 4, &ev(), Some(&sig)), "an untrusted origin is rejected");
     }
 
     #[test]
@@ -104,7 +106,7 @@ mod tests {
         // We trust A's key; B tries to forge an entry claiming origin A.
         let s = Signing::new(&sec_a, &HashMap::from([("A".to_string(), pub_a)])).unwrap();
         let forger = Signing::new(&sec_b, &HashMap::new()).unwrap();
-        let forged = forger.sign("A", 1, 1, &ev());
-        assert!(!s.verify("A", 1, 1, &ev(), Some(&forged)), "a signature from the wrong key is rejected");
+        let forged = forger.sign("A", 0, 1, 1, &ev());
+        assert!(!s.verify("A", 0, 1, 1, &ev(), Some(&forged)), "a signature from the wrong key is rejected");
     }
 }

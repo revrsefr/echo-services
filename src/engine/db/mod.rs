@@ -740,6 +740,16 @@ impl ChannelInfo {
 // and order it — the origin node, its per-node sequence (`origin:seq` is the
 // cluster-unique id), and a Lamport clock for causal ordering across nodes.
 // Lines written before these existed default them in.
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+// Order two per-origin cursors: is `incoming` strictly newer than `have`? Epoch
+// dominates (a compaction bumps it), then seq within an epoch.
+fn cursor_newer(have: (u64, u64), incoming: (u64, u64)) -> bool {
+    incoming.0 > have.0 || (incoming.0 == have.0 && incoming.1 > have.1)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
     #[serde(default)]
@@ -748,6 +758,12 @@ pub struct LogEntry {
     seq: u64,
     #[serde(default)]
     lamport: u64,
+    // Compaction generation for `origin`. Bumped each time that node compacts, which
+    // resets its seq to 0; lets a peer tell a compaction's forward jump (higher epoch,
+    // seq 0) from a live relay gap (same epoch, seq ahead). Omitted while 0, so a
+    // never-compacted / single-node log is byte-identical to before this field existed.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    epoch: u64,
     // Optional Ed25519 signature (base64) over the entry, for Tier C federation. When
     // signing is off it's None and `skip_serializing_if` omits it entirely, so the log
     // format is byte-identical to an unsigned deployment. Must precede the flattened
@@ -761,7 +777,10 @@ pub struct LogEntry {
 #[cfg(test)]
 impl LogEntry {
     pub(crate) fn for_test(origin: &str, seq: u64, lamport: u64, event: Event) -> Self {
-        LogEntry { origin: origin.to_string(), seq, lamport, sig: None, event }
+        LogEntry { origin: origin.to_string(), seq, lamport, epoch: 0, sig: None, event }
+    }
+    pub(crate) fn for_test_epoch(origin: &str, epoch: u64, seq: u64, lamport: u64, event: Event) -> Self {
+        LogEntry { origin: origin.to_string(), seq, lamport, epoch, sig: None, event }
     }
 }
 
@@ -792,7 +811,8 @@ pub struct EventLog {
     path: PathBuf,
     origin: String,
     lamport: u64,                   // logical clock, ticked on every event
-    versions: HashMap<String, u64>, // per-origin highest seq applied (version vector)
+    epoch: u64,                     // our origin's current compaction generation
+    versions: HashMap<String, (u64, u64)>, // per-origin (epoch, seq) cursor (version vector)
     entries: Vec<LogEntry>,         // full log, kept so peers can pull what they lack
     outbound: Option<broadcast::Sender<LogEntry>>, // push newly committed entries to peers
     // Operator lockdown (OperServ SET READONLY): while set, locally-authored
@@ -810,7 +830,7 @@ pub struct EventLog {
 
 impl EventLog {
     fn open(path: PathBuf, origin: String) -> (Self, Vec<Event>) {
-        let mut log = Self { path, origin, lamport: 0, versions: HashMap::new(), entries: Vec::new(), outbound: None, readonly: false, file: None, signing: None };
+        let mut log = Self { path, origin, lamport: 0, epoch: 0, versions: HashMap::new(), entries: Vec::new(), outbound: None, readonly: false, file: None, signing: None };
         if let Ok(data) = std::fs::read_to_string(&log.path) {
             for line in data.lines().filter(|l| !l.trim().is_empty()) {
                 match serde_json::from_str::<LogEntry>(line) {
@@ -829,16 +849,35 @@ impl EventLog {
     // Roll the clock and version vector forward over an entry. Local (channel)
     // entries carry no gossip identity, so they never touch the vector or clock.
     fn absorb(&mut self, entry: &LogEntry) {
+        // Recover our compaction epoch from ANY of our own entries, including Local
+        // ones — a compaction whose snapshot carried no Global events (a node with
+        // only channels, or with external accounts) would otherwise lose the epoch on
+        // restart, reset our seqs, and permanently diverge subsequent writes from peers.
+        if entry.origin == self.origin {
+            self.epoch = self.epoch.max(entry.epoch);
+        }
         if entry.event.scope() != Scope::Global {
             return;
         }
         self.lamport = self.lamport.max(entry.lamport);
-        self.versions.entry(entry.origin.clone()).and_modify(|s| *s = (*s).max(entry.seq)).or_insert(entry.seq);
+        let cur = (entry.epoch, entry.seq);
+        self.versions
+            .entry(entry.origin.clone())
+            .and_modify(|c| {
+                if cursor_newer(*c, cur) {
+                    *c = cur;
+                }
+            })
+            .or_insert(cur);
     }
 
-    // Seq the next locally-authored event will carry (0-based, per our origin).
+    // Seq the next locally-authored event will carry (0-based within the current
+    // epoch, per our origin). Compaction resets this to 0 by bumping the epoch.
     fn next_seq(&self) -> u64 {
-        self.versions.get(&self.origin).map_or(0, |s| s + 1)
+        match self.versions.get(&self.origin) {
+            Some(&(e, s)) if e == self.epoch => s + 1,
+            _ => 0,
+        }
     }
 
     // Persist a locally-authored event. Global events get the next seq + a ticked
@@ -853,10 +892,10 @@ impl EventLog {
         let entry = if global {
             self.lamport = self.lamport.saturating_add(1);
             let seq = self.next_seq();
-            let sig = self.signing.as_ref().map(|s| s.sign(&self.origin, seq, self.lamport, &event));
-            LogEntry { origin: self.origin.clone(), seq, lamport: self.lamport, sig, event }
+            let sig = self.signing.as_ref().map(|s| s.sign(&self.origin, self.epoch, seq, self.lamport, &event));
+            LogEntry { origin: self.origin.clone(), seq, lamport: self.lamport, epoch: self.epoch, sig, event }
         } else {
-            LogEntry { origin: self.origin.clone(), seq: 0, lamport: 0, sig: None, event }
+            LogEntry { origin: self.origin.clone(), seq: 0, lamport: 0, epoch: 0, sig: None, event }
         };
         if let Err(e) = self.persist(&entry) {
             // Surface the real cause (disk full, permissions, ...) here at the
@@ -865,7 +904,7 @@ impl EventLog {
             return Err(e);
         }
         if global {
-            self.versions.insert(entry.origin.clone(), entry.seq);
+            self.versions.insert(entry.origin.clone(), (entry.epoch, entry.seq));
         }
         // Push every committed entry to subscribers: the gossip forwarder filters to
         // Global before sending to a peer, but the gRPC directory stream wants the
@@ -890,24 +929,28 @@ impl EventLog {
         // signature from a trusted origin key, or it's rejected before it can touch
         // the version vector. Inert when signing is off (flat-trust / Tier B).
         if let Some(s) = &self.signing {
-            if !s.verify(&entry.origin, entry.seq, entry.lamport, &entry.event, entry.sig.as_deref()) {
+            if !s.verify(&entry.origin, entry.epoch, entry.seq, entry.lamport, &entry.event, entry.sig.as_deref()) {
                 return Ok(None);
             }
         }
-        // Accept any entry newer than what we hold for this origin. A forward jump is
-        // legitimate here: a peer syncing from a COMPACTED node receives seqs that
-        // start well above 0 (the intermediate ones were folded into the snapshot),
-        // and the fold is an idempotent upsert. NOTE: this cannot detect an out-of-
-        // order relay in a 3+-node mesh (an entry delivered ahead of its predecessors
-        // advances the version past the gap). Fixing that safely needs a snapshot-epoch
-        // marker so a compaction jump is distinguishable from a live gap — deferred;
-        // see docs/federation.md. Not reachable today (no gossip peers).
-        if self.versions.get(&entry.origin).is_some_and(|&s| entry.seq <= s) {
-            return Ok(None); // already have it
+        // Epoch-aware, strictly in-order acceptance. This distinguishes a COMPACTION's
+        // forward jump (a higher epoch beginning at seq 0 — accept and adopt the reset)
+        // from a live RELAY GAP in a 3+-node mesh (same epoch, a seq ahead of ours —
+        // drop, so the version vector never advances past the gap and the digest
+        // re-requests it in order). An entry from a superseded older epoch is dropped.
+        let (e, s) = (entry.epoch, entry.seq);
+        let accept = match self.versions.get(&entry.origin).copied() {
+            None => s == 0,                           // a new origin: start only from seq 0
+            Some((eb, sb)) if e == eb => s == sb + 1, // contiguous within the epoch
+            Some((eb, _)) if e > eb => s == 0,        // a compaction: adopt its seq-0 reset
+            Some(_) => false,                         // older epoch, already superseded
+        };
+        if !accept {
+            return Ok(None);
         }
         self.persist(&entry)?;
         self.lamport = self.lamport.max(entry.lamport).saturating_add(1); // Lamport receive rule
-        self.versions.insert(entry.origin.clone(), entry.seq);
+        self.versions.insert(entry.origin.clone(), (e, s));
         let event = entry.event.clone();
         self.notify(&entry);
         self.entries.push(entry);
@@ -938,17 +981,20 @@ impl EventLog {
     }
 
     // Our version vector: highest seq applied per origin.
-    fn version_vector(&self) -> HashMap<String, u64> {
+    fn version_vector(&self) -> HashMap<String, (u64, u64)> {
         self.versions.clone()
     }
 
-    // Global entries a peer is missing, given the version vector it advertised.
+    // Global entries a peer is missing, given the (epoch, seq) cursor it advertised.
     // Local (channel) entries are never offered — they don't leave the node.
-    fn missing_for(&self, peer: &HashMap<String, u64>) -> Vec<LogEntry> {
+    fn missing_for(&self, peer: &HashMap<String, (u64, u64)>) -> Vec<LogEntry> {
         self.entries
             .iter()
             .filter(|e| e.event.scope() == Scope::Global)
-            .filter(|e| peer.get(&e.origin).is_none_or(|&s| e.seq > s))
+            .filter(|e| match peer.get(&e.origin) {
+                None => true,
+                Some(&h) => cursor_newer(h, (e.epoch, e.seq)),
+            })
             .cloned()
             .collect()
     }
@@ -987,20 +1033,32 @@ impl EventLog {
     // theirs on the next sync. Written to a temp file and renamed, so a crash
     // leaves the old log.
     fn compact(&mut self, events: Vec<Event>) -> std::io::Result<()> {
-        let mut seq = self.next_seq();
+        // An empty snapshot means no state to preserve; skip so the bumped epoch is
+        // never written onto an empty file (where a restart couldn't recover it).
+        if events.is_empty() {
+            return Ok(());
+        }
+        // A new compaction generation: bump the epoch and restart seqs at 0. A peer
+        // sees the higher epoch beginning at seq 0 and adopts it (accepting the jump)
+        // rather than mistaking it for a live gap.
+        self.epoch = self.epoch.saturating_add(1);
+        let mut seq = 0u64;
         let mut last_global = None;
         let mut snapshot = Vec::with_capacity(events.len());
         for event in events {
             let entry = if event.scope() == Scope::Global {
                 self.lamport = self.lamport.saturating_add(1);
-                // Compaction re-seqs entries, so any signature must be recomputed.
-                let sig = self.signing.as_ref().map(|s| s.sign(&self.origin, seq, self.lamport, &event));
-                let e = LogEntry { origin: self.origin.clone(), seq, lamport: self.lamport, sig, event };
+                // Compaction re-seqs (and re-epochs) entries, so any signature must be recomputed.
+                let sig = self.signing.as_ref().map(|s| s.sign(&self.origin, self.epoch, seq, self.lamport, &event));
+                let e = LogEntry { origin: self.origin.clone(), seq, lamport: self.lamport, epoch: self.epoch, sig, event };
                 last_global = Some(seq);
                 seq += 1;
                 e
             } else {
-                LogEntry { origin: self.origin.clone(), seq: 0, lamport: 0, sig: None, event }
+                // Stamp Local entries with the epoch too, so it survives a restart even
+                // when the snapshot carries no Global events (Local entries never gossip,
+                // so this only feeds `absorb`'s epoch recovery).
+                LogEntry { origin: self.origin.clone(), seq: 0, lamport: 0, epoch: self.epoch, sig: None, event }
             };
             snapshot.push(entry);
         }
@@ -1018,7 +1076,7 @@ impl EventLog {
         self.file = None;
         self.versions = HashMap::new();
         if let Some(last) = last_global {
-            self.versions.insert(self.origin.clone(), last);
+            self.versions.insert(self.origin.clone(), (self.epoch, last));
         }
         self.entries = snapshot;
         Ok(())
@@ -1453,13 +1511,13 @@ impl Db {
         self.log.events_from(mark)
     }
 
-    /// Our version vector, advertised to peers so they can send what we lack.
-    pub fn version_vector(&self) -> HashMap<String, u64> {
+    /// Our version vector — a per-origin (epoch, seq) cursor — advertised to peers.
+    pub fn version_vector(&self) -> HashMap<String, (u64, u64)> {
         self.log.version_vector()
     }
 
     /// The log entries a peer is missing, given the version vector it sent.
-    pub fn missing_for(&self, peer: &HashMap<String, u64>) -> Vec<LogEntry> {
+    pub fn missing_for(&self, peer: &HashMap<String, (u64, u64)>) -> Vec<LogEntry> {
         self.log.missing_for(peer)
     }
 
