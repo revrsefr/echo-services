@@ -59,6 +59,7 @@ base64 = "0.22"
 sha2 = "0.10"
 hmac = "0.12"
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
 subtle = "2"
 regex = "1"
 anyhow = "1"

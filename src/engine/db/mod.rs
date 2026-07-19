@@ -31,6 +31,7 @@ mod account;
 mod channel;
 mod event;
 mod network;
+pub mod sign;
 mod store;
 
 pub use event::Event;
@@ -747,6 +748,12 @@ pub struct LogEntry {
     seq: u64,
     #[serde(default)]
     lamport: u64,
+    // Optional Ed25519 signature (base64) over the entry, for Tier C federation. When
+    // signing is off it's None and `skip_serializing_if` omits it entirely, so the log
+    // format is byte-identical to an unsigned deployment. Must precede the flattened
+    // event so serde extracts it as a named field before the event captures the rest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sig: Option<String>,
     #[serde(flatten)]
     event: Event,
 }
@@ -754,7 +761,7 @@ pub struct LogEntry {
 #[cfg(test)]
 impl LogEntry {
     pub(crate) fn for_test(origin: &str, seq: u64, lamport: u64, event: Event) -> Self {
-        LogEntry { origin: origin.to_string(), seq, lamport, event }
+        LogEntry { origin: origin.to_string(), seq, lamport, sig: None, event }
     }
 }
 
@@ -796,11 +803,14 @@ pub struct EventLog {
     // event (~20% of the append cost on real disk). Reset to None after compact()
     // replaces the file, since the old handle would point at a discarded inode.
     file: Option<std::fs::File>,
+    // Tier C federation: when set, Global entries this node authors are signed and
+    // ingested Global entries must carry a signature from a trusted origin key.
+    signing: Option<sign::Signing>,
 }
 
 impl EventLog {
     fn open(path: PathBuf, origin: String) -> (Self, Vec<Event>) {
-        let mut log = Self { path, origin, lamport: 0, versions: HashMap::new(), entries: Vec::new(), outbound: None, readonly: false, file: None };
+        let mut log = Self { path, origin, lamport: 0, versions: HashMap::new(), entries: Vec::new(), outbound: None, readonly: false, file: None, signing: None };
         if let Ok(data) = std::fs::read_to_string(&log.path) {
             for line in data.lines().filter(|l| !l.trim().is_empty()) {
                 match serde_json::from_str::<LogEntry>(line) {
@@ -842,9 +852,11 @@ impl EventLog {
         let global = event.scope() == Scope::Global;
         let entry = if global {
             self.lamport = self.lamport.saturating_add(1);
-            LogEntry { origin: self.origin.clone(), seq: self.next_seq(), lamport: self.lamport, event }
+            let seq = self.next_seq();
+            let sig = self.signing.as_ref().map(|s| s.sign(&self.origin, seq, self.lamport, &event));
+            LogEntry { origin: self.origin.clone(), seq, lamport: self.lamport, sig, event }
         } else {
-            LogEntry { origin: self.origin.clone(), seq: 0, lamport: 0, event }
+            LogEntry { origin: self.origin.clone(), seq: 0, lamport: 0, sig: None, event }
         };
         if let Err(e) = self.persist(&entry) {
             // Surface the real cause (disk full, permissions, ...) here at the
@@ -873,6 +885,14 @@ impl EventLog {
         // of a channel that was registered on a network you're not part of.
         if entry.event.scope() != Scope::Global {
             return Ok(None);
+        }
+        // Tier C: when signing is configured, a Global entry must carry a valid
+        // signature from a trusted origin key, or it's rejected before it can touch
+        // the version vector. Inert when signing is off (flat-trust / Tier B).
+        if let Some(s) = &self.signing {
+            if !s.verify(&entry.origin, entry.seq, entry.lamport, &entry.event, entry.sig.as_deref()) {
+                return Ok(None);
+            }
         }
         // Apply strictly in per-origin sequence. The FIRST entry ever seen from an
         // origin sets the baseline — a peer syncing from a COMPACTED node starts
@@ -908,6 +928,10 @@ impl EventLog {
 
     fn set_outbound(&mut self, tx: broadcast::Sender<LogEntry>) {
         self.outbound = Some(tx);
+    }
+
+    fn set_signing(&mut self, signing: sign::Signing) {
+        self.signing = Some(signing);
     }
 
     // The events appended at or after `mark`, cloned. Used by the audit feed to
@@ -973,12 +997,14 @@ impl EventLog {
         for event in events {
             let entry = if event.scope() == Scope::Global {
                 self.lamport = self.lamport.saturating_add(1);
-                let e = LogEntry { origin: self.origin.clone(), seq, lamport: self.lamport, event };
+                // Compaction re-seqs entries, so any signature must be recomputed.
+                let sig = self.signing.as_ref().map(|s| s.sign(&self.origin, seq, self.lamport, &event));
+                let e = LogEntry { origin: self.origin.clone(), seq, lamport: self.lamport, sig, event };
                 last_global = Some(seq);
                 seq += 1;
                 e
             } else {
-                LogEntry { origin: self.origin.clone(), seq: 0, lamport: 0, event }
+                LogEntry { origin: self.origin.clone(), seq: 0, lamport: 0, sig: None, event }
             };
             snapshot.push(entry);
         }
@@ -1407,6 +1433,12 @@ impl Db {
     /// Wire the log to a broadcast channel; each new entry is pushed to peers.
     pub fn set_outbound(&mut self, tx: broadcast::Sender<LogEntry>) {
         self.log.set_outbound(tx);
+    }
+
+    /// Enable Tier C gossip signing: sign Global entries we author, and verify
+    /// ingested Global entries against the trusted per-origin keys.
+    pub fn set_gossip_signing(&mut self, signing: sign::Signing) {
+        self.log.set_signing(signing);
     }
 
     /// The number of entries in the log, a mark to later diff against.

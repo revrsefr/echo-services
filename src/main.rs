@@ -75,6 +75,15 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // `echo --gen-gossip-key` prints a fresh Ed25519 keypair for Tier C federation.
+    if matches!(argv.get(1).map(String::as_str), Some("--gen-gossip-key") | Some("gen-gossip-key")) {
+        let (secret, public) = engine::db::sign::generate();
+        println!("# gossip signing keypair — keep `key` secret; publish `public` to your peers");
+        println!("key    = \"{secret}\"");
+        println!("public = \"{public}\"");
+        return Ok(());
+    }
+
     let path = std::env::args().nth(1).unwrap_or_else(|| "config.toml".to_string());
     let cfg = config::Config::load(&path)?;
     let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -185,6 +194,18 @@ async fn main() -> Result<()> {
     let mut db = engine::db::Db::open("echo.db.jsonl", &cfg.server.sid);
     db.scram_iterations = cfg.server.scram_iterations;
     db.set_outbound(gossip_tx.clone());
+    if let Some(sig) = cfg.gossip.as_ref().and_then(|g| g.signing.as_ref()) {
+        match engine::db::sign::Signing::new(&sig.key, &sig.trust) {
+            Ok(s) => {
+                db.set_gossip_signing(s);
+                tracing::info!(trusted = sig.trust.len(), "gossip signing enabled (Tier C per-origin signatures)");
+            }
+            Err(e) => {
+                tracing::error!(%e, "invalid [gossip.signing] config");
+                std::process::exit(1);
+            }
+        }
+    }
     db.set_email_enabled(cfg.email.is_some());
     db.set_external_accounts(cfg.auth.as_ref().is_some_and(|a| a.external));
     db.set_confusable_check(cfg.register.confusable_check);

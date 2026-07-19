@@ -325,6 +325,18 @@ pub struct Gossip {
     // Mutual-TLS for the peer link. Absent = plaintext.
     #[serde(default)]
     pub tls: Option<Tls>,
+    // Tier C per-origin signing (see docs/federation.md). Absent = flat trust.
+    #[serde(default)]
+    pub signing: Option<Signing>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Signing {
+    // This node's base64 Ed25519 secret key (from `echo --gen-gossip-key`).
+    pub key: String,
+    // origin SID -> its base64 Ed25519 public key. Include your own SID plus each peer's.
+    #[serde(default)]
+    pub trust: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

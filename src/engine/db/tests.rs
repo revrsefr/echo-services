@@ -424,7 +424,7 @@
     #[test]
     fn ingest_is_idempotent() {
         let (mut log, _) = EventLog::open(tmp("ingest"), "local".into());
-        let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 5, event: cert("x", "f") };
+        let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 5, sig: None, event: cert("x", "f") };
         assert!(log.ingest(entry.clone()).unwrap().is_some(), "first ingest applies");
         assert_eq!(log.versions.get("peer"), Some(&0));
         assert_eq!(log.lamport, 6, "receive rule: max(local, remote) + 1");
@@ -441,7 +441,7 @@
             name: "bob".into(), email: None,
             ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
         };
-        let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, event: Event::AccountRegistered(Box::new(bob)) };
+        let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, sig: None, event: Event::AccountRegistered(Box::new(bob)) };
         db.ingest(entry).unwrap();
         assert!(db.exists("bob"), "peer's account is present locally");
         assert!(db.exists("alice"), "local account still there");
@@ -580,6 +580,50 @@
         }
         assert!(b.exists("alice"), "B converges from a compacted node");
         assert_eq!(b.certfps("alice"), &[fp][..], "certs arrive folded into the snapshot");
+    }
+
+    // Tier C: a node accepts a signed entry from a trusted origin, and rejects one
+    // from an origin it doesn't trust — even if that origin signed it validly.
+    #[test]
+    fn gossip_signing_accepts_trusted_and_rejects_untrusted() {
+        use super::sign::{self, Signing};
+        use std::collections::HashMap;
+        let (a_sec, a_pub) = sign::generate();
+        let (b_sec, _) = sign::generate();
+        let (c_sec, _) = sign::generate();
+
+        let mut a = Db::open(tmp("signA"), "AAA");
+        a.scram_iterations = 4096;
+        a.set_gossip_signing(Signing::new(&a_sec, &HashMap::new()).unwrap());
+        a.register("alice", "pw", None).unwrap();
+
+        // B trusts A's public key (and its own, though unused here).
+        let mut b = Db::open(tmp("signB"), "BBB");
+        b.scram_iterations = 4096;
+        b.set_gossip_signing(Signing::new(&b_sec, &HashMap::from([("AAA".to_string(), a_pub)])).unwrap());
+        for entry in a.missing_for(&b.version_vector()) {
+            b.ingest(entry).unwrap();
+        }
+        assert!(b.exists("alice"), "a signed entry from a trusted origin is accepted");
+
+        // C signs validly with its own key, but B doesn't trust origin CCC.
+        let mut c = Db::open(tmp("signC"), "CCC");
+        c.scram_iterations = 4096;
+        c.set_gossip_signing(Signing::new(&c_sec, &HashMap::new()).unwrap());
+        c.register("mallory", "pw", None).unwrap();
+        for entry in c.missing_for(&b.version_vector()) {
+            b.ingest(entry).unwrap();
+        }
+        assert!(!b.exists("mallory"), "an entry from an untrusted origin is rejected");
+    }
+
+    // With signing off, the serialized log carries no `sig` field — byte-identical
+    // to a pre-signing deployment (the compatibility guarantee).
+    #[test]
+    fn unsigned_entries_omit_the_sig_field() {
+        let entry = LogEntry::for_test("A", 0, 1, Event::AccountDropped { account: "x".into() });
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(!json.contains("\"sig\""), "no sig field when unsigned: {json}");
     }
 
     // Channels register (case-insensitively unique), persist, and drop.
