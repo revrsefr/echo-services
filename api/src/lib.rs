@@ -485,6 +485,21 @@ pub struct ServiceCtx {
     // engine drains these to the log channel, prefixing the sender's nick/host —
     // e.g. a blocked look-alike registration attempt.
     pub alerts: Vec<(String, String)>,
+    // Login-attempt outcomes for the auth audit feed. The engine drains these
+    // through its own auth_report (which resolves the client's source), so a
+    // module can report a reject the engine's verify path never sees — e.g. a
+    // failed IDENTIFY against a cert-only account with no password verifier.
+    pub auth_reports: Vec<AuthReport>,
+}
+
+// A login-attempt outcome a module hands back for the auth audit feed.
+#[derive(Default)]
+pub struct AuthReport {
+    pub ok: bool,
+    pub account: Option<String>,
+    pub mech: String,
+    pub client: String,
+    pub reason: Option<String>,
 }
 
 impl ServiceCtx {
@@ -534,6 +549,19 @@ impl ServiceCtx {
     // prefixes the sender's nick/host and routes it to the log channel.
     pub fn alert(&mut self, category: impl Into<String>, text: impl Into<String>) {
         self.alerts.push((category.into(), text.into()));
+    }
+
+    // Report a login-attempt outcome to the auth audit feed. For a reject the
+    // engine's own verify path won't produce (a failed IDENTIFY against an account
+    // with no password verifier), so operators see it like any other failed login.
+    pub fn auth_report(&mut self, ok: bool, account: Option<&str>, mech: &str, client: &str, reason: Option<&str>) {
+        self.auth_reports.push(AuthReport {
+            ok,
+            account: account.map(String::from),
+            mech: mech.to_string(),
+            client: client.to_string(),
+            reason: reason.map(String::from),
+        });
     }
 
     // A channel/target message sourced from one of our pseudo-clients (e.g. a

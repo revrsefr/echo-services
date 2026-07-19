@@ -113,6 +113,13 @@ impl Engine {
                 out.push(line);
             }
         }
+        // Login-attempt outcomes a command reported (e.g. a failed IDENTIFY against
+        // a cert-only account), routed through the same auth feed as the verify path.
+        for r in std::mem::take(&mut ctx.auth_reports) {
+            if let Some(line) = self.auth_report(r.ok, r.account.as_deref(), &r.mech, &r.client, r.reason.as_deref()) {
+                out.push(line);
+            }
+        }
         self.apply_dict_limit(&mut out);
         self.apply_msg_style(&mut out);
         out

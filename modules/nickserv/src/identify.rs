@@ -49,8 +49,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     match db.scram_verifier(account_name) {
         None => {
             // Exists but has no verifier (e.g. cert-only) — a password can't match.
+            // Report it to the auth feed too, or probing a cert-only account is a
+            // blind spot the deferred wrong-password path doesn't have.
             db.note_auth(account_name, false);
             ctx.count("nickserv.identify_fail");
+            ctx.auth_report(false, Some(account_name), "NickServ IDENTIFY", from.uid, Some("no password set"));
             ctx.fail(me, from.uid, "IDENTIFY", "INVALID_CREDENTIALS", "Invalid password. Please try again.");
         }
         Some((account, verifier)) => {
