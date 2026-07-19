@@ -6,7 +6,38 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use subtle::ConstantTimeEq;
+
+// Caps to keep an untrusted (or not-yet-authenticated) peer from exhausting us: a
+// single line can't grow an unbounded buffer, and the handshake can't hang forever.
+const MAX_GOSSIP_LINE: usize = 1 << 20; // 1 MiB per framed message
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+
+// Read one newline-delimited message, bounded to `max` bytes so a peer streaming
+// without a newline can't OOM the single-process daemon. `Ok(None)` on EOF.
+async fn read_line_capped<R: AsyncBufRead + Unpin>(reader: &mut R, max: usize) -> anyhow::Result<Option<String>> {
+    let mut buf = Vec::new();
+    loop {
+        let mut byte = [0u8; 1];
+        if reader.read(&mut byte).await? == 0 {
+            return Ok((!buf.is_empty()).then(|| String::from_utf8_lossy(&buf).into_owned()));
+        }
+        if byte[0] == b'\n' {
+            return Ok(Some(String::from_utf8_lossy(&buf).into_owned()));
+        }
+        buf.push(byte[0]);
+        if buf.len() > max {
+            anyhow::bail!("gossip line exceeded {max} bytes");
+        }
+    }
+}
+
+// Constant-time equality for the shared secret, so a connecting peer can't learn it
+// byte-by-byte from a timing side channel.
+fn secret_eq(a: &str, b: &str) -> bool {
+    a.len() == b.len() && a.as_bytes().ct_eq(b.as_bytes()).into()
+}
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
@@ -154,7 +185,7 @@ where
     S: AsyncRead + AsyncWrite + Send + 'static,
 {
     let (read, mut write) = tokio::io::split(stream);
-    let mut reader = BufReader::new(read).lines();
+    let mut reader = BufReader::new(read);
 
     // A single writer task owns the socket; the reader and the ticker feed it.
     let (tx, mut rx) = mpsc::channel::<String>(1024);
@@ -168,17 +199,19 @@ where
 
     // Handshake: send our hello, require a matching secret back.
     let _ = send(&tx, &Msg::Hello { secret: secret.clone(), origin }).await;
-    match reader.next_line().await? {
-        Some(line) => match serde_json::from_str::<Msg>(&line) {
-            Ok(Msg::Hello { secret: s, .. }) if s == secret => {}
+    let hello = tokio::time::timeout(HANDSHAKE_TIMEOUT, read_line_capped(&mut reader, MAX_GOSSIP_LINE)).await;
+    match hello {
+        Ok(Ok(Some(line))) => match serde_json::from_str::<Msg>(&line) {
+            Ok(Msg::Hello { secret: s, .. }) if secret_eq(&s, &secret) => {}
             _ => {
                 writer.abort();
                 anyhow::bail!("bad gossip handshake");
             }
         },
-        None => {
+        _ => {
+            // EOF, read error, oversized line, or the handshake timed out.
             writer.abort();
-            anyhow::bail!("peer closed before handshake");
+            anyhow::bail!("peer failed to complete the handshake");
         }
     }
 
@@ -235,7 +268,7 @@ where
 
     // Answer a peer's digest with what it lacks; apply the entries it sends us.
     let result = loop {
-        match reader.next_line().await {
+        match read_line_capped(&mut reader, MAX_GOSSIP_LINE).await {
             Ok(Some(line)) => match serde_json::from_str::<Msg>(&line) {
                 Ok(Msg::Digest { versions, reply }) => {
                     let missing = engine.lock().await.gossip_missing(&versions);
@@ -255,7 +288,7 @@ where
                 _ => {}
             },
             Ok(None) => break Ok(()),
-            Err(e) => break Err(e.into()),
+            Err(e) => break Err(e),
         }
     };
 
