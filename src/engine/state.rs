@@ -249,6 +249,10 @@ impl Network {
         self.users.get(uid).map(|u| u.host.as_str())
     }
 
+    pub fn ident_of(&self, uid: &str) -> Option<&str> {
+        self.users.get(uid).map(|u| u.ident.as_str())
+    }
+
     // A user's identity for extban / ban matching (nick, ident, hosts, ip, gecos,
     // account). `None` if we don't know the uid.
     pub fn ban_target<'a>(&'a self, uid: &str) -> Option<echo_api::BanTarget<'a>> {
@@ -576,6 +580,9 @@ impl NetView for Network {
     }
     fn host_of(&self, uid: &str) -> Option<&str> {
         Network::host_of(self, uid)
+    }
+    fn ident_of(&self, uid: &str) -> Option<&str> {
+        Network::ident_of(self, uid)
     }
     fn account_of(&self, uid: &str) -> Option<&str> {
         Network::account_of(self, uid)

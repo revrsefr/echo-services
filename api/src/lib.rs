@@ -640,6 +640,13 @@ impl ServiceCtx {
         });
     }
 
+    pub fn set_ident(&mut self, uid: &str, ident: &str) {
+        self.actions.push(NetAction::SetIdent {
+            uid: uid.to_string(),
+            ident: ident.to_string(),
+        });
+    }
+
     // Apply a vhost spec to a user: `ident@host` sets both the ident and host,
     // a bare `host` just the host.
     pub fn apply_vhost(&mut self, uid: &str, spec: &str) {
@@ -2142,6 +2149,8 @@ pub trait NetView {
     fn uid_by_nick(&self, nick: &str) -> Option<&str>;
     fn nick_of(&self, uid: &str) -> Option<&str>;
     fn host_of(&self, uid: &str) -> Option<&str>;
+    // A user's real ident (username), for restoring after an `ident@host` vhost.
+    fn ident_of(&self, uid: &str) -> Option<&str>;
     fn account_of(&self, uid: &str) -> Option<&str>;
     // A user's identity for extban / AKICK matching, if known.
     fn ban_target(&self, uid: &str) -> Option<BanTarget<'_>>;
