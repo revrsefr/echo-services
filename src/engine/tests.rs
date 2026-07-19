@@ -343,6 +343,24 @@
         assert!(matches!(e.db.certfp_add("bar", fp), Err(db::CertError::InUse)), "a fingerprint maps to one account");
     }
 
+    // An identified caller manages certs without re-entering a password.
+    #[test]
+    fn cert_works_for_identified_user_without_password() {
+        let mut e = engine_with("certid", "foo", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let fp = "aabbccddeeff00112233445566778899";
+        let cert = |e: &mut Engine, t: String| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t });
+
+        let add = cert(&mut e, format!("CERT ADD {fp}"));
+        assert!(add.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Added"))), "add without password: {add:?}");
+        let list = cert(&mut e, "CERT LIST".into());
+        assert!(list.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(fp))), "list without password: {list:?}");
+        let del = cert(&mut e, format!("CERT DEL {fp}"));
+        assert!(del.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Removed"))), "del without password: {del:?}");
+        assert!(e.db.certfp_owner(fp).is_none(), "fingerprint removed");
+    }
+
     // Standard replies gate: off (default) degrades a service FAIL to a notice so
     // nothing is lost; on, the structured FAIL survives with command + code.
     #[test]
