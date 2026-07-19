@@ -5601,7 +5601,7 @@ fn bench_engine_throughput() {
     // enough that ordinary lines never trip it, so we time the per-message CHECK
     // cost (the realistic case), not the kick path.
     let (mut e, _p) = kicker_fixture("bench_hot");
-    let mut bs = |e: &mut Engine, t: &str| {
+    let bs = |e: &mut Engine, t: &str| {
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
     };
     bs(&mut e, "KICK #c CAPS ON");

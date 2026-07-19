@@ -781,9 +781,9 @@
             db.set_email("carol", Some("c@x.io".into())).unwrap();
             db.news_add(NewsKind::Logon, "welcome all", "oper");
             db.news_add(NewsKind::Oper, "staff notice", "oper");
-            let rid = db.report_file("carol", "bob", "spam").unwrap();
+            let rid = db.report_file("carol", "carol.host", "bob", "spam").unwrap();
             db.report_close(rid);
-            let hid = db.help_request("carol", "help me").unwrap();
+            let hid = db.help_request("carol", "carol.host", "help me").unwrap();
             db.help_take(hid, "bob");
             db.oper_grant("carol", vec!["admin".into()], None);
             db.session_except_add("*@trusted.host", 10, "trusted");
