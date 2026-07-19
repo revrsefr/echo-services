@@ -49,6 +49,9 @@ pub struct Config {
     // not load and echo makes no outbound lookup requests. Opt-in on purpose.
     #[serde(default)]
     pub dictserv: Option<Dict>,
+    // Registration policy. Absent = defaults (the look-alike guard is on).
+    #[serde(default)]
+    pub register: Register,
     // Which InspIRCd matching-extbans AKICK may use. Absent = every extban echo
     // knows (full compatibility). List `enabled` to restrict it — e.g. drop the
     // ones your ircd doesn't provide.
@@ -83,6 +86,22 @@ pub struct Dict {
 
 fn default_dict_server() -> String {
     "dict.org:2628".to_string()
+}
+
+// Registration policy.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
+pub struct Register {
+    // Reject look-alike / mixed-script / invisible registration names. On by
+    // default; turn it off for a community that legitimately uses mixed or
+    // non-Latin names. Reloadable with REHASH.
+    pub confusable_check: bool,
+}
+
+impl Default for Register {
+    fn default() -> Self {
+        Self { confusable_check: true }
+    }
 }
 
 // Account-authority configuration.

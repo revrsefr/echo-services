@@ -320,6 +320,9 @@ impl Store for Db {
     fn external_accounts(&self) -> bool {
         Db::external_accounts(self)
     }
+    fn confusable_check_enabled(&self) -> bool {
+        self.confusable_check
+    }
     fn set_account_note(&mut self, account: &str, note: Option<String>) -> bool {
         Db::set_account_note(self, account, note)
     }

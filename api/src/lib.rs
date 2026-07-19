@@ -1935,6 +1935,11 @@ pub trait Store {
     // Whether account identity is owned externally (website); when true, IRC
     // can't register or change credentials — it only authenticates.
     fn external_accounts(&self) -> bool;
+    // Whether REGISTER should reject look-alike / mixed-script names ([register]
+    // confusable_check). Defaults on; a mock store need not override it.
+    fn confusable_check_enabled(&self) -> bool {
+        true
+    }
     // Staff notes on accounts/channels (oper-only), shown in INFO to operators.
     fn set_account_note(&mut self, account: &str, note: Option<String>) -> bool;
     fn account_note(&self, account: &str) -> Option<String>;
@@ -2175,6 +2180,12 @@ pub fn confusable_reason(name: &str) -> Option<&'static str> {
     fn is_invisible(cp: u32) -> bool {
         matches!(cp, 0xAD | 0x180E | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060 | 0x2066..=0x2069 | 0xFEFF)
     }
+    // "Styled" Latin that renders as normal-looking ASCII: fullwidth (Ａｄｍｉｎ),
+    // mathematical alphanumerics (𝐚𝐝𝐦𝐢𝐧), and enclosed/circled/squared letters.
+    // Nobody types a whole name this way except to imitate one.
+    fn is_fancy_latin(cp: u32) -> bool {
+        matches!(cp, 0xFF21..=0xFF5A | 0x1D400..=0x1D7FF | 0x1F130..=0x1F189 | 0x24B6..=0x24E9 | 0x2460..=0x24FF)
+    }
     // Non-Latin letters that look like an ASCII Latin letter — the homoglyphs a
     // spoofer swaps in. Catches an all-look-alike name that pure script-mixing
     // would miss (e.g. an entirely-Cyrillic name that reads as Latin).
@@ -2197,6 +2208,9 @@ pub fn confusable_reason(name: &str) -> Option<&'static str> {
         let cp = ch as u32;
         if is_invisible(cp) {
             return Some("That name uses invisible or text-direction characters. Please choose a plain name.");
+        }
+        if is_fancy_latin(cp) {
+            return Some("That name uses styled look-alike letters (fullwidth or symbol fonts). Please choose a plain name.");
         }
         if let Some((script, id)) = script_id(cp) {
             letters += 1;
@@ -2349,6 +2363,8 @@ mod tests {
             "аеосх",      // all-Cyrillic Latin look-alikes — homoglyph
             "ad\u{200b}min", // zero-width space
             "\u{202e}nimda", // right-to-left override
+            "Ａｄｍｉｎ",     // fullwidth Latin
+            "\u{1D41A}\u{1D41D}\u{1D426}\u{1D422}\u{1D427}", // 𝐚𝐝𝐦𝐢𝐧 mathematical bold
         ] {
             assert!(confusable_reason(bad).is_some(), "should be rejected: {bad}");
         }

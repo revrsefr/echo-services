@@ -186,6 +186,7 @@ async fn main() -> Result<()> {
     db.set_outbound(gossip_tx.clone());
     db.set_email_enabled(cfg.email.is_some());
     db.set_external_accounts(cfg.auth.as_ref().is_some_and(|a| a.external));
+    db.set_confusable_check(cfg.register.confusable_check);
     match cfg.extban.as_ref().map(|e| e.enabled.as_slice()) {
         Some(list) if !list.is_empty() => {
             db.set_extban_enabled(list.to_vec());

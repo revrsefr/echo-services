@@ -338,6 +338,11 @@ impl Db {
         self.external_accounts = on;
     }
 
+    /// Toggle the look-alike / mixed-script REGISTER guard (from `[register]`).
+    pub fn set_confusable_check(&mut self, on: bool) {
+        self.confusable_check = on;
+    }
+
     /// The network defence level (5 = normal, 1 = full lockdown).
     pub fn defcon(&self) -> u8 {
         self.defcon

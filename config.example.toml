@@ -103,3 +103,12 @@ protocol = 1206            # InspIRCd link protocol version (1206 = insp4, 1205 
 # channel is unaffected; keep this off if you don't want echo talking to dict.org.
 # [dictserv]
 # server = "dict.org:2628"
+
+# Registration policy. The look-alike guard refuses REGISTER of a nick or channel
+# that mixes alphabets (Cyrillic "аdmin"), is built from homoglyphs or styled
+# (fullwidth/math) letters imitating Latin, or hides invisible/bidi characters —
+# while genuine monolingual text (including accented French) passes. It's on by
+# default; turn it off for a community that legitimately uses mixed/non-Latin
+# names. Reloadable with OperServ REHASH.
+# [register]
+# confusable_check = false
