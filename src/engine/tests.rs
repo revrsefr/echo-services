@@ -2479,6 +2479,71 @@
         assert!(parted, "the assigned bot parts the expired channel");
     }
 
+    // An emptied channel is destroyed on the ircd; echo must forget it so a later
+    // channel of the same name can't inherit its stale `+k` key (or membership).
+    #[test]
+    fn emptied_channel_is_forgotten_so_no_stale_key_leaks() {
+        let path = std::env::temp_dir().join("echo-emptykey.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut e = Engine::new(vec![], Db::open(&path, "42S"));
+        e.network.channel_join("#x", "000AAAAAB", true);
+        e.network.channel_join("#x", "000AAAAAC", false);
+        e.network.set_channel_key("#x", Some("secret".into()));
+        assert_eq!(e.network.channel_key("#x"), Some("secret"));
+
+        e.network.channel_part("#x", "000AAAAAB");
+        e.network.channel_part("#x", "000AAAAAC"); // now empty
+        assert_eq!(e.network.channel_key("#x"), None, "stale key must not linger after the channel empties");
+
+        e.network.channel_join("#x", "000AAAAAD", true); // recreated, no key
+        assert_eq!(e.network.channel_key("#x"), None, "recreated channel starts keyless");
+
+        // The quit path prunes an emptied channel too.
+        e.network.set_channel_key("#x", Some("k2".into()));
+        e.network.user_quit("000AAAAAD");
+        assert_eq!(e.network.channel_key("#x"), None, "a quit that empties a channel forgets it");
+    }
+
+    // The gRPC login path applies the same guards as IRC IDENTIFY: a suspended or
+    // throttled account is refused before the verify (and the throttle clears on success).
+    #[test]
+    fn authority_auth_begin_refuses_suspended_or_throttled() {
+        let path = std::env::temp_dir().join("echo-authbegin.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("carol", "hunter2", None).unwrap();
+        db.register("dave", "hunter2", None).unwrap();
+        let mut e = Engine::new(vec![], db);
+        assert!(e.authority_auth_begin("carol").is_some(), "a normal account resolves a verifier");
+
+        e.db.suspend_account("carol", "staff", "x", None).unwrap();
+        assert!(e.authority_auth_begin("carol").is_none(), "suspended account refused");
+
+        for _ in 0..10 {
+            e.db.note_auth("dave", false);
+        }
+        assert!(e.authority_auth_begin("dave").is_none(), "throttled account refused");
+        e.db.note_auth("dave", true);
+        assert!(e.authority_auth_begin("dave").is_some(), "cleared after a success");
+    }
+
+    // groups_founded bounds group registration: it counts only groups the account founds.
+    #[test]
+    fn groups_founded_counts_only_a_founders_own_groups() {
+        let path = std::env::temp_dir().join("echo-groupcount.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.register("boss", "password1", None).unwrap();
+        db.register("other", "password1", None).unwrap();
+        db.group_register("!a", "boss").unwrap();
+        db.group_register("!b", "boss").unwrap();
+        db.group_register("!c", "other").unwrap();
+        assert_eq!(db.groups_founded("boss"), 2);
+        assert_eq!(db.groups_founded("other"), 1);
+        assert_eq!(db.groups_founded("nobody"), 0);
+    }
+
     // BOT DEL * removes every bot at once, quitting each.
     #[test]
     fn botserv_mass_bot_removal() {
