@@ -2354,7 +2354,9 @@ pub fn parse_duration(s: &str) -> Option<u64> {
         c if c.is_ascii_digit() => (s, 1),
         _ => return None,
     };
-    num.parse::<u64>().ok().map(|n| n * mult)
+    // Checked so an out-of-range duration is rejected (None) rather than wrapping to
+    // a garbage/near-instant expiry in a release build.
+    num.parse::<u64>().ok().and_then(|n| n.checked_mul(mult))
 }
 
 // Case-insensitive hostmask glob: `*` (any run) and `?` (one char).

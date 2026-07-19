@@ -96,7 +96,10 @@ fn parse_definition(raw: &str) -> Option<String> {
             break;
         }
     }
-    let body: String = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    // Drop control characters an untrusted/MITM'd DICT server could embed (CTCP
+    // \x01, color/format \x02\x03, NUL truncation) before this is spoken into a
+    // channel. split_whitespace already removed CR/LF/TAB.
+    let body: String = body.split_whitespace().collect::<Vec<_>>().join(" ").chars().filter(|c| !c.is_control()).collect();
     if body.is_empty() {
         return None;
     }

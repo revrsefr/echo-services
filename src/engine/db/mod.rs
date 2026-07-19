@@ -1258,6 +1258,11 @@ impl Db {
             if c.noexpire {
                 snapshot.push(Event::ChannelNoExpire { channel: c.name.clone(), on: true });
             }
+            if c.expiry_warned {
+                // Preserve the "warning already sent" flag, or compaction re-arms it
+                // and the idle channel is warned again on the next sweep.
+                snapshot.push(Event::ChannelExpiryWarned { channel: c.name.clone() });
+            }
             if c.settings != ChanSettings::default() {
                 snapshot.push(Event::ChannelSettingsSet { channel: c.name.clone(), settings: c.settings });
             }

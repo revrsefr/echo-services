@@ -21,6 +21,12 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             return;
         }
     };
+    // A menu offer can outlive a later FORBID; re-check at grant time like the
+    // request/approve/default paths, or a stale offer bypasses the impersonation guard.
+    if db.vhost_is_forbidden(&host) {
+        ctx.notice(me, from.uid, format!("\x02{host}\x02 isn't allowed here. Please choose another."));
+        return;
+    }
     match db.set_vhost(account, &host, "offer", None) {
         Ok(()) => {
             ctx.apply_vhost(from.uid, &host);

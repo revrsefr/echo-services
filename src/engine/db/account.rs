@@ -734,6 +734,7 @@ impl Db {
             let _ = self.log.append(Event::AccountSeen { account: account.to_string(), ts: now });
             if let Some(a) = self.accounts.get_mut(&k) {
                 a.last_seen = a.last_seen.max(now);
+                a.expiry_warned = false; // mirror the AccountSeen fold, or a re-active account never re-warns
             }
         }
     }
@@ -747,6 +748,7 @@ impl Db {
             let _ = self.log.append(Event::ChannelUsed { channel: channel.to_string(), ts: now });
             if let Some(c) = self.channels.get_mut(&k) {
                 c.last_used = c.last_used.max(now);
+                c.expiry_warned = false; // mirror the ChannelUsed fold, or a re-active channel never re-warns
             }
         }
     }
