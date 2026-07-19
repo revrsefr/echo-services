@@ -44,7 +44,7 @@ impl Xline {
             ctx.notice(me, from.uid, "Please give a reason.");
             return;
         }
-        if too_wide(&mask) {
+        if too_wide(&mask, self.kind == XlineKind::Rline) {
             ctx.notice(me, from.uid, "That mask is too wide — it would match almost everyone.");
             return;
         }
@@ -169,9 +169,12 @@ fn norm_channel(input: &str) -> Option<String> {
 
 // A mask whose every meaningful character is a wildcard would match nearly all.
 // A leading channel prefix is ignored so `#*` counts as too wide.
-fn too_wide(mask: &str) -> bool {
+fn too_wide(mask: &str, is_regex: bool) -> bool {
     let body = mask.strip_prefix('#').or_else(|| mask.strip_prefix('&')).unwrap_or(mask);
-    body.is_empty() || body.chars().all(|c| c == '*' || c == '?' || c == '.' || c == '@')
+    // A realname REGEX that's a bare quantifier over any-char (.+ / .* / .) matches
+    // everyone, so treat '+' as a wildcard too — otherwise `SNLINE ADD .+` bans the
+    // whole network (glob '*'/'?' and '.' are already caught).
+    body.is_empty() || body.chars().all(|c| c == '*' || c == '?' || c == '.' || c == '@' || (is_regex && c == '+'))
 }
 
 fn human_secs(secs: u64) -> String {

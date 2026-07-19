@@ -33,7 +33,7 @@ pub fn handle_session(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceC
 }
 
 pub fn handle_exception(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
-    if !from.privs.has(Priv::Oper) {
+    if !from.privs.has(Priv::Admin) {
         ctx.notice(me, from.uid, "Access denied — EXCEPTION needs the \x02admin\x02 privilege.");
         return;
     }
