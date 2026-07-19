@@ -2068,7 +2068,15 @@
         // A user with no access is kicked.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "rando".into(), host: "h".into(), ip: "0.0.0.0".into() });
         let out = e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#c".into(), op: false });
-        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { uid, channel, .. } if uid == "000AAAAAC" && channel == "#c")), "no-access user kicked: {out:?}");
+        let kick = out.iter().find_map(|a| match a {
+            NetAction::Kick { uid, channel, reason, .. } if uid == "000AAAAAC" && channel == "#c" => Some(reason.clone()),
+            _ => None,
+        });
+        let reason = kick.expect(&format!("no-access user kicked: {out:?}"));
+        // The restricted kick must be incident-stamped like every other removal —
+        // it early-returns, so this proves the return routes through finish() and
+        // reaches stamp_incidents (which appends the searchable [#id] tag).
+        assert!(reason.contains("[#"), "restricted kick is incident-stamped: {reason:?}");
     }
 
     // ChanServ SET AUTOOP OFF suppresses auto-op on join (on by default).

@@ -1161,7 +1161,7 @@ impl Engine {
     pub fn handle(&mut self, event: NetEvent) -> Vec<NetAction> {
         // Lift any kicker bans whose BANEXPIRE has elapsed (cheap when none are
         // pending, which is the usual case).
-        let mut out = self.sweep_unbans();
+        let out = self.sweep_unbans();
         let evout = match event {
             NetEvent::Ping { token, from } => vec![NetAction::Pong { token, from }],
             NetEvent::Idle { requester, target } => {
@@ -1231,21 +1231,21 @@ impl Engine {
                 self.network.user_connect(uid.clone(), nick, host, ip.clone());
                 // DEFCON 1 is a full lockdown: no new connections are accepted.
                 if self.db.defcon() == 1 && !self.sid.is_empty() {
-                    return vec![NetAction::KillUser {
+                    return self.finish(out, vec![NetAction::KillUser {
                         from: self.sid.clone(),
                         uid,
                         reason: "The network is in lockdown (DEFCON 1). Please try again later.".to_string(),
-                    }];
+                    }]);
                 }
                 // Enforce the session limit: kill the connection that puts an IP
                 // over its allowance (default limit, raised/lowered by exceptions).
                 if let Some(limit) = self.session_limit_for(&ip) {
                     if self.network.session_count(&ip) > limit {
-                        return vec![NetAction::KillUser {
+                        return self.finish(out, vec![NetAction::KillUser {
                             from: self.sid.clone(),
                             uid,
                             reason: format!("Session limit exceeded ({limit} from {ip})"),
-                        }];
+                        }]);
                     }
                 }
                 // Greet with the logon news, and — separately — prompt-then-
@@ -1329,7 +1329,7 @@ impl Engine {
                 }
                 // A suspended channel is frozen: no auto-op, akick, or entry message.
                 if self.db.is_channel_suspended(&channel) {
-                    return watch;
+                    return self.finish(out, watch);
                 }
                 let account = self.network.account_of(&uid).map(str::to_string);
                 let from = self.channel_mode_source(&channel);
@@ -1342,21 +1342,21 @@ impl Engine {
                 let entrymsg = self.db.channel(&channel).map(|c| c.entrymsg.clone()).filter(|m| !m.is_empty());
                 // Computed before the match below moves `channel` into its actions.
                 let greet = self.greet_on_join(&channel, account.as_deref());
-                let mut out = std::mem::take(&mut watch);
+                let mut acts = std::mem::take(&mut watch);
                 // A services bot assigned here is opped on join and is never subject
                 // to secureops/restricted — it's staff, not a member.
                 let is_bot = self.bot_uids.values().any(|b| b == &uid);
                 // SECUREOPS: a user who arrives opped (FJOIN prefix) but lacks op-level
                 // access loses it, unless we're about to grant it to them anyway.
                 if op && !has_op_access && !is_bot && self.db.channel(&channel).is_some_and(|c| c.settings.secureops) {
-                    out.push(NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: format!("-o {uid}") });
+                    acts.push(NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: format!("-o {uid}") });
                 }
                 // RESTRICTED: only users with access (or opers) may be in the channel.
                 if mode.is_none() && !is_bot && self.db.channel(&channel).is_some_and(|c| c.settings.restricted) {
                     let is_oper = account.as_deref().is_some_and(|a| self.oper_privs(a).any());
                     if !is_oper {
-                        out.push(NetAction::Kick { from, channel, uid, reason: "This channel is restricted to users with access.".to_string() });
-                        return out;
+                        acts.push(NetAction::Kick { from, channel, uid, reason: "This channel is restricted to users with access.".to_string() });
+                        return self.finish(out, acts);
                     }
                 }
                 // AUTOOP (on by default): the channel must allow it and the user
@@ -1367,10 +1367,10 @@ impl Engine {
                     // A user with access gets their status mode, plus the entry message.
                     Some(m) => {
                         if let Some(msg) = entrymsg {
-                            out.push(NetAction::Notice { from: from.clone(), to: uid.clone(), text: msg });
+                            acts.push(NetAction::Notice { from: from.clone(), to: uid.clone(), text: msg });
                         }
                         if autoop {
-                            out.push(NetAction::ChannelMode { from, channel, modes: echo_api::status_mode(m, &uid) });
+                            acts.push(NetAction::ChannelMode { from, channel, modes: echo_api::status_mode(m, &uid) });
                         }
                     }
                     // No access: an auto-kick match is banned and kicked, else greeted.
@@ -1389,12 +1389,12 @@ impl Engine {
                         match akick {
                             Some((mask, reason)) => {
                                 self.network.channel_part(&channel, &uid);
-                                out.push(NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: format!("+b {mask}") });
-                                out.push(NetAction::Kick { from, channel, uid, reason });
+                                acts.push(NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: format!("+b {mask}") });
+                                acts.push(NetAction::Kick { from, channel, uid, reason });
                             }
                             None => {
                                 if let Some(msg) = entrymsg {
-                                    out.push(NetAction::Notice { from, to: uid, text: msg });
+                                    acts.push(NetAction::Notice { from, to: uid, text: msg });
                                 }
                             }
                         }
@@ -1403,10 +1403,10 @@ impl Engine {
                 // GREET: if the channel shows greets and this member has channel
                 // access + a personal greet, the assigned bot displays it.
                 if let Some(g) = greet {
-                    out.push(g);
+                    acts.push(g);
                     self.bump("botserv.greet");
                 }
-                out
+                acts
             }
             NetEvent::Part { uid, channel, reason } => {
                 // Match before dropping membership so the identity is still resolvable.
@@ -1438,7 +1438,7 @@ impl Engine {
                     if let Some(c) = self.db.channel(&channel) {
                         if c.settings.secureops && !self.network.account_of(&uid).is_some_and(|a| c.is_op(a)) {
                             let from = self.chan_service.clone().unwrap_or_default();
-                            return vec![NetAction::ChannelMode { from, channel, modes: format!("-o {uid}") }];
+                            return self.finish(out, vec![NetAction::ChannelMode { from, channel, modes: format!("-o {uid}") }]);
                         }
                     }
                 }
@@ -1497,7 +1497,7 @@ impl Engine {
                     host: s.host().to_string(),
                     gecos: s.gecos().to_string(),
                 }) {
-                    return vec![intro];
+                    return self.finish(out, vec![intro]);
                 }
                 // If the ircd killed one of our bots, forget it so reconcile
                 // reintroduces it (and rejoins its channels); a killed real user is
@@ -1507,7 +1507,8 @@ impl Engine {
                     self.bot_idents.remove(&bot_lc);
                     self.network.bot_forget(&bot_lc);
                     self.bot_channels.retain(|(b, _)| *b != bot_lc);
-                    return self.reconcile_bots();
+                    let bots = self.reconcile_bots();
+                    return self.finish(out, bots);
                 }
                 self.forget_user(&uid);
                 Vec::new()
@@ -1537,6 +1538,16 @@ impl Engine {
         // resolve it inline (test iteration counts are cheap) — the login finish is
         // exactly what the link layer produces, and it must happen before
         // track_accounts so the login is recorded within this handle().
+        self.finish(out, evout)
+    }
+
+    // The shared tail of `handle`: fold committed events into account tracking,
+    // append them to any output already pending (kicker-ban unbans swept at the
+    // top of `handle`), stamp every user-removal with a searchable incident id,
+    // and degrade IRCv3 standard replies when they can't be sent. Every early
+    // return in `handle` routes through here, so none of these side-effects is
+    // skipped on the kill/kick/restricted paths.
+    fn finish(&mut self, mut out: Vec<NetAction>, evout: Vec<NetAction>) -> Vec<NetAction> {
         #[cfg(test)]
         let evout: Vec<NetAction> = evout
             .into_iter()
