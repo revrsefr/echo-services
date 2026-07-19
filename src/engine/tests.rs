@@ -5528,6 +5528,32 @@ fn fantasy_dict_emits_a_lookup_via_the_bot() {
     );
 }
 
+// A blocked look-alike channel registration refuses the user AND tells the staff
+// feed who tried it.
+#[test]
+fn confusable_register_alerts_the_staff_feed() {
+    use echo_chanserv::ChanServ;
+    let mut db = svc_db("confalert");
+    db.register("boss", "sesame", None).unwrap();
+    let mut e = Engine::new(vec![ns(), Box::new(ChanServ { uid: "42SAAAAAB".into() })], db);
+    e.set_sid("42S".into());
+    e.set_log_channel(Some("#services".into()));
+    e.set_debugserv_uid("42SAAAAAO");
+    e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "host.fr".into(), ip: "1.2.3.4".into() });
+    e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+    let chan = "#teѕt"; // Latin te + Cyrillic ѕ + Latin t — a look-alike
+    e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: chan.into(), op: true });
+    let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: format!("REGISTER {chan}") });
+    // The user is refused,
+    assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "000AAAAAB" && text.contains("alphabets"))), "user refused: {out:?}");
+    // and #services is told who tried it.
+    assert!(
+        out.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text }
+            if from == "42SAAAAAO" && to == "#services" && text.contains("[REGISTER]") && text.contains("boss") && text.contains("look-alike"))),
+        "staff feed alert: {out:?}"
+    );
+}
+
 // Perf harness — not part of the normal suite. Run:
 //   cargo test --release -p echo -- --ignored --nocapture bench_engine
 // Measures the two costs that actually bound the single-threaded engine: the

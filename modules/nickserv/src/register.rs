@@ -16,6 +16,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     // unless the guard is turned off.
     if db.confusable_check_enabled() {
         if let Some(reason) = echo_api::confusable_reason(from.nick) {
+            ctx.alert("REGISTER", "tried to register a look-alike nick (blocked)");
             ctx.notice(me, from.uid, reason);
             return;
         }

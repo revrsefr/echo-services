@@ -422,6 +422,10 @@ pub struct ServiceCtx {
     // folds these into the shared registry after the command runs — so every
     // service reports its own stats through one shared pipe.
     pub stats: Vec<String>,
+    // Staff-feed alerts (category, text) about what the sender just did. The
+    // engine drains these to the log channel, prefixing the sender's nick/host —
+    // e.g. a blocked look-alike registration attempt.
+    pub alerts: Vec<(String, String)>,
 }
 
 impl ServiceCtx {
@@ -465,6 +469,12 @@ impl ServiceCtx {
     // into the engine's shared registry, which the gRPC Stats API exposes.
     pub fn count(&mut self, key: impl Into<String>) {
         self.stats.push(key.into());
+    }
+
+    // Send a line to the staff feed about what the sender just did. The engine
+    // prefixes the sender's nick/host and routes it to the log channel.
+    pub fn alert(&mut self, category: impl Into<String>, text: impl Into<String>) {
+        self.alerts.push((category.into(), text.into()));
     }
 
     // A channel/target message sourced from one of our pseudo-clients (e.g. a

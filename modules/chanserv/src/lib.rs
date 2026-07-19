@@ -135,6 +135,7 @@ impl Service for ChanServ {
                 // homoglyph of a real channel), unless the guard is turned off.
                 if db.confusable_check_enabled() {
                     if let Some(reason) = echo_api::confusable_reason(chan) {
+                        ctx.alert("REGISTER", format!("tried to register the look-alike channel \x02{chan}\x02 (blocked)"));
                         ctx.notice(me, from.uid, reason);
                         return;
                     }

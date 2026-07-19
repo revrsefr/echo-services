@@ -96,11 +96,19 @@ impl Engine {
         for key in std::mem::take(&mut ctx.stats) {
             self.bump(&key);
         }
+        // Staff-feed alerts a command raised (e.g. a blocked look-alike name),
+        // prefixed with who the sender is, routed to the log channel.
+        let alerts = std::mem::take(&mut ctx.alerts);
         // A command may have changed the bot registry (BotServ BOT ADD/DEL).
         let mut out = ctx.actions;
         out.extend(self.reconcile_bots());
         // Announce whatever this command changed to the staff audit channel.
         out.extend(self.audit_feed(audit_mark, &nick, account.as_deref()));
+        for (cat, text) in alerts {
+            if let Some(line) = self.feed(&cat, format!("{} {text}", self.who(from))) {
+                out.push(line);
+            }
+        }
         self.apply_dict_limit(&mut out);
         self.apply_msg_style(&mut out);
         out
