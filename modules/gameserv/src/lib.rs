@@ -107,10 +107,12 @@ impl GameServ {
         Self { uid, games: HashMap::new(), nextid: 1 }
     }
 
-    // A player's ranked identity: their account if registered, else their nick
-    // (guests play casually under their nick; ranked points need an account).
+    // A player's game identity: their account if registered, else their connection
+    // UID (not their nick, which is mutable — keying on it lets a nick-reuser hijack
+    // an abandoned guest game, and lets a nick-cycler evade the per-user game cap).
+    // `nick_a`/`nick_b` hold the display name separately.
     fn ident<'a>(from: &'a Sender) -> &'a str {
-        from.account.unwrap_or(from.nick)
+        from.account.unwrap_or(from.uid)
     }
 
     // The side an account plays in a game (A = challenger), or None if not a party.

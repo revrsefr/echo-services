@@ -82,6 +82,11 @@ pub async fn run(engine: Shared, cfg: Gossip, peers: Vec<Peer>, origin: String, 
     };
     let acceptor = tls.as_ref().map(|(a, _)| a.clone());
     let connector = tls.as_ref().map(|(_, c)| c.clone());
+    if cfg.tls.is_none() {
+        // The handshake exchanges the shared secret before the peer is authenticated,
+        // so without TLS a passive eavesdropper on the link can learn it. Encrypt it.
+        tracing::warn!("gossip has no [gossip.tls] — the shared secret crosses the wire in plaintext; enable TLS for any non-loopback peer");
+    }
     if let Some(bind) = cfg.bind.clone() {
         tokio::spawn(listen(bind, engine.clone(), cfg.secret.clone(), origin.clone(), outbound.clone(), acceptor));
     }
