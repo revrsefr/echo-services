@@ -635,7 +635,9 @@ impl KickerSettings {
             if text.chars().count() >= min {
                 let upper = text.chars().filter(|c| c.is_ascii_uppercase()).count() as u32;
                 let lower = text.chars().filter(|c| c.is_ascii_lowercase()).count() as u32;
-                if upper as usize >= min && upper + lower > 0 && upper * 100 / (upper + lower) >= percent {
+                // Length is already gated above; gate only on the caps ratio here
+                // (a prior `upper >= min` clause wrongly demanded min uppercase letters).
+                if upper + lower > 0 && upper * 100 / (upper + lower) >= percent {
                     return Some("Turn caps lock off!");
                 }
             }

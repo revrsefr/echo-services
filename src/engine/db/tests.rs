@@ -941,3 +941,15 @@
         assert_eq!(db.channel("#foo").unwrap().join_mode("alice"), None, "purge holds after replay");
         assert_eq!(db.channel_successor("#bar"), None, "successor purge holds after replay");
     }
+
+    #[test]
+    fn caps_kicker_triggers_on_ratio_not_uppercase_count() {
+        let k = KickerSettings { caps: true, ..Default::default() };
+        // 9 uppercase in an 18-char line is ~50% caps and over the length floor —
+        // it must trip even though the uppercase count is below caps_min (a prior
+        // `upper >= min` bug let it slip through).
+        assert_eq!(k.violation("AAAAAAAAA hi there"), Some("Turn caps lock off!"));
+        // A short or low-ratio line still doesn't trip.
+        assert_eq!(k.violation("Hello there"), None);
+        assert_eq!(k.violation("YO"), None, "too short for the length floor");
+    }
