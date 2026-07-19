@@ -56,6 +56,13 @@ pub fn handle(me: &str, from: &Sender, chan: &str, args: &[&str], ctx: &mut Serv
             return;
         }
     };
+    // The `a` flag delegates access-list management, but only the founder may grant
+    // `f` (founder/co-founder) — otherwise a delegate could mint a founder-equivalent
+    // entry (Rank::Founder) and seize the channel.
+    if !is_founder && updated.has(echo_api::Flag::Founder) {
+        ctx.notice(me, from.uid, format!("Only the founder can grant the \x02f\x02 flag on \x02{chan}\x02."));
+        return;
+    }
     if updated.is_empty() {
         match db.access_del(chan, target) {
             Ok(true) => ctx.notice(me, from.uid, format!("Cleared \x02{target}\x02's access to \x02{chan}\x02.")),

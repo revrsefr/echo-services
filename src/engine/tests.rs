@@ -4881,6 +4881,11 @@
         // Grant carol the 'a' flag; now she can.
         cs(&mut e, "000AAAAAA", "FLAGS #room carol +a");
         assert!(has(&cs(&mut e, "000AAAAAC", "FLAGS #room bob +i"), "now holds"), "carol with 'a' can change flags");
+        // ...but a non-founder delegate may NOT grant the founder flag (escalation).
+        assert!(has(&cs(&mut e, "000AAAAAC", "FLAGS #room bob +f"), "Only the founder"), "carol can't grant +f");
+        assert!(!e.db.channel("#room").unwrap().access.iter().any(|a| a.account.eq_ignore_ascii_case("bob") && a.level.contains('f')), "bob did not get founder");
+        // The founder still can.
+        assert!(has(&cs(&mut e, "000AAAAAA", "FLAGS #room bob +f"), "now holds"), "founder can grant +f");
 
         // An invalid flag letter is rejected.
         assert!(has(&cs(&mut e, "000AAAAAA", "FLAGS #room bob +z"), "isn't a valid flag"), "bad flag rejected");
