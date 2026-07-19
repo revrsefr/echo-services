@@ -418,6 +418,22 @@
         e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "LOGOUT".into() })
     }
 
+    // A guest rename must skip a nick that's already online, or it would collide
+    // with (and get) an innocent user instead of freeing the name.
+    #[test]
+    fn logout_skips_an_occupied_guest_nick() {
+        let mut e = engine_with("guestskip", "foo", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        // Someone already holds Guest12345 (the first nick the counter would pick).
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "Guest12345".into(), host: "h".into() , ip: "0.0.0.0".into() });
+        let out = logout(&mut e, "000AAAAAB");
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAB" && nick == "Guest12346")),
+            "logout skips the taken guest nick: {out:?}"
+        );
+    }
+
     // LOGOUT while not identified must not rename you or clear anything.
     #[test]
     fn logout_without_login_is_noop() {

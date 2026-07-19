@@ -2277,6 +2277,25 @@ pub fn valid_email(addr: &str) -> bool {
     )
 }
 
+/// The next free guest nick: `base` + an incrementing counter, skipping any nick
+/// that is currently online or registered. An enforced/logged-out rename must not
+/// land on a real user or a registered nick — that would either defeat the rename
+/// (the target stays put) or collide with and kill an innocent occupant. Advances
+/// `seq` past whatever it returns.
+pub fn next_guest_nick(base: &str, seq: &mut u32, net: &dyn NetView, store: &dyn Store) -> String {
+    for _ in 0..100_000 {
+        let candidate = format!("{base}{seq}");
+        *seq = seq.wrapping_add(1);
+        if net.uid_by_nick(&candidate).is_none() && !store.exists(&candidate) {
+            return candidate;
+        }
+    }
+    // Pathological: the whole range is taken. Fall back rather than loop forever.
+    let candidate = format!("{base}{seq}");
+    *seq = seq.wrapping_add(1);
+    candidate
+}
+
 // Reject a look-alike / mixed-script registration name (nick or channel): the
 // impersonation trick that a message-content filter never sees at the registration
 // seam. Returns a rejection reason, or None if the name is fine. Genuine

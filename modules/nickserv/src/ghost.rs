@@ -48,8 +48,7 @@ pub fn handle(me: &str, guest_nick: &str, guest_seq: &mut u32, from: &Sender, ar
             return;
         }
         Some(ghost) => {
-            let guest = format!("{guest_nick}{guest_seq}");
-            *guest_seq = guest_seq.wrapping_add(1);
+            let guest = echo_api::next_guest_nick(guest_nick, guest_seq, net, &*db);
             ctx.force_nick(&ghost, &guest);
             ctx.notice(me, from.uid, format!("\x02{target}\x02 has been freed."));
         }
