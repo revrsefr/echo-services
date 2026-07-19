@@ -11,6 +11,12 @@ pub fn handle(me: &str, from: &Sender, name: Option<&str>, ctx: &mut ServiceCtx,
         ctx.notice(me, from.uid, "A group name starts with \x02!\x02, e.g. \x02!staff\x02.");
         return;
     }
+    // Honour the registration freeze staff raise during a spam wave, like
+    // NickServ/ChanServ REGISTER — otherwise the group namespace stays open.
+    if db.registrations_frozen() {
+        ctx.notice(me, from.uid, "Group registration is temporarily disabled. Please try again later.");
+        return;
+    }
     // Guard the group namespace like NickServ/ChanServ REGISTER: a look-alike group
     // name (!аdmin) could impersonate a real one that opers grant channel access to.
     if db.confusable_check_enabled() {
@@ -18,6 +24,13 @@ pub fn handle(me: &str, from: &Sender, name: Option<&str>, ctx: &mut ServiceCtx,
             ctx.notice(me, from.uid, reason);
             return;
         }
+    }
+    // Cap groups per founder so the append-only log can't be grown without bound
+    // (mirrors NickServ's grouped-nick and AJOIN caps).
+    const MAX_GROUPS: usize = 25;
+    if db.groups_founded(acc) >= MAX_GROUPS {
+        ctx.notice(me, from.uid, format!("You've reached the maximum of {MAX_GROUPS} registered groups."));
+        return;
     }
     let acc = acc.to_string();
     match db.group_register(name, &acc) {

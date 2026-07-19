@@ -2079,6 +2079,7 @@ pub trait Store {
     fn group(&self, name: &str) -> Option<GroupView>;
     fn groups(&self) -> Vec<String>;
     fn groups_of(&self, account: &str) -> Vec<String>;
+    fn groups_founded(&self, account: &str) -> usize;
     // A user's effective channel capabilities (direct access unioned with groups).
     fn channel_caps(&self, channel: &str, account: &str) -> Caps;
     // Runtime operator grants (OperServ OPER), merged with config opers. `expires`

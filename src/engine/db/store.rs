@@ -401,6 +401,9 @@ impl Store for Db {
     fn groups_of(&self, account: &str) -> Vec<String> {
         Db::groups_of(self, account)
     }
+    fn groups_founded(&self, account: &str) -> usize {
+        Db::groups_founded(self, account)
+    }
     fn channel_caps(&self, channel: &str, account: &str) -> Caps {
         Db::channel_caps(self, channel, account)
     }

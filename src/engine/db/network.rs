@@ -657,6 +657,11 @@ impl Db {
         names
     }
 
+    /// How many groups `account` is the founder of (bounds group registration).
+    pub fn groups_founded(&self, account: &str) -> usize {
+        self.net.groups.iter().filter(|g| g.founder.eq_ignore_ascii_case(account)).count()
+    }
+
     /// The groups an account belongs to (founder or member).
     pub fn groups_of(&self, account: &str) -> Vec<String> {
         self.net
