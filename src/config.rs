@@ -146,14 +146,14 @@ pub struct Expire {
 impl Expire {
     // The thresholds in seconds, or None where that kind is disabled (zero days).
     pub fn account_ttl(&self) -> Option<u64> {
-        (self.accounts_days > 0).then(|| self.accounts_days * 86_400)
+        (self.accounts_days > 0).then(|| self.accounts_days.saturating_mul(86_400))
     }
     pub fn channel_ttl(&self) -> Option<u64> {
-        (self.channels_days > 0).then(|| self.channels_days * 86_400)
+        (self.channels_days > 0).then(|| self.channels_days.saturating_mul(86_400))
     }
     // The warning lead time in seconds, or None if warnings are off.
     pub fn warn_ttl(&self) -> Option<u64> {
-        (self.warn_days > 0).then(|| self.warn_days * 86_400)
+        (self.warn_days > 0).then(|| self.warn_days.saturating_mul(86_400))
     }
 }
 
@@ -400,7 +400,7 @@ fn default_services_channel() -> String {
 }
 
 fn default_service_modes() -> String {
-    "ikBT".to_string()
+    "iHkBT".to_string() // invisible, hideoper, servprotect, bot, block-CTCP (matches the doc above)
 }
 
 fn default_service_oper_type() -> String {
@@ -439,6 +439,11 @@ impl Config {
         }
         if self.uplink.host.trim().is_empty() {
             anyhow::bail!("uplink.host must not be empty");
+        }
+        // A too-low PBKDF2 cost (notably a stray 0) would silently mint near-plaintext
+        // SCRAM verifiers for every new registration; refuse it loudly.
+        if self.server.scram_iterations < 1000 {
+            anyhow::bail!("server.scram_iterations = {} is too low (use at least 1000; default {})", self.server.scram_iterations, default_scram_iterations());
         }
         Ok(())
     }
