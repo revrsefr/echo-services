@@ -291,6 +291,7 @@ pub struct Group {
     pub name: String, // "!name", casefolded
     pub founder: String,
     pub ts: u64,
+    pub home: String, // origin node that registered it, for deterministic conflict resolution
     pub members: Vec<GroupMember>,
 }
 
@@ -1342,7 +1343,7 @@ impl Db {
             }
         }
         for g in &self.net.groups {
-            snapshot.push(Event::GroupRegistered { name: g.name.clone(), founder: g.founder.clone(), ts: g.ts });
+            snapshot.push(Event::GroupRegistered { name: g.name.clone(), founder: g.founder.clone(), ts: g.ts, home: g.home.clone() });
             for m in &g.members {
                 snapshot.push(Event::GroupFlagsSet { name: g.name.clone(), account: m.account.clone(), flags: m.flags.clone() });
             }

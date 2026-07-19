@@ -54,6 +54,23 @@
         assert_eq!(converge(&a, &a), "A");
     }
 
+    #[test]
+    fn group_registration_conflict_converges_deterministically() {
+        let reg = |founder: &str, ts: u64, home: &str| Event::GroupRegistered { name: "!g".into(), founder: founder.into(), ts, home: home.into() };
+        let converge = |first: Event, second: Event| {
+            let (mut acc, mut ch, mut gr, mut bo, mut hc, mut nd) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HostConfig::default(), NetData::default());
+            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, &mut nd, first);
+            apply(&mut acc, &mut ch, &mut gr, &mut bo, &mut hc, &mut nd, second);
+            nd.groups[0].founder.clone()
+        };
+        let a = reg("alice", 100, "nodeA");
+        let b = reg("bob", 100, "nodeB");
+        // Two nodes claim "!g": the earlier (ts, then origin) wins, same result in
+        // either apply order — so gossip peers converge instead of diverging.
+        assert_eq!(converge(a.clone(), b.clone()), "alice", "(100,nodeA) beats (100,nodeB)");
+        assert_eq!(converge(b, a), "alice", "commutative: converges to the same founder");
+    }
+
     // A gossiped registration that wins the name (earlier ts) moves an account's
     // home. That is a hostile takeover — logging the local user out — ONLY if the
     // credential differs; re-asserting the SAME account (same verifier) must not.

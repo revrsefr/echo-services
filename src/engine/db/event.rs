@@ -93,7 +93,7 @@ pub enum Event {
     ReportClosed { id: u64 },
     ReportDeleted { id: u64 },
     // User groups (GroupServ). Global — groups are account identity.
-    GroupRegistered { name: String, founder: String, ts: u64 },
+    GroupRegistered { name: String, founder: String, ts: u64, #[serde(default)] home: String },
     GroupDropped { name: String },
     GroupFounderSet { name: String, founder: String },
     // Upsert a member (empty flags = a plain member, still present).
@@ -221,19 +221,11 @@ impl Event {
             | Event::ForbidRemoved { .. }
             | Event::NotifyAdded { .. }
             | Event::NotifyRemoved { .. }
-            | Event::NewsAdded { .. }
-            | Event::NewsDeleted { .. }
-            | Event::ReportFiled { .. }
-            | Event::ReportClosed { .. }
-            | Event::ReportDeleted { .. }
             | Event::GroupRegistered { .. }
             | Event::GroupDropped { .. }
             | Event::GroupFounderSet { .. }
             | Event::GroupFlagsSet { .. }
             | Event::GroupMemberDel { .. }
-            | Event::HelpRequested { .. }
-            | Event::HelpTaken { .. }
-            | Event::HelpClosed { .. }
             | Event::OperGranted { .. }
             | Event::OperRevoked { .. }
             | Event::SessionExceptionAdded { .. }
@@ -277,7 +269,19 @@ impl Event {
             | Event::JupeAdded { .. }
             | Event::JupeRemoved { .. }
             | Event::StatsSet { .. }
-            | Event::IncidentsSet { .. } => Scope::Local,
+            | Event::IncidentsSet { .. }
+            // News and the moderation queues (reports, help tickets) are node-local
+            // operational state: their ids are per-node counters, so gossiping them
+            // would collide id namespaces across nodes and never converge. Keep them
+            // local (like channels) — each node owns its own.
+            | Event::NewsAdded { .. }
+            | Event::NewsDeleted { .. }
+            | Event::ReportFiled { .. }
+            | Event::ReportClosed { .. }
+            | Event::ReportDeleted { .. }
+            | Event::HelpRequested { .. }
+            | Event::HelpTaken { .. }
+            | Event::HelpClosed { .. } => Scope::Local,
         }
     }
 }
@@ -745,10 +749,22 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         Event::ReportDeleted { id } => {
             net.reports.retain(|r| r.id != id);
         }
-        Event::GroupRegistered { name, founder, ts } => {
+        Event::GroupRegistered { name, founder, ts, home } => {
             let k = key(&name);
-            if !net.groups.iter().any(|g| key(&g.name) == k) {
-                net.groups.push(Group { name, founder, ts, members: Vec::new() });
+            let claim = Group { name, founder, ts, home, members: Vec::new() };
+            match net.groups.iter().position(|g| key(&g.name) == k) {
+                None => net.groups.push(claim),
+                // Same name claimed on two nodes: keep the earlier registration
+                // (ts, then origin) deterministically so every node converges —
+                // mirrors AccountRegistered / owns_over. Single-node replay never
+                // hits this (one GroupRegistered per live name).
+                Some(i) => {
+                    let held = &net.groups[i];
+                    let keep_existing = (held.ts, held.home.as_str()) < (claim.ts, claim.home.as_str());
+                    if !keep_existing {
+                        net.groups[i] = claim;
+                    }
+                }
             }
         }
         Event::GroupDropped { name } => {

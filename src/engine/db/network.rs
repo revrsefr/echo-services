@@ -586,8 +586,9 @@ impl Db {
             return Err(ChanError::Exists);
         }
         let ts = now();
-        self.log.append(Event::GroupRegistered { name: name.to_string(), founder: founder.to_string(), ts }).map_err(|_| ChanError::Internal)?;
-        self.net.groups.push(Group { name: name.to_string(), founder: founder.to_string(), ts, members: Vec::new() });
+        let home = self.log.origin.clone();
+        self.log.append(Event::GroupRegistered { name: name.to_string(), founder: founder.to_string(), ts, home: home.clone() }).map_err(|_| ChanError::Internal)?;
+        self.net.groups.push(Group { name: name.to_string(), founder: founder.to_string(), ts, home, members: Vec::new() });
         Ok(())
     }
 
