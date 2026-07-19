@@ -851,8 +851,12 @@ impl EventLog {
         }
         if global {
             self.versions.insert(entry.origin.clone(), entry.seq);
-            self.notify(&entry);
         }
+        // Push every committed entry to subscribers: the gossip forwarder filters to
+        // Global before sending to a peer, but the gRPC directory stream wants the
+        // node-local channel events too (a website mirroring the account + channel
+        // directory, which registers/drops/founder-sets never reached before).
+        self.notify(&entry);
         self.entries.push(entry);
         Ok(())
     }

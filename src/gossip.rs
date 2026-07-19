@@ -13,6 +13,8 @@ use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName}
 use tokio_rustls::rustls::{self, ClientConfig, RootCertStore, ServerConfig};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
+use crate::engine::db::Scope;
+
 use crate::config::{Gossip, Peer, Tls};
 use crate::engine::db::LogEntry;
 use crate::engine::Engine;
@@ -205,6 +207,13 @@ where
             loop {
                 match rx.recv().await {
                     Ok(entry) => {
+                        // Only global (account/identity) state replicates to peers;
+                        // channel state is node-local, so never forward it — the
+                        // outbound stream now also carries local events for the gRPC
+                        // directory subscriber.
+                        if entry.event().scope() != Scope::Global {
+                            continue;
+                        }
                         if send(&tx, &Msg::Entry { entry: Box::new(entry) }).await.is_err() {
                             break;
                         }

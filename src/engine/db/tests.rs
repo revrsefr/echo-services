@@ -459,6 +459,26 @@
     }
 
     #[test]
+    fn channel_directory_events_reach_the_outbound_subscriber() {
+        // A gRPC directory subscriber (a website mirror) reads the outbound stream.
+        // Account events are Global and always flowed; channel events are Local and
+        // were dropped before reaching outbound, so a mirror never saw registrations.
+        let (tx, mut rx) = tokio::sync::broadcast::channel(64);
+        let mut db = Db::open(tmp("chan-sub"), "N1");
+        db.scram_iterations = 4096;
+        db.set_outbound(tx);
+        db.register("alice", "pw", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let mut saw_channel = false;
+        while let Ok(entry) = rx.try_recv() {
+            if matches!(entry.event(), Event::ChannelRegistered { name, .. } if name == "#c") {
+                saw_channel = true;
+            }
+        }
+        assert!(saw_channel, "channel registration must reach the outbound directory stream");
+    }
+
+    #[test]
     fn compaction_preserves_channel_last_used_and_levels() {
         let p = tmp("compact-chan");
         let mut db = Db::open(&p, "local");
