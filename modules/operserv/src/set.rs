@@ -4,8 +4,8 @@ use echo_api::{Priv, Sender, ServiceCtx, Store};
 // While on, no new registrations or changes are accepted; existing data and
 // gossip replication keep working. Admin-only. No argument reports the state.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
-    if !from.privs.has(Priv::Admin) {
-        ctx.notice(me, from.uid, "Access denied — SET is for services operators.");
+    if !from.privs.has(Priv::Root) {
+        ctx.notice(me, from.uid, "Access denied — SET needs the \x02root\x02 privilege.");
         return;
     }
     match args.get(1).map(|s| s.to_ascii_uppercase()).as_deref() {

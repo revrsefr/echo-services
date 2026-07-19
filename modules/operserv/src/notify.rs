@@ -9,8 +9,8 @@ const ALL_FLAGS: &str = "cdjkmnoptusS";
 // An oper watch list: users matching a mask have their flagged events announced
 // to the staff feed. Admin-only, like the rest of the ban family.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
-    if !from.privs.has(Priv::Admin) {
-        ctx.notice(me, from.uid, "Access denied — NOTIFY needs the \x02admin\x02 privilege.");
+    if !from.privs.has(Priv::Oper) {
+        ctx.notice(me, from.uid, "Access denied — NOTIFY needs the \x02operator\x02 privilege.");
         return;
     }
     match args.get(1).map(|s| s.to_ascii_uppercase()).as_deref() {

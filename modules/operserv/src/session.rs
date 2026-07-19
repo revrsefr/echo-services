@@ -4,8 +4,8 @@ use echo_api::{NetView, Priv, Sender, ServiceCtx, Store};
 // EXCEPTION ADD <ip-mask> <limit> [reason] | DEL <ip-mask> | LIST: manage the
 // per-IP-mask allowances that override the default limit. All admin-only.
 pub fn handle_session(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView) {
-    if !from.privs.has(Priv::Admin) {
-        ctx.notice(me, from.uid, "Access denied — SESSION needs the \x02admin\x02 privilege.");
+    if !from.privs.has(Priv::Oper) {
+        ctx.notice(me, from.uid, "Access denied — SESSION needs the \x02operator\x02 privilege.");
         return;
     }
     match args.get(1).map(|s| s.to_ascii_uppercase()).as_deref() {
@@ -33,7 +33,7 @@ pub fn handle_session(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceC
 }
 
 pub fn handle_exception(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
-    if !from.privs.has(Priv::Admin) {
+    if !from.privs.has(Priv::Oper) {
         ctx.notice(me, from.uid, "Access denied — EXCEPTION needs the \x02admin\x02 privilege.");
         return;
     }

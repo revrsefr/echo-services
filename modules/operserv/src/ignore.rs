@@ -5,8 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // drop commands from a matching user. A mask with an '@' matches nick!*@host
 // (ident isn't tracked); a bare mask matches the nick. Admin-only, node-local.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
-    if !from.privs.has(Priv::Admin) {
-        ctx.notice(me, from.uid, "Access denied — IGNORE needs the \x02admin\x02 privilege.");
+    if !from.privs.has(Priv::Oper) {
+        ctx.notice(me, from.uid, "Access denied — IGNORE needs the \x02operator\x02 privilege.");
         return;
     }
     match args.get(1).map(|s| s.to_ascii_uppercase()).as_deref() {

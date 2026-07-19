@@ -1,4 +1,4 @@
-use echo_api::{parse_duration, Sender, ServiceCtx, Store, XlineKind};
+use echo_api::{parse_duration, Priv, Sender, ServiceCtx, Store, XlineKind};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // A network-ban command family (AKILL, SQLINE, …): the ircd X-line `kind`, the
@@ -13,6 +13,10 @@ pub struct Xline {
 
 impl Xline {
     pub fn handle(&self, me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
+        if !from.privs.has(Priv::Oper) {
+            ctx.notice(me, from.uid, format!("Access denied — {} needs the \x02operator\x02 privilege.", self.name));
+            return;
+        }
         match args.get(1).map(|s| s.to_ascii_uppercase()).as_deref() {
             Some("ADD") => self.add(me, from, &args[2..], ctx, db),
             Some("DEL") | Some("REMOVE") => self.del(me, from, args.get(2).copied(), ctx, db),

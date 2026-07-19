@@ -55,7 +55,7 @@ fn require_channel_admin(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceC
         ctx.notice(me, from.uid, format!("\x02{chan}\x02 isn't registered."));
         return false;
     };
-    if from.account != Some(founder.as_str()) && !from.privs.has(Priv::Admin) {
+    if from.account != Some(founder.as_str()) && !from.privs.has(Priv::Oper) {
         ctx.notice(me, from.uid, format!("Only \x02{chan}\x02's founder can see its stats."));
         return false;
     }

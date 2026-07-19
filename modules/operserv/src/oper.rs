@@ -1,20 +1,21 @@
-use echo_api::{parse_duration, Priv, Sender, ServiceCtx, Store};
+use echo_api::{parse_duration, Priv, Privs, Sender, ServiceCtx, Store};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // OPER ADD <account> <priv[,priv…]> [+duration] | OPER DEL <account> | OPER LIST:
 // manage runtime services operators (merged with the declarative config opers).
-// The privileges are auspex, suspend, admin; a +duration makes the grant expire.
-// Admin-only — only an admin grants oper.
+// Privileges (low to high): auspex, oper, suspend, admin, root — or name a tier
+// directly (operator/administrator/root), which grants the matching privilege.
+// Root-only — granting operators is the top-tier power.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
-    if !from.privs.has(Priv::Admin) {
-        ctx.notice(me, from.uid, "Access denied — OPER needs the \x02admin\x02 privilege.");
+    if !from.privs.has(Priv::Root) {
+        ctx.notice(me, from.uid, "Access denied — OPER needs the \x02root\x02 privilege.");
         return;
     }
     match args.get(1).map(|s| s.to_ascii_uppercase()).as_deref() {
         Some("ADD") | Some("SET") => add(me, from, args.get(2).copied(), args.get(3).copied(), args.get(4).copied(), ctx, db),
         Some("DEL") | Some("REMOVE") => del(me, from, args.get(2).copied(), ctx, db),
         Some("LIST") | Some("VIEW") => list(me, from, ctx, db),
-        _ => ctx.notice(me, from.uid, "Syntax: OPER ADD <account> <priv[,priv]> [+duration] | OPER DEL <account> | OPER LIST — privs: auspex, suspend, admin"),
+        _ => ctx.notice(me, from.uid, "Syntax: OPER ADD <account> <priv[,priv] | tier> [+duration] | OPER DEL <account> | OPER LIST — tiers: operator, administrator, root; privs: auspex, oper, suspend, admin, root"),
     }
 }
 
@@ -76,7 +77,8 @@ fn list(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store) {
     }
     for (account, privs, expires) in &opers {
         let window = if expires.is_some() { " (temporary)" } else { "" };
-        ctx.notice(me, from.uid, format!("  \x02{account}\x02 — {}{window}", privs.join(", ")));
+        let tier = Privs::from_names(privs).tier();
+        ctx.notice(me, from.uid, format!("  \x02{account}\x02 [{tier}] — {}{window}", privs.join(", ")));
     }
     ctx.notice(me, from.uid, format!("End of runtime operator list ({} shown).", opers.len()));
 }

@@ -4,8 +4,8 @@ use echo_api::{Priv, Sender, ServiceCtx, Store};
 // note to an account or channel (a `#name` is a channel, else an account). The
 // note is shown to operators in that service's INFO. Admin-only.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
-    if !from.privs.has(Priv::Admin) {
-        ctx.notice(me, from.uid, "Access denied — INFO needs the \x02admin\x02 privilege.");
+    if !from.privs.has(Priv::Oper) {
+        ctx.notice(me, from.uid, "Access denied — INFO needs the \x02operator\x02 privilege.");
         return;
     }
     match args.get(1).map(|s| s.to_ascii_uppercase()).as_deref() {

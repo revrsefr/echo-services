@@ -2,8 +2,8 @@ use echo_api::{NetView, Priv, Sender, ServiceCtx};
 
 // KILL <nick> [reason]: disconnect a user from the network. Admin-only.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView) {
-    if !from.privs.has(Priv::Admin) {
-        ctx.notice(me, from.uid, "Access denied — KILL needs the \x02admin\x02 privilege.");
+    if !from.privs.has(Priv::Oper) {
+        ctx.notice(me, from.uid, "Access denied — KILL needs the \x02operator\x02 privilege.");
         return;
     }
     let Some(&target) = args.get(1) else {

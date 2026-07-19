@@ -173,7 +173,23 @@ pub struct Log {
 pub struct Oper {
     pub account: String,
     #[serde(default)]
-    pub privs: Vec<String>, // "auspex" | "suspend" | "admin"
+    pub privs: Vec<String>, // fine-grained: auspex, oper, suspend, admin, root
+    // A tier shortcut: "operator", "administrator", or "root" — expands to the
+    // matching privilege (which implies the lower tiers). Combined with `privs`.
+    #[serde(default, rename = "type")]
+    pub oper_type: Option<String>,
+}
+
+impl Oper {
+    // Every privilege-name granted, from both the `type` shortcut and the explicit
+    // `privs` list.
+    fn all_priv_names(&self) -> Vec<String> {
+        let mut names = self.privs.clone();
+        if let Some(t) = &self.oper_type {
+            names.push(t.clone());
+        }
+        names
+    }
 }
 
 impl Config {
@@ -181,7 +197,7 @@ impl Config {
     pub fn opers(&self) -> std::collections::HashMap<String, echo_api::Privs> {
         let mut map = std::collections::HashMap::new();
         for o in &self.oper {
-            map.insert(o.account.to_ascii_lowercase(), echo_api::Privs::from_names(&o.privs));
+            map.insert(o.account.to_ascii_lowercase(), echo_api::Privs::from_names(&o.all_priv_names()));
         }
         map
     }
@@ -192,7 +208,7 @@ impl Config {
         self.oper
             .iter()
             .flat_map(|o| {
-                let (_, unknown) = echo_api::Privs::parse_names(&o.privs);
+                let (_, unknown) = echo_api::Privs::parse_names(&o.all_priv_names());
                 unknown.into_iter().map(move |name| (o.account.clone(), name))
             })
             .collect()

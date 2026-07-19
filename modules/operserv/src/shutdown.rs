@@ -6,8 +6,8 @@ use echo_api::{Priv, Sender, ServiceCtx};
 // first so users know why services vanished.
 pub fn handle(me: &str, from: &Sender, restart: bool, args: &[&str], ctx: &mut ServiceCtx) {
     let cmd = if restart { "RESTART" } else { "SHUTDOWN" };
-    if !from.privs.has(Priv::Admin) {
-        ctx.notice(me, from.uid, format!("Access denied — {cmd} needs the \x02admin\x02 privilege."));
+    if !from.privs.has(Priv::Root) {
+        ctx.notice(me, from.uid, format!("Access denied — {cmd} needs the \x02root\x02 privilege."));
         return;
     }
     let reason = if args.len() > 1 { args[1..].join(" ") } else { format!("Services {}", if restart { "restarting" } else { "shutting down" }) };

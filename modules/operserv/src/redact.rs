@@ -1,10 +1,14 @@
-use echo_api::{Sender, ServiceCtx};
+use echo_api::{Priv, Sender, ServiceCtx};
 
 // REDACT <#channel|nick> <msgid> [reason]: delete a message by its IRCv3 msgid.
 // The msgid comes from the reporting oper's client (which saw the tagged message);
 // echo relays it as a server-trusted redaction, so no ircd oper privilege is needed
 // (draft/message-redaction). One-shot — nothing is stored.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx) {
+    if !from.privs.has(Priv::Oper) {
+        ctx.notice(me, from.uid, "Access denied — REDACT needs the \x02operator\x02 privilege.");
+        return;
+    }
     let (Some(&target), Some(&msgid)) = (args.get(1), args.get(2)) else {
         ctx.notice(me, from.uid, "Syntax: REDACT <#channel|nick> <msgid> [reason]");
         return;

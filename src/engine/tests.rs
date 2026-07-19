@@ -673,7 +673,7 @@
     // OperServ REHASH is admin-only and hands the reload to the engine (resolved
     // in the link layer) addressed back to the oper who ran it.
     #[test]
-    fn operserv_rehash_is_admin_only() {
+    fn operserv_rehash_is_root_only() {
         use echo_operserv::OperServ;
         let path = std::env::temp_dir().join("echo-opsrehash.jsonl");
         let _ = std::fs::remove_file(&path);
@@ -690,22 +690,22 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("alice".to_string(), Privs::default().with(echo_api::Priv::Admin));
-        opers.insert("bob".to_string(), Privs::default().with(echo_api::Priv::Auspex));
+        opers.insert("alice".to_string(), Privs::default().with(echo_api::Priv::Root));
+        opers.insert("bob".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
         e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 
-        // Admin: hands off the reload, addressed back to the requesting oper.
+        // Root: hands off the reload, addressed back to the requesting oper.
         let a = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: "REHASH".into() });
         assert!(a.iter().any(|x| matches!(x, NetAction::Rehash { requester, agent } if requester == "000AAAAAB" && agent == "42SAAAAAH")), "{a:?}");
 
-        // Oper without admin: denied, no reload handed off.
+        // An administrator (not root): denied, no reload handed off.
         let b = e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAH".into(), text: "REHASH".into() });
-        assert!(!b.iter().any(|x| matches!(x, NetAction::Rehash { .. })), "non-admin must not rehash: {b:?}");
-        assert!(b.iter().any(|x| matches!(x, NetAction::Notice { text, .. } if text.contains("admin"))), "{b:?}");
+        assert!(!b.iter().any(|x| matches!(x, NetAction::Rehash { .. })), "a non-root oper must not rehash: {b:?}");
+        assert!(b.iter().any(|x| matches!(x, NetAction::Notice { text, .. } if text.contains("root"))), "{b:?}");
     }
 
     // REHASH re-reads the file, applies the reloadable settings, and announces the
@@ -1901,7 +1901,7 @@
             db,
         );
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Root));
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
@@ -1941,7 +1941,7 @@
             db,
         );
         let mut opers = std::collections::HashMap::new();
-        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Root));
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
         e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
@@ -4019,7 +4019,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin).with(echo_api::Priv::Auspex));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Root));
         opers.insert("mod".to_string(), Privs::default().with(echo_api::Priv::Suspend));
         e.set_opers(opers);
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
@@ -4344,7 +4344,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Root));
         e.set_opers(opers);
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
         let denied = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied")));
@@ -4389,7 +4389,7 @@
         );
         e.set_sid("42S".into());
         let mut opers = std::collections::HashMap::new();
-        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Root));
         e.set_opers(opers);
         let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
         let denied = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied")));
@@ -5205,8 +5205,9 @@ fn svc_login(e: &mut Engine, acct: &str) {
 
 // Grant the account full operator privileges.
 fn svc_oper(e: &mut Engine, acct: &str) {
+    // A full (root-tier) operator: `root` implies every lower privilege.
     let mut opers = std::collections::HashMap::new();
-    opers.insert(acct.to_string(), echo_api::Privs::from_names(&["admin", "suspend", "auspex"]));
+    opers.insert(acct.to_string(), echo_api::Privs::from_names(&["root"]));
     e.set_opers(opers);
 }
 

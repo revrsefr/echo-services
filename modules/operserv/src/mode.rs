@@ -4,8 +4,8 @@ use echo_api::{NetView, Priv, Sender, ServiceCtx, Store};
 // (forced, so it applies regardless of the current TS). Admin-only. Status-mode
 // targets may be given as nicks — they're resolved to uids for the ircd.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &dyn Store) {
-    if !from.privs.has(Priv::Admin) {
-        ctx.notice(me, from.uid, "Access denied — MODE needs the \x02admin\x02 privilege.");
+    if !from.privs.has(Priv::Oper) {
+        ctx.notice(me, from.uid, "Access denied — MODE needs the \x02operator\x02 privilege.");
         return;
     }
     let Some(&chan) = args.get(1).filter(|c| c.starts_with('#') || c.starts_with('&')) else {

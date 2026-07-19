@@ -317,33 +317,54 @@ impl ChanModeCap {
 
 // A services-operator privilege. Coarse and typed (not a string namespace), so
 // the compiler checks every use and there is one gating mechanism, not two.
+// A services-operator privilege, ordered as tiers: a higher one implies the lower
+// ones (see `Privs::has`), so three named tiers — operator, administrator, root —
+// fall out of single privileges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Priv {
     // See other users' hidden info (INFO fields, LIST filters).
     Auspex,
+    // Front-line moderation: network bans (AKILL/x-lines), KICK, KILL, SESSION,
+    // IGNORE, MODE, SPAMFILTER, NOTIFY, stats — the day-to-day operator tools.
+    Oper,
     // Suspend / unsuspend accounts and channels.
     Suspend,
-    // Modify or drop other users' accounts and channels (SASET, DROP, GETEMAIL).
+    // Persistent data + broadcast: modify/drop accounts+channels (SASET, DROP,
+    // GETEMAIL, NOEXPIRE), FORBID, GLOBAL, DEFCON, SVS, JUPE, and the BotServ /
+    // MemoServ / InfoServ staff tools.
     Admin,
+    // Control the services daemon and the oper roster: OPER (grant/revoke opers),
+    // SHUTDOWN / RESTART, REHASH, OperServ SET, DebugServ.
+    Root,
 }
 
 impl Priv {
-    /// Every privilege, for iteration and validation.
-    pub const ALL: [Priv; 3] = [Priv::Auspex, Priv::Suspend, Priv::Admin];
+    /// Every privilege, low tier to high, for iteration and validation.
+    pub const ALL: [Priv; 5] = [Priv::Auspex, Priv::Oper, Priv::Suspend, Priv::Admin, Priv::Root];
 
     /// This privilege's canonical name — the `[[oper]]` config token. Exhaustive,
     /// so adding a variant forces adding its name (no silent gap).
     pub fn name(self) -> &'static str {
         match self {
             Priv::Auspex => "auspex",
+            Priv::Oper => "oper",
             Priv::Suspend => "suspend",
             Priv::Admin => "admin",
+            Priv::Root => "root",
         }
     }
 
-    /// Parse a privilege name (case-insensitive); `None` if unrecognised.
+    /// Parse a privilege name (case-insensitive), accepting the tier aliases
+    /// `operator`/`administrator`; `None` if unrecognised.
     pub fn from_name(s: &str) -> Option<Priv> {
-        Self::ALL.into_iter().find(|p| s.eq_ignore_ascii_case(p.name()))
+        match s.to_ascii_lowercase().as_str() {
+            "auspex" => Some(Priv::Auspex),
+            "oper" | "operator" => Some(Priv::Oper),
+            "suspend" => Some(Priv::Suspend),
+            "admin" | "administrator" => Some(Priv::Admin),
+            "root" => Some(Priv::Root),
+            _ => None,
+        }
     }
 
     /// The recognised names as a comma list, for "valid: …" error messages.
@@ -358,13 +379,45 @@ impl Priv {
 pub struct Privs(u8);
 
 impl Privs {
+    fn bit(p: Priv) -> u8 {
+        1 << p as u8
+    }
     // Grant a privilege (builder style: `Privs::default().with(Priv::Admin)`).
     pub fn with(self, p: Priv) -> Self {
-        Privs(self.0 | (1 << p as u8))
+        Privs(self.0 | Self::bit(p))
     }
-    // Whether this set holds `p`.
+    // Whether this set can exercise `p`, honouring the tier chain: a higher tier
+    // implies the lower ones — Root ⊃ Admin ⊃ Oper ⊃ Auspex — and Admin also bundles
+    // Suspend. So an `admin` gates through an `oper`-level command and can view, but
+    // a stand-alone `suspend` grant is only that (it doesn't imply Auspex).
     pub fn has(self, p: Priv) -> bool {
-        self.0 & (1 << p as u8) != 0
+        let b = Self::bit;
+        let mask = match p {
+            Priv::Auspex => b(Priv::Auspex) | b(Priv::Oper) | b(Priv::Admin) | b(Priv::Root),
+            Priv::Oper => b(Priv::Oper) | b(Priv::Admin) | b(Priv::Root),
+            Priv::Suspend => b(Priv::Suspend) | b(Priv::Admin) | b(Priv::Root),
+            Priv::Admin => b(Priv::Admin) | b(Priv::Root),
+            Priv::Root => b(Priv::Root),
+        };
+        self.0 & mask != 0
+    }
+    // Whether `p` was granted literally (no tier implication) — for display, not
+    // gating.
+    pub fn contains(self, p: Priv) -> bool {
+        self.0 & Self::bit(p) != 0
+    }
+    // The named tier this set belongs to, by its highest granted privilege.
+    pub fn tier(self) -> &'static str {
+        if self.contains(Priv::Root) {
+            "Services Root"
+        } else if self.contains(Priv::Admin) {
+            "Services Administrator"
+        } else if self.any() {
+            // oper, or an auspex/suspend-only grant — a (limited) operator.
+            "Services Operator"
+        } else {
+            "not an operator"
+        }
     }
     // Whether this is a services operator at all (holds any privilege).
     pub fn any(self) -> bool {
@@ -397,9 +450,9 @@ impl Privs {
         Self::parse_names(names).0
     }
 
-    // The privilege names held, for display.
+    // The privilege names granted literally (not implied), for display.
     pub fn names(self) -> Vec<&'static str> {
-        Priv::ALL.into_iter().filter(|p| self.has(*p)).map(Priv::name).collect()
+        Priv::ALL.into_iter().filter(|p| self.contains(*p)).map(Priv::name).collect()
     }
 }
 
@@ -2533,25 +2586,38 @@ mod tests {
     }
 
     #[test]
-    fn privs_bitset_grants_and_checks() {
-        let p = Privs::default().with(Priv::Auspex).with(Priv::Admin);
-        assert!(p.has(Priv::Auspex) && p.has(Priv::Admin));
-        assert!(!p.has(Priv::Suspend), "only granted privileges are held");
-        assert!(p.any());
+    fn privs_are_tiered_and_imply_the_lower_ones() {
+        let admin = Privs::default().with(Priv::Admin);
+        // Admin is a tier: it can exercise the lower privileges too.
+        assert!(admin.has(Priv::Admin) && admin.has(Priv::Suspend) && admin.has(Priv::Oper) && admin.has(Priv::Auspex));
+        // but not the tier above it,
+        assert!(!admin.has(Priv::Root));
+        // and `contains` reports only what was granted literally (for display).
+        assert!(admin.contains(Priv::Admin) && !admin.contains(Priv::Suspend));
+        assert_eq!(admin.tier(), "Services Administrator");
+
+        // An operator can moderate but not administrate; root can do everything.
+        let oper = Privs::default().with(Priv::Oper);
+        assert!(oper.has(Priv::Oper) && oper.has(Priv::Auspex) && !oper.has(Priv::Suspend) && !oper.has(Priv::Admin));
+        assert_eq!(oper.tier(), "Services Operator");
+        let root = Privs::default().with(Priv::Root);
+        assert!(root.has(Priv::Root) && root.has(Priv::Admin) && root.has(Priv::Oper) && root.has(Priv::Auspex));
+        assert_eq!(root.tier(), "Services Root");
+
         assert!(!Privs::default().any(), "empty set is not an oper");
     }
 
     #[test]
     fn parse_names_reports_typos_instead_of_dropping_them() {
         // Known names are parsed (case-insensitive); unknown ones are collected so
-        // a config typo is surfaced, not silently ignored.
+        // a config typo is surfaced, not silently ignored. "root" is a real priv now.
         let (privs, unknown) = Privs::parse_names(&["Admin", "auspex", "admn", "root"]);
-        assert!(privs.has(Priv::Admin) && privs.has(Priv::Auspex));
-        assert!(!privs.has(Priv::Suspend));
-        assert_eq!(unknown, vec!["admn".to_string(), "root".to_string()]);
+        assert!(privs.contains(Priv::Admin) && privs.contains(Priv::Auspex) && privs.contains(Priv::Root));
+        assert_eq!(unknown, vec!["admn".to_string()]);
         assert_eq!(Priv::from_name("SUSPEND"), Some(Priv::Suspend));
+        assert_eq!(Priv::from_name("administrator"), Some(Priv::Admin)); // tier alias
         assert_eq!(Priv::from_name("nope"), None);
-        assert_eq!(Priv::valid_names(), "auspex, suspend, admin");
+        assert_eq!(Priv::valid_names(), "auspex, oper, suspend, admin, root");
     }
 
     #[test]

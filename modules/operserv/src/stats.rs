@@ -1,9 +1,13 @@
-use echo_api::{Sender, ServiceCtx, Store, XlineKind};
+use echo_api::{Priv, Sender, ServiceCtx, Store, XlineKind};
 
 // STATS: an at-a-glance summary of the enforcement state OperServ holds — how
 // many network bans of each kind and how many services ignores are live.
 // Read-only, so any operator may run it (the module is already oper-gated).
 pub fn handle(me: &str, from: &Sender, db: &mut dyn Store, ctx: &mut ServiceCtx) {
+    if !from.privs.has(Priv::Oper) {
+        ctx.notice(me, from.uid, "Access denied — STATS needs the \x02operator\x02 privilege.");
+        return;
+    }
     let akills = db.akills();
     let glines = akills.iter().filter(|a| a.kind == XlineKind::Gline).count();
     let qlines = akills.iter().filter(|a| a.kind == XlineKind::Qline).count();

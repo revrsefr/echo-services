@@ -42,12 +42,18 @@ protocol = 1206            # InspIRCd link protocol version (1206 = insp4, 1205 
 # [modules]
 # services = ["nickserv", "chanserv"]
 
-# Services operators: accounts granted privileges. Omit for a network with no
-# opers. Privileges: "auspex" (see others' hidden info), "suspend"
-# (suspend/unsuspend), "admin" (modify or drop other accounts/channels).
+# Services operators, in three tiers of increasing power:
+#   operator      — day-to-day moderation: view hidden info, network bans, kick,
+#                   kill, session limits, ignores, mode, spam filters, log search.
+#   administrator — the above plus account/channel data: suspend, drop, set flags,
+#                   forbid, global notices, defcon, memo/info/bot administration.
+#   root          — the above plus daemon control: add/remove opers, set, rehash,
+#                   restart, shutdown, the activity feed.
+# Name a tier with `type`, or list individual privileges with `privs` (auspex,
+# oper, suspend, admin, root). Omit the whole block for a network with no opers.
 # [[oper]]
 # account = "yournick"
-# privs = ["auspex", "suspend", "admin"]
+# type = "root"
 
 # Staff audit feed: notable service actions (registrations, drops, vhosts,
 # suspensions, akicks, access and bot changes, oper host config) are announced

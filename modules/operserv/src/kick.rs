@@ -3,8 +3,8 @@ use echo_api::{NetView, Priv, Sender, ServiceCtx};
 // KICK <#channel> <nick> [reason]: remove a user from a channel, sourced from
 // OperServ so it's clearly a staff action. Admin-only.
 pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView) {
-    if !from.privs.has(Priv::Admin) {
-        ctx.notice(me, from.uid, "Access denied — KICK needs the \x02admin\x02 privilege.");
+    if !from.privs.has(Priv::Oper) {
+        ctx.notice(me, from.uid, "Access denied — KICK needs the \x02operator\x02 privilege.");
         return;
     }
     let Some(&chan) = args.get(1).filter(|c| c.starts_with('#') || c.starts_with('&')) else {
