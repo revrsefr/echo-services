@@ -6,7 +6,7 @@
 //! SCORES <#channel> shows the standings; CHANFIX <#channel> performs the fix.
 //! `lib.rs` holds the dispatcher; each command lives in its own file.
 
-use echo_api::{HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
+use echo_api::{t, HelpEntry, NetView, Sender, Service, ServiceCtx, Store};
 
 #[path = "scores.rs"]
 mod scores;
@@ -58,7 +58,7 @@ impl Service for ChanFix {
             Some("SCORES") => scores::handle(me, from, args.get(1).copied(), ctx, net),
             Some("CHANFIX") | Some("FIX") => fix::handle(me, from, args.get(1).copied(), ctx, net, db),
             Some("HELP") | None => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
-            Some(other) => ctx.notice(me, from.uid, format!("I don't know \x02{other}\x02. Try \x02SCORES\x02 or \x02CHANFIX\x02 <#channel>.")),
+            Some(other) => ctx.notice(me, from.uid, t!(ctx, "I don't know \x02{other}\x02. Try \x02SCORES\x02 or \x02CHANFIX\x02 <#channel>.", other = other)),
         }
     }
 }

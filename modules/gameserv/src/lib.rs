@@ -136,7 +136,7 @@ impl GameServ {
             return;
         };
         let Some(tuid) = net.uid_by_nick(target).map(str::to_string) else {
-            ctx.notice(me, from.uid, format!("\x02{target}\x02 is not online."));
+            ctx.notice(me, from.uid, t!(ctx, "\x02{target}\x02 is not online.", target = target));
             return;
         };
         let meid = Self::ident(from).to_string();
@@ -164,7 +164,7 @@ impl GameServ {
         // flooding a victim with offers to exhaust the victim's slots.
         let mine = self.games.values().filter(|g| g.acc_a == meid || (g.acc_b == meid && g.status == Status::Active)).count();
         if mine >= MAX_GAMES_PER_USER {
-            ctx.notice(me, from.uid, format!("You have too many games in progress (max {MAX_GAMES_PER_USER}). Finish or resign one first."));
+            ctx.notice(me, from.uid, t!(ctx, "You have too many games in progress (max {max}). Finish or resign one first.", max = MAX_GAMES_PER_USER));
             return;
         }
         let id = self.nextid;
@@ -180,8 +180,8 @@ impl GameServ {
             target.to_string(),
         );
         self.games.insert(id, g);
-        ctx.notice(me, from.uid, format!("Challenge \x02#{id}\x02 ({}) sent to \x02{target}\x02.", gt.wire()));
-        ctx.notice(me, &tuid, format!("{} challenges you to {} (game #{id}). \x02/msg GamesServ ACCEPT {id}\x02", from.nick, gt.wire()));
+        ctx.notice(me, from.uid, t!(ctx, "Challenge \x02#{id}\x02 ({game}) sent to \x02{target}\x02.", id = id, game = gt.wire(), target = target));
+        ctx.notice(me, &tuid, t!(ctx, "{challenger} challenges you to {game} (game #{id}). \x02/msg GamesServ ACCEPT {id}\x02", challenger = from.nick, game = gt.wire(), id = id));
         let g = &self.games[&id];
         push_one(g, Side::A, "pending", me, net, ctx); // challenger: waiting
         push_one(g, Side::B, "offer", me, net, ctx); // target: can accept/decline
@@ -201,7 +201,7 @@ impl GameServ {
         g.status = Status::Active;
         g.nick_b = from.nick.to_string();
         let glyph = g.glyph(Side::B);
-        ctx.notice(me, from.uid, format!("Game \x02#{id}\x02 started. You are \x02{glyph}\x02."));
+        ctx.notice(me, from.uid, t!(ctx, "Game \x02#{id}\x02 started. You are \x02{glyph}\x02.", id = id, glyph = glyph));
         push_state(&self.games[&id], me, net, ctx);
     }
 
@@ -217,7 +217,7 @@ impl GameServ {
         };
         let g = self.games.remove(&id).unwrap();
         if let Some(auid) = net.uid_by_nick(&g.nick_a).map(str::to_string) {
-            ctx.notice(me, &auid, format!("{} declined your challenge #{id}.", from.nick));
+            ctx.notice(me, &auid, t!(ctx, "{nick} declined your challenge #{id}.", nick = from.nick, id = id));
         }
         ctx.notice(me, from.uid, "Declined.");
     }
@@ -276,7 +276,7 @@ impl GameServ {
                 return;
             }
         };
-        ctx.notice(me, from.uid, format!("You resigned game #{id}."));
+        ctx.notice(me, from.uid, t!(ctx, "You resigned game #{id}.", id = id));
         self.finish(id, winner, me, net, ctx);
     }
 
@@ -330,7 +330,7 @@ impl GameServ {
         for id in ids {
             let g = &self.games[&id];
             let opp = if g.acc_a == meid { &g.nick_b } else { &g.nick_a };
-            ctx.notice(me, from.uid, format!("#{}  {}  vs {}  [{}]", g.id, g.gtype().wire(), opp, g.status.wire()));
+            ctx.notice(me, from.uid, t!(ctx, "#{id}  {game}  vs {opp}  [{status}]", id = g.id, game = g.gtype().wire(), opp = opp, status = g.status.wire()));
         }
     }
 
@@ -345,15 +345,15 @@ impl GameServ {
         };
         let counters = net.stat_counters();
         push_stats(&counters, &who, from.nick, me, net, ctx, None); // machine lines for the UI
-        ctx.notice(me, from.uid, format!("\x02{who}\x02 — classement Jeux"));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{who}\x02 — classement Jeux", who = who));
         let mut any = false;
         for gt in TYPES {
             let s = read_stats(&counters, gt, &who);
             if s.any() {
                 any = true;
-                ctx.notice(me, from.uid, format!(
-                    "  \x02{}\x02  \x02{}\x02 — {} pts ({}V {}D {}N)",
-                    gt.label(), s.rank(), s.points(), s.wins, s.losses, s.draws
+                ctx.notice(me, from.uid, t!(ctx,
+                    "  \x02{game}\x02  \x02{rank}\x02 — {pts} pts ({wins}V {losses}D {draws}N)",
+                    game = gt.label(), rank = s.rank(), pts = s.points(), wins = s.wins, losses = s.losses, draws = s.draws
                 ));
             }
         }
@@ -392,13 +392,15 @@ impl GameServ {
         all.sort_by_key(|(_, s)| std::cmp::Reverse(s.points()));
         push_tag(me, net, from.nick, &format!("GS$TOPSTART {}", gt.wire()), ctx);
         if all.is_empty() {
-            ctx.notice(me, from.uid, format!("Classement \x02{}\x02 vide. Sois le premier à gagner !", gt.label()));
+            ctx.notice(me, from.uid, t!(ctx, "Classement \x02{game}\x02 vide. Sois le premier à gagner !", game = gt.label()));
             return;
         }
-        ctx.notice(me, from.uid, format!("\x02Classement {} :\x02", gt.label()));
+        ctx.notice(me, from.uid, t!(ctx, "\x02Classement {game} :\x02", game = gt.label()));
         for (rank, (acc, s)) in all.iter().take(10).enumerate() {
             let rank = rank + 1;
-            ctx.notice(me, from.uid, format!("{rank:2}. {acc:<16} {}  {} pts", s.rank(), s.points()));
+            let pos = format!("{rank:2}");
+            let name = format!("{acc:<16}");
+            ctx.notice(me, from.uid, t!(ctx, "{pos}. {name} {tier}  {pts} pts", pos = pos, name = name, tier = s.rank(), pts = s.points()));
             push_tag(me, net, from.nick, &format!("GS$TOPROW {} {rank} {acc} {} {}", gt.wire(), s.rank(), s.points()), ctx);
         }
     }
@@ -481,7 +483,7 @@ impl Service for GameServ {
             Some("STATS") => self.do_stats(&me, from, args, ctx, net),
             Some("TOP") => self.do_top(&me, from, args, ctx, net),
             Some("HELP") | None => echo_api::help(&me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
-            Some(other) => ctx.notice(&me, from.uid, format!("I don't know \x02{other}\x02. Try \x02HELP\x02.")),
+            Some(other) => ctx.notice(&me, from.uid, t!(ctx, "I don't know \x02{other}\x02. Try \x02HELP\x02.", other = other)),
         }
     }
 }

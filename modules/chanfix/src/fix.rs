@@ -1,4 +1,4 @@
-use echo_api::{NetView, Sender, ServiceCtx, Store};
+use echo_api::{t, NetView, Sender, ServiceCtx, Store};
 
 // A channel with this many ops isn't opless and needs no fix.
 const OP_THRESHOLD: usize = 3;
@@ -16,17 +16,17 @@ pub fn handle(me: &str, from: &Sender, chan: Option<&str>, ctx: &mut ServiceCtx,
     };
     // Defer to ChanServ for anything it owns.
     if db.channel(chan).is_some() {
-        ctx.notice(me, from.uid, format!("\x02{chan}\x02 is registered — use \x02ChanServ\x02 to manage it."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 is registered — use \x02ChanServ\x02 to manage it.", chan = chan));
         return;
     }
     if net.op_count(chan) >= OP_THRESHOLD {
-        ctx.notice(me, from.uid, format!("\x02{chan}\x02 already has ops — nothing to fix."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 already has ops — nothing to fix.", chan = chan));
         return;
     }
     let scores = net.chanfix_scores(chan);
     let highscore = scores.first().map(|(_, s)| *s).unwrap_or(0);
     if highscore < MIN_FIX_SCORE {
-        ctx.notice(me, from.uid, format!("\x02{chan}\x02 doesn't have enough op-time history to fix yet."));
+        ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 doesn't have enough op-time history to fix yet.", chan = chan));
         return;
     }
     let threshold = ((highscore as f64 * FIX_STEP) as u32).max(1);
@@ -47,8 +47,8 @@ pub fn handle(me: &str, from: &Sender, chan: Option<&str>, ctx: &mut ServiceCtx,
         }
     }
     if opped == 0 {
-        ctx.notice(me, from.uid, format!("None of \x02{chan}\x02's trusted regulars are here right now."));
+        ctx.notice(me, from.uid, t!(ctx, "None of \x02{chan}\x02's trusted regulars are here right now.", chan = chan));
     } else {
-        ctx.notice(me, from.uid, format!("Reopped \x02{opped}\x02 trusted regular(s) in \x02{chan}\x02."));
+        ctx.notice(me, from.uid, t!(ctx, "Reopped \x02{opped}\x02 trusted regular(s) in \x02{chan}\x02.", opped = opped, chan = chan));
     }
 }
