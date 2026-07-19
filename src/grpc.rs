@@ -189,6 +189,7 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::JupeAdded { .. }
         | Event::JupeRemoved { .. }
         | Event::StatsSet { .. }
+        | Event::IncidentsSet { .. }
         | Event::AccountExpiryWarned { .. }
         | Event::ChannelExpiryWarned { .. }
         | Event::AccountOperNoteSet { .. }

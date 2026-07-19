@@ -229,6 +229,7 @@ impl Engine {
         // Restore persisted stats so they survive a restart.
         network.seed_stats(db.persisted_stats());
         network.seed_chan_activity(db.persisted_chan_stats());
+        network.seed_incidents(db.persisted_incidents());
         Self {
             services,
             network,
@@ -305,6 +306,18 @@ impl Engine {
         }
         if let Err(err) = self.db.persist_stats(&counters, chan_stats) {
             tracing::warn!(%err, "failed to persist stat counters");
+        }
+    }
+
+    // Snapshot the recent-incident ring (OperServ LOGSEARCH) so it survives a
+    // restart. Flushed on the same cadence as the stat counters.
+    pub fn persist_incidents(&mut self) {
+        let (seq, incidents) = self.network.incidents_snapshot();
+        if incidents.is_empty() {
+            return;
+        }
+        if let Err(err) = self.db.persist_incidents(seq, incidents) {
+            tracing::warn!(%err, "failed to persist incidents");
         }
     }
 
@@ -1875,7 +1888,7 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         | ChannelMlock { .. } | ChannelDescSet { .. } | ChannelEntryMsgSet { .. } | ChannelUrlSet { .. } | ChannelEmailSet { .. } | ChannelSettingsSet { .. }
         | ChannelKickerSet { .. } | ChannelBadwordsSet { .. } | ChannelTriggersSet { .. }
         | ChannelTopicSet { .. } | AccountSeen { .. } | ChannelUsed { .. }
-        | AccountExpiryWarned { .. } | ChannelExpiryWarned { .. } | StatsSet { .. } => return None,
+        | AccountExpiryWarned { .. } | ChannelExpiryWarned { .. } | StatsSet { .. } | IncidentsSet { .. } => return None,
     };
     Some(s)
 }

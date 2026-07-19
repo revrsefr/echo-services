@@ -636,6 +636,22 @@
         assert_eq!(db.persisted_chan_stats(), chans, "per-channel activity replays too");
     }
 
+    #[test]
+    fn incidents_survive_a_restart() {
+        let p = tmp("incpersist");
+        let incidents = vec![
+            ("i1".to_string(), 1000u64, "[REGISTER] baddie tried a look-alike nick".to_string()),
+            ("i2".to_string(), 1001u64, "kicked spammer from #chan".to_string()),
+        ];
+        {
+            let mut db = Db::open(&p, "N1");
+            db.persist_incidents(9, incidents.clone()).unwrap();
+            assert_eq!(db.persisted_incidents(), (9, incidents.clone()), "stored while live");
+        }
+        let db = Db::open(&p, "N1");
+        assert_eq!(db.persisted_incidents(), (9, incidents), "incidents replay from the log after a restart");
+    }
+
     // Fold parity: the live state after a broad sequence of writes must equal the
     // state rebuilt by replaying the same log — every event's manual live mutation
     // has to match its `apply()` arm, or a restart silently changes the data.

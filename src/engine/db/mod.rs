@@ -350,6 +350,10 @@ pub struct NetData {
     pub stats: std::collections::BTreeMap<String, u64>,
     // Persisted per-channel BOTSTATS activity: (channel, lines, top talkers).
     pub chan_stats: ChanStats,
+    // Persisted snapshot of the recent-incident ring (OperServ LOGSEARCH) and its
+    // id counter, so the moderation trail survives a restart.
+    pub incidents: Vec<(String, u64, String)>,
+    pub incident_seq: u64,
 }
 
 // A session-limit exception: an IP-mask glob and the session allowance for IPs
@@ -1271,6 +1275,12 @@ impl Db {
             snapshot.push(Event::StatsSet {
                 counters: self.net.stats.iter().map(|(k, v)| (k.clone(), *v)).collect(),
                 channels: self.net.chan_stats.clone(),
+            });
+        }
+        if !self.net.incidents.is_empty() {
+            snapshot.push(Event::IncidentsSet {
+                incident_seq: self.net.incident_seq,
+                incidents: self.net.incidents.clone(),
             });
         }
         for host in &self.host_cfg.offers {

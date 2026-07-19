@@ -260,6 +260,7 @@ async fn main() -> Result<()> {
                 tokio::time::sleep(std::time::Duration::from_secs(300)).await;
                 let mut e = engine.lock().await;
                 e.persist_stats(); // snapshot counters so a crash loses at most ~5 min
+                e.persist_incidents(); // and the LOGSEARCH incident ring
                 e.expire_sweep();
                 if let Err(err) = e.maybe_compact() {
                     tracing::warn!(%err, "compaction failed");
@@ -300,8 +301,13 @@ async fn main() -> Result<()> {
     tokio::select! {
         res = link::run(proto, engine, &addr, irc_rx, irc_tx, cfg.email.clone(), cfg.keycard.clone(), cfg.dictserv.as_ref().map(|d| d.server.clone())) => res,
         _ = shutdown_signal() => {
-            // Flush stat counters so a clean stop/restart keeps StatServ history.
-            shutdown_engine.lock().await.persist_stats();
+            // Flush stat counters + the incident ring so a clean stop/restart keeps
+            // StatServ history and OperServ LOGSEARCH.
+            {
+                let mut e = shutdown_engine.lock().await;
+                e.persist_stats();
+                e.persist_incidents();
+            }
             tracing::info!("received shutdown signal, exiting");
             Ok(())
         }

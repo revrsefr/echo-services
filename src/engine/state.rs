@@ -456,6 +456,20 @@ impl Network {
         self.stats = stats;
     }
 
+    // Restore the recent-incident ring (and its id counter) from a persisted
+    // snapshot at startup, so OperServ LOGSEARCH survives a restart.
+    pub fn seed_incidents(&mut self, data: (u64, Vec<(String, u64, String)>)) {
+        let (seq, incidents) = data;
+        self.incident_seq = seq;
+        self.incidents = incidents.into_iter().map(|(id, ts, summary)| Incident { id, ts, summary }).collect();
+    }
+
+    // Snapshot the live incident ring (id counter, incidents oldest-first) for
+    // persistence.
+    pub fn incidents_snapshot(&self) -> (u64, Vec<(String, u64, String)>) {
+        (self.incident_seq, self.incidents.iter().map(|i| (i.id.clone(), i.ts, i.summary.clone())).collect())
+    }
+
     // BOTSTATS view: (total lines, top talkers by count, descending).
     pub fn channel_activity(&self, channel: &str) -> Option<(u64, Vec<(String, u64)>)> {
         let a = self.chan_activity.get(&lc(channel))?;

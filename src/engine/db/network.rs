@@ -427,6 +427,21 @@ impl Db {
         Ok(())
     }
 
+    /// Snapshot the recent-incident ring to the log so OperServ LOGSEARCH survives
+    /// a restart. `seq` is the id counter; `incidents` are (id, ts, summary).
+    pub fn persist_incidents(&mut self, seq: u64, incidents: Vec<(String, u64, String)>) -> std::io::Result<()> {
+        self.log.append(Event::IncidentsSet { incident_seq: seq, incidents: incidents.clone() })?;
+        self.net.incident_seq = seq;
+        self.net.incidents = incidents;
+        Ok(())
+    }
+
+    /// The persisted incident snapshot (id counter, incidents), for reseeding the
+    /// live ring at startup.
+    pub fn persisted_incidents(&self) -> (u64, Vec<(String, u64, String)>) {
+        (self.net.incident_seq, self.net.incidents.clone())
+    }
+
     /// File an abuse report, rate-limited per reporter. Returns the new report's
     /// id, or None if the reporter filed one too recently.
     pub fn report_file(&mut self, reporter: &str, target: &str, reason: &str) -> Option<u64> {

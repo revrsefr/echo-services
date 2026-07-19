@@ -158,6 +158,14 @@ pub enum Event {
         #[serde(default)]
         channels: super::ChanStats,
     },
+    // A snapshot of the recent-incident ring (OperServ LOGSEARCH), flushed
+    // periodically and on shutdown so the moderation trail survives a restart.
+    // `seq` restores the id counter; incidents are (id, ts, summary), oldest first.
+    IncidentsSet {
+        // NOT `seq`: the event flattens into LogEntry, which already has a `seq`.
+        incident_seq: u64,
+        incidents: Vec<(String, u64, String)>,
+    },
 }
 
 // Whether an event replicates across the federation. Account identity is Global
@@ -268,7 +276,8 @@ impl Event {
             | Event::ChannelOperNoteSet { .. }
             | Event::JupeAdded { .. }
             | Event::JupeRemoved { .. }
-            | Event::StatsSet { .. } => Scope::Local,
+            | Event::StatsSet { .. }
+            | Event::IncidentsSet { .. } => Scope::Local,
         }
     }
 }
@@ -688,6 +697,10 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
             // A full snapshot: replace, so replaying the newest wins.
             net.stats = counters.into_iter().collect();
             net.chan_stats = channels;
+        }
+        Event::IncidentsSet { incident_seq, incidents } => {
+            net.incident_seq = incident_seq;
+            net.incidents = incidents;
         }
         Event::AccountExpiryWarned { account } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {
