@@ -341,16 +341,17 @@ impl Network {
         }
         self.users.remove(uid);
         self.accounts.remove(uid);
-        // Drop the membership, and forget any channel it emptied — an emptied
-        // channel is destroyed by the ircd, so a lingering entry would both grow
-        // unbounded over the process lifetime and hand stale modes (e.g. a `+k`
-        // key) to whoever recreates the name later.
-        self.channels.retain(|_, c| {
+        for c in self.channels.values_mut() {
             c.members.remove(uid);
             c.ops.remove(uid);
             c.voices.remove(uid);
-            !c.members.is_empty()
-        });
+        }
+    }
+
+    // Forget a channel outright (the engine calls this once it's confirmed truly
+    // empty on the ircd — no members and no resident services bot).
+    pub fn remove_channel(&mut self, channel: &str) {
+        self.channels.remove(&lc(channel));
     }
 
     pub fn nick_of(&self, uid: &str) -> Option<&str> {
@@ -394,19 +395,10 @@ impl Network {
 
     // A user left a channel (part/kick): drop membership and record last-seen.
     pub fn channel_part(&mut self, channel: &str, uid: &str) {
-        let key = lc(channel);
-        let emptied = if let Some(c) = self.channels.get_mut(&key) {
+        if let Some(c) = self.channels.get_mut(&lc(channel)) {
             c.members.remove(uid);
             c.ops.remove(uid);
             c.voices.remove(uid);
-            c.members.is_empty()
-        } else {
-            false
-        };
-        // An emptied channel is gone on the ircd; drop it so a later channel of
-        // the same name can't inherit its stale modes (see user_quit).
-        if emptied {
-            self.channels.remove(&key);
         }
         if let Some(nick) = self.nick_of(uid).map(str::to_string) {
             self.record_seen(lc(&nick), Seen { nick, ts: now(), what: format!("leaving {channel}") });

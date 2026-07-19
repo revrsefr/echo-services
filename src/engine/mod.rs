@@ -448,6 +448,7 @@ impl Engine {
     // kick the channel's own bot). Any reconcile actions are returned.
     fn member_left(&mut self, channel: &str, uid: &str) -> Vec<NetAction> {
         self.network.channel_part(channel, uid);
+        self.prune_channel_if_gone(channel);
         self.forget_chatter(channel, uid);
         if let Some(bot_lc) = self.bot_uids.iter().find_map(|(lc, u)| (u == uid).then(|| lc.clone())) {
             if self.bot_channels.remove(&(bot_lc, channel.to_string())) {
@@ -738,10 +739,28 @@ impl Engine {
     // Forget a user who left the network (QUIT or KILL): drop their membership,
     // any half-finished SASL exchange, and their pending nick-protection timer.
     fn forget_user(&mut self, uid: &str) {
+        let chans = self.network.channels_of(uid);
         self.network.user_quit(uid);
+        for c in &chans {
+            self.prune_channel_if_gone(c);
+        }
         self.sasl_sessions.remove(uid);
         self.pending_enforce.retain(|p| p.uid != uid);
         self.forget_chatter_everywhere(uid);
+    }
+
+    // Forget a channel once it's truly gone on the ircd — no members AND no resident
+    // services bot (bots keep a channel alive without being tracked as members).
+    // Pruning it stops a stale key/mode leaking to a later channel of the same name,
+    // while keeping a botted/persistent channel's live state intact.
+    fn prune_channel_if_gone(&mut self, channel: &str) {
+        if self.network.channel_members(channel).next().is_some() {
+            return;
+        }
+        if self.bot_channels.iter().any(|(_, c)| c.eq_ignore_ascii_case(channel)) {
+            return;
+        }
+        self.network.remove_channel(channel);
     }
 
     // Log a single session out of `account`, telling them why (services-sourced).

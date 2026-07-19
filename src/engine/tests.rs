@@ -2495,29 +2495,33 @@
         assert!(parted, "the assigned bot parts the expired channel");
     }
 
-    // An emptied channel is destroyed on the ircd; echo must forget it so a later
-    // channel of the same name can't inherit its stale `+k` key (or membership).
+    // A truly-empty channel is forgotten (so a stale `+k` key can't leak to a later
+    // channel of the same name), but a channel a services bot still sits in is kept
+    // alive (bots aren't tracked as members) so its live key/modes survive.
     #[test]
-    fn emptied_channel_is_forgotten_so_no_stale_key_leaks() {
+    fn emptied_channel_pruned_but_botted_channel_kept() {
         let path = std::env::temp_dir().join("echo-emptykey.jsonl");
         let _ = std::fs::remove_file(&path);
         let mut e = Engine::new(vec![], Db::open(&path, "42S"));
+
+        // Bot-less channel: once the last member leaves, it's gone (no stale key).
         e.network.channel_join("#x", "000AAAAAB", true);
-        e.network.channel_join("#x", "000AAAAAC", false);
         e.network.set_channel_key("#x", Some("secret".into()));
         assert_eq!(e.network.channel_key("#x"), Some("secret"));
-
         e.network.channel_part("#x", "000AAAAAB");
-        e.network.channel_part("#x", "000AAAAAC"); // now empty
-        assert_eq!(e.network.channel_key("#x"), None, "stale key must not linger after the channel empties");
-
-        e.network.channel_join("#x", "000AAAAAD", true); // recreated, no key
+        e.prune_channel_if_gone("#x");
+        assert_eq!(e.network.channel_key("#x"), None, "empty bot-less channel is forgotten");
+        e.network.channel_join("#x", "000AAAAAD", true); // recreated, fresh
         assert_eq!(e.network.channel_key("#x"), None, "recreated channel starts keyless");
 
-        // The quit path prunes an emptied channel too.
-        e.network.set_channel_key("#x", Some("k2".into()));
-        e.network.user_quit("000AAAAAD");
-        assert_eq!(e.network.channel_key("#x"), None, "a quit that empties a channel forgets it");
+        // Botted channel: emptied of humans, but the bot keeps it alive on the ircd,
+        // so echo must NOT drop its live key.
+        e.network.channel_join("#y", "000AAAAAC", true);
+        e.network.set_channel_key("#y", Some("hunter2".into()));
+        e.bot_channels.insert(("bendy".to_string(), "#y".to_string()));
+        e.network.channel_part("#y", "000AAAAAC");
+        e.prune_channel_if_gone("#y");
+        assert_eq!(e.network.channel_key("#y"), Some("hunter2"), "botted channel keeps its key");
     }
 
     // The gRPC login path applies the same guards as IRC IDENTIFY: a suspended or
