@@ -745,6 +745,7 @@ impl Engine {
             self.prune_channel_if_gone(c);
         }
         self.sasl_sessions.remove(uid);
+        self.sasl_source.remove(uid); // the captured SASL host/IP dies with the connection too
         self.pending_enforce.retain(|p| p.uid != uid);
         self.forget_chatter_everywhere(uid);
     }
