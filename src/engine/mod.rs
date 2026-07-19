@@ -295,6 +295,18 @@ impl Engine {
         m
     }
 
+    // The stat snapshot plus event-log position, for the health/metrics endpoint.
+    // The log gauges (seq/lamport/entries) let a monitor watch replication progress
+    // and catch a stalled or non-advancing log before users notice.
+    pub fn health_metrics(&self) -> std::collections::BTreeMap<String, u64> {
+        let mut m = self.stats_snapshot();
+        // lamport is monotonic (survives compaction) — the "log advancing" gauge;
+        // entries is the current in-memory log size (drops at each compaction).
+        m.insert("event.lamport".to_string(), self.db.lamport());
+        m.insert("log.entries".to_string(), self.db.log_len() as u64);
+        m
+    }
+
     // Snapshot the accumulated stat counters to the log (periodically and on
     // shutdown) so StatServ / the Stats API keep their history across a restart.
     // Only the real counters are persisted; the live gauges above are re-derived.

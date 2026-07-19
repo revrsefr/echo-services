@@ -36,6 +36,13 @@ protocol = 1206            # InspIRCd link protocol version (1206 = insp4, 1205 
 # cert = "certs/node.crt"
 # key  = "certs/node.key"
 
+# Liveness + Prometheus metrics (plain HTTP, read-only, unauthenticated). Omit to
+# leave it off. Bind to localhost and point a monitor at it: GET /health for a
+# liveness probe (JSON), GET /metrics for a scrape (gauges: account/channel/oper
+# totals, per-service counters, and event.lamport — a monotonic log-progress gauge).
+# [health]
+# bind = "127.0.0.1:9099"
+
 # Which service modules to start. Omit this section for the full standard suite
 # (every service comes up by default). List names here to run a subset; add
 # "example" to also start the example template service.

@@ -935,6 +935,12 @@ impl EventLog {
         self.entries.len()
     }
 
+    // The highest Lamport clock seen. Monotonic across compaction (unlike `len`,
+    // which a snapshot shrinks), so it's the gauge that shows the log advancing.
+    fn lamport(&self) -> u64 {
+        self.lamport
+    }
+
     // Rewrite the log to a minimal snapshot: one event per live account and
     // channel, authored under our origin at fresh sequence numbers. Peers
     // re-converge because the register events overwrite and cert replay is
@@ -1364,6 +1370,12 @@ impl Db {
     /// The number of entries in the log, a mark to later diff against.
     pub fn log_len(&self) -> usize {
         self.log.len()
+    }
+
+    /// The highest Lamport clock committed — a monotonic gauge of log progress
+    /// (survives compaction), for the health/metrics endpoint.
+    pub fn lamport(&self) -> u64 {
+        self.log.lamport()
     }
 
     /// The events appended since `mark` (a value from an earlier [`log_len`]).

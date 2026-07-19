@@ -6,6 +6,7 @@ mod dict;
 mod engine;
 mod gossip;
 mod grpc;
+mod health;
 mod jsonrpc;
 mod keycard;
 mod link;
@@ -250,6 +251,11 @@ async fn main() -> Result<()> {
     // JSON-RPC stats endpoint (plain HTTP), for a website's stats pages.
     if let Some(jsonrpc_cfg) = cfg.jsonrpc.clone() {
         tokio::spawn(jsonrpc::run(engine.clone(), jsonrpc_cfg));
+    }
+
+    // Liveness + Prometheus metrics endpoint (plain HTTP, localhost).
+    if let Some(health_cfg) = cfg.health.clone() {
+        tokio::spawn(health::run(engine.clone(), health_cfg));
     }
 
     // Periodically fold log churn into a snapshot when it grows past the accounts.

@@ -20,6 +20,10 @@ pub struct Config {
     // Absent = it does not start. Bind to localhost; a token is required.
     #[serde(default)]
     pub jsonrpc: Option<JsonRpc>,
+    // Liveness + Prometheus metrics endpoint (plain HTTP). Absent = it does not
+    // start. Bind to localhost; unauthenticated by design (read-only gauges).
+    #[serde(default)]
+    pub health: Option<Health>,
     // Which service modules to start. Absent = the full standard suite (all the
     // pseudo-clients); listing it trims that set. Every service is first-class.
     #[serde(default)]
@@ -275,6 +279,14 @@ pub struct JsonRpc {
     // reverse proxy does TLS. Reuses the same cert/key shape as [grpc].
     #[serde(default)]
     pub tls: Option<ServerTls>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Health {
+    // Address to accept HTTP on, e.g. "127.0.0.1:9099". Keep it on localhost:
+    // the endpoint is unauthenticated and serves read-only gauges for a monitor
+    // (Prometheus scrape of /metrics, or /health for a liveness probe).
+    pub bind: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
