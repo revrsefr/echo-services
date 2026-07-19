@@ -730,6 +730,26 @@ mod tests {
         assert_eq!(engine.lock().await.directory_snapshot().0[0].email, None, "empty string clears the email");
     }
 
+    // The website authority path can't smuggle a CRLF into a mail header via the
+    // stored email or the account name (SMTP header injection through sendmail -t).
+    #[tokio::test]
+    async fn authority_rejects_crlf_in_email_and_name() {
+        let (engine, _tx) = engine_with("acct-inject");
+        let svc = accounts_svc(engine.clone());
+        svc.register(authed(RegisterRequest { name: "frank".into(), password: "x".into(), email: String::new() }, "t")).await.unwrap();
+
+        let bad = "frank@example.com\r\nBcc: attacker@evil.com".to_string();
+        let se = svc.set_email(authed(SetEmailRequest { account: "frank".into(), email: bad.clone() }, "t")).await.unwrap().into_inner();
+        assert_eq!(se.status, PbStatus::Invalid as i32, "CRLF email refused on SET");
+        assert_eq!(engine.lock().await.directory_snapshot().0[0].email, None, "poisoned email not stored");
+
+        let reg = svc.register(authed(RegisterRequest { name: "mallory".into(), password: "x".into(), email: bad }, "t")).await.unwrap().into_inner();
+        assert_eq!(reg.status, PbStatus::Invalid as i32, "CRLF email refused on register");
+
+        let name = svc.register(authed(RegisterRequest { name: "eve\r\nBcc: x@evil.com".into(), password: "x".into(), email: String::new() }, "t")).await.unwrap().into_inner();
+        assert_eq!(name.status, PbStatus::Invalid as i32, "control char in the account name refused");
+    }
+
     // Full round trip through the real confirmation-email pipeline: register with
     // email confirmation on, capture the code echo actually emails out (never
     // returned by the RPC — proving the caller can't skip owning the inbox), then

@@ -271,10 +271,20 @@ fn dispatch_email(email: &Option<crate::config::Email>, to: String, subject: Str
         return tracing::warn!(%to, "email requested but not configured");
     };
     tokio::spawn(async move {
+        // Hard backstop against header injection: never let a control char reach
+        // the raw SMTP header block, whatever the caller did. Bodies (text/html)
+        // may legitimately contain newlines, so only the header values are checked.
+        if [to.as_str(), subject.as_str(), email.from.as_str()].iter().any(|s| s.chars().any(char::is_control)) {
+            return tracing::warn!(%to, "refusing to send an email with control characters in a header");
+        }
         let headers = format!("From: {}\r\nTo: {to}\r\nSubject: {subject}\r\nMIME-Version: 1.0\r\n", email.from);
         let msg = match html {
             Some(html) => {
-                let b = "echo-alt-boundary-x9";
+                // Random per-message boundary so body content can never be mistaken
+                // for the delimiter.
+                let mut rb = [0u8; 8];
+                rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut rb);
+                let b = format!("echo-bnd-{:016x}", u64::from_le_bytes(rb));
                 format!(
                     "{headers}Content-Type: multipart/alternative; boundary=\"{b}\"\r\n\r\n\
                      --{b}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{text}\r\n\

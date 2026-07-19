@@ -30,6 +30,10 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             let email = args.get(2).map(|s| s.to_string());
             let cleared = email.is_none();
             if let Some(addr) = &email {
+                if !echo_api::valid_email(addr) {
+                    ctx.notice(me, from.uid, "That doesn't look like a valid email address.");
+                    return;
+                }
                 if db.is_forbidden(ForbidKind::Email, addr).is_some() {
                     ctx.notice(me, from.uid, "That email address is forbidden by network policy. Use a different one.");
                     return;

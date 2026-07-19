@@ -22,6 +22,12 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         }
     }
     let email = args.get(2).map(|s| s.to_string());
+    if let Some(addr) = &email {
+        if !echo_api::valid_email(addr) {
+            ctx.notice(me, from.uid, "That doesn't look like a valid email address.");
+            return;
+        }
+    }
     ctx.defer_register(from.nick, *password, email, RegReply::NickServ {
         agent: me.to_string(),
         uid: from.uid.to_string(),

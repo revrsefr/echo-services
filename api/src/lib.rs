@@ -2259,6 +2259,24 @@ pub trait Service: Send {
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, store: &mut dyn Store);
 }
 
+/// True if `addr` is safe to store and to embed in an SMTP header / hand to
+/// `sendmail -t`: no control characters (notably CR/LF, which would inject mail
+/// headers), no spaces, a single `@` with non-empty local and domain parts, and
+/// a sane length. Deliberately permissive on the charset otherwise.
+pub fn valid_email(addr: &str) -> bool {
+    if addr.is_empty() || addr.len() > 254 {
+        return false;
+    }
+    if addr.chars().any(|c| c.is_control() || c == ' ') {
+        return false;
+    }
+    let mut parts = addr.split('@');
+    matches!(
+        (parts.next(), parts.next(), parts.next()),
+        (Some(local), Some(domain), None) if !local.is_empty() && !domain.is_empty()
+    )
+}
+
 // Reject a look-alike / mixed-script registration name (nick or channel): the
 // impersonation trick that a message-content filter never sees at the registration
 // seam. Returns a rejection reason, or None if the name is fine. Genuine
@@ -2759,5 +2777,22 @@ mod help_tests {
         let mut ctx = ServiceCtx::default();
         help("Svc", &sender(), &mut ctx, "b", T, Some("nope"));
         assert!(texts(&ctx)[0].contains("No help"));
+    }
+
+    #[test]
+    fn valid_email_rejects_header_injection() {
+        assert!(valid_email("alice@example.com"));
+        assert!(valid_email("a.b+c@sub.domain.co.uk"));
+        // CR/LF (SMTP header injection), spaces and other controls are rejected.
+        assert!(!valid_email("victim@example.com\r\nBcc: attacker@evil.com"));
+        assert!(!valid_email("victim@example.com\nBcc: x@evil.com"));
+        assert!(!valid_email("a b@example.com"));
+        assert!(!valid_email("bad\temail@example.com"));
+        // Structural nonsense is rejected too.
+        assert!(!valid_email(""));
+        assert!(!valid_email("no-at-sign"));
+        assert!(!valid_email("two@at@signs.com"));
+        assert!(!valid_email("@nolocal.com"));
+        assert!(!valid_email("nodomain@"));
     }
 }

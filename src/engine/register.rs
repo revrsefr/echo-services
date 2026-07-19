@@ -30,6 +30,12 @@ impl Engine {
     // confusable check), applied to every authority write so it can't create a name
     // IRC would have rejected.
     fn authority_name_ok(&self, name: &str) -> Result<(), AuthorityStatus> {
+        // A control char in the name would inject into the confirmation email's
+        // Subject/body (the name is interpolated there); IRC nicks can't carry one,
+        // but a website-provided name must be checked.
+        if name.is_empty() || name.chars().any(char::is_control) {
+            return Err(AuthorityStatus::Invalid);
+        }
         if self.db.is_forbidden(echo_api::ForbidKind::Nick, name).is_some() {
             return Err(AuthorityStatus::Invalid);
         }
@@ -49,6 +55,11 @@ impl Engine {
                 return status;
             }
         }
+        if let Some(addr) = &email {
+            if !echo_api::valid_email(addr) {
+                return AuthorityStatus::Invalid;
+            }
+        }
         match self.db.provision_account(name, scram256, scram512, email) {
             Ok(()) => AuthorityStatus::Ok,
             Err(RegError::Exists) => AuthorityStatus::AlreadyExists,
@@ -63,9 +74,10 @@ impl Engine {
         if self.db.registrations_frozen() || self.db.readonly() {
             return AuthorityStatus::Invalid;
         }
-        // The IRC REGISTER rejects a FORBIDden email; a website write must too.
+        // The IRC REGISTER rejects a FORBIDden email; a website write must too —
+        // and must reject a malformed/CRLF-bearing one before it reaches a mail header.
         if let Some(addr) = &email {
-            if self.db.is_forbidden(echo_api::ForbidKind::Email, addr).is_some() {
+            if !echo_api::valid_email(addr) || self.db.is_forbidden(echo_api::ForbidKind::Email, addr).is_some() {
                 return AuthorityStatus::Invalid;
             }
         }
@@ -127,6 +139,9 @@ impl Engine {
 
     pub fn authority_set_email(&mut self, account: &str, email: Option<String>) -> AuthorityStatus {
         if let Some(addr) = &email {
+            if !echo_api::valid_email(addr) {
+                return AuthorityStatus::Invalid; // no CRLF/garbage into a mail header
+            }
             if self.db.is_forbidden(echo_api::ForbidKind::Email, addr).is_some() {
                 return AuthorityStatus::Invalid; // same email-forbid policy as IRC SET
             }
