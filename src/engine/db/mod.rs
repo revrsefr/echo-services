@@ -1216,11 +1216,22 @@ impl Db {
         let mut snapshot: Vec<Event> = self.accounts.values().cloned().map(|a| Event::AccountRegistered(Box::new(a))).collect();
         for c in self.channels.values() {
             snapshot.push(Event::ChannelRegistered { name: c.name.clone(), founder: c.founder.clone(), ts: c.ts });
+            // ChannelRegistered replays last_used back to the registration ts, so a
+            // channel active since registration would have its inactivity-expiry clock
+            // reset by every compaction (and could then be wrongly expired). Restore it.
+            if c.last_used > c.ts {
+                snapshot.push(Event::ChannelUsed { channel: c.name.clone(), ts: c.last_used });
+            }
             if !c.lock_on.is_empty() || !c.lock_off.is_empty() {
                 snapshot.push(Event::ChannelMlock { name: c.name.clone(), on: c.lock_on.clone(), off: c.lock_off.clone(), params: c.lock_params.clone() });
             }
             for a in &c.access {
                 snapshot.push(Event::ChannelAccessAdd { channel: c.name.clone(), account: a.account.clone(), level: a.level.clone() });
+            }
+            // LEVELS overrides live only in c.levels; without this they reset to the
+            // tier defaults on every compaction.
+            for (cap, role) in &c.levels {
+                snapshot.push(Event::ChannelLevelSet { channel: c.name.clone(), cap: cap.clone(), role: role.clone() });
             }
             for k in &c.akick {
                 snapshot.push(Event::ChannelAkickAdd { channel: c.name.clone(), mask: k.mask.clone(), reason: k.reason.clone() });

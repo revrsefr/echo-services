@@ -458,6 +458,30 @@
         assert_eq!(db.certfps("bob"), &[kept][..], "kept cert survives");
     }
 
+    #[test]
+    fn compaction_preserves_channel_last_used_and_levels() {
+        let p = tmp("compact-chan");
+        let mut db = Db::open(&p, "local");
+        db.scram_iterations = 4096;
+        db.register("alice", "pw", None).unwrap();
+        db.register_channel("#chan", "alice").unwrap();
+        let reg_ts = db.channel("#chan").unwrap().ts;
+        // A LEVELS override and recent activity, both held outside ChannelRegistered.
+        db.level_set("#chan", "SET", "AOP").unwrap();
+        let active = reg_ts + 100_000; // past the 1-day activity-coalesce threshold
+        db.mark_channel_used("#chan", active);
+        assert_eq!(db.channel("#chan").unwrap().last_used, active);
+
+        db.compact().unwrap();
+        drop(db);
+        let db = Db::open(&p, "local");
+        let c = db.channel("#chan").expect("channel survives compaction");
+        // Before the fix, the snapshot emitted only ChannelRegistered, so replay
+        // reset last_used to reg_ts (risking wrong expiry) and dropped the override.
+        assert_eq!(c.last_used, active, "inactivity clock survives compaction");
+        assert!(c.levels.iter().any(|(cap, role)| cap == "SET" && role == "AOP"), "LEVELS override survives: {:?}", c.levels);
+    }
+
     // An account provisioned from a SCRAM verifier alone (external authority)
     // must authenticate over the PLAIN / IDENTIFY path (db.authenticate), not
     // only over SCRAM — the verifier is the sole credential, so a backfilled
