@@ -839,7 +839,7 @@ impl EventLog {
         }
         let global = event.scope() == Scope::Global;
         let entry = if global {
-            self.lamport += 1;
+            self.lamport = self.lamport.saturating_add(1);
             LogEntry { origin: self.origin.clone(), seq: self.next_seq(), lamport: self.lamport, event }
         } else {
             LogEntry { origin: self.origin.clone(), seq: 0, lamport: 0, event }
@@ -876,7 +876,7 @@ impl EventLog {
             return Ok(None); // already have it
         }
         self.persist(&entry)?;
-        self.lamport = self.lamport.max(entry.lamport) + 1; // Lamport receive rule
+        self.lamport = self.lamport.max(entry.lamport).saturating_add(1); // Lamport receive rule
         self.versions.insert(entry.origin.clone(), entry.seq);
         let event = entry.event.clone();
         self.notify(&entry);
@@ -958,7 +958,7 @@ impl EventLog {
         let mut snapshot = Vec::with_capacity(events.len());
         for event in events {
             let entry = if event.scope() == Scope::Global {
-                self.lamport += 1;
+                self.lamport = self.lamport.saturating_add(1);
                 let e = LogEntry { origin: self.origin.clone(), seq, lamport: self.lamport, event };
                 last_global = Some(seq);
                 seq += 1;

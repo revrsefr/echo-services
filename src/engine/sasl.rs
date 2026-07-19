@@ -189,7 +189,14 @@ impl Engine {
             }
         };
         match fingerprints.iter().find_map(|fp| self.db.certfp_owner(fp)) {
-            Some(account) if authzid.is_empty() || authzid.eq_ignore_ascii_case(account) => {
+            // Accept an authzid that is empty, matches the cert's account, OR resolves
+            // to it via a grouped nick — mirroring the PLAIN/SCRAM paths, which resolve
+            // aliases (else naming your own grouped nick is wrongly refused).
+            Some(account)
+                if authzid.is_empty()
+                    || authzid.eq_ignore_ascii_case(account)
+                    || self.db.resolve_account(&authzid).is_some_and(|a| a.eq_ignore_ascii_case(account)) =>
+            {
                 let account = account.to_string();
                 self.sasl_login("SASL EXTERNAL", agent, client, account)
             }
