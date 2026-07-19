@@ -13,6 +13,7 @@ use subtle::ConstantTimeEq;
 // single line can't grow an unbounded buffer, and the handshake can't hang forever.
 const MAX_GOSSIP_LINE: usize = 1 << 20; // 1 MiB per framed message
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_INBOUND_SESSIONS: usize = 64; // concurrent unauthenticated accepts before we shed
 
 // Read one newline-delimited message, bounded to `max` bytes so a peer streaming
 // without a newline can't OOM the single-process daemon. `Ok(None)` on EOF.
@@ -101,12 +102,20 @@ async fn listen(bind: String, engine: Shared, secret: String, origin: String, ou
         Err(e) => return tracing::error!(%e, %bind, "gossip bind failed"),
     };
     tracing::info!(%bind, tls = acceptor.is_some(), "gossip listening");
+    // Cap concurrent half-open/authenticating sessions so someone who can reach the
+    // port can't exhaust tasks/FDs before the handshake rejects them.
+    let limiter = Arc::new(tokio::sync::Semaphore::new(MAX_INBOUND_SESSIONS));
     loop {
         if let Ok((stream, addr)) = listener.accept().await {
+            let Ok(permit) = limiter.clone().try_acquire_owned() else {
+                tracing::warn!(%addr, "gossip inbound session cap reached; dropping connection");
+                continue;
+            };
             tracing::info!(%addr, "gossip peer accepted");
             let (engine, secret, origin, outbound, acceptor) =
                 (engine.clone(), secret.clone(), origin.clone(), outbound.clone(), acceptor.clone());
             tokio::spawn(async move {
+                let _permit = permit; // released when the session ends
                 let served = match acceptor {
                     Some(acc) => match acc.accept(stream).await {
                         Ok(tls) => session(tls, engine, secret, origin, outbound).await,
