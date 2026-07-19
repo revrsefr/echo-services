@@ -2519,21 +2519,28 @@ pub struct HelpEntry {
 // prints that command's detail. Every service routes its HELP command here, so
 // the shape is identical across every service on the network.
 pub fn help(me: &str, from: &Sender, ctx: &mut ServiceCtx, blurb: &str, topics: &[HelpEntry], topic: Option<&str>) {
+    let lang = ctx.lang().to_string();
     match topic {
         None => {
             ctx.notice(me, from.uid, blurb);
             for e in topics {
-                ctx.notice(me, from.uid, format!("  \x02{}\x02  {}", e.cmd, e.summary));
+                // Render the summary through the catalog before interpolating, so
+                // the whole formatted line doesn't need to be a catalog key.
+                let summary = render(&lang, e.summary, &[]);
+                ctx.notice(me, from.uid, format!("  \x02{}\x02  {}", e.cmd, summary));
             }
             ctx.notice(me, from.uid, "Type \x02HELP <command>\x02 for detail on one command.");
         }
         Some(t) => match topics.iter().find(|e| e.cmd.split('/').any(|c| c.eq_ignore_ascii_case(t))) {
             Some(e) => {
-                for line in e.detail.lines() {
-                    ctx.notice(me, from.uid, line);
+                // Render the whole (multi-line) detail, then split — the catalog
+                // key is the entire detail string, not each line.
+                let detail = render(&lang, e.detail, &[]);
+                for line in detail.lines() {
+                    ctx.notice(me, from.uid, line.to_string());
                 }
             }
-            None => ctx.notice(me, from.uid, format!("No help for \x02{}\x02. Type \x02HELP\x02 for the command list.", t.to_ascii_uppercase())),
+            None => ctx.notice(me, from.uid, render(&lang, "No help for \x02{t}\x02. Type \x02HELP\x02 for the command list.", &[("t", t.to_ascii_uppercase())])),
         },
     }
 }
