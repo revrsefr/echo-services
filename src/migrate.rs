@@ -303,31 +303,42 @@ pub fn import_anope(anope_path: &str, out_path: &str, node: &str) -> std::io::Re
 
     // Mode locks: aggregate the +modes per channel. Param modes (+f flood,
     // +j joinflood) carry their stored value so the lock re-enforces verbatim.
-    let mut locks: HashMap<String, (String, Vec<(char, String)>)> = HashMap::new();
+    // Per channel: (locked-on modes, locked-off modes, param values for on-modes).
+    type Mlock = (String, String, Vec<(char, String)>);
+    let mut locks: HashMap<String, Mlock> = HashMap::new();
     for ml in records(&data, "ModeLock") {
         let (Some(chan), Some(name)) = (field(ml, "ci"), field(ml, "name")) else { continue };
-        if !flag(ml, "set") {
-            continue;
-        }
+        let set = flag(ml, "set");
         if let Some(ch) = mode_char(name) {
-            locks.entry(chan.to_string()).or_default().0.push(ch);
-        } else if let Some(ch) = param_mode_char(name) {
-            let Some(param) = field(ml, "param") else {
-                sum.skipped.push(format!("modelock {chan} {name}: param mode with no value"));
-                continue;
-            };
             let entry = locks.entry(chan.to_string()).or_default();
-            entry.0.push(ch);
-            entry.1.push((ch, param.to_string()));
+            if set {
+                entry.0.push(ch);
+            } else {
+                entry.1.push(ch); // a locked-OFF simple mode (-m/-p/-s), previously dropped silently
+            }
+        } else if set {
+            if let Some(ch) = param_mode_char(name) {
+                let Some(param) = field(ml, "param") else {
+                    sum.skipped.push(format!("modelock {chan} {name}: param mode with no value"));
+                    continue;
+                };
+                let entry = locks.entry(chan.to_string()).or_default();
+                entry.0.push(ch);
+                entry.2.push((ch, param.to_string()));
+            } else {
+                sum.skipped.push(format!("modelock {chan} {name}: unmapped mode"));
+            }
+        } else if let Some(ch) = param_mode_char(name) {
+            locks.entry(chan.to_string()).or_default().1.push(ch); // locked-off param mode takes no value
         } else {
             sum.skipped.push(format!("modelock {chan} {name}: unmapped mode"));
         }
     }
-    for (chan, (on, params)) in &locks {
+    for (chan, (on, off, params)) in &locks {
         db.migrate_append(Event::ChannelMlock {
             name: chan.clone(),
             on: on.clone(),
-            off: String::new(),
+            off: off.clone(),
             params: params.clone(),
         })?;
         sum.mlocked += 1;
