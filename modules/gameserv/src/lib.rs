@@ -139,7 +139,15 @@ impl GameServ {
             ctx.notice(me, from.uid, format!("\x02{target}\x02 is not online."));
             return;
         };
-        if tuid == from.uid {
+        let meid = Self::ident(from).to_string();
+        let target_acc = net.account_of(&tuid).map(str::to_string);
+        // Key the target by the same identity ident() uses (account, else UID), or a
+        // guest target's acc_b (their nick) never matches their later meid.
+        let target_id = target_acc.clone().unwrap_or_else(|| tuid.clone());
+        // Reject self-challenge on the GAME IDENTITY, not just the connection uid:
+        // two sessions logged into one account would otherwise play a "ranked" game
+        // against themselves and farm rating.
+        if target_id == meid {
             ctx.notice(me, from.uid, "You cannot challenge yourself.");
             return;
         }
@@ -151,13 +159,11 @@ impl GameServ {
             ctx.notice(me, from.uid, "The game server is at capacity right now. Please try again shortly.");
             return;
         }
-        let meid = Self::ident(from).to_string();
         let mine = self.games.values().filter(|g| g.acc_a == meid || g.acc_b == meid).count();
         if mine >= MAX_GAMES_PER_USER {
             ctx.notice(me, from.uid, format!("You have too many games in progress (max {MAX_GAMES_PER_USER}). Finish or resign one first."));
             return;
         }
-        let target_acc = net.account_of(&tuid).map(str::to_string);
         let id = self.nextid;
         self.nextid += 1;
         let g = Game::new(
@@ -165,9 +171,7 @@ impl GameServ {
             gt,
             meid,
             from.account.is_some(),
-            // Key the target by the same identity ident() uses (account, else UID),
-            // or a guest target's acc_b (their nick) never matches their later meid.
-            target_acc.clone().unwrap_or_else(|| tuid.clone()),
+            target_id,
             target_acc.is_some(),
             from.nick.to_string(),
             target.to_string(),
