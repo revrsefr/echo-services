@@ -60,11 +60,15 @@ pub fn handle(me: &str, from: &Sender, rest: &[&str], ctx: &mut ServiceCtx, exte
 // "2d6: 4+5=9" for the extended output.
 fn render_roll(r: &expr::Roll) -> String {
     if r.values.len() == 1 {
-        format!("{}: {}", r.spec, r.total)
-    } else {
-        let each = r.values.iter().map(u64::to_string).collect::<Vec<_>>().join("+");
-        format!("{}: {}={}", r.spec, each, r.total)
+        return format!("{}: {}", r.spec, r.total);
     }
+    // For a huge roll the kept face list is capped, so the addends wouldn't sum to
+    // the true total — show the total alone rather than a listing that doesn't add up.
+    if r.values.iter().copied().sum::<u64>() != r.total {
+        return format!("{}: {} (first {} dice)", r.spec, r.total, r.values.len());
+    }
+    let each = r.values.iter().map(u64::to_string).collect::<Vec<_>>().join("+");
+    format!("{}: {}={}", r.spec, each, r.total)
 }
 
 // ROLL rounds to a whole number; CALC keeps up to four decimals, trimmed.
