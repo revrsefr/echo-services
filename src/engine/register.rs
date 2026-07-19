@@ -58,6 +58,12 @@ impl Engine {
 
     pub fn authority_register(&mut self, name: &str, creds: Option<db::Credentials>, email: Option<String>) -> AuthorityStatus {
         let Some(creds) = creds else { return AuthorityStatus::Internal };
+        // The IRC REGISTER rejects a FORBIDden email; a website write must too.
+        if let Some(addr) = &email {
+            if self.db.is_forbidden(echo_api::ForbidKind::Email, addr).is_some() {
+                return AuthorityStatus::Invalid;
+            }
+        }
         let addr = email.clone();
         let status = match self.db.register_prepared(name, creds, email) {
             Ok(()) => AuthorityStatus::Ok,
@@ -93,6 +99,11 @@ impl Engine {
     }
 
     pub fn authority_set_email(&mut self, account: &str, email: Option<String>) -> AuthorityStatus {
+        if let Some(addr) = &email {
+            if self.db.is_forbidden(echo_api::ForbidKind::Email, addr).is_some() {
+                return AuthorityStatus::Invalid; // same email-forbid policy as IRC SET
+            }
+        }
         match self.db.set_email(account, email) {
             Ok(()) => AuthorityStatus::Ok,
             Err(_) => AuthorityStatus::NotFound,
