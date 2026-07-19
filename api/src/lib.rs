@@ -406,15 +406,21 @@ impl Privs {
     pub fn contains(self, p: Priv) -> bool {
         self.0 & Self::bit(p) != 0
     }
-    // The named tier this set belongs to, by its highest granted privilege.
+    // The named tier this set belongs to: the highest tier gate it actually
+    // clears. Uses `has` (not `contains`) so the label never claims more than the
+    // set can do — a `suspend`- or `auspex`-only grant doesn't clear the operator
+    // floor, so it's reported as a limited operator, not a full one.
     pub fn tier(self) -> &'static str {
-        if self.contains(Priv::Root) {
+        if self.has(Priv::Root) {
             "Services Root"
-        } else if self.contains(Priv::Admin) {
+        } else if self.has(Priv::Admin) {
             "Services Administrator"
-        } else if self.any() {
-            // oper, or an auspex/suspend-only grant — a (limited) operator.
+        } else if self.has(Priv::Oper) {
             "Services Operator"
+        } else if self.any() {
+            // Holds a privilege but not the operator floor: a view-only (auspex)
+            // or suspend-only grant. A real role, but narrower than a named tier.
+            "limited operator"
         } else {
             "not an operator"
         }
@@ -2603,6 +2609,15 @@ mod tests {
         let root = Privs::default().with(Priv::Root);
         assert!(root.has(Priv::Root) && root.has(Priv::Admin) && root.has(Priv::Oper) && root.has(Priv::Auspex));
         assert_eq!(root.tier(), "Services Root");
+
+        // A grant below the operator floor is labelled honestly, never as a full
+        // operator: `tier` is the highest gate the set clears, not just any bit.
+        let auspex = Privs::default().with(Priv::Auspex);
+        assert!(auspex.has(Priv::Auspex) && !auspex.has(Priv::Oper), "auspex alone can view, not moderate");
+        assert_eq!(auspex.tier(), "limited operator");
+        let suspend = Privs::default().with(Priv::Suspend);
+        assert!(suspend.has(Priv::Suspend) && !suspend.has(Priv::Auspex) && !suspend.has(Priv::Oper), "suspend is a side power, not view/moderate");
+        assert_eq!(suspend.tier(), "limited operator");
 
         assert!(!Privs::default().any(), "empty set is not an oper");
     }
