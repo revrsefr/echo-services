@@ -8,6 +8,10 @@ pub use echo_api::{ChanSeenView, HelpEntry, IncidentView, NetView, SeenView};
 // The most recent moderation/action incidents kept for LOGSEARCH.
 const INCIDENT_CAP: usize = 10_000;
 
+// Bound on the global last-seen map, so nick churn can't grow it without limit.
+// Best-effort data: when it overflows, the stalest quarter is pruned.
+const SEEN_CAP: usize = 20_000;
+
 // Live network view, rebuilt from the uplink's burst each connect (ephemeral —
 // unlike the account store, which persists).
 #[derive(Default)]
@@ -318,20 +322,20 @@ impl Network {
     }
 
     pub fn user_nick_change(&mut self, uid: &str, nick: String) {
-        if let Some(user) = self.users.get_mut(uid) {
-            self.seen.insert(lc(&nick), Seen { nick: nick.clone(), ts: now(), what: format!("changing nick from {}", user.nick) });
-            user.nick = nick;
-        }
+        let Some(old) = self.users.get_mut(uid).map(|user| std::mem::replace(&mut user.nick, nick.clone())) else {
+            return;
+        };
+        self.record_seen(lc(&nick), Seen { nick, ts: now(), what: format!("changing nick from {old}") });
     }
 
     pub fn user_quit(&mut self, uid: &str) {
-        if let Some(u) = self.users.get(uid) {
-            self.seen.insert(lc(&u.nick), Seen { nick: u.nick.clone(), ts: now(), what: "quitting".to_string() });
+        if let Some((nick, ip)) = self.users.get(uid).map(|u| (u.nick.clone(), u.ip.clone())) {
+            self.record_seen(lc(&nick), Seen { nick, ts: now(), what: "quitting".to_string() });
             // Release the user's session slot.
-            if let Some(n) = self.sessions.get_mut(&u.ip) {
+            if let Some(n) = self.sessions.get_mut(&ip) {
                 *n -= 1;
                 if *n == 0 {
-                    self.sessions.remove(&u.ip);
+                    self.sessions.remove(&ip);
                 }
             }
         }
@@ -378,8 +382,8 @@ impl Network {
         if op {
             c.ops.insert(uid.to_string());
         }
-        if let Some(nick) = self.nick_of(uid) {
-            self.seen.insert(lc(nick), Seen { nick: nick.to_string(), ts: now(), what: format!("joining {channel}") });
+        if let Some(nick) = self.nick_of(uid).map(str::to_string) {
+            self.record_seen(lc(&nick), Seen { nick, ts: now(), what: format!("joining {channel}") });
         }
     }
 
@@ -390,8 +394,8 @@ impl Network {
             c.ops.remove(uid);
             c.voices.remove(uid);
         }
-        if let Some(nick) = self.nick_of(uid) {
-            self.seen.insert(lc(nick), Seen { nick: nick.to_string(), ts: now(), what: format!("leaving {channel}") });
+        if let Some(nick) = self.nick_of(uid).map(str::to_string) {
+            self.record_seen(lc(&nick), Seen { nick, ts: now(), what: format!("leaving {channel}") });
         }
     }
 
@@ -560,6 +564,21 @@ impl Network {
 
     pub fn last_seen(&self, nick: &str) -> Option<&Seen> {
         self.seen.get(&lc(nick))
+    }
+
+    // Record a last-seen entry, bounding the map so distinct-nick churn (a client
+    // cycling nicks, a botnet) can't grow it without limit. When it overflows, the
+    // stalest quarter is pruned in one pass — amortising the O(n) sort so the common
+    // insert stays O(1). SEEN is best-effort, so forgetting the oldest is safe.
+    fn record_seen(&mut self, key: String, entry: Seen) {
+        self.seen.insert(key, entry);
+        if self.seen.len() > SEEN_CAP {
+            let mut by_ts: Vec<(String, u64)> = self.seen.iter().map(|(k, s)| (k.clone(), s.ts)).collect();
+            by_ts.sort_unstable_by_key(|(_, ts)| *ts);
+            for (k, _) in by_ts.into_iter().take(SEEN_CAP / 4) {
+                self.seen.remove(&k);
+            }
+        }
     }
 }
 

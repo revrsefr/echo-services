@@ -1434,7 +1434,10 @@ impl Engine {
             NetEvent::ChannelOp { channel, uid, op } => {
                 self.network.set_op(&channel, &uid, op);
                 // SECUREOPS: a user who gains +o without op-level access loses it.
-                if op {
+                // A services bot assigned here is staff, not a member — never subject
+                // to secureops (the Join path exempts it the same way).
+                let is_bot = self.bot_uids.values().any(|b| b == &uid);
+                if op && !is_bot {
                     if let Some(c) = self.db.channel(&channel) {
                         if c.settings.secureops && !self.network.account_of(&uid).is_some_and(|a| c.is_op(a)) {
                             let from = self.chan_service.clone().unwrap_or_default();
