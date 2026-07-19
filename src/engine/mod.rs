@@ -171,11 +171,13 @@ const ENFORCE_GRACE: u64 = 60;
 
 struct CachedBadwords {
     rev: u64,
+    ts: u64, // channel registration ts, so a drop+re-register (rev resets to 0) can't alias
     set: regex::RegexSet,
 }
 
 struct CachedTriggers {
     rev: u64,
+    ts: u64, // see CachedBadwords.ts
     entries: Vec<TriggerRt>,
 }
 
@@ -996,7 +998,11 @@ impl Engine {
                 let p = self.pending_enforce.remove(i);
                 let still_there = self.network.uid_by_nick(&p.nick) == Some(p.uid.as_str());
                 let identified = self.network.account_of(&p.uid) == self.db.resolve_account(&p.nick);
-                if still_there && !identified {
+                // Re-check protection at fire time: the owner may have turned KILL
+                // off during the grace window, in which case don't rename.
+                let account = self.db.resolve_account(&p.nick).map(str::to_string);
+                let wants = account.as_deref().is_some_and(|a| self.db.account_wants_protect(a));
+                if still_there && !identified && wants {
                     fire.push(p.uid);
                 }
             } else {
@@ -1004,8 +1010,7 @@ impl Engine {
             }
         }
         for uid in fire {
-            let guest = format!("{}{}", self.guest_nick, self.enforce_seq);
-            self.enforce_seq = self.enforce_seq.wrapping_add(1);
+            let guest = echo_api::next_guest_nick(&self.guest_nick, &mut self.enforce_seq, &self.network, &self.db);
             if let Some(ns) = self.nick_service.clone() {
                 self.emit_irc(NetAction::Notice { from: ns, to: uid.clone(), text: "You didn't identify in time; you've been renamed.".to_string() });
             }

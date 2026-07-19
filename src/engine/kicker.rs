@@ -30,12 +30,13 @@ impl Engine {
         // list's revision changes).
         let mut reason: Option<&'static str> = k.violation(text);
         if reason.is_none() && k.badwords && !c.badwords.is_empty() {
-            let rev = c.badwords_rev;
-            if self.badword_cache.get(channel).map(|cb| cb.rev) != Some(rev) {
+            let (rev, ts) = (c.badwords_rev, c.ts);
+            let key = channel.to_ascii_lowercase();
+            if self.badword_cache.get(&key).map(|cb| (cb.rev, cb.ts)) != Some((rev, ts)) {
                 let set = db::build_badword_set(&c.badwords);
-                self.badword_cache.insert(channel.to_string(), CachedBadwords { rev, set });
+                self.badword_cache.insert(key.clone(), CachedBadwords { rev, ts, set });
             }
-            if self.badword_cache.get(channel).unwrap().set.is_match(text) {
+            if self.badword_cache.get(&key).unwrap().set.is_match(text) {
                 reason = Some("Watch your language!");
             }
         }
@@ -127,8 +128,9 @@ impl Engine {
         }
         let bot = c.assigned_bot.as_deref()?;
         let botuid = self.network.uid_by_nick(bot)?.to_string();
-        let rev = c.triggers_rev;
-        if self.trigger_cache.get(channel).map(|ct| ct.rev) != Some(rev) {
+        let (rev, ts) = (c.triggers_rev, c.ts);
+        let key = channel.to_ascii_lowercase();
+        if self.trigger_cache.get(&key).map(|ct| (ct.rev, ct.ts)) != Some((rev, ts)) {
             let entries = c
                 .triggers
                 .iter()
@@ -141,14 +143,14 @@ impl Engine {
                         .map(|re| TriggerRt { re, response: t.response.clone(), cooldown: t.cooldown, last_fired: 0 })
                 })
                 .collect();
-            self.trigger_cache.insert(channel.to_string(), CachedTriggers { rev, entries });
+            self.trigger_cache.insert(key.clone(), CachedTriggers { rev, ts, entries });
         }
         let now = self.now_secs();
         let nick = self.network.nick_of(from).unwrap_or(from).to_string();
 
         // First matching trigger wins; $1..$9 fill from capture groups, $nick from
         // the speaker. A trigger still cooling down suppresses the response.
-        let cached = self.trigger_cache.get_mut(channel).unwrap();
+        let cached = self.trigger_cache.get_mut(&key).unwrap();
         let mut response = None;
         for e in cached.entries.iter_mut() {
             if let Some(caps) = e.re.captures(text) {
