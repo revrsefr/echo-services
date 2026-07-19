@@ -874,8 +874,20 @@ impl EventLog {
         if entry.event.scope() != Scope::Global {
             return Ok(None);
         }
-        if self.versions.get(&entry.origin).is_some_and(|&s| entry.seq <= s) {
-            return Ok(None); // already have it
+        // Apply strictly in per-origin sequence. The FIRST entry ever seen from an
+        // origin sets the baseline — a peer syncing from a COMPACTED node starts
+        // mid-stream (its seqs restart at next_seq(), not 0), so we can't demand 0.
+        // After that, only the next contiguous seq is accepted; a non-contiguous one
+        // (an older duplicate, or a future entry a relay delivered ahead of the direct
+        // path in a 3+-node mesh) is dropped rather than applied, so it can't advance
+        // the version vector past a gap — the digest then re-requests the gap in order
+        // instead of losing it forever.
+        let expected = match self.versions.get(&entry.origin) {
+            None => entry.seq,
+            Some(&s) => s + 1,
+        };
+        if entry.seq != expected {
+            return Ok(None);
         }
         self.persist(&entry)?;
         self.lamport = self.lamport.max(entry.lamport).saturating_add(1); // Lamport receive rule

@@ -439,7 +439,14 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         }
         Event::MemoSent { account, from, text, ts, receipt } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {
-                a.memos.push(Memo { from, text, ts, read: false, receipt });
+                // Enforce the mailbox cap in the fold too, so a gossip peer can't push
+                // memos past the limit the local MEMO SEND path enforces. Local sends
+                // are already capped before the event is logged, so this is a no-op on
+                // replay and only bounds an ingested flood. Default mirrors MemoServ's.
+                let limit = a.memo_limit.unwrap_or(30) as usize;
+                if a.memos.len() < limit {
+                    a.memos.push(Memo { from, text, ts, read: false, receipt });
+                }
             }
         }
         Event::MemoRead { account, index } => {
