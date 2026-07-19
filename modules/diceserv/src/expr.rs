@@ -224,6 +224,14 @@ pub fn evaluate(input: &str, rng: &mut impl Rng) -> Result<Evaluated, String> {
     if toks.is_empty() {
         return Err("nothing to roll".to_string());
     }
+    // Bound the token count so a deeply-nested expression (e.g. thousands of `(`
+    // or unary `-`) can't overflow the recursive-descent parser or `eval` and
+    // crash the single-threaded daemon. Each nesting level needs >=1 token, so
+    // this caps both recursion depths. Legit dice math is far shorter.
+    const MAX_TOKENS: usize = 500;
+    if toks.len() > MAX_TOKENS {
+        return Err("that expression is too long".to_string());
+    }
     let ast = Parser { toks, pos: 0 }.parse()?;
     let mut rolls = Vec::new();
     let mut total_dice = 0u64;
@@ -273,11 +281,18 @@ fn eval(ast: &Ast, rng: &mut impl Rng, rolls: &mut Vec<Roll>, total: &mut u64) -
             if *total > MAX_TOTAL {
                 return Err("that expression rolls too many dice".to_string());
             }
-            let mut values = Vec::with_capacity(num as usize);
+            // Retain at most MAX_KEPT individual faces for the extended (EX)
+            // listing: a million-die roll is allowed for the total, but keeping
+            // (and later stringifying) every face would be a multi-MB alloc under
+            // the engine lock. The sum stays exact regardless.
+            const MAX_KEPT: usize = 1000;
+            let mut values = Vec::with_capacity((num as usize).min(MAX_KEPT));
             let mut sum = 0u64;
             for _ in 0..num {
                 let face = rng.gen_range(1..=sides);
-                values.push(face);
+                if values.len() < MAX_KEPT {
+                    values.push(face);
+                }
                 sum += face;
             }
             rolls.push(Roll { spec: format!("{num}d{sides}"), values, total: sum });
@@ -346,4 +361,33 @@ fn call(name: &str, args: &[Ast], rng: &mut impl Rng, rolls: &mut Vec<Roll>, tot
         },
         _ => return Err(format!("unknown function '{name}'")),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deep_nesting_is_rejected_not_a_stack_overflow() {
+        let mut rng = rand::thread_rng();
+        // Pathological deeply-nested / unary-heavy input must be refused by the
+        // token cap, never overflow the recursive parser/eval and crash the daemon.
+        assert!(evaluate(&"(".repeat(5000), &mut rng).is_err(), "deep parens rejected");
+        assert!(evaluate(&"-".repeat(5000), &mut rng).is_err(), "deep unary rejected");
+        // Ordinary expressions (including modest nesting) still evaluate.
+        assert!(evaluate("2+3*4", &mut rng).is_ok());
+        let nested = format!("{}1{}", "(".repeat(50), ")".repeat(50));
+        assert!(evaluate(&nested, &mut rng).is_ok(), "modest nesting still parses");
+    }
+
+    #[test]
+    fn extended_roll_retains_bounded_faces() {
+        let mut rng = rand::thread_rng();
+        // A huge roll is allowed for the total, but only a bounded number of faces
+        // is kept for the extended listing (no multi-MB alloc under the lock).
+        let ev = evaluate("50000d6", &mut rng).expect("large roll ok");
+        assert_eq!(ev.rolls.len(), 1);
+        assert!(ev.rolls[0].values.len() <= 1000, "faces retained are capped");
+        assert!(ev.rolls[0].total >= 50000, "the sum stays exact");
+    }
 }
