@@ -11,6 +11,8 @@ mod spamfilter;
 mod redact;
 #[path = "forbid.rs"]
 mod forbid;
+#[path = "protect.rs"]
+mod protect;
 mod notify;
 #[path = "global.rs"]
 mod global;
@@ -82,6 +84,7 @@ impl Service for OperServ {
             Some(cmd) if cmd.eq_ignore_ascii_case("SPAMFILTER") => spamfilter::handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("REDACT") => redact::handle(me, from, args, ctx),
             Some(cmd) if cmd.eq_ignore_ascii_case("FORBID") => forbid::handle(me, from, args, ctx, db),
+            Some(cmd) if cmd.eq_ignore_ascii_case("PROTECT") => protect::handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("NOTIFY") => notify::handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("GLOBAL") => global::handle(me, from, args, ctx),
             Some(cmd) if cmd.eq_ignore_ascii_case("KILL") => kill::handle(me, from, args, ctx, net),
@@ -118,6 +121,7 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "SPAMFILTER", summary: "content spam filter (ircd m_filter)", detail: "Syntax: \x02SPAMFILTER ADD <action> [+expiry] <regex> <reason> | SPAMFILTER DEL <regex|number> | SPAMFILTER LIST [pattern]\x02\nMatches message content (a regular expression, e.g. \x02.*free.*bitcoin.*\x02) and acts on it. Actions: gline, zline, block, silent, kill, shun, warn, none. echo persists filters and re-applies them to the ircd at each link. Admin only." },
     HelpEntry { cmd: "REDACT", summary: "delete a message by its msgid", detail: "Syntax: \x02REDACT <#channel|nick> <msgid> [reason]\x02\nDeletes a specific message (by its IRCv3 \x02msgid\x02, which your client shows) from everyone who received it. draft/message-redaction." },
     HelpEntry { cmd: "FORBID", summary: "ban a nick/chan/email from registration", detail: "Syntax: \x02FORBID ADD <NICK|CHAN|EMAIL> <mask> <reason> | FORBID DEL <NICK|CHAN|EMAIL> <mask> | FORBID LIST\x02\nStops a nick, channel, or email pattern from being registered." },
+    HelpEntry { cmd: "PROTECT", summary: "turn nick protection on/off for accounts", detail: "Syntax: \x02PROTECT ALL | <account> [ON|OFF]\x02\nToggles the identify-or-be-renamed enforcement. \x02ALL\x02 enables it on every account that has it off (e.g. after a migration). Admin only." },
     HelpEntry { cmd: "NOTIFY", summary: "watch masks and log their events", detail: "Syntax: \x02NOTIFY ADD +<expiry> <flags|*> <mask> <reason> | NOTIFY DEL <mask|number> | NOTIFY LIST [pattern] | NOTIFY VIEW [pattern] | NOTIFY CLEAR\x02\nWatches a \x02nick!user@host\x02 pattern, bare nick glob, or \x02#channel\x02; matching users have their flagged events announced to the staff feed. Flags: \x02c\x02 connect, \x02d\x02 disconnect, \x02o\x02 oper-up, \x02j\x02 join, \x02p\x02 part, \x02k\x02 kick, \x02m\x02 channel mode, \x02t\x02 topic, \x02n\x02 nick change, \x02u\x02 user mode, \x02s\x02 services command, \x02S\x02 services SET (\x02*\x02 for all). Expiry like \x02+30d\x02, or \x02+0\x02 for permanent. Admin only." },
     HelpEntry { cmd: "SQLINE", summary: "ban a nick pattern", detail: "Syntax: \x02SQLINE ADD [+expiry] <nick> <reason> | SQLINE DEL <mask|number> | SQLINE LIST [pattern]\x02\nBans matching nicknames." },
     HelpEntry { cmd: "SNLINE", summary: "ban a realname pattern", detail: "Syntax: \x02SNLINE ADD [+expiry] <realname> <reason> | SNLINE DEL <mask|number> | SNLINE LIST [pattern]\x02\nBans matching real names." },

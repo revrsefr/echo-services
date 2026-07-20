@@ -5403,6 +5403,32 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::DelLine { kind, mask } if kind == "Q" && mask == "badname")), "qline removed: {out:?}");
     }
 
+    // OperServ PROTECT ALL enables nick protection on accounts that had it off
+    // (e.g. carried over from a migration).
+    #[test]
+    fn operserv_protect_all_enables_protection() {
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-protectall.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register("bob", "pw", None).unwrap();
+        db.set_account_kill("bob", false).unwrap(); // bob has protection OFF
+        assert!(!db.account_wants_protect("bob"));
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let os = OperServ { uid: "42SAAAAAH".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(os)], db);
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("alice".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: "PROTECT ALL".into() });
+        assert!(e.db.account_wants_protect("bob"), "bob is now protected after PROTECT ALL");
+    }
+
     // ChanServ SET: description and founder transfer, founder-gated.
     #[test]
     fn chanserv_set() {
