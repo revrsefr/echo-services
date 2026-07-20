@@ -23,18 +23,42 @@ fn brand_mark(brand: &str, accent: &str, logo: &str) -> String {
     }
 }
 
-fn render(brand: &str, accent: &str, logo: &str, title: &str, message: &str, code: &str, note: &str) -> String {
+#[allow(clippy::too_many_arguments)]
+fn render(brand: &str, accent: &str, logo: &str, title: &str, message: &str, code: &str, note: &str, button: &str) -> String {
     // `message` carries the account name (attacker-influenceable). Substitute every
     // OTHER slot first and `{{message}}` LAST, so a message that literally contains
     // `{{code}}`/`{{note}}` (an account named that) is inserted verbatim rather than
-    // splicing in the real code.
+    // splicing in the real code. `button` is trusted markup built below, not escaped.
     BASE.replace("{{brand_mark}}", &brand_mark(brand, accent, logo))
         .replace("{{brand}}", &escape(brand))
         .replace("{{accent}}", &escape(accent))
         .replace("{{title}}", &escape(title))
         .replace("{{code}}", &escape(code))
         .replace("{{note}}", &escape(note))
+        .replace("{{button}}", button)
         .replace("{{message}}", &escape(message))
+}
+
+// Percent-encode a URL query value (RFC 3986 unreserved set passes through).
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+// A one-click call-to-action button for the HTML email.
+fn action_button(accent: &str, url: &str, label: &str) -> String {
+    format!(
+        "<tr><td align=\"center\" style=\"padding:22px 36px 0;\"><a href=\"{}\" style=\"display:inline-block;background:{};color:#ffffff;font-size:15px;font-weight:700;text-decoration:none;padding:14px 34px;border-radius:11px;\">{}</a></td></tr>",
+        escape(url),
+        escape(accent),
+        escape(label),
+    )
 }
 
 pub fn reset(brand: &str, accent: &str, logo: &str, account: &str, code: &str, lang: &str) -> Mail {
@@ -54,19 +78,36 @@ pub fn reset(brand: &str, accent: &str, logo: &str, account: &str, code: &str, l
             &crate::render(lang, "Use this code to reset the password for your account {account}.", &acc()),
             code,
             &crate::render(lang, "This code expires in 15 minutes. If you didn't ask to reset it, ignore this email.", &[]),
+            "",
         ),
     }
 }
 
-pub fn confirm(brand: &str, accent: &str, logo: &str, account: &str, code: &str, lang: &str) -> Mail {
+pub fn confirm(brand: &str, accent: &str, logo: &str, account: &str, code: &str, confirm_url: &str, lang: &str) -> Mail {
     let acc = || vec![("account", account.to_string())];
+    // A one-click confirm link when a web endpoint is configured, else code-only.
+    let link = if confirm_url.is_empty() {
+        String::new()
+    } else {
+        format!("{}?account={}&code={}", confirm_url.trim_end_matches('/'), percent_encode(account), percent_encode(code))
+    };
+    let mut text = crate::render(
+        lang,
+        "Confirm your account {account} with:\n  /msg NickServ CONFIRM {code}\nThe code expires in 15 minutes.\n",
+        &[("account", account.to_string()), ("code", code.to_string())],
+    );
+    if !link.is_empty() {
+        text.push_str(&crate::render(lang, "Or confirm in one click: {link}", &[("link", link.clone())]));
+        text.push('\n');
+    }
+    let button = if link.is_empty() {
+        String::new()
+    } else {
+        action_button(accent, &link, &crate::render(lang, "Confirm now", &[]))
+    };
     Mail {
         subject: crate::render(lang, "Confirm your {account} registration", &acc()),
-        text: crate::render(
-            lang,
-            "Confirm your account {account} with:\n  /msg NickServ CONFIRM {code}\nThe code expires in 15 minutes.\n",
-            &[("account", account.to_string()), ("code", code.to_string())],
-        ),
+        text,
         html: render(
             brand,
             accent,
@@ -75,6 +116,7 @@ pub fn confirm(brand: &str, accent: &str, logo: &str, account: &str, code: &str,
             &crate::render(lang, "Welcome! Confirm the email for your account {account} with the code below.", &acc()),
             code,
             &crate::render(lang, "This code expires in 15 minutes.", &[]),
+            &button,
         ),
     }
 }
@@ -130,6 +172,7 @@ pub fn expiry_warning(brand: &str, accent: &str, logo: &str, kind: ExpiryTarget,
             &crate::render(lang, "Your {word} {name} has been inactive and will expire in {remaining}.", &base()),
             remaining,
             &keep,
+            "",
         ),
     }
 }
@@ -138,4 +181,33 @@ pub fn expiry_warning(brand: &str, accent: &str, logo: &str, kind: ExpiryTarget,
 // out of the template.
 fn escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn confirm_link_present_only_when_url_set() {
+        let with = confirm("Brand", "#000000", "", "alice", "ABC123", "https://x.net/confirm", "en");
+        assert!(with.text.contains("https://x.net/confirm?account=alice&code=ABC123"), "text link: {}", with.text);
+        assert!(with.html.contains("href=\"https://x.net/confirm?account=alice&amp;code=ABC123\""), "html button href escaped");
+        assert!(with.html.contains("Confirm now"), "button label");
+
+        let none = confirm("Brand", "#000000", "", "alice", "ABC123", "", "en");
+        assert!(!none.text.contains("one click"), "no link line: {}", none.text);
+        assert!(!none.html.contains("Confirm now"), "no button");
+    }
+
+    #[test]
+    fn confirm_link_percent_encodes_the_account() {
+        let m = confirm("B", "#000000", "", "a[b", "K", "https://x/confirm", "en");
+        assert!(m.text.contains("account=a%5Bb&code=K"), "encoded account: {}", m.text);
+    }
+
+    #[test]
+    fn confirm_url_trailing_slash_is_trimmed() {
+        let m = confirm("B", "#000000", "", "z", "K", "https://x/confirm/", "en");
+        assert!(m.text.contains("https://x/confirm?account=z"), "trimmed: {}", m.text);
+    }
 }

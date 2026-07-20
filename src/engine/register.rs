@@ -95,7 +95,7 @@ impl Engine {
         if status == AuthorityStatus::Ok && !self.db.is_verified(name) {
             if let Some(addr) = addr {
                 let code = self.db.issue_code(name, db::CodeKind::Confirm);
-                let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), name, &code, &self.lang_for_account(name));
+                let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), name, &code, self.db.email_confirm_url(), &self.lang_for_account(name));
                 self.emit_irc(NetAction::SendEmail { to: addr, subject: mail.subject, text: mail.text, html: Some(mail.html) });
             }
         }
@@ -279,7 +279,7 @@ impl Engine {
                 }
                 Some((false, Some(addr))) => {
                     let code = self.db.issue_code(&account, db::CodeKind::Confirm);
-                    let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), &account, &code, &self.lang_for_account(&account));
+                    let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), &account, &code, self.db.email_confirm_url(), &self.lang_for_account(&account));
                     let mut out = resp("verification_required", "VERIFICATION_REQUIRED", "A new confirmation code has been emailed.");
                     out.push(NetAction::SendEmail { to: addr, subject: mail.subject, text: mail.text, html: Some(mail.html) });
                     out
@@ -344,7 +344,7 @@ impl Engine {
         if needs_verify {
             if let Some(addr) = addr {
                 let code = self.db.issue_code(account, db::CodeKind::Confirm);
-                let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), account, &code, &self.lang_for_account(account));
+                let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), account, &code, self.db.email_confirm_url(), &self.lang_for_account(account));
                 out.push(NetAction::SendEmail { to: addr, subject: mail.subject, text: mail.text, html: Some(mail.html) });
                 if let RegReply::NickServ { agent, uid, .. } = &reply {
                     out.push(NetAction::Notice { from: agent.clone(), to: uid.clone(), text: echo_api::render(&self.lang_for_account(account), "A confirmation code has been emailed to you. Confirm with \x02CONFIRM <code>\x02.", &[]) });

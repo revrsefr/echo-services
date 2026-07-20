@@ -332,6 +332,12 @@ pub struct Email {
     // email clients don't render inline SVG or data URIs).
     #[serde(default)]
     pub logo: String,
+    // Optional base URL of a web endpoint that confirms an account from a code,
+    // e.g. "https://example.net/confirm". When set, confirmation emails include a
+    // one-click link (`<url>?account=<name>&code=<code>`) alongside the CONFIRM
+    // command; the endpoint calls the gRPC Confirm RPC.
+    #[serde(default)]
+    pub confirm_url: String,
 }
 
 fn default_brand() -> String {

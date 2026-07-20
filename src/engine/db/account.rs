@@ -247,6 +247,15 @@ impl Db {
         &self.email_logo
     }
 
+    /// Base URL of the web confirm endpoint (empty = no one-click link in emails).
+    pub fn email_confirm_url(&self) -> &str {
+        &self.email_confirm_url
+    }
+
+    pub fn set_email_confirm_url(&mut self, url: &str) {
+        self.email_confirm_url = url.to_string();
+    }
+
     pub fn set_email_brand(&mut self, brand: &str) {
         self.email_brand = brand.to_string();
     }

@@ -281,6 +281,7 @@ async fn main() -> Result<()> {
         db.set_email_brand(&email.brand);
         db.set_email_accent(&email.accent);
         db.set_email_logo(&email.logo);
+        db.set_email_confirm_url(&email.confirm_url);
     }
     let engine = Arc::new(Mutex::new(Engine::new(services, db)));
 
