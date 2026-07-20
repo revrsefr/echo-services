@@ -20,10 +20,14 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             let reason = args[4..].join(" ");
             let setter = from.account.unwrap_or(from.nick);
             let label = kind.wire().to_lowercase();
-            match db.forbid_add(kind, mask, setter, &reason) {
-                Ok(true) => ctx.notice(me, from.uid, t!(ctx, "Forbade {label} \x02{mask}\x02.", label = label, mask = mask)),
-                Ok(false) => ctx.notice(me, from.uid, t!(ctx, "Updated the forbid on {label} \x02{mask}\x02.", label = label, mask = mask)),
-                Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+            let ok = match db.forbid_add(kind, mask, setter, &reason) {
+                Ok(true) => { ctx.notice(me, from.uid, t!(ctx, "Forbade {label} \x02{mask}\x02.", label = label, mask = mask)); true }
+                Ok(false) => { ctx.notice(me, from.uid, t!(ctx, "Updated the forbid on {label} \x02{mask}\x02.", label = label, mask = mask)); true }
+                Err(_) => { ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."); false }
+            };
+            // A forbidden NICK is Q-lined so it can't even be USED, not only registered.
+            if ok && matches!(kind, ForbidKind::Nick) {
+                ctx.add_line(echo_api::XlineKind::Qline, mask, setter, 0, &reason);
             }
         }
         Some("DEL") | Some("REMOVE") => {
@@ -33,7 +37,12 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             };
             let label = kind.wire().to_lowercase();
             match db.forbid_del(kind, mask) {
-                Ok(true) => ctx.notice(me, from.uid, t!(ctx, "Removed the forbid on {label} \x02{mask}\x02.", label = label, mask = mask)),
+                Ok(true) => {
+                    ctx.notice(me, from.uid, t!(ctx, "Removed the forbid on {label} \x02{mask}\x02.", label = label, mask = mask));
+                    if matches!(kind, ForbidKind::Nick) {
+                        ctx.del_line(echo_api::XlineKind::Qline, mask);
+                    }
+                }
                 Ok(false) => ctx.notice(me, from.uid, t!(ctx, "No forbid on {label} \x02{mask}\x02.", label = label, mask = mask)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }

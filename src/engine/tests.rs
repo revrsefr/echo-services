@@ -5372,6 +5372,37 @@
         assert!(e.db.is_verified("bob"), "bob is now active after the vouch");
     }
 
+    // FORBID NICK also Q-lines the nick so it can't be used, and the Q-line is
+    // removed on unforbid and re-asserted on a relink.
+    #[test]
+    fn forbid_nick_qlines_it() {
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-forbid-qline.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let os = OperServ { uid: "42SAAAAAH".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(os)], db);
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("alice".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let to_os = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: text.into() });
+
+        let out = to_os(&mut e, "FORBID ADD NICK badname reserved");
+        assert!(out.iter().any(|a| matches!(a, NetAction::AddLine { kind, mask, .. } if kind == "Q" && mask == "badname")), "qline set: {out:?}");
+
+        let burst = e.startup_actions();
+        assert!(burst.iter().any(|a| matches!(a, NetAction::AddLine { kind, mask, .. } if kind == "Q" && mask == "badname")), "qline re-asserted on relink: {burst:?}");
+
+        let out = to_os(&mut e, "FORBID DEL NICK badname");
+        assert!(out.iter().any(|a| matches!(a, NetAction::DelLine { kind, mask } if kind == "Q" && mask == "badname")), "qline removed: {out:?}");
+    }
+
     // ChanServ SET: description and founder transfer, founder-gated.
     #[test]
     fn chanserv_set() {

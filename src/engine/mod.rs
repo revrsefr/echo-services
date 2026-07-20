@@ -1245,6 +1245,13 @@ impl Engine {
             let duration = a.expires.map(|e| e.saturating_sub(now)).unwrap_or(0);
             out.push(NetAction::AddLine { kind: a.kind.wire().to_string(), mask: a.mask, setter: a.setter, duration, reason: a.reason });
         }
+        // Re-assert a Q-line for every forbidden nick, so a FORBID keeps the nick
+        // unusable across a relink (services X-lines don't survive the split).
+        for f in self.db.forbids() {
+            if matches!(f.kind, echo_api::ForbidKind::Nick) {
+                out.push(NetAction::AddLine { kind: echo_api::XlineKind::Qline.wire().to_string(), mask: f.mask, setter: f.setter, duration: 0, reason: f.reason });
+            }
+        }
         // Re-assert the spam filters so they survive an ircd restart (m_filter has
         // no s2s delete, so echo is the durable source of truth for them).
         for f in self.db.filters() {
