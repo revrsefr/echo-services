@@ -196,7 +196,8 @@ impl Engine {
             if self.service_uid("DictServ").is_some() {
                 let query = words.collect::<Vec<_>>().join(" ");
                 if !query.trim().is_empty() {
-                    ctx.dict_lookup(botuid.as_str(), chan, l.database, l.label, query);
+                    let (database, label) = echo_dictserv::database_for(l, ctx.lang());
+                    ctx.dict_lookup(botuid.as_str(), chan, database, label, query);
                 }
             }
             return;

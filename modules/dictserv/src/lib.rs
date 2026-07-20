@@ -55,6 +55,16 @@ pub fn dict_db_for(lang: &str) -> Option<(&'static str, &'static str)> {
     }
 }
 
+// The (database, label) a lookup should use for `lang`: the flagship `dict`
+// follows the language; every other command is fixed. Shared by DictServ's own
+// handler and the engine's `!dict` fantasy router so both route identically.
+pub fn database_for(l: &Lookup, lang: &str) -> (&'static str, &'static str) {
+    match (l.cmd, dict_db_for(lang)) {
+        ("dict", Some(loc)) => loc,
+        _ => (l.database, l.label),
+    }
+}
+
 const BLURB: &str = "DictServ looks words up in the dict.org dictionaries. Try \x02dict\x02 <word> (WordNet), \x02define\x02 (GCIDE), \x02thes\x02 (thesaurus), \x02acronym\x02, \x02element\x02, \x02law\x02, \x02bible\x02, and more — \x02LOOKUP\x02 lists them all.";
 
 const TOPICS: &[HelpEntry] = &[
@@ -93,12 +103,7 @@ impl Service for DictServ {
                 ctx.notice(me, from.uid, t!(ctx, "Give a term to look up, e.g. \x02{cmd} cat\x02.", cmd = l.cmd));
                 return;
             }
-            // `dict` follows the user's language where dict.org has a matching
-            // dictionary; the specific commands (define, thes, …) stay fixed.
-            let (database, label) = match (l.cmd, dict_db_for(ctx.lang())) {
-                ("dict", Some(loc)) => loc,
-                _ => (l.database, l.label),
-            };
+            let (database, label) = database_for(l, ctx.lang());
             ctx.dict_lookup(me, from.uid, database, label, query);
             return;
         }
