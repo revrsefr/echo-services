@@ -950,6 +950,19 @@ impl Engine {
         self.config_path = path.into();
     }
 
+    // Whether our pseudo-clients have signed on to the uplink (a fresh burst sets
+    // `services_signon`), and for how long — for the Admin/`echorpc` status view.
+    pub fn linked(&self) -> bool {
+        self.services_signon > 0
+    }
+    pub fn uptime_secs(&self) -> u64 {
+        if self.services_signon == 0 {
+            0
+        } else {
+            self.now_secs().saturating_sub(self.services_signon)
+        }
+    }
+
     // Re-read config.toml and apply the settings that are safe to change while
     // linked, reporting the outcome to the oper who ran REHASH. A parse error
     // keeps the running configuration untouched (validate-or-keep, like an ircd

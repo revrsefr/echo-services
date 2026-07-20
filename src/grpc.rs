@@ -21,16 +21,17 @@ pub mod pb {
 }
 
 use pb::accounts_server::{Accounts, AccountsServer};
+use pb::admin_server::{Admin, AdminServer};
 use pb::directory_server::{Directory, DirectoryServer};
 use pb::replication_event::Kind;
 use pb::stats_server::{Stats, StatsServer};
 use pb::{
     AccountDropped, AccountEmailSet, AccountRecord, AccountRegistered, AccountReply, AccountVerified,
-    AuthenticateReply, AuthenticateRequest, ChannelDescSet, ChannelDropped, ChannelFounderSet, ChannelRecord,
-    ChannelRegistered, ConfirmRequest, DropRequest, ForceLogoutReply, ForceLogoutRequest, GroupNickRequest,
-    NickGrouped, NickUngrouped, ProvisionRequest, RegisterRequest, ReplicationEvent, SetEmailRequest, SetPasswordRequest,
-    SnapshotRequest, SnapshotResponse, Status as PbStatus, StatsRequest, StatsResponse, SubscribeRequest,
-    UngroupNickRequest,
+    AdminRequest, AdminResponse, AuthenticateReply, AuthenticateRequest, ChannelDescSet, ChannelDropped,
+    ChannelFounderSet, ChannelRecord, ChannelRegistered, ConfirmRequest, DropRequest, ForceLogoutReply,
+    ForceLogoutRequest, GroupNickRequest, NickGrouped, NickUngrouped, ProvisionRequest, RegisterRequest,
+    ReplicationEvent, SetEmailRequest, SetPasswordRequest, SnapshotRequest, SnapshotResponse,
+    Status as PbStatus, StatsRequest, StatsResponse, SubscribeRequest, UngroupNickRequest, VersionResponse,
 };
 
 type Shared = Arc<Mutex<Engine>>;
@@ -409,6 +410,36 @@ impl Stats for StatsService {
     }
 }
 
+struct AdminService {
+    engine: Shared,
+    token: String,
+}
+
+#[tonic::async_trait]
+impl Admin for AdminService {
+    async fn version(&self, req: Request<AdminRequest>) -> Result<Response<VersionResponse>, Status> {
+        authorize(&req, &self.token)?;
+        let e = self.engine.lock().await;
+        Ok(Response::new(VersionResponse {
+            version: crate::version::VERSION.to_string(),
+            revision: crate::version::revision(),
+            built: crate::version::built(),
+            rustc: crate::version::RUSTC.to_string(),
+            uptime_secs: e.uptime_secs(),
+            linked: e.linked(),
+        }))
+    }
+
+    async fn rehash(&self, req: Request<AdminRequest>) -> Result<Response<AdminResponse>, Status> {
+        authorize(&req, &self.token)?;
+        // Same reload the OperServ REHASH path runs; the returned staff-feed notice
+        // has no oper to reach over gRPC, so it's dropped (the reload is logged).
+        let _ = self.engine.lock().await.rehash("gRPC control", "");
+        tracing::info!("configuration reloaded via gRPC control");
+        Ok(Response::new(AdminResponse { ok: true, message: "configuration reloaded".to_string() }))
+    }
+}
+
 // Start the listener, if configured. Absent [grpc] in config.toml = no-op, same
 // pattern as gossip being optional.
 pub async fn run(engine: Shared, cfg: GrpcCfg, outbound: broadcast::Sender<LogEntry>) {
@@ -425,6 +456,7 @@ pub async fn run(engine: Shared, cfg: GrpcCfg, outbound: broadcast::Sender<LogEn
     let has_tls = cfg.tls.is_some();
     let accounts_svc = AccountsService { engine: engine.clone(), token: cfg.token.clone() };
     let stats_svc = StatsService { engine: engine.clone(), token: cfg.token.clone() };
+    let admin_svc = AdminService { engine: engine.clone(), token: cfg.token.clone() };
     let directory_svc = DirectoryService { engine, outbound, token: cfg.token };
     let mut server = Server::builder();
     if let Some(tls) = &cfg.tls {
@@ -438,11 +470,12 @@ pub async fn run(engine: Shared, cfg: GrpcCfg, outbound: broadcast::Sender<LogEn
             Err(e) => return tracing::error!(%e, "grpc TLS setup failed"),
         };
     }
-    tracing::info!(%addr, tls = has_tls, "grpc directory + accounts + stats API listening");
+    tracing::info!(%addr, tls = has_tls, "grpc directory + accounts + stats + admin API listening");
     if let Err(e) = server
         .add_service(DirectoryServer::new(directory_svc))
         .add_service(AccountsServer::new(accounts_svc))
         .add_service(StatsServer::new(stats_svc))
+        .add_service(AdminServer::new(admin_svc))
         .serve(addr)
         .await
     {

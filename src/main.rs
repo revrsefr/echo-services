@@ -2,6 +2,7 @@
 // crates (echo-nickserv, echo-chanserv, echo-inspircd), each depending
 // only on the echo-api SDK.
 mod config;
+mod control;
 mod dict;
 mod engine;
 mod gossip;
@@ -58,8 +59,22 @@ async fn main() -> Result<()> {
     // One-off migration: `echo import <anope.json> <out.log> [node-name]` builds a
     // fresh event log from an Anope db_json and exits, touching nothing else.
     let argv: Vec<String> = std::env::args().collect();
-    // `echo --version` / `-V` prints the build banner (version, git revision, build
-    // date, toolchain, target) and exits.
+    // `echorpc <cmd>` (a symlink to this binary) or `echo ctl <cmd>` runs the
+    // control CLI against the daemon's gRPC Admin API instead of starting up.
+    // Checked before `version` so `echorpc version` hits the live daemon, not the
+    // static build banner.
+    let arg0 = std::path::Path::new(argv.first().map(String::as_str).unwrap_or(""))
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("");
+    if arg0 == "echorpc" || arg0 == "echoctl" {
+        return control::run(argv[1..].to_vec()).await;
+    }
+    if argv.get(1).map(String::as_str) == Some("ctl") {
+        return control::run(argv.get(2..).unwrap_or(&[]).to_vec()).await;
+    }
+    // `echo --version` / `-V` / `echo version` prints the build banner (version,
+    // git revision, build date, toolchain, target) and exits.
     if matches!(argv.get(1).map(String::as_str), Some("--version") | Some("-V") | Some("version")) {
         use std::io::IsTerminal;
         println!("{}", version::banner(std::io::stdout().is_terminal()));

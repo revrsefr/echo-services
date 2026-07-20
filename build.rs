@@ -9,7 +9,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Django (or any other consumer) generates its own stub from proto/echo.proto.
     tonic_build::configure()
         .build_server(true)
-        .build_client(false)
+        // The `echorpc` control CLI (in this same binary) dials the Admin service,
+        // so we need the client stubs too. Django generates its own from the proto.
+        .build_client(true)
         .compile_protos(&["proto/echo.proto"], &["proto"])?;
     println!("cargo:rerun-if-changed=proto/echo.proto");
     emit_build_info();

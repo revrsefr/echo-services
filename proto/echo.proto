@@ -155,3 +155,26 @@ message StatsResponse {
   map<string, uint64> counters = 1;
   uint64 collected_at = 2; // unix seconds when this snapshot was taken
 }
+
+// Local admin/control surface, for the `echorpc` CLI: read the running daemon's
+// build + liveness, and reload its config live. Process lifecycle
+// (start/stop/restart) is deliberately NOT here — you can't RPC a daemon that
+// isn't running; that's systemd's job.
+service Admin {
+  rpc Version(AdminRequest) returns (VersionResponse);
+  rpc Rehash(AdminRequest) returns (AdminResponse);
+}
+
+message AdminRequest {}
+message VersionResponse {
+  string version = 1;
+  string revision = 2;
+  string built = 3;
+  string rustc = 4;
+  uint64 uptime_secs = 5; // 0 = not linked to the uplink yet
+  bool linked = 6;
+}
+message AdminResponse {
+  bool ok = 1;
+  string message = 2;
+}
