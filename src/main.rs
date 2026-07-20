@@ -61,7 +61,8 @@ async fn main() -> Result<()> {
     // `echo --version` / `-V` prints the build banner (version, git revision, build
     // date, toolchain, target) and exits.
     if matches!(argv.get(1).map(String::as_str), Some("--version") | Some("-V") | Some("version")) {
-        println!("{}", version::banner());
+        use std::io::IsTerminal;
+        println!("{}", version::banner(std::io::stdout().is_terminal()));
         return Ok(());
     }
     if argv.get(1).map(String::as_str) == Some("import") {
@@ -95,6 +96,11 @@ async fn main() -> Result<()> {
     }
 
     let path = std::env::args().nth(1).unwrap_or_else(|| "config.toml".to_string());
+    // On an interactive run, greet with the full banner; under systemd (stderr is
+    // journald, not a tty) skip it and let the structured log line below stand.
+    if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+        eprintln!("{}", version::banner(true));
+    }
     tracing::info!(revision = %version::revision(), built = %version::built(), rustc = version::RUSTC, "starting {}", version::short());
     let cfg = config::Config::load(&path)?;
     let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();

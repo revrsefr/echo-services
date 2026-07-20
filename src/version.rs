@@ -33,22 +33,48 @@ pub fn short() -> String {
     format!("echo {VERSION} ({})", revision())
 }
 
-/// The full multi-line banner for `echo --version`.
-pub fn banner() -> String {
+// ASCII wordmark (figlet "standard", "echo").
+const LOGO: [&str; 5] = [
+    r"            _           ",
+    r"   ___  ___| |__   ___  ",
+    r"  / _ \/ __| '_ \ / _ \ ",
+    r" |  __/ (__| | | | (_) |",
+    r"  \___|\___|_| |_|\___/ ",
+];
+
+/// The full banner for `echo --version` / an interactive startup. `color` emits
+/// ANSI styling (only when writing to a terminal).
+pub fn banner(color: bool) -> String {
+    let (logo, name, dim, reset) = if color {
+        ("\x1b[38;5;44m", "\x1b[1;38;5;51m", "\x1b[2m", "\x1b[0m")
+    } else {
+        ("", "", "", "")
+    };
     let commit = if COMMIT_DATE.is_empty() {
         String::new()
     } else {
-        format!(" ({COMMIT_DATE})")
+        format!("  {dim}({COMMIT_DATE}){reset}")
     };
-    format!(
-        "echo \u{2014} federated IRC services\n  \
-         version:  {VERSION}\n  \
-         revision: {rev}{commit}\n  \
-         built:    {built} ({profile})\n  \
-         rustc:    {RUSTC}\n  \
-         target:   {TARGET}",
-        rev = revision(),
-        built = built(),
-        profile = profile(),
-    )
+    // Identity text aligned against the middle rows of the logo.
+    let side = [
+        String::new(),
+        format!("{name}echo{reset} {dim}services{reset}"),
+        format!("{dim}federated IRC services{reset}"),
+        String::new(),
+        String::new(),
+    ];
+    let mut out = String::from("\n");
+    for i in 0..LOGO.len() {
+        out.push_str(&format!("  {logo}{:<24}{reset}   {}\n", LOGO[i], side[i]));
+    }
+    out.push('\n');
+    let mut row = |label: &str, value: String| {
+        out.push_str(&format!("  {dim}{label:<9}{reset}{value}\n"));
+    };
+    row("version", VERSION.to_string());
+    row("revision", format!("{}{commit}", revision()));
+    row("built", format!("{} {dim}·{reset} {}", built(), profile()));
+    row("rustc", RUSTC.strip_prefix("rustc ").unwrap_or(RUSTC).to_string());
+    row("target", TARGET.to_string());
+    out
 }
