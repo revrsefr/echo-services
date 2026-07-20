@@ -51,12 +51,17 @@ fn make_nonce() -> String {
     STANDARD.encode(b)
 }
 
-// Proof of holding the shared secret: HMAC-SHA256(secret, the peer's nonce). The
+// Proof of holding the shared secret: HMAC-SHA256(secret, direction ‖ nonce). The
 // secret itself never crosses the wire — the peer verifies this against the nonce
-// it chose, so an eavesdropper (or a peer with the wrong secret) can't reproduce
-// it and can't replay it on a later connection (fresh nonce each time).
-fn auth_proof(secret: &str, nonce: &str) -> String {
+// it chose. `direction` ("L" for the listener's proof, "D" for the dialer's) is
+// mixed in so the two sides' proofs are over DIFFERENT inputs: a peer can neither
+// reflect our own nonce+proof back to us, nor use a second connection as an oracle
+// to have us sign the value it needs — both would need the other direction's
+// label, which only the other role ever produces.
+fn auth_proof(secret: &str, direction: &str, nonce: &str) -> String {
     let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
+    mac.update(direction.as_bytes());
+    mac.update(b"\0");
     mac.update(nonce.as_bytes());
     STANDARD.encode(mac.finalize().into_bytes())
 }
@@ -141,11 +146,14 @@ async fn listen(bind: String, engine: Shared, secret: String, origin: String, ou
             tokio::spawn(async move {
                 let _permit = permit; // released when the session ends
                 let served = match acceptor {
-                    Some(acc) => match acc.accept(stream).await {
-                        Ok(tls) => session(tls, engine, secret, origin, outbound).await,
-                        Err(e) => return tracing::debug!(%e, %addr, "gossip tls accept failed"),
+                    // Bound the TLS handshake too, so a peer that opens the socket but
+                    // never finishes negotiating can't pin its session permit forever.
+                    Some(acc) => match tokio::time::timeout(HANDSHAKE_TIMEOUT, acc.accept(stream)).await {
+                        Ok(Ok(tls)) => session(tls, engine, secret, origin, outbound, true).await,
+                        Ok(Err(e)) => return tracing::debug!(%e, %addr, "gossip tls accept failed"),
+                        Err(_) => return tracing::debug!(%addr, "gossip tls accept timed out"),
                     },
-                    None => session(stream, engine, secret, origin, outbound).await,
+                    None => session(stream, engine, secret, origin, outbound, true).await,
                 };
                 if let Err(e) = served {
                     tracing::debug!(%e, "gossip session ended");
@@ -163,12 +171,12 @@ async fn dial(peer: Peer, engine: Shared, secret: String, origin: String, outbou
                 let served = match &connector {
                     Some(conn) => match ServerName::try_from(peer.name.clone()) {
                         Ok(name) => match conn.connect(name, stream).await {
-                            Ok(tls) => session(tls, engine.clone(), secret.clone(), origin.clone(), outbound.clone()).await,
+                            Ok(tls) => session(tls, engine.clone(), secret.clone(), origin.clone(), outbound.clone(), false).await,
                             Err(e) => Err(anyhow::anyhow!("tls connect: {e}")),
                         },
                         Err(e) => Err(anyhow::anyhow!("bad peer TLS name {:?}: {e}", peer.name)),
                     },
-                    None => session(stream, engine.clone(), secret.clone(), origin.clone(), outbound.clone()).await,
+                    None => session(stream, engine.clone(), secret.clone(), origin.clone(), outbound.clone(), false).await,
                 };
                 if let Err(e) = served {
                     tracing::debug!(%e, addr = %peer.addr, "gossip session ended");
@@ -227,7 +235,7 @@ async fn read_handshake<R: AsyncBufRead + Unpin>(reader: &mut R) -> Option<Msg> 
 }
 
 // One peer connection: authenticate, then run anti-entropy until it drops.
-async fn session<S>(stream: S, engine: Shared, secret: String, origin: String, outbound: Outbound) -> anyhow::Result<()>
+async fn session<S>(stream: S, engine: Shared, secret: String, origin: String, outbound: Outbound, listener: bool) -> anyhow::Result<()>
 where
     S: AsyncRead + AsyncWrite + Send + 'static,
 {
@@ -246,10 +254,12 @@ where
 
     // Handshake: a mutual challenge-response over the shared secret, so the secret
     // itself never crosses the wire. Each side sends a random nonce, then proves it
-    // holds the secret by returning HMAC(secret, the peer's nonce); each verifies
-    // the peer's proof against the nonce it chose. A wrong secret (or an
-    // eavesdropper) can't produce a valid proof, and a fresh nonce per link stops
-    // replay.
+    // holds the secret by returning HMAC(secret, its-role ‖ the peer's nonce); each
+    // verifies the peer's proof against the nonce it chose and the peer's role. The
+    // per-role label (listener "L" vs dialer "D") is what stops a reflection or
+    // oracle attack — without it, a peer with no secret could bounce our own
+    // nonce+proof back and authenticate. A fresh nonce per link stops replay.
+    let (my_dir, peer_dir) = if listener { ("L", "D") } else { ("D", "L") };
     let my_nonce = make_nonce();
     let _ = send(&tx, &Msg::Hello { origin, nonce: my_nonce.clone() }).await;
     let peer_nonce = match read_handshake(&mut reader).await {
@@ -259,9 +269,15 @@ where
             anyhow::bail!("peer failed to complete the handshake");
         }
     };
-    let _ = send(&tx, &Msg::Auth { proof: auth_proof(&secret, &peer_nonce) }).await;
+    // A peer echoing our own nonce back has nothing to prove — refuse it outright
+    // (the direction labels already defeat reflection; this is belt-and-braces).
+    if peer_nonce == my_nonce {
+        writer.abort();
+        anyhow::bail!("gossip peer reused our nonce");
+    }
+    let _ = send(&tx, &Msg::Auth { proof: auth_proof(&secret, my_dir, &peer_nonce) }).await;
     match read_handshake(&mut reader).await {
-        Some(Msg::Auth { proof }) if ct_str_eq(&proof, &auth_proof(&secret, &my_nonce)) => {}
+        Some(Msg::Auth { proof }) if ct_str_eq(&proof, &auth_proof(&secret, peer_dir, &my_nonce)) => {}
         _ => {
             writer.abort();
             anyhow::bail!("bad gossip handshake");
@@ -362,6 +378,15 @@ mod tests {
     use crate::engine::db::Db;
     use echo_nickserv::NickServ;
 
+    // The listener's and the dialer's proof over the same nonce MUST differ, so a
+    // secretless peer can't reflect one side's proof (or oracle it on a second
+    // connection) as the other side's expected value.
+    #[test]
+    fn handshake_proof_is_direction_separated() {
+        assert_ne!(auth_proof("s3cret", "L", "abc"), auth_proof("s3cret", "D", "abc"));
+        assert_eq!(auth_proof("s3cret", "L", "abc"), auth_proof("s3cret", "L", "abc"));
+    }
+
     fn engine(origin: &str, tag: &str) -> (Shared, Outbound) {
         let path = std::env::temp_dir().join(format!("echo-gossip-{tag}.jsonl"));
         let _ = std::fs::remove_file(&path);
@@ -382,8 +407,8 @@ mod tests {
         a.lock().await.test_register("alice");
 
         let (ca, cb) = tokio::io::duplex(64 * 1024);
-        let sa = tokio::spawn(session(ca, a.clone(), "s3cret".into(), "A".into(), atx));
-        let sb = tokio::spawn(session(cb, b.clone(), "s3cret".into(), "B".into(), btx));
+        let sa = tokio::spawn(session(ca, a.clone(), "s3cret".into(), "A".into(), atx, true));
+        let sb = tokio::spawn(session(cb, b.clone(), "s3cret".into(), "B".into(), btx, false));
 
         let mut converged = false;
         for _ in 0..100 {
@@ -406,8 +431,8 @@ mod tests {
         let (b, btx) = engine("B", "push-b");
 
         let (ca, cb) = tokio::io::duplex(64 * 1024);
-        let sa = tokio::spawn(session(ca, a.clone(), "s3cret".into(), "A".into(), atx));
-        let sb = tokio::spawn(session(cb, b.clone(), "s3cret".into(), "B".into(), btx));
+        let sa = tokio::spawn(session(ca, a.clone(), "s3cret".into(), "A".into(), atx, true));
+        let sb = tokio::spawn(session(cb, b.clone(), "s3cret".into(), "B".into(), btx, false));
         tokio::time::sleep(Duration::from_millis(200)).await; // let both subscribe
 
         a.lock().await.test_register("late");
@@ -435,8 +460,8 @@ mod tests {
         b.lock().await.test_register_pw("alice", "from-b");
 
         let (ca, cb) = tokio::io::duplex(64 * 1024);
-        let sa = tokio::spawn(session(ca, a.clone(), "s3cret".into(), "A".into(), atx));
-        let sb = tokio::spawn(session(cb, b.clone(), "s3cret".into(), "B".into(), btx));
+        let sa = tokio::spawn(session(ca, a.clone(), "s3cret".into(), "A".into(), atx, true));
+        let sb = tokio::spawn(session(cb, b.clone(), "s3cret".into(), "B".into(), btx, false));
 
         let mut converged = false;
         for _ in 0..100 {
@@ -462,8 +487,8 @@ mod tests {
         a.lock().await.test_register_channel("#secret", "alice");
 
         let (ca, cb) = tokio::io::duplex(64 * 1024);
-        let sa = tokio::spawn(session(ca, a.clone(), "s3cret".into(), "A".into(), atx));
-        let sb = tokio::spawn(session(cb, b.clone(), "s3cret".into(), "B".into(), btx));
+        let sa = tokio::spawn(session(ca, a.clone(), "s3cret".into(), "A".into(), atx, true));
+        let sb = tokio::spawn(session(cb, b.clone(), "s3cret".into(), "B".into(), btx, false));
 
         // Wait for the account to converge (proves the link works), then assert
         // the channel never crossed it.
@@ -492,8 +517,8 @@ mod tests {
         a.lock().await.test_register("alice");
 
         let (ca, cb) = tokio::io::duplex(64 * 1024);
-        let sa = tokio::spawn(session(ca, a.clone(), "right".into(), "A".into(), atx));
-        let sb = tokio::spawn(session(cb, b.clone(), "wrong".into(), "B".into(), btx));
+        let sa = tokio::spawn(session(ca, a.clone(), "right".into(), "A".into(), atx, true));
+        let sb = tokio::spawn(session(cb, b.clone(), "wrong".into(), "B".into(), btx, false));
 
         let _ = tokio::time::timeout(Duration::from_secs(1), async {
             let _ = sa.await;
@@ -538,8 +563,8 @@ mod tests {
         let (sside, cside) = tokio::io::duplex(64 * 1024);
         let name = ServerName::try_from("echo").unwrap();
         let (server, client) = tokio::join!(acceptor.accept(sside), connector.connect(name, cside));
-        let sa = tokio::spawn(session(server.expect("tls accept"), a.clone(), "s3cret".into(), "A".into(), atx));
-        let sb = tokio::spawn(session(client.expect("tls connect"), b.clone(), "s3cret".into(), "B".into(), btx));
+        let sa = tokio::spawn(session(server.expect("tls accept"), a.clone(), "s3cret".into(), "A".into(), atx, true));
+        let sb = tokio::spawn(session(client.expect("tls connect"), b.clone(), "s3cret".into(), "B".into(), btx, false));
 
         let mut converged = false;
         for _ in 0..100 {

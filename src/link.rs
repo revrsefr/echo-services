@@ -55,20 +55,19 @@ fn redact(line: &str) -> Cow<'_, str> {
             let after = p + kw.len();
             if let Some(c) = line[after..].find(" :") {
                 let tstart = after + c + 2;
-                let mut words = line[tstart..].split(' ');
-                let first = words.next().unwrap_or("");
-                let mut cmd = first.to_ascii_lowercase();
-                let mut argstart = tstart + first.len();
+                // Tokenise the trailer exactly like the dispatcher (`split_whitespace`),
+                // so a TAB or a leading/collapsed space can't sneak a credential past
+                // redaction while still reaching the command handler.
+                let mut words = line[tstart..].split_whitespace();
+                let mut cmd = words.next().unwrap_or("").to_ascii_lowercase();
                 // "NS <cmd> ..." / "NICKSERV <cmd> ..." — unwrap one level.
                 if matches!(cmd.as_str(), "ns" | "nickserv") {
-                    if let Some(w2) = words.next() {
-                        cmd = w2.to_ascii_lowercase();
-                        argstart += 1 + w2.len();
-                    }
+                    cmd = words.next().unwrap_or("").to_ascii_lowercase();
                 }
                 let is_set_password = cmd == "set"
                     && words.next().map(|w| w.eq_ignore_ascii_case("password")).unwrap_or(false);
-                if (SECRET_CMDS.contains(&cmd.as_str()) || is_set_password) && argstart < line.len() {
+                // Over-redact the whole trailer when the command is credential-bearing.
+                if SECRET_CMDS.contains(&cmd.as_str()) || is_set_password {
                     return format!("{} :[REDACTED]", line[..tstart].trim_end_matches(" :")).into();
                 }
             }

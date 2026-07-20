@@ -497,13 +497,29 @@ pub fn render(lang: &str, msgid: &str, args: &[(&str, String)]) -> String {
         .and_then(|m| m.get(msgid))
         .map(String::as_str)
         .unwrap_or(msgid);
-    if args.is_empty() {
+    if args.is_empty() || !template.contains('{') {
         return template.to_string();
     }
-    let mut out = template.to_string();
-    for (name, val) in args {
-        out = out.replace(&format!("{{{name}}}"), val);
+    // Single left-to-right pass: a substituted value is copied to the output and
+    // never re-scanned, so a value that itself contains `{name}` (e.g. a nick like
+    // "{game}") can't trigger a second substitution. An unknown `{x}` (no matching
+    // arg, e.g. the literal `{ON|OFF}`) is left verbatim, as before.
+    let mut out = String::with_capacity(template.len() + 16);
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let Some(rel_close) = rest[open..].find('}') else {
+            break; // unbalanced '{' — emit the remainder verbatim below
+        };
+        let close = open + rel_close;
+        let name = &rest[open + 1..close];
+        match args.iter().find(|(n, _)| *n == name) {
+            Some((_, val)) => out.push_str(val),
+            None => out.push_str(&rest[open..=close]),
+        }
+        rest = &rest[close + 1..];
     }
+    out.push_str(rest);
     out
 }
 

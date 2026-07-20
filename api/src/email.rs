@@ -24,13 +24,17 @@ fn brand_mark(brand: &str, accent: &str, logo: &str) -> String {
 }
 
 fn render(brand: &str, accent: &str, logo: &str, title: &str, message: &str, code: &str, note: &str) -> String {
+    // `message` carries the account name (attacker-influenceable). Substitute every
+    // OTHER slot first and `{{message}}` LAST, so a message that literally contains
+    // `{{code}}`/`{{note}}` (an account named that) is inserted verbatim rather than
+    // splicing in the real code.
     BASE.replace("{{brand_mark}}", &brand_mark(brand, accent, logo))
         .replace("{{brand}}", &escape(brand))
         .replace("{{accent}}", &escape(accent))
         .replace("{{title}}", &escape(title))
-        .replace("{{message}}", &escape(message))
         .replace("{{code}}", &escape(code))
         .replace("{{note}}", &escape(note))
+        .replace("{{message}}", &escape(message))
 }
 
 pub fn reset(brand: &str, accent: &str, logo: &str, account: &str, code: &str, lang: &str) -> Mail {

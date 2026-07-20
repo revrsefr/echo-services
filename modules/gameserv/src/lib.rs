@@ -463,9 +463,11 @@ fn push_stats(counters: &[(String, u64)], account: &str, to_nick: &str, me: &str
             _ => read_stats(counters, gt, account),
         };
         let payload = format!("GS$ {} {} r={} p={} w={} l={} d={}", account, gt.wire(), s.rank(), s.points(), s.wins, s.losses, s.draws);
-        // push_stats is only called for a registered side (a_reg/b_reg), so the
-        // account guard in push_tag always applies here.
-        push_tag(me, net, to_nick, account, true, &payload, ctx);
+        // Ranked stats are PUBLIC leaderboard data and are also pushed to a viewer
+        // who queried someone ELSE (STATS <nick>), so `to_nick` is not the subject
+        // account — don't apply the board-state account guard here (that guard is
+        // only for the private mid-game board in push_one).
+        push_tag(me, net, to_nick, account, false, &payload, ctx);
     }
 }
 
