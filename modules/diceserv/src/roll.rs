@@ -11,7 +11,7 @@ pub fn handle(me: &str, from: &Sender, rest: &[&str], ctx: &mut ServiceCtx, exte
     let input = rest.join(" ");
     let input = input.trim();
     if input.is_empty() {
-        ctx.notice(me, from.uid, "Give me something to roll, e.g. \x022d6+3\x02.");
+        ctx.notice(me, from.uid, t!(ctx, "Give me something to roll, e.g. \x022d6+3\x02."));
         return;
     }
     // `N~expr` repeats the roll N times.
@@ -44,12 +44,15 @@ pub fn handle(me: &str, from: &Sender, rest: &[&str], ctx: &mut ServiceCtx, exte
                 // `25~99999d1+…` can't multiply the per-roll cap into tens of millions.
                 if spent >= expr::MAX_TOTAL {
                     if i + 1 < times {
-                        ctx.notice(me, from.uid, "That's a lot of dice — stopping the repeats here.");
+                        ctx.notice(me, from.uid, t!(ctx, "That's a lot of dice, stopping the repeats here."));
                     }
                     break;
                 }
             }
             Err(why) => {
+                // The parser returns its diagnostic in English; localize the static
+                // fragments through the catalog (interpolated ones fall back verbatim).
+                let why = echo_api::render(ctx.lang(), &why, &[]);
                 ctx.notice(me, from.uid, t!(ctx, "I couldn't roll \x02{body}\x02: {why}.", body = body, why = why));
                 return; // the whole batch shares the expression, so it'll fail the same way
             }

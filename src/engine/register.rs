@@ -356,9 +356,10 @@ impl Engine {
 
     // Commit a password change the link layer derived off-thread, then notice the user.
     pub fn complete_password_change(&mut self, account: &str, creds: Option<db::Credentials>, agent: &str, uid: &str) -> Vec<NetAction> {
+        let lang = self.lang_for_account(account);
         let text = match creds.and_then(|c| self.db.set_credentials(account, c).ok()) {
-            Some(()) => format!("Your password for \x02{account}\x02 has been changed."),
-            None => "Sorry, that didn't work. Please try again in a moment.".to_string(),
+            Some(()) => echo_api::render(&lang, "Your password for \x02{account}\x02 has been changed.", &[("account", account.to_string())]),
+            None => echo_api::render(&lang, "Sorry, that didn't work. Please try again in a moment.", &[]),
         };
         vec![NetAction::Notice { from: agent.to_string(), to: uid.to_string(), text }]
     }

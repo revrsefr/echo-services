@@ -842,8 +842,9 @@ impl Db {
     }
 
     /// Channels entering the warning window, paired with their founder's email
-    /// (skipped when the founder has none). Returns (channel, email, seconds left).
-    pub fn channels_to_warn(&self, now: u64, ttl: u64, lead: u64) -> Vec<(String, String, u64)> {
+    /// (skipped when the founder has none) and preferred language. Returns
+    /// (channel, email, seconds left, founder language).
+    pub fn channels_to_warn(&self, now: u64, ttl: u64, lead: u64) -> Vec<(String, String, u64, String)> {
         let floor = ttl.saturating_sub(lead);
         self.channels
             .values()
@@ -853,8 +854,10 @@ impl Db {
                 if idle <= floor || idle > ttl {
                     return None;
                 }
-                let email = self.accounts.get(&key(&c.founder)).and_then(|a| a.email.clone())?;
-                Some((c.name.clone(), email, ttl - idle))
+                let acc = self.accounts.get(&key(&c.founder))?;
+                let email = acc.email.clone()?;
+                let lang = acc.language.clone().unwrap_or_else(|| self.default_language());
+                Some((c.name.clone(), email, ttl - idle, lang))
             })
             .collect()
     }

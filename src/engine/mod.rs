@@ -727,11 +727,8 @@ impl Engine {
             self.logout_uid(&uid, account, reason);
             if !orphaned.is_empty() {
                 if let Some(ns) = &ns {
-                    self.emit_irc(NetAction::Notice {
-                        from: ns.clone(),
-                        to: uid,
-                        text: format!("Channels you had registered as \x02{account}\x02 were released: {}.", orphaned.join(", ")),
-                    });
+                    let text = echo_api::render(&self.lang_for_uid(&uid), "Channels you had registered as \x02{account}\x02 were released: {list}.", &[("account", account.to_string()), ("list", orphaned.join(", "))]);
+                    self.emit_irc(NetAction::Notice { from: ns.clone(), to: uid.clone(), text });
                 }
             }
         }
@@ -773,11 +770,10 @@ impl Engine {
         self.network.clear_account(uid);
         self.emit_irc(NetAction::Metadata { target: uid.to_string(), key: "accountname".to_string(), value: String::new() });
         if let Some(ns) = self.nick_service.clone() {
-            self.emit_irc(NetAction::Notice {
-                from: ns,
-                to: uid.to_string(),
-                text: format!("Your account \x02{account}\x02 {reason}. You have been logged out."),
-            });
+            let lang = self.lang_for_uid(uid);
+            let reason = echo_api::render(&lang, reason, &[]);
+            let text = echo_api::render(&lang, "Your account \x02{account}\x02 {reason}. You have been logged out.", &[("account", account.to_string()), ("reason", reason)]);
+            self.emit_irc(NetAction::Notice { from: ns, to: uid.to_string(), text });
         }
     }
 
@@ -859,8 +855,8 @@ impl Engine {
                 }
             }
             if let Some(ttl) = self.channel_ttl {
-                for (channel, email, left) in self.db.channels_to_warn(now, ttl, lead) {
-                    let mail = echo_api::email::expiry_warning(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), echo_api::email::ExpiryTarget::Channel, &channel, &human_duration(left), &self.db.default_language());
+                for (channel, email, left, lang) in self.db.channels_to_warn(now, ttl, lead) {
+                    let mail = echo_api::email::expiry_warning(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), echo_api::email::ExpiryTarget::Channel, &channel, &human_duration(left), &lang);
                     self.emit_irc(NetAction::SendEmail { to: email, subject: mail.subject, text: mail.text, html: Some(mail.html) });
                     self.db.mark_channel_warned(&channel);
                 }
