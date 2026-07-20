@@ -1381,6 +1381,7 @@ impl Engine {
                 self.network.user_nick_change(&uid, nick);
                 self.pending_enforce.retain(|p| p.uid != uid); // they left the old nick
                 let mut out = self.enforce_registered_nick(&uid, &new_nick);
+                out.extend(self.enforce_akick_on_nick(&uid));
                 if let Some(line) = self.notify_line('n', &uid, None, &format!("changed nick (was {old_nick})")) {
                     out.push(line);
                 }
@@ -1477,28 +1478,11 @@ impl Engine {
                     }
                     // No access: an auto-kick match is banned and kicked, else greeted.
                     None => {
-                        // Match the akick list against the user's full identity —
-                        // host and the extbans (account/realname/…) the ircd gave us.
-                        let akick = {
-                            let target = self.network.ban_target(&uid);
-                            target.as_ref().and_then(|t| {
-                                self.db.channel(&channel).and_then(|c| c.akick_match(t)).map(|k| {
-                                    let reason = if k.reason.is_empty() { "You are banned from this channel.".to_string() } else { k.reason.clone() };
-                                    (k.mask.clone(), reason)
-                                })
-                            })
-                        };
-                        match akick {
-                            Some((mask, reason)) => {
-                                self.network.channel_part(&channel, &uid);
-                                acts.push(NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: format!("+b {mask}") });
-                                acts.push(NetAction::Kick { from, channel, uid, reason });
-                            }
-                            None => {
-                                if let Some(msg) = entrymsg {
-                                    acts.push(NetAction::Notice { from, to: uid, text: msg });
-                                }
-                            }
+                        let hit = self.akick_hit(&uid, &channel);
+                        if !hit.is_empty() {
+                            acts.extend(hit);
+                        } else if let Some(msg) = entrymsg {
+                            acts.push(NetAction::Notice { from, to: uid, text: msg });
                         }
                     }
                 }
@@ -1823,6 +1807,49 @@ impl Engine {
         }
         let botuid = self.network.uid_by_nick(&bot)?.to_string();
         Some(NetAction::Privmsg { from: botuid, to: channel.to_string(), text: format!("[{acc}] {greet}") })
+    }
+
+    // Ban+kick `uid` from `channel` if their current identity matches its akick
+    // list. Parts them locally and returns the +b/KICK; empty when no match.
+    fn akick_hit(&mut self, uid: &str, channel: &str) -> Vec<NetAction> {
+        let matched = {
+            let target = self.network.ban_target(uid);
+            target.as_ref().and_then(|t| {
+                self.db.channel(channel).and_then(|c| c.akick_match(t)).map(|k| {
+                    let reason = if k.reason.is_empty() { "You are banned from this channel.".to_string() } else { k.reason.clone() };
+                    (k.mask.clone(), reason)
+                })
+            })
+        };
+        match matched {
+            Some((mask, reason)) => {
+                let from = self.channel_mode_source(channel);
+                self.network.channel_part(channel, uid);
+                vec![
+                    NetAction::ChannelMode { from: from.clone(), channel: channel.to_string(), modes: format!("+b {mask}") },
+                    NetAction::Kick { from, channel: channel.to_string(), uid: uid.to_string(), reason },
+                ]
+            }
+            None => Vec::new(),
+        }
+    }
+
+    // A nick change rewrites the user's n!u@h, so re-run the akick check the join
+    // path does — otherwise a user joins clean, switches to a banned nick, and stays.
+    // Access holders are exempt, as on join.
+    fn enforce_akick_on_nick(&mut self, uid: &str) -> Vec<NetAction> {
+        let mut acts = Vec::new();
+        let account = self.network.account_of(uid).map(str::to_string);
+        for channel in self.network.channels_of(uid) {
+            if self.db.is_channel_suspended(&channel) {
+                continue;
+            }
+            if account.as_deref().and_then(|a| self.db.channel_join_mode(&channel, a)).is_some() {
+                continue;
+            }
+            acts.extend(self.akick_hit(uid, &channel));
+        }
+        acts
     }
 
     // Fantasy commands: `!op nick`, `!kick nick`, `!topic …` spoken in a channel

@@ -5179,6 +5179,36 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes.contains('o'))), "{out:?}");
     }
 
+    // A user who joins clean then switches to a nick matching the akick list is
+    // banned and kicked, just as if they'd joined under that nick.
+    #[test]
+    fn akick_enforced_on_nick_change() {
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-cs-akick-nick.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+        let to_cs = |e: &mut Engine, from: &str, text: &str| {
+            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+        };
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h1".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        to_cs(&mut e, "000AAAAAB", "AKICK #c ADD evil!*@* begone");
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "clean.host".into(), ip: "0.0.0.0".into() });
+        let out = e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#c".into(), op: false });
+        assert!(!out.iter().any(|a| matches!(a, NetAction::Kick { .. })), "clean nick not kicked: {out:?}");
+
+        let out = e.handle(NetEvent::NickChange { uid: "000AAAAAC".into(), nick: "evil".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#c" && modes == "+b evil!*@*")), "{out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { channel, uid, reason, .. } if channel == "#c" && uid == "000AAAAAC" && reason.starts_with("begone"))), "{out:?}");
+    }
+
     // ChanServ SET: description and founder transfer, founder-gated.
     #[test]
     fn chanserv_set() {
