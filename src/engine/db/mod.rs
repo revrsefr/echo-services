@@ -707,7 +707,11 @@ impl ChannelInfo {
                 '+' => adding = true,
                 '-' => adding = false,
                 m if m.is_ascii_alphabetic() => {
-                    if (m == 'r' || self.lock_on.contains(m)) && !adding && !readd.contains(m) {
+                    // A param mode (e.g. +f) is re-asserted whenever it's touched — set
+                    // as well as unset — so changing its param is reverted to the locked
+                    // one, not just re-added after a plain `-f`.
+                    let param_locked = self.lock_params.iter().any(|(c, _)| *c == m);
+                    if (m == 'r' || self.lock_on.contains(m)) && (!adding || param_locked) && !readd.contains(m) {
                         readd.push(m);
                     } else if self.lock_off.contains(m) && adding && !reremove.contains(m) {
                         reremove.push(m);

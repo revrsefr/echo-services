@@ -764,6 +764,14 @@
         assert_eq!(info.enforce("-r"), Some("+r".to_string()));   // +r always locked
         assert_eq!(info.enforce("+m"), None);                     // unrelated mode ignored
 
+        // A param mode (+f): both a plain unset AND a changed param revert to the
+        // locked param — not just the unset case.
+        db.set_mlock_params("#chan", "ntf", "s", vec![('f', "kick:4:5s".to_string())]).unwrap();
+        let info = db.channel("#chan").unwrap();
+        assert_eq!(info.enforce("-f"), Some("+f kick:4:5s".to_string())); // unset re-added with param
+        assert_eq!(info.enforce("+f"), Some("+f kick:4:5s".to_string())); // changed param reverted
+        db.set_mlock("#chan", "nt", "s").unwrap(); // restore for the reopen check
+
         drop(db);
         let db = Db::open(&p, "local");
         assert_eq!(db.channel("#chan").unwrap().lock_modes(), "+rnt-s", "survives reopen");
