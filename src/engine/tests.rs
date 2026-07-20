@@ -5429,6 +5429,32 @@
         assert!(e.db.account_wants_protect("bob"), "bob is now protected after PROTECT ALL");
     }
 
+    // OperServ SETALL applies a channel setting to every registered channel.
+    #[test]
+    fn operserv_setall_applies_to_every_channel() {
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-setall.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#one", "alice").unwrap();
+        db.register_channel("#two", "alice").unwrap();
+        assert!(!db.channel("#one").unwrap().settings.secureops);
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let os = OperServ { uid: "42SAAAAAH".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(os)], db);
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("alice".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: "SETALL SECUREOPS ON".into() });
+        assert!(e.db.channel("#one").unwrap().settings.secureops, "#one now has secureops");
+        assert!(e.db.channel("#two").unwrap().settings.secureops, "#two now has secureops");
+    }
+
     // ChanServ SET: description and founder transfer, founder-gated.
     #[test]
     fn chanserv_set() {
