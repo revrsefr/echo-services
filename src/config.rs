@@ -126,11 +126,16 @@ pub struct Register {
     // default; turn it off for a community that legitimately uses mixed or
     // non-Latin names. Reloadable with REHASH.
     pub confusable_check: bool,
+    // Invite-only registration: a new account stays pending until an existing
+    // member vouches for it (NickServ VOUCH), instead of confirming by email.
+    // Off by default. Reloadable with REHASH.
+    #[serde(default)]
+    pub vouch: bool,
 }
 
 impl Default for Register {
     fn default() -> Self {
-        Self { confusable_check: true }
+        Self { confusable_check: true, vouch: false }
     }
 }
 

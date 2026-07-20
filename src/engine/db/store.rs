@@ -338,6 +338,9 @@ impl Store for Db {
     fn confusable_check_enabled(&self) -> bool {
         self.confusable_check
     }
+    fn registration_vouch(&self) -> bool {
+        Db::registration_vouch(self)
+    }
     fn set_account_note(&mut self, account: &str, note: Option<String>) -> bool {
         Db::set_account_note(self, account, note)
     }

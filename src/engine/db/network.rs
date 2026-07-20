@@ -355,6 +355,10 @@ impl Db {
         self.confusable_check = on;
     }
 
+    pub fn set_registration_vouch(&mut self, on: bool) {
+        self.registration_vouch = on;
+    }
+
     /// The network-wide reply language for users who haven't set a preference.
     pub fn set_default_language(&mut self, lang: &str) {
         if !lang.is_empty() {
@@ -380,6 +384,10 @@ impl Db {
 
     pub fn confusable_check_enabled(&self) -> bool {
         self.confusable_check
+    }
+
+    pub fn registration_vouch(&self) -> bool {
+        self.registration_vouch
     }
 
     /// The network defence level (5 = normal, 1 = full lockdown).

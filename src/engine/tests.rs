@@ -5344,6 +5344,27 @@
         assert!(!out.iter().any(|a| matches!(a, NetAction::Kick { reason, .. } if reason.contains("requested by"))), "op founder exempt on LEVEL: {out:?}");
     }
 
+    // Invite-only registration: a new account starts pending, and a confirmed
+    // member's VOUCH activates it.
+    #[test]
+    fn vouch_confirms_a_pending_account() {
+        let path = std::env::temp_dir().join("echo-vouch.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap(); // verified (vouch off)
+        db.set_registration_vouch(true);
+        db.register("bob", "pw", None).unwrap(); // invite-only -> pending
+        assert!(!db.is_verified("bob"), "bob starts pending under vouch mode");
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let mut e = Engine::new(vec![Box::new(ns)], db);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "VOUCH bob".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("vouched"))), "vouch confirmation: {out:?}");
+        assert!(e.db.is_verified("bob"), "bob is now active after the vouch");
+    }
+
     // ChanServ SET: description and founder transfer, founder-gated.
     #[test]
     fn chanserv_set() {

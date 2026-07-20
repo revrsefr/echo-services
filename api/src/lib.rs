@@ -2190,6 +2190,11 @@ pub trait Store {
     fn confusable_check_enabled(&self) -> bool {
         true
     }
+    // Whether registration is invite-only ([register] vouch): a new account waits
+    // for an existing member to VOUCH for it instead of confirming by email.
+    fn registration_vouch(&self) -> bool {
+        false
+    }
     // Staff notes on accounts/channels (oper-only), shown in INFO to operators.
     fn set_account_note(&mut self, account: &str, note: Option<String>) -> bool;
     fn account_note(&self, account: &str) -> Option<String>;

@@ -6,9 +6,10 @@ impl Db {
         if self.exists(name) {
             return Err(RegError::Exists);
         }
-        // Unverified only when email confirmation actually applies (email is
-        // configured and an address was given); otherwise verified immediately.
-        let verified = !(self.email_enabled && email.is_some());
+        // Unverified when email confirmation applies (email configured and an
+        // address given) OR the network is invite-only (a member must VOUCH);
+        // otherwise verified immediately.
+        let verified = !(self.registration_vouch || (self.email_enabled && email.is_some()));
         let ts = now(); // one timestamp: registered-at == last-seen at creation
         let account = Account {
             name: name.to_string(),

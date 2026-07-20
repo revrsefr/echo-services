@@ -7,6 +7,7 @@ mod register;
 #[path = "identify.rs"]
 mod identify;
 mod login;
+mod vouch;
 #[path = "logout.rs"]
 mod logout;
 #[path = "cert.rs"]
@@ -53,6 +54,7 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "REGISTER", summary: "register your nick as an account", detail: "Syntax: \x02REGISTER <password> [email]\x02\nRegisters your current nick as an account. If an email is given and confirmation is on, you get a code to \x02CONFIRM\x02." },
     HelpEntry { cmd: "IDENTIFY", summary: "log in to your account", detail: "Syntax: \x02IDENTIFY [account] <password>\x02\nLogs you in. Also \x02ID\x02." },
     HelpEntry { cmd: "LOGIN", summary: "log in and reclaim your nick", detail: "Syntax: \x02LOGIN <nick> <password>\x02\nLogs you in to <nick>'s account and moves you onto that nick, freeing any session already holding it." },
+    HelpEntry { cmd: "VOUCH", summary: "confirm a pending member", detail: "Syntax: \x02VOUCH <nick>\x02\nOn an invite-only network, confirms a newly-registered account so it becomes active. Any identified member may vouch." },
     HelpEntry { cmd: "LOGOUT", summary: "log out to a guest nick", detail: "Syntax: \x02LOGOUT\x02\nLogs you out and moves you to a guest nick. Also \x02LOGOFF\x02." },
     HelpEntry { cmd: "INFO", summary: "show account information", detail: "Syntax: \x02INFO [account]\x02\nShows account information. The email is shown only to the owner." },
     HelpEntry { cmd: "ALIST", summary: "list channels you have access on", detail: "Syntax: \x02ALIST\x02\nLists the channels you hold access on." },
@@ -129,6 +131,7 @@ impl Service for NickServ {
             Some("RECOVER") => ghost::handle(me, &self.guest_nick, &mut self.guest_seq, from, args, ctx, net, db, true),
             Some("RESETPASS") => resetpass::handle(me, from, args, ctx, db),
             Some("CONFIRM") => confirm::handle(me, from, args, ctx, db),
+            Some("VOUCH") => vouch::handle(me, from, args, ctx, db),
             Some("AJOIN") => ajoin::handle(me, from, args, ctx, net, db),
             Some("SUSPEND") => suspend::handle(me, from, args, ctx, net, db, true),
             Some("UNSUSPEND") => suspend::handle(me, from, args, ctx, net, db, false),

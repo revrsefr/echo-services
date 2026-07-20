@@ -342,7 +342,12 @@ impl Engine {
         // NickServ or the account-registration relay path. The relay reply
         // already carries verification_required; NickServ users get a notice.
         if needs_verify {
-            if let Some(addr) = addr {
+            if self.db.registration_vouch() {
+                // Invite-only: the account waits for a member to VOUCH, not an email code.
+                if let RegReply::NickServ { agent, uid, .. } = &reply {
+                    out.push(NetAction::Notice { from: agent.clone(), to: uid.clone(), text: echo_api::render(&self.lang_for_account(account), "Your account is pending. Ask an existing member to vouch for you with \x02/msg NickServ VOUCH {account}\x02.", &[("account", account.to_string())]) });
+                }
+            } else if let Some(addr) = addr {
                 let code = self.db.issue_code(account, db::CodeKind::Confirm);
                 let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), account, &code, self.db.email_confirm_url(), &self.lang_for_account(account));
                 out.push(NetAction::SendEmail { to: addr, subject: mail.subject, text: mail.text, html: Some(mail.html) });

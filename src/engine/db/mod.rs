@@ -1181,6 +1181,7 @@ pub struct Db {
     // against accounts pushed in (via the gRPC Accounts API). Node-local config.
     external_accounts: bool,
     confusable_check: bool, // reject look-alike / mixed-script REGISTER names
+    registration_vouch: bool, // invite-only: new accounts wait for a member to vouch
     default_language: String, // network-wide reply language for users with no preference
     available_languages: Vec<String>, // language codes a user may pick with SET LANGUAGE
 }
@@ -1251,7 +1252,7 @@ impl Db {
             apply(&mut accounts, &mut channels, &mut grouped, &mut bots, &mut host_cfg, &mut net, event);
         }
         tracing::info!(accounts = accounts.len(), channels = channels.len(), "account store loaded");
-        Self { accounts, channels, grouped, log, extban_enabled: None, notify_exclude: Vec::new(), live_extbans: None, live_chanmodes: None, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), email_confirm_url: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), report_times: HashMap::new(), bots, host_cfg, net, ignores: Vec::new(), defcon: 5, external_accounts: false, confusable_check: true, default_language: "en".to_string(), available_languages: vec!["en".to_string()] }
+        Self { accounts, channels, grouped, log, extban_enabled: None, notify_exclude: Vec::new(), live_extbans: None, live_chanmodes: None, scram_iterations: scram::DEFAULT_ITERATIONS, email_enabled: false, email_brand: "Network Services".to_string(), email_accent: "#4f46e5".to_string(), email_logo: String::new(), email_confirm_url: String::new(), codes: HashMap::new(), auth_fails: HashMap::new(), vhost_req_times: HashMap::new(), report_times: HashMap::new(), bots, host_cfg, net, ignores: Vec::new(), defcon: 5, external_accounts: false, confusable_check: true, registration_vouch: false, default_language: "en".to_string(), available_languages: vec!["en".to_string()] }
     }
 
     /// Fold an entry authored by another node into the store — the services-side

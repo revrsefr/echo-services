@@ -241,6 +241,7 @@ async fn main() -> Result<()> {
     db.set_email_enabled(cfg.email.is_some());
     db.set_external_accounts(cfg.auth.as_ref().is_some_and(|a| a.external));
     db.set_confusable_check(cfg.register.confusable_check);
+    db.set_registration_vouch(cfg.register.vouch);
     if let Some(lang) = &cfg.language {
         db.set_default_language(&lang.default);
         db.set_available_languages(lang.available.clone());
