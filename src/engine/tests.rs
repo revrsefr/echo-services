@@ -5286,6 +5286,32 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::SetHost { uid, host } if uid == "000AAAAAB" && host == "cloak.host")), "logout restores the cloak: {out:?}");
     }
 
+    // SECUREVOICES strips voice from a user with no channel access, but leaves an
+    // access holder's voice alone.
+    #[test]
+    fn securevoices_strips_voice_from_non_access_users() {
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-securevoices.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "SET #c SECUREVOICES ON".into() });
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        let out = e.handle(NetEvent::ChannelVoice { channel: "#c".into(), uid: "000AAAAAC".into(), voice: true });
+        assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#c" && modes == "-v 000AAAAAC")), "non-access voice stripped: {out:?}");
+
+        let out = e.handle(NetEvent::ChannelVoice { channel: "#c".into(), uid: "000AAAAAB".into(), voice: true });
+        assert!(!out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes.starts_with("-v"))), "founder keeps voice: {out:?}");
+    }
+
     // ChanServ SET: description and founder transfer, founder-gated.
     #[test]
     fn chanserv_set() {

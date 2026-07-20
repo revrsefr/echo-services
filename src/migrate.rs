@@ -273,6 +273,7 @@ pub fn import_anope(anope_path: &str, out_path: &str, node: &str) -> std::io::Re
             private: any(&["PRIVATE", "CS_PRIVATE"]),
             peace: any(&["PEACE"]),
             secureops: any(&["SECUREOPS", "CS_SECUREOPS"]),
+            securevoices: false, // no Anope equivalent
             restricted: any(&["RESTRICTED", "CS_RESTRICTED"]),
             noautoop: any(&["NOAUTOOP", "CS_NOAUTOOP"]),
             keeptopic: any(&["KEEPTOPIC"]),

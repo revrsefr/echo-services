@@ -1368,5 +1368,6 @@
  "Confirm now": "Jetzt bestätigen",
  "… and \u0002{more}\u0002 more; showing the first {cap}.": "… und \u0002{more}\u0002 weitere; die ersten {cap} werden angezeigt.",
  "log in and reclaim your nick": "anmelden und deinen Nick zurückholen",
- "Syntax: \u0002LOGIN <nick> <password>\u0002\nLogs you in to <nick>'s account and moves you onto that nick, freeing any session already holding it.": "Syntax: \u0002LOGIN <Nick> <Passwort>\u0002\nMeldet dich beim Konto von <Nick> an und setzt dich auf diesen Nick, wobei jede Sitzung, die ihn belegt, freigegeben wird."
+ "Syntax: \u0002LOGIN <nick> <password>\u0002\nLogs you in to <nick>'s account and moves you onto that nick, freeing any session already holding it.": "Syntax: \u0002LOGIN <Nick> <Passwort>\u0002\nMeldet dich beim Konto von <Nick> an und setzt dich auf diesen Nick, wobei jede Sitzung, die ihn belegt, freigegeben wird.",
+ "Syntax: \u0002SET <#channel> FOUNDER <account> | DESC <text> | URL [address] | EMAIL [address] | SUCCESSOR <account>|OFF | SIGNKICK|PRIVATE|PEACE|SECUREOPS|SECUREVOICES|RESTRICTED|AUTOOP|KEEPTOPIC|TOPICLOCK {ON|OFF}\u0002\nTransfers the founder or changes a channel setting.": "Syntax: \u0002SET <#channel> FOUNDER <account> | DESC <text> | URL [address] | EMAIL [address] | SUCCESSOR <account>|OFF | SIGNKICK|PRIVATE|PEACE|SECUREOPS|SECUREVOICES|RESTRICTED|AUTOOP|KEEPTOPIC|TOPICLOCK {ON|OFF}\u0002\nÜberträgt den Gründer oder ändert eine Kanaleinstellung."
 }

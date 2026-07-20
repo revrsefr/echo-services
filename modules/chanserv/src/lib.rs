@@ -53,7 +53,7 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "REGISTER", summary: "register a channel", detail: "Syntax: \x02REGISTER <#channel>\x02\nRegisters a channel to you. You must currently hold ops in it." },
     HelpEntry { cmd: "INFO", summary: "show channel information", detail: "Syntax: \x02INFO <#channel>\x02\nShows a channel's registration and settings." },
     HelpEntry { cmd: "LIST", summary: "list registered channels", detail: "Syntax: \x02LIST\x02\nLists registered channels." },
-    HelpEntry { cmd: "SET", summary: "change founder or settings", detail: "Syntax: \x02SET <#channel> FOUNDER <account> | DESC <text> | URL [address] | EMAIL [address] | SUCCESSOR <account>|OFF | SIGNKICK|PRIVATE|PEACE|SECUREOPS|RESTRICTED|AUTOOP|KEEPTOPIC|TOPICLOCK {ON|OFF}\x02\nTransfers the founder or changes a channel setting." },
+    HelpEntry { cmd: "SET", summary: "change founder or settings", detail: "Syntax: \x02SET <#channel> FOUNDER <account> | DESC <text> | URL [address] | EMAIL [address] | SUCCESSOR <account>|OFF | SIGNKICK|PRIVATE|PEACE|SECUREOPS|SECUREVOICES|RESTRICTED|AUTOOP|KEEPTOPIC|TOPICLOCK {ON|OFF}\x02\nTransfers the founder or changes a channel setting." },
     HelpEntry { cmd: "ACCESS", summary: "manage the access list", detail: "Syntax: \x02ACCESS <#channel> LIST | ADD <account|!group> <sop|op|halfop|voice> | DEL <account|!group>\x02\nManages the channel access list. The target may be a GroupServ \x02!group\x02; each of its members holding the group's \x02c\x02 flag then inherits the access." },
     HelpEntry { cmd: "FLAGS", summary: "granular per-account flags", detail: "Syntax: \x02FLAGS <#channel> [account [+/-flags]]\x02\nViews or changes granular per-account channel flags." },
     HelpEntry { cmd: "LEVELS", summary: "tune which tier holds each capability", detail: "Syntax: \x02LEVELS <#channel> [SET <capability> <tier> | RESET <capability>]\x02\nGrants a channel capability (\x02OP\x02, \x02TOPIC\x02, \x02INVITE\x02, \x02ACCESS\x02) to an access tier (\x02VOP\x02/\x02HOP\x02/\x02AOP\x02/\x02SOP\x02) and above, e.g. let halfops manage AKICK. Additive — it never removes access. Founder only." },
@@ -201,6 +201,7 @@ impl Service for ChanServ {
                         if info.private { opts.push("PRIVATE"); }
                         if info.peace { opts.push("PEACE"); }
                         if info.secureops { opts.push("SECUREOPS"); }
+                        if info.securevoices { opts.push("SECUREVOICES"); }
                         if info.keeptopic { opts.push("KEEPTOPIC"); }
                         if info.topiclock { opts.push("TOPICLOCK"); }
                         if !opts.is_empty() {

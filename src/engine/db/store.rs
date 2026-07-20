@@ -653,6 +653,7 @@ fn channel_view(c: &ChannelInfo) -> ChannelView {
         private: c.settings.private,
         peace: c.settings.peace,
         secureops: c.settings.secureops,
+        securevoices: c.settings.securevoices,
         keeptopic: c.settings.keeptopic,
         topiclock: c.settings.topiclock,
         topic: c.topic.clone(),

@@ -1849,6 +1849,7 @@ pub struct ChannelView {
     pub private: bool,
     pub peace: bool,
     pub secureops: bool,
+    pub securevoices: bool,
     pub keeptopic: bool,
     pub topiclock: bool,
     pub suspended: bool,
@@ -1871,6 +1872,7 @@ pub enum ChanSetting {
     Private,
     Peace,
     SecureOps,
+    SecureVoices,
     KeepTopic,
     TopicLock,
     // Kick users without channel access when they join.

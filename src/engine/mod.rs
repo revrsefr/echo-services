@@ -1538,6 +1538,17 @@ impl Engine {
             }
             NetEvent::ChannelVoice { channel, uid, voice } => {
                 self.network.set_voice(&channel, &uid, voice);
+                // SECUREVOICES: a user who gains +v without voice-level (or higher)
+                // access loses it. A services bot is staff, never a member.
+                let is_bot = self.bot_uids.values().any(|b| b == &uid);
+                if voice && !is_bot {
+                    if let Some(c) = self.db.channel(&channel) {
+                        if c.settings.securevoices && !self.network.account_of(&uid).is_some_and(|a| c.join_mode(a).is_some()) {
+                            let from = self.chan_service.clone().unwrap_or_default();
+                            return self.finish(out, vec![NetAction::ChannelMode { from, channel, modes: format!("-v {uid}") }]);
+                        }
+                    }
+                }
                 Vec::new()
             }
             NetEvent::ChannelKey { channel, key } => {

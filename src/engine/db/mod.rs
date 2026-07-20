@@ -428,6 +428,9 @@ pub struct ChanSettings {
     // Strip channel-operator status from anyone without op-level access.
     #[serde(default)]
     pub secureops: bool,
+    // Strip voice from anyone without voice-level (or higher) access.
+    #[serde(default)]
+    pub securevoices: bool,
     // Kick anyone without channel access when they join.
     #[serde(default)]
     pub restricted: bool,
