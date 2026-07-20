@@ -152,6 +152,9 @@ impl Store for Db {
             a.vhost.as_ref().filter(|v| v.expires.is_none_or(|e| e > now())).map(|v| VhostView { account: a.name.clone(), host: v.host.clone(), setter: v.setter.clone(), expires: v.expires })
         })
     }
+    fn active_vhost(&self, account: &str) -> Option<String> {
+        Db::active_vhost(self, account)
+    }
     fn vhosts(&self) -> Vec<VhostView> {
         Db::vhosts(self).into_iter().map(|(account, host, setter, expires)| VhostView { account, host, setter, expires }).collect()
     }

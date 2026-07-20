@@ -767,6 +767,9 @@ impl Engine {
         if let Some(action) = self.feed("SESS", format!("{} logged out of \x02{account}\x02 ({reason})", self.who(uid))) {
             self.emit_irc(action);
         }
+        for act in echo_api::vhost_restore_actions(&self.network, &self.db, uid, account) {
+            self.emit_irc(act);
+        }
         self.network.clear_account(uid);
         self.emit_irc(NetAction::Metadata { target: uid.to_string(), key: "accountname".to_string(), value: String::new() });
         if let Some(ns) = self.nick_service.clone() {

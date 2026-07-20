@@ -2093,6 +2093,7 @@ pub trait Store {
     fn set_vhost(&mut self, account: &str, host: &str, setter: &str, ttl: Option<u64>) -> Result<(), RegError>;
     fn del_vhost(&mut self, account: &str) -> Result<bool, RegError>;
     fn vhost(&self, account: &str) -> Option<VhostView>;
+    fn active_vhost(&self, account: &str) -> Option<String>;
     fn vhosts(&self) -> Vec<VhostView>;
     fn vhost_owner(&self, host: &str) -> Option<String>;
     fn request_vhost(&mut self, account: &str, host: &str) -> Result<(), RegError>;
@@ -2444,6 +2445,26 @@ pub fn next_guest_nick(base: &str, seq: &mut u32, net: &dyn NetView, store: &dyn
     let candidate = format!("{base}{seq}");
     *seq = seq.wrapping_add(1);
     candidate
+}
+
+/// The actions to reverse a services vhost when a session logs out: restore the
+/// connect-time host, and the ident too if the vhost set one (`ident@host`).
+/// Empty when the account holds no vhost. Restores the stored displayed host —
+/// the cloak, never the real host — since the vhost apply never overwrites it.
+pub fn vhost_restore_actions(net: &dyn NetView, store: &dyn Store, uid: &str, account: &str) -> Vec<NetAction> {
+    let Some(vhost) = store.active_vhost(account) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    if vhost.contains('@') {
+        if let Some(ident) = net.ident_of(uid).filter(|i| !i.is_empty()) {
+            out.push(NetAction::SetIdent { uid: uid.to_string(), ident: ident.to_string() });
+        }
+    }
+    if let Some(host) = net.host_of(uid).filter(|h| !h.is_empty()) {
+        out.push(NetAction::SetHost { uid: uid.to_string(), host: host.to_string() });
+    }
+    out
 }
 
 /// Tell `target` account they were affected by someone else's action: notice

@@ -5240,6 +5240,24 @@
         assert_eq!(e.db.unread_memos("bob"), 1, "no extra memo when online");
     }
 
+    // Logging out reverses a services vhost, restoring the connect-time host (the
+    // cloak we were given at UserConnect), not the real host.
+    #[test]
+    fn logout_restores_the_connect_host_over_a_vhost() {
+        let path = std::env::temp_dir().join("echo-logout-vhost.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.set_vhost("alice", "cool.vhost", "admin", None).unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let mut e = Engine::new(vec![Box::new(ns)], db);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "cloak.host".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "LOGOUT".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::SetHost { uid, host } if uid == "000AAAAAB" && host == "cloak.host")), "logout restores the cloak: {out:?}");
+    }
+
     // ChanServ SET: description and founder transfer, founder-gated.
     #[test]
     fn chanserv_set() {
