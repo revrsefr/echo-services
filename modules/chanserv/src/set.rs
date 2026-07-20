@@ -89,7 +89,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
-        Some("SIGNKICK") => toggle(me, from, ctx, db, chan, ChanSetting::SignKick, args.get(3).copied()),
+        Some("SIGNKICK") => signkick_set(me, from, ctx, db, chan, args.get(3).copied()),
         Some("PRIVATE") => toggle(me, from, ctx, db, chan, ChanSetting::Private, args.get(3).copied()),
         Some("PEACE") => toggle(me, from, ctx, db, chan, ChanSetting::Peace, args.get(3).copied()),
         Some("SECUREOPS") => toggle(me, from, ctx, db, chan, ChanSetting::SecureOps, args.get(3).copied()),
@@ -98,14 +98,14 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         Some("AUTOOP") => toggle(me, from, ctx, db, chan, ChanSetting::AutoOp, args.get(3).copied()),
         Some("KEEPTOPIC") => toggle(me, from, ctx, db, chan, ChanSetting::KeepTopic, args.get(3).copied()),
         Some("TOPICLOCK") => toggle(me, from, ctx, db, chan, ChanSetting::TopicLock, args.get(3).copied()),
-        _ => ctx.notice(me, from.uid, "Syntax: SET <#channel> FOUNDER <account> | SUCCESSOR <account>|OFF | DESC <text> | URL [address] | EMAIL [address] | SIGNKICK {ON|OFF} | PRIVATE {ON|OFF} | PEACE {ON|OFF} | SECUREOPS {ON|OFF} | SECUREVOICES {ON|OFF} | RESTRICTED {ON|OFF} | AUTOOP {ON|OFF} | KEEPTOPIC {ON|OFF} | TOPICLOCK {ON|OFF}"),
+        _ => ctx.notice(me, from.uid, "Syntax: SET <#channel> FOUNDER <account> | SUCCESSOR <account>|OFF | DESC <text> | URL [address] | EMAIL [address] | SIGNKICK {ON|OFF|LEVEL} | PRIVATE {ON|OFF} | PEACE {ON|OFF} | SECUREOPS {ON|OFF} | SECUREVOICES {ON|OFF} | RESTRICTED {ON|OFF} | AUTOOP {ON|OFF} | KEEPTOPIC {ON|OFF} | TOPICLOCK {ON|OFF}"),
     }
 }
 
 // The SET keyword for a channel option, used in its messages.
 fn label(setting: ChanSetting) -> &'static str {
     match setting {
-        ChanSetting::SignKick => "SIGNKICK",
+        ChanSetting::SignKick | ChanSetting::SignKickLevel => "SIGNKICK",
         ChanSetting::Private => "PRIVATE",
         ChanSetting::Peace => "PEACE",
         ChanSetting::SecureOps => "SECUREOPS",
@@ -120,6 +120,25 @@ fn label(setting: ChanSetting) -> &'static str {
 }
 
 // Flip one on/off channel option, reporting the new state.
+// SIGNKICK is three-state: ON (sign every CS KICK), LEVEL (sign only kicks by
+// users without op access), OFF. Stored as the signkick + signkick_level pair.
+fn signkick_set(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store, chan: &str, arg: Option<&str>) {
+    let (on, level, state) = match arg.map(|s| s.to_ascii_uppercase()).as_deref() {
+        Some("ON") => (true, false, "on"),
+        Some("LEVEL") => (true, true, "level"),
+        Some("OFF") => (false, false, "off"),
+        _ => {
+            ctx.notice(me, from.uid, "Syntax: SET <#channel> SIGNKICK {ON|OFF|LEVEL}");
+            return;
+        }
+    };
+    let _ = db.set_channel_setting(chan, ChanSetting::SignKick, on);
+    match db.set_channel_setting(chan, ChanSetting::SignKickLevel, level) {
+        Ok(()) => ctx.notice(me, from.uid, t!(ctx, "\x02{name}\x02 for \x02{chan}\x02 is now \x02{state}\x02.", name = "SIGNKICK", chan = chan, state = state)),
+        Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+    }
+}
+
 fn toggle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store, chan: &str, setting: ChanSetting, arg: Option<&str>) {
     let name = label(setting);
     let on = match arg.map(|s| s.to_ascii_uppercase()).as_deref() {

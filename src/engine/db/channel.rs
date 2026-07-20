@@ -271,6 +271,7 @@ impl Db {
         let mut settings = c.settings;
         match setting {
             ChanSetting::SignKick => settings.signkick = on,
+            ChanSetting::SignKickLevel => settings.signkick_level = on,
             ChanSetting::Private => settings.private = on,
             ChanSetting::Peace => settings.peace = on,
             ChanSetting::SecureOps => settings.secureops = on,

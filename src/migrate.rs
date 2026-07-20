@@ -269,7 +269,8 @@ pub fn import_anope(anope_path: &str, out_path: &str, node: &str) -> std::io::Re
         }
         let any = |names: &[&str]| names.iter().any(|n| flag(ci, n));
         let settings = ChanSettings {
-            signkick: any(&["SIGNKICK"]),
+            signkick: any(&["SIGNKICK", "SIGNKICK_LEVEL"]),
+            signkick_level: any(&["SIGNKICK_LEVEL"]),
             private: any(&["PRIVATE", "CS_PRIVATE"]),
             peace: any(&["PEACE"]),
             secureops: any(&["SECUREOPS", "CS_SECUREOPS"]),

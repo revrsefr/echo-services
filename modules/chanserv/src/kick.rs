@@ -20,9 +20,13 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         return;
     }
     let mut reason = if args.len() > 3 { args[3..].join(" ") } else { "Kicked".to_string() };
-    // SIGNKICK: attribute the kick to whoever asked for it.
-    if db.channel(chan).is_some_and(|c| c.signkick) {
-        reason = format!("{reason} (requested by {})", from.nick);
+    // SIGNKICK: attribute the kick to the requester. LEVEL mode signs only kicks
+    // by users without op-level access, leaving trusted ops' kicks unsigned.
+    if let Some(c) = db.channel(chan) {
+        let kicker_op = from.account.is_some_and(|a| c.is_op(a));
+        if c.signkick && (!c.signkick_level || !kicker_op) {
+            reason = format!("{reason} (requested by {})", from.nick);
+        }
     }
     ctx.kick(me, chan, target, &reason);
 }

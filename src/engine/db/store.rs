@@ -650,6 +650,7 @@ fn channel_view(c: &ChannelInfo) -> ChannelView {
         url: c.url.clone(),
         email: c.email.clone(),
         signkick: c.settings.signkick,
+        signkick_level: c.settings.signkick_level,
         private: c.settings.private,
         peace: c.settings.peace,
         secureops: c.settings.secureops,

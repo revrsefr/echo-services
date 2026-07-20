@@ -419,6 +419,10 @@ pub struct ChanSettings {
     // Append "(requested by <nick>)" to ChanServ KICK reasons.
     #[serde(default)]
     pub signkick: bool,
+    // With signkick on: sign only kicks by users WITHOUT op-level access (trusted
+    // ops' kicks stay unsigned). Ignored when signkick is off.
+    #[serde(default)]
+    pub signkick_level: bool,
     // Hide the channel from ChanServ LIST.
     #[serde(default)]
     pub private: bool,

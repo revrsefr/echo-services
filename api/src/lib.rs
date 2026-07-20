@@ -1846,6 +1846,7 @@ pub struct ChannelView {
     pub email: String,
     // ChanServ SET options.
     pub signkick: bool,
+    pub signkick_level: bool,
     pub private: bool,
     pub peace: bool,
     pub secureops: bool,
@@ -1869,6 +1870,7 @@ pub struct ChannelView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChanSetting {
     SignKick,
+    SignKickLevel,
     Private,
     Peace,
     SecureOps,

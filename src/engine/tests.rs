@@ -5312,6 +5312,38 @@
         assert!(!out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes.starts_with("-v"))), "founder keeps voice: {out:?}");
     }
 
+    // SIGNKICK ON signs every CS KICK; LEVEL exempts kickers with op access.
+    #[test]
+    fn signkick_level_exempts_ops() {
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-signkick-level.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+        let to_cs = |e: &mut Engine, from: &str, text: &str| {
+            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+        };
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAE".into(), nick: "eve".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Join { uid: "000AAAAAE".into(), channel: "#c".into(), op: false });
+
+        to_cs(&mut e, "000AAAAAB", "SET #c SIGNKICK ON");
+        let out = to_cs(&mut e, "000AAAAAB", "KICK #c eve");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { reason, .. } if reason.contains("requested by alice"))), "signed on ON: {out:?}");
+
+        e.handle(NetEvent::Join { uid: "000AAAAAE".into(), channel: "#c".into(), op: false });
+        to_cs(&mut e, "000AAAAAB", "SET #c SIGNKICK LEVEL");
+        let out = to_cs(&mut e, "000AAAAAB", "KICK #c eve");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Kick { .. })), "kick still happens: {out:?}");
+        assert!(!out.iter().any(|a| matches!(a, NetAction::Kick { reason, .. } if reason.contains("requested by"))), "op founder exempt on LEVEL: {out:?}");
+    }
+
     // ChanServ SET: description and founder transfer, founder-gated.
     #[test]
     fn chanserv_set() {

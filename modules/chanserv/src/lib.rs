@@ -197,7 +197,7 @@ impl Service for ChanServ {
                             ctx.notice(me, from.uid, t!(ctx, "  Suspended  : by \x02{by}\x02 — {reason}", by = s.by, reason = s.reason));
                         }
                         let mut opts = Vec::new();
-                        if info.signkick { opts.push("SIGNKICK"); }
+                        if info.signkick { opts.push(if info.signkick_level { "SIGNKICK (level)" } else { "SIGNKICK" }); }
                         if info.private { opts.push("PRIVATE"); }
                         if info.peace { opts.push("PEACE"); }
                         if info.secureops { opts.push("SECUREOPS"); }
