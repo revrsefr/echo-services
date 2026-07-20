@@ -1365,5 +1365,6 @@
  "Added \u0002{count}\u0002 channels to your auto-join list.": "\u0002{count}\u0002 canales añadidos a tu lista de auto-unión.",
  "Unknown AJOIN command \u0002{other}\u0002. Use \u0002ADD\u0002, \u0002ADDALL\u0002, \u0002DEL\u0002 or \u0002LIST\u0002.": "Comando AJOIN desconocido \u0002{other}\u0002. Usa \u0002ADD\u0002, \u0002ADDALL\u0002, \u0002DEL\u0002 o \u0002LIST\u0002.",
  "Or confirm in one click: {link}": "O confirma con un clic: {link}",
- "Confirm now": "Confirmar ahora"
+ "Confirm now": "Confirmar ahora",
+ "… and \u0002{more}\u0002 more; showing the first {cap}.": "… y \u0002{more}\u0002 más; mostrando los primeros {cap}."
 }

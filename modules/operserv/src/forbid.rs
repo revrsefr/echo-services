@@ -45,8 +45,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             }
             ctx.notice(me, from.uid, "Registration bans:");
-            for f in &forbids {
+            for f in forbids.iter().take(echo_api::LIST_CAP) {
                 ctx.notice(me, from.uid, t!(ctx, "  [{kind}] \x02{mask}\x02 by {setter} ({when}) — {reason}", kind = f.kind.wire(), mask = f.mask, setter = f.setter, when = human_time(f.ts), reason = f.reason));
+            }
+            if forbids.len() > echo_api::LIST_CAP {
+                ctx.notice(me, from.uid, t!(ctx, "… and \x02{more}\x02 more; showing the first {cap}.", more = forbids.len() - echo_api::LIST_CAP, cap = echo_api::LIST_CAP));
             }
         }
         _ => ctx.notice(me, from.uid, "Syntax: FORBID ADD <NICK|CHAN|EMAIL> <mask> <reason> | DEL <NICK|CHAN|EMAIL> <mask> | LIST"),

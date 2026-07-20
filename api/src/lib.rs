@@ -280,6 +280,10 @@ pub fn chanmode_takes_param(m: char, adding: bool) -> bool {
 // mask or value. Fallback before the ircd's live prefix set is learned.
 pub const STATUS_MODES: &str = "qaohv";
 
+/// Max entries a service prints for a LIST before truncating, so a huge list
+/// can't exceed the client's receive queue and disconnect the operator.
+pub const LIST_CAP: usize = 200;
+
 /// How a channel mode consumes its parameter, from the ircd's `CAPAB CHANMODES`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChanModeKind {
