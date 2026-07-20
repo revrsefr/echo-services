@@ -195,7 +195,7 @@ impl Protocol for InspIrcd {
             // :<uid> PART <chan> [:reason] — a user leaving a channel.
             "PART" => match (source.as_deref(), tokens.next()) {
                 (Some(uid), Some(chan)) if chan.starts_with('#') => {
-                    vec![NetEvent::Part { uid: uid.to_string(), channel: chan.to_string(), reason: trailing(rest) }]
+                    vec![NetEvent::Part { uid: uid.to_string(), channel: chan.to_string(), reason: reason(rest) }]
                 }
                 _ => vec![],
             },
@@ -204,7 +204,7 @@ impl Protocol for InspIrcd {
                 let chan = tokens.next().unwrap_or("");
                 match tokens.next() {
                     Some(uid) if chan.starts_with('#') => {
-                        vec![NetEvent::Kicked { channel: chan.to_string(), uid: uid.to_string(), by: source.unwrap_or_default(), reason: trailing(rest) }]
+                        vec![NetEvent::Kicked { channel: chan.to_string(), uid: uid.to_string(), by: source.unwrap_or_default(), reason: reason(rest) }]
                     }
                     _ => vec![],
                 }
@@ -291,7 +291,7 @@ impl Protocol for InspIrcd {
                     _ => vec![],
                 }
             }
-            "QUIT" => vec![NetEvent::Quit { uid: source.unwrap_or_default(), reason: trailing(rest) }],
+            "QUIT" => vec![NetEvent::Quit { uid: source.unwrap_or_default(), reason: reason(rest) }],
             // :<src> KILL <uid> :<reason> — a user forcibly removed. We forget
             // them (or reintroduce, if it was one of our bots).
             "KILL" => match tokens.next() {
@@ -683,12 +683,41 @@ fn trailing(rest: &str) -> String {
     }
 }
 
+// A free-text reason param (PART/KICK/QUIT), which the ircd always sends as a
+// `:`-prefixed trailing. Unlike `trailing()`, a MISSING reason yields "" rather
+// than the last preceding word — so `KICK #c target` (no reason) doesn't record
+// the target uid as the reason.
+fn reason(rest: &str) -> String {
+    match rest.find(" :") {
+        Some(i) => rest[i + 2..].to_string(),
+        None => String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn proto() -> InspIrcd {
         InspIrcd::new("services.test".into(), "Federated Services".into(), "42S".into(), "pw".into(), 1206, 1, "iHkBT".into())
+    }
+
+    // A KICK/PART/QUIT with no explicit `:reason` must record an EMPTY reason,
+    // not the last preceding word (a channel/target token).
+    #[test]
+    fn kick_without_reason_is_empty_not_the_target() {
+        let ev = proto().parse(":42SAAAAAB KICK #chan 0IRAAAAAB");
+        assert!(
+            matches!(ev.as_slice(), [NetEvent::Kicked { reason, .. }] if reason.is_empty()),
+            "{ev:?}"
+        );
+        let ev = proto().parse(":42SAAAAAB KICK #chan 0IRAAAAAB :flooding");
+        assert!(
+            matches!(ev.as_slice(), [NetEvent::Kicked { reason, .. }] if reason == "flooding"),
+            "{ev:?}"
+        );
+        let ev = proto().parse(":0IRAAAAAB QUIT");
+        assert!(matches!(ev.as_slice(), [NetEvent::Quit { reason, .. }] if reason.is_empty()), "{ev:?}");
     }
 
     // A remote nick change must surface as a NickChange for the source uid, or

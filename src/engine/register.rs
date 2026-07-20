@@ -60,6 +60,11 @@ impl Engine {
                 return AuthorityStatus::Invalid;
             }
         }
+        // The verifiers are attacker-influenced if the authority is compromised:
+        // reject an absurd iteration count that would DoS later logins.
+        if !super::scram::verifier_ok(scram256) || (!scram512.is_empty() && !super::scram::verifier_ok(scram512)) {
+            return AuthorityStatus::Invalid;
+        }
         match self.db.provision_account(name, scram256, scram512, email) {
             Ok(()) => AuthorityStatus::Ok,
             Err(RegError::Exists) => AuthorityStatus::AlreadyExists,

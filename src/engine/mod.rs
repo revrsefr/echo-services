@@ -1146,6 +1146,14 @@ impl Engine {
         self.bot_channels.clear();
         self.network.clear_bots();
         self.network.clear_servers(); // the burst re-introduces the server tree
+        // A re-link's burst re-introduces every user and channel, but the
+        // half-finished SASL exchanges and armed nick-enforcement timers from the
+        // dropped connection are orphaned — forget them so a re-link (were one ever
+        // added in-process) can't act on stale connection state. Today the process
+        // exits on uplink loss and systemd restarts it, so this is defensive.
+        self.sasl_sessions.clear();
+        self.sasl_source.clear();
+        self.pending_enforce.clear();
         self.next_bot_index = 0;
         let mut out = vec![NetAction::Burst];
         for svc in &self.services {

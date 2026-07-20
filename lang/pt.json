@@ -1333,5 +1333,6 @@
  "You are now the founder of \u0002{chan}\u0002 (inherited from \u0002{account}\u0002).": "É agora o fundador de \u0002{chan}\u0002 (herdado de \u0002{account}\u0002).",
  "You didn't identify in time; you've been renamed.": "Não se identificou a tempo; o seu nome foi alterado.",
  "Please mind the channel rules — {reason} Next time you'll be kicked.": "Respeite as regras do canal — {reason} Da próxima vez será expulso.",
- "Access denied — {what} is for services operators.": "Acesso negado — {what} é para operadores de serviços."
+ "Access denied — {what} is for services operators.": "Acesso negado — {what} é para operadores de serviços.",
+ "\u0002{nick}\u0002 isn't a valid nickname.": "\u0002{nick}\u0002 não é uma alcunha válida."
 }

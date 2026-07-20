@@ -390,7 +390,7 @@ impl GameServ {
         }
         let mut all: Vec<(String, Stats)> = map.into_iter().filter(|(_, s)| s.points() > 0).collect();
         all.sort_by_key(|(_, s)| std::cmp::Reverse(s.points()));
-        push_tag(me, net, from.nick, &format!("GS$TOPSTART {}", gt.wire()), ctx);
+        push_tag(me, net, from.nick, from.account.unwrap_or(""), from.account.is_some(), &format!("GS$TOPSTART {}", gt.wire()), ctx);
         if all.is_empty() {
             ctx.notice(me, from.uid, t!(ctx, "Classement \x02{game}\x02 vide. Sois le premier à gagner !", game = gt.label()));
             return;
@@ -401,7 +401,7 @@ impl GameServ {
             let pos = format!("{rank:2}");
             let name = format!("{acc:<16}");
             ctx.notice(me, from.uid, t!(ctx, "{pos}. {name} {tier}  {pts} pts", pos = pos, name = name, tier = s.rank(), pts = s.points()));
-            push_tag(me, net, from.nick, &format!("GS$TOPROW {} {rank} {acc} {} {}", gt.wire(), s.rank(), s.points()), ctx);
+            push_tag(me, net, from.nick, from.account.unwrap_or(""), from.account.is_some(), &format!("GS$TOPROW {} {rank} {acc} {} {}", gt.wire(), s.rank(), s.points()), ctx);
         }
     }
 }
@@ -409,18 +409,24 @@ impl GameServ {
 // ── web-sync pushes (free functions so they never borrow the GameServ state) ──
 
 // Client-only tag on a TAGMSG: invisible in chat, read only by the web client.
-fn push_tag(me: &str, net: &dyn NetView, nick: &str, payload: &str, ctx: &mut ServiceCtx) {
-    if let Some(uid) = net.uid_by_nick(nick) {
-        ctx.actions.push(NetAction::Raw(format!("@+tchatou.fr/gs={} :{} TAGMSG {}", board::escape_tag(payload), me, uid)));
+fn push_tag(me: &str, net: &dyn NetView, nick: &str, account: &str, registered: bool, payload: &str, ctx: &mut ServiceCtx) {
+    let Some(uid) = net.uid_by_nick(nick) else { return };
+    // A registered player's board goes only to their own account: if they renamed
+    // mid-game and a stranger grabbed the old nick, deliver to nobody rather than
+    // leak the position to the nick-thief. Guests are keyed by a mutable nick
+    // already (casual games), so best-effort by nick is all we can do for them.
+    if registered && net.account_of(uid) != Some(account) {
+        return;
     }
+    ctx.actions.push(NetAction::Raw(format!("@+tchatou.fr/gs={} :{} TAGMSG {}", board::escape_tag(payload), me, uid)));
 }
 
 // The GS# state line for one side. `status_override` lets a challenge show as
 // "pending" to the challenger and "offer" to the target.
 fn push_one(g: &Game, viewer: Side, status_override: &str, me: &str, net: &dyn NetView, ctx: &mut ServiceCtx) {
-    let (nick, opp) = match viewer {
-        Side::A => (&g.nick_a, &g.nick_b),
-        Side::B => (&g.nick_b, &g.nick_a),
+    let (nick, opp, account, registered) = match viewer {
+        Side::A => (&g.nick_a, &g.nick_b, &g.acc_a, g.a_reg),
+        Side::B => (&g.nick_b, &g.nick_a, &g.acc_b, g.b_reg),
     };
     let status = if status_override.is_empty() { g.status.wire() } else { status_override };
     let res = match (g.status, g.result) {
@@ -432,7 +438,7 @@ fn push_one(g: &Game, viewer: Side, status_override: &str, me: &str, net: &dyn N
         "GS# {} g={} s={} t={} me={} opp={} st={} r={}",
         g.id, g.gtype().wire(), g.encode(), g.glyph(g.turn), g.glyph(viewer), opp, status, res
     );
-    push_tag(me, net, nick, &payload, ctx);
+    push_tag(me, net, nick, account, registered, &payload, ctx);
 }
 
 fn push_state(g: &Game, me: &str, net: &dyn NetView, ctx: &mut ServiceCtx) {
@@ -450,7 +456,9 @@ fn push_stats(counters: &[(String, u64)], account: &str, to_nick: &str, me: &str
             _ => read_stats(counters, gt, account),
         };
         let payload = format!("GS$ {} {} r={} p={} w={} l={} d={}", account, gt.wire(), s.rank(), s.points(), s.wins, s.losses, s.draws);
-        push_tag(me, net, to_nick, &payload, ctx);
+        // push_stats is only called for a registered side (a_reg/b_reg), so the
+        // account guard in push_tag always applies here.
+        push_tag(me, net, to_nick, account, true, &payload, ctx);
     }
 }
 

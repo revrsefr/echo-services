@@ -162,6 +162,16 @@ pub fn parse_verifier(encoded: &str) -> Option<Verifier> {
     })
 }
 
+// An externally supplied verifier (a gRPC Provision backfill) is untrusted for
+// its cost parameter: a huge `i=` would make every later PBKDF2 verify burn a
+// core — a compromised-authority DoS. Accept only a well-formed verifier whose
+// iteration count is in a sane range (the floor matches the config minimum, the
+// ceiling is a few multiples of the default so a real backfill still fits).
+pub const MAX_VERIFIER_ITERATIONS: u32 = 5_000_000;
+pub fn verifier_ok(encoded: &str) -> bool {
+    parse_verifier(encoded).is_some_and(|v| (1000..=MAX_VERIFIER_ITERATIONS).contains(&v.iterations))
+}
+
 // --- exchange ---
 
 pub struct ClientFirst {
@@ -350,5 +360,20 @@ mod tests {
         };
         assert!(prove(PASSWORD).is_some(), "the real password authenticates against the authority's verifier");
         assert!(prove("wrong").is_none(), "a wrong password is rejected");
+    }
+
+    #[test]
+    fn verifier_ok_rejects_absurd_iteration_cost() {
+        // Derive one cheap verifier, then swap the `i=` to probe the range — never
+        // actually run PBKDF2 at an absurd count (that IS the DoS we're bounding).
+        let cheap = make_verifier(Hash::Sha256, "pw", 4096);
+        assert!(verifier_ok(&cheap));
+        let with_iters = |i: &str| cheap.replacen("i=4096", &format!("i={i}"), 1);
+        // A huge iteration count (compromised-authority CPU DoS) is refused.
+        assert!(!verifier_ok(&with_iters("4294967295")));
+        assert!(!verifier_ok(&with_iters(&(MAX_VERIFIER_ITERATIONS + 1).to_string())));
+        // A too-cheap or malformed verifier is refused.
+        assert!(!verifier_ok(&with_iters("100")));
+        assert!(!verifier_ok("not a verifier"));
     }
 }

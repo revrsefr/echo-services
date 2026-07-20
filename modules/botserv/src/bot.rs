@@ -13,6 +13,10 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 ctx.notice(me, from.uid, "Syntax: BOT ADD <nick> <user> <host> [gecos]");
                 return;
             };
+            if !echo_api::valid_nick(nick) {
+                ctx.notice(me, from.uid, t!(ctx, "\x02{nick}\x02 isn't a valid nickname.", nick = nick));
+                return;
+            }
             let gecos = if args.len() > 5 { args[5..].join(" ") } else { "Service Bot".to_string() };
             match db.bot_add(nick, user, host, &gecos) {
                 Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Bot \x02{nick}\x02 (\x02{user}@{host}\x02) added.", nick = nick, user = user, host = host)),
@@ -24,6 +28,10 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 ctx.notice(me, from.uid, "Syntax: BOT CHANGE <oldnick> <newnick> [user [host [gecos]]]");
                 return;
             };
+            if !echo_api::valid_nick(newnick) {
+                ctx.notice(me, from.uid, t!(ctx, "\x02{nick}\x02 isn't a valid nickname.", nick = newnick));
+                return;
+            }
             // Omitted fields keep the bot's current values.
             let Some(cur) = db.bots().into_iter().find(|b| b.nick.eq_ignore_ascii_case(old)) else {
                 ctx.notice(me, from.uid, t!(ctx, "There's no bot named \x02{nick}\x02.", nick = old));

@@ -2391,6 +2391,25 @@ pub fn valid_email(addr: &str) -> bool {
     )
 }
 
+/// True if `nick` is a syntactically valid IRC nickname safe to introduce as a
+/// pseudo-client: 1–30 chars, a letter or RFC "special" first (never a digit,
+/// `-`, `#`, `:`, space or control), and only nick-legal chars after. Guards the
+/// operator BOT ADD/CHANGE path so a bogus `:evil`/`#chan`/spaced nick can't be
+/// minted into an IntroduceUser line.
+pub fn valid_nick(nick: &str) -> bool {
+    let count = nick.chars().count();
+    if count == 0 || count > 30 {
+        return false;
+    }
+    const SPECIAL: &str = "[]\\`_^{|}";
+    let mut chars = nick.chars();
+    let first = chars.next().unwrap();
+    if !(first.is_ascii_alphabetic() || SPECIAL.contains(first)) {
+        return false;
+    }
+    nick.chars().all(|c| c.is_ascii_alphanumeric() || SPECIAL.contains(c) || c == '-')
+}
+
 /// The next free guest nick: `base` + an incrementing counter, skipping any nick
 /// that is currently online or registered. An enforced/logged-out rename must not
 /// land on a real user or a registered nick — that would either defeat the rename
@@ -2972,5 +2991,22 @@ mod help_tests {
         assert!(!valid_email("two@at@signs.com"));
         assert!(!valid_email("@nolocal.com"));
         assert!(!valid_email("nodomain@"));
+    }
+
+    #[test]
+    fn valid_nick_guards_bot_names() {
+        assert!(valid_nick("Bendy"));
+        assert!(valid_nick("Guest12345"));
+        assert!(valid_nick("a-b_c`"));
+        assert!(valid_nick("[bot]"));
+        // Protocol-hostile or malformed nicks are rejected.
+        assert!(!valid_nick(":evil")); // colon would open a trailing param
+        assert!(!valid_nick("#chan"));
+        assert!(!valid_nick("has space"));
+        assert!(!valid_nick("bad\x02ctrl"));
+        assert!(!valid_nick("1leading"));
+        assert!(!valid_nick("-leading"));
+        assert!(!valid_nick(""));
+        assert!(!valid_nick(&"x".repeat(31)));
     }
 }
