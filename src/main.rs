@@ -12,6 +12,7 @@ mod keycard;
 mod link;
 mod migrate;
 mod proto;
+mod version;
 mod wiktionary;
 #[cfg(test)]
 mod i18n_check;
@@ -57,6 +58,12 @@ async fn main() -> Result<()> {
     // One-off migration: `echo import <anope.json> <out.log> [node-name]` builds a
     // fresh event log from an Anope db_json and exits, touching nothing else.
     let argv: Vec<String> = std::env::args().collect();
+    // `echo --version` / `-V` prints the build banner (version, git revision, build
+    // date, toolchain, target) and exits.
+    if matches!(argv.get(1).map(String::as_str), Some("--version") | Some("-V") | Some("version")) {
+        println!("{}", version::banner());
+        return Ok(());
+    }
     if argv.get(1).map(String::as_str) == Some("import") {
         let (Some(src), Some(out)) = (argv.get(2), argv.get(3)) else {
             eprintln!("usage: echo import <anope.json> <out.log> [node-name]");
@@ -88,6 +95,7 @@ async fn main() -> Result<()> {
     }
 
     let path = std::env::args().nth(1).unwrap_or_else(|| "config.toml".to_string());
+    tracing::info!(revision = %version::revision(), built = %version::built(), rustc = version::RUSTC, "starting {}", version::short());
     let cfg = config::Config::load(&path)?;
     let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 

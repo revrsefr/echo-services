@@ -11,7 +11,7 @@ impl Engine {
         let cmd = parts.next().unwrap_or("").to_ascii_uppercase();
         let arg = parts.next().unwrap_or("");
         let response = match cmd.as_str() {
-            "VERSION" => format!("VERSION echo services {}", env!("CARGO_PKG_VERSION")),
+            "VERSION" => format!("VERSION {}", crate::version::short()),
             "PING" => format!("PING {arg}"),
             "TIME" => format!("TIME {}", echo_api::human_time(self.now_secs())),
             "CLIENTINFO" => "CLIENTINFO ACTION CLIENTINFO PING TIME VERSION".to_string(),
