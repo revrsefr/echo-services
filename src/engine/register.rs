@@ -90,7 +90,7 @@ impl Engine {
         if status == AuthorityStatus::Ok && !self.db.is_verified(name) {
             if let Some(addr) = addr {
                 let code = self.db.issue_code(name, db::CodeKind::Confirm);
-                let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), name, &code);
+                let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), name, &code, &self.lang_for_account(name));
                 self.emit_irc(NetAction::SendEmail { to: addr, subject: mail.subject, text: mail.text, html: Some(mail.html) });
             }
         }
@@ -191,7 +191,8 @@ impl Engine {
             self.network.clear_account(&uid);
             self.emit_irc(NetAction::Metadata { target: uid.clone(), key: "accountname".to_string(), value: String::new() });
             if let Some(ns) = &ns {
-                self.emit_irc(NetAction::Notice { from: ns.clone(), to: uid, text: format!("You have been logged out of \x02{account}\x02.") });
+                let text = echo_api::render(&self.lang_for_account(account), "You have been logged out of \x02{account}\x02.", &[("account", account.to_string())]);
+                self.emit_irc(NetAction::Notice { from: ns.clone(), to: uid, text });
             }
         }
         n
@@ -273,7 +274,7 @@ impl Engine {
                 }
                 Some((false, Some(addr))) => {
                     let code = self.db.issue_code(&account, db::CodeKind::Confirm);
-                    let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), &account, &code);
+                    let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), &account, &code, &self.lang_for_account(&account));
                     let mut out = resp("verification_required", "VERIFICATION_REQUIRED", "A new confirmation code has been emailed.");
                     out.push(NetAction::SendEmail { to: addr, subject: mail.subject, text: mail.text, html: Some(mail.html) });
                     out
@@ -338,10 +339,10 @@ impl Engine {
         if needs_verify {
             if let Some(addr) = addr {
                 let code = self.db.issue_code(account, db::CodeKind::Confirm);
-                let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), account, &code);
+                let mail = echo_api::email::confirm(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), account, &code, &self.lang_for_account(account));
                 out.push(NetAction::SendEmail { to: addr, subject: mail.subject, text: mail.text, html: Some(mail.html) });
                 if let RegReply::NickServ { agent, uid, .. } = &reply {
-                    out.push(NetAction::Notice { from: agent.clone(), to: uid.clone(), text: "A confirmation code has been emailed to you. Confirm with \x02CONFIRM <code>\x02.".to_string() });
+                    out.push(NetAction::Notice { from: agent.clone(), to: uid.clone(), text: echo_api::render(&self.lang_for_account(account), "A confirmation code has been emailed to you. Confirm with \x02CONFIRM <code>\x02.", &[]) });
                 }
             }
         }
@@ -366,14 +367,15 @@ impl Engine {
         let actions = match then {
             AuthThen::Identify { uid, agent, name, account } => {
                 self.db.note_auth(&name, ok);
-                let mut ctx = ServiceCtx::default();
+                let lang = self.lang_for_account(&account);
+                let mut ctx = ServiceCtx { lang: lang.clone(), ..Default::default() };
                 if !ok {
                     ctx.count("nickserv.identify_fail");
                     ctx.fail(&agent, &uid, "IDENTIFY", "INVALID_CREDENTIALS", "Invalid password. Please try again.");
                 } else {
                     ctx.login(&uid, &account);
                     ctx.count("nickserv.identify");
-                    ctx.notice(&agent, &uid, format!("You're now identified as \x02{account}\x02. Welcome back!"));
+                    ctx.notice(&agent, &uid, echo_api::render(&lang, "You're now identified as \x02{account}\x02. Welcome back!", &[("account", account.clone())]));
                     for entry in self.db.ajoin_list(&account) {
                         ctx.force_join(&uid, &entry.channel, &entry.key);
                     }
@@ -386,7 +388,7 @@ impl Engine {
                     }
                     let unread = self.db.unread_memos(&account);
                     if unread > 0 && self.db.memo_notify_on(&account) {
-                        ctx.notice(&agent, &uid, format!("You have \x02{unread}\x02 new memo(s). Read them with \x02/msg MemoServ READ NEW\x02."));
+                        ctx.notice(&agent, &uid, echo_api::render_plural(&lang, unread as u64, "You have \x02{unread}\x02 new memo. Read it with \x02/msg MemoServ READ NEW\x02.", "You have \x02{unread}\x02 new memos. Read them with \x02/msg MemoServ READ NEW\x02.", &[("unread", unread.to_string())]));
                     }
                 }
                 for key in std::mem::take(&mut ctx.stats) {

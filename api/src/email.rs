@@ -33,38 +33,44 @@ fn render(brand: &str, accent: &str, logo: &str, title: &str, message: &str, cod
         .replace("{{note}}", &escape(note))
 }
 
-pub fn reset(brand: &str, accent: &str, logo: &str, account: &str, code: &str) -> Mail {
+pub fn reset(brand: &str, accent: &str, logo: &str, account: &str, code: &str, lang: &str) -> Mail {
+    let acc = || vec![("account", account.to_string())];
     Mail {
-        subject: format!("Password reset for {account}"),
-        text: format!(
-            "Your password reset code for {account} is: {code}\nIt expires in 15 minutes.\nReset with:\n  /msg NickServ RESETPASS {account} {code} <newpassword>\n"
+        subject: crate::render(lang, "Password reset for {account}", &acc()),
+        text: crate::render(
+            lang,
+            "Your password reset code for {account} is: {code}\nIt expires in 15 minutes.\nReset with:\n  /msg NickServ RESETPASS {account} {code} <newpassword>\n",
+            &[("account", account.to_string()), ("code", code.to_string())],
         ),
         html: render(
             brand,
             accent,
             logo,
-            "Password reset",
-            &format!("Use this code to reset the password for your account {account}."),
+            &crate::render(lang, "Password reset", &[]),
+            &crate::render(lang, "Use this code to reset the password for your account {account}.", &acc()),
             code,
-            "This code expires in 15 minutes. If you didn't ask to reset it, ignore this email.",
+            &crate::render(lang, "This code expires in 15 minutes. If you didn't ask to reset it, ignore this email.", &[]),
         ),
     }
 }
 
-pub fn confirm(brand: &str, accent: &str, logo: &str, account: &str, code: &str) -> Mail {
+pub fn confirm(brand: &str, accent: &str, logo: &str, account: &str, code: &str, lang: &str) -> Mail {
+    let acc = || vec![("account", account.to_string())];
     Mail {
-        subject: format!("Confirm your {account} registration"),
-        text: format!(
-            "Confirm your account {account} with:\n  /msg NickServ CONFIRM {code}\nThe code expires in 15 minutes.\n"
+        subject: crate::render(lang, "Confirm your {account} registration", &acc()),
+        text: crate::render(
+            lang,
+            "Confirm your account {account} with:\n  /msg NickServ CONFIRM {code}\nThe code expires in 15 minutes.\n",
+            &[("account", account.to_string()), ("code", code.to_string())],
         ),
         html: render(
             brand,
             accent,
             logo,
-            "Confirm your account",
-            &format!("Welcome! Confirm the email for your account {account} with the code below."),
+            &crate::render(lang, "Confirm your account", &[]),
+            &crate::render(lang, "Welcome! Confirm the email for your account {account} with the code below.", &acc()),
             code,
-            "This code expires in 15 minutes.",
+            &crate::render(lang, "This code expires in 15 minutes.", &[]),
         ),
     }
 }
@@ -87,26 +93,39 @@ impl ExpiryTarget {
 
 // Warn the owner of an account or channel that inactivity will soon expire it.
 // `remaining` is a human span ("7 days") and takes the prominent code slot.
-pub fn expiry_warning(brand: &str, accent: &str, logo: &str, kind: ExpiryTarget, name: &str, remaining: &str) -> Mail {
-    let word = kind.word();
-    let keep = if kind == ExpiryTarget::Channel {
-        "To keep it, have a member join the channel before then. Otherwise it will be removed."
-    } else {
-        "To keep it, just identify to it before then. Otherwise it will be removed."
+pub fn expiry_warning(brand: &str, accent: &str, logo: &str, kind: ExpiryTarget, name: &str, remaining: &str, lang: &str) -> Mail {
+    let word = crate::render(lang, kind.word(), &[]);
+    let keep = crate::render(
+        lang,
+        if kind == ExpiryTarget::Channel {
+            "To keep it, have a member join the channel before then. Otherwise it will be removed."
+        } else {
+            "To keep it, just identify to it before then. Otherwise it will be removed."
+        },
+        &[],
+    );
+    let base = || {
+        vec![
+            ("word", word.clone()),
+            ("name", name.to_string()),
+            ("remaining", remaining.to_string()),
+        ]
     };
     Mail {
-        subject: format!("Your {word} {name} is about to expire"),
-        text: format!(
-            "Your {word} {name} has been inactive and will expire in {remaining}.\n{keep}\n"
+        subject: crate::render(lang, "Your {word} {name} is about to expire", &[("word", word.clone()), ("name", name.to_string())]),
+        text: crate::render(
+            lang,
+            "Your {word} {name} has been inactive and will expire in {remaining}.\n{keep}\n",
+            &[("word", word.clone()), ("name", name.to_string()), ("remaining", remaining.to_string()), ("keep", keep.clone())],
         ),
         html: render(
             brand,
             accent,
             logo,
-            "About to expire",
-            &format!("Your {word} {name} has been inactive and will expire in {remaining}."),
+            &crate::render(lang, "About to expire", &[]),
+            &crate::render(lang, "Your {word} {name} has been inactive and will expire in {remaining}.", &base()),
             remaining,
-            keep,
+            &keep,
         ),
     }
 }

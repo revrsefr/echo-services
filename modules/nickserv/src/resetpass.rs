@@ -25,7 +25,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             }
             let code = db.issue_code(&canonical, CodeKind::Reset);
-            let mail = echo_api::email::reset(db.email_brand(), db.email_accent(), db.email_logo(), &canonical, &code);
+            let lang = db.language_of(&canonical).unwrap_or_else(|| db.default_language());
+            let mail = echo_api::email::reset(db.email_brand(), db.email_accent(), db.email_logo(), &canonical, &code, &lang);
             ctx.send_email(email, mail.subject, mail.text, Some(mail.html));
             ctx.notice(me, from.uid, t!(ctx, "A reset code has been emailed to the address on file for \x02{canonical}\x02.", canonical = canonical));
         }

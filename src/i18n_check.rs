@@ -167,6 +167,50 @@ fn every_template_is_translated() {
             }
         }
     }
+    // Also guard the engine- and email-layer strings, which localise via
+    // echo_api::render / crate::render (with a literal msgid) rather than the
+    // module macros. Scoped to those call prefixes so email.rs's own private
+    // `render` HTML helper and test literals aren't picked up.
+    let render_re =
+        Regex::new(&format!(r"(?:echo_api|crate)::render\s*\(\s*[^,]+,\s*{str_lit}")).unwrap();
+    let render_plural_re = Regex::new(&format!(
+        r"(?:echo_api|crate)::render_plural\s*\(\s*[^,]+,\s*[^,]+,\s*{str_lit}\s*,\s*{str_lit}"
+    ))
+    .unwrap();
+    let mut extra = vec![PathBuf::from(ROOT).join("api/src/email.rs")];
+    let mut stack = vec![PathBuf::from(ROOT).join("src/engine")];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().and_then(|s| s.to_str()) == Some("rs")
+                && p.file_name().and_then(|s| s.to_str()) != Some("tests.rs")
+            {
+                extra.push(p);
+            }
+        }
+    }
+    for path in extra {
+        let Ok(src) = fs::read_to_string(&path) else { continue };
+        let rel = path.strip_prefix(ROOT).unwrap_or(&path).display().to_string();
+        for cap in render_re.captures_iter(&src) {
+            let id = unescape(&cap[1]);
+            if !reference.contains_key(&id) {
+                missing.push(format!("{rel}: render {id:?}"));
+            }
+        }
+        for cap in render_plural_re.captures_iter(&src) {
+            for g in [1usize, 2] {
+                let id = unescape(&cap[g]);
+                if !reference.contains_key(&id) {
+                    missing.push(format!("{rel}: render_plural {id:?}"));
+                }
+            }
+        }
+    }
+
     assert!(
         missing.is_empty(),
         "these templates have no catalog entry:\n{}",

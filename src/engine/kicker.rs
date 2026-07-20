@@ -87,7 +87,8 @@ impl Engine {
             };
             if !already {
                 self.bump("botserv.warn");
-                return vec![NetAction::Notice { from: botuid, to: from.to_string(), text: format!("Please mind the channel rules — {reason} Next time you'll be kicked.") }];
+                let text = echo_api::render(&self.lang_for_uid(from), "Please mind the channel rules — {reason} Next time you'll be kicked.", &[("reason", reason.to_string())]);
+                return vec![NetAction::Notice { from: botuid, to: from.to_string(), text }];
             }
         }
 

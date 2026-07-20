@@ -620,7 +620,7 @@ impl Engine {
                 out.push(NetAction::Notice {
                     from: ns.clone(),
                     to: uid.to_string(),
-                    text: format!("You have \x02{unread}\x02 new memo(s). Read them with \x02/msg MemoServ READ NEW\x02."),
+                    text: echo_api::render_plural(&self.lang_for_account(account), unread as u64, "You have \x02{unread}\x02 new memo. Read it with \x02/msg MemoServ READ NEW\x02.", "You have \x02{unread}\x02 new memos. Read them with \x02/msg MemoServ READ NEW\x02.", &[("unread", unread.to_string())]),
                 });
             }
         }
@@ -718,7 +718,8 @@ impl Engine {
         // Tell any online successor they inherited a channel.
         for (chan, s) in &inherited {
             if let (Some(ns), Some(uid)) = (&ns, self.network.uids_logged_into(s).into_iter().next()) {
-                self.emit_irc(NetAction::Notice { from: ns.clone(), to: uid, text: format!("You are now the founder of \x02{chan}\x02 (inherited from \x02{account}\x02).") });
+                let text = echo_api::render(&self.lang_for_account(s), "You are now the founder of \x02{chan}\x02 (inherited from \x02{account}\x02).", &[("chan", chan.to_string()), ("account", account.to_string())]);
+                self.emit_irc(NetAction::Notice { from: ns.clone(), to: uid, text });
             }
         }
         // Log out and inform each local session that held the name.
@@ -809,6 +810,21 @@ impl Engine {
     // no per-record timer. Opers, accounts with a live session, and occupied
     // channels are spared; each expiry is announced to the audit channel. Emits
     // cleanup directly over the outbound path (like a takeover cleanup).
+    // The language to address `account`'s owner in: their stored preference, or
+    // the network default.
+    fn lang_for_account(&self, account: &str) -> String {
+        self.db.language_of(account).unwrap_or_else(|| self.db.default_language())
+    }
+
+    // The language to address the user on `uid` in: their logged-in account's
+    // preference, or the network default (e.g. an unidentified user).
+    fn lang_for_uid(&self, uid: &str) -> String {
+        self.network
+            .account_of(uid)
+            .and_then(|a| self.db.language_of(a))
+            .unwrap_or_else(|| self.db.default_language())
+    }
+
     pub fn expire_sweep(&mut self) {
         let now = self.now_secs();
         // First, warn owners whose account/channel is approaching expiry and for
@@ -816,14 +832,14 @@ impl Engine {
         if let Some(lead) = self.expire_warn.filter(|_| self.db.email_enabled()) {
             if let Some(ttl) = self.account_ttl {
                 for (account, email, left) in self.db.accounts_to_warn(now, ttl, lead) {
-                    let mail = echo_api::email::expiry_warning(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), echo_api::email::ExpiryTarget::Account, &account, &human_duration(left));
+                    let mail = echo_api::email::expiry_warning(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), echo_api::email::ExpiryTarget::Account, &account, &human_duration(left), &self.lang_for_account(&account));
                     self.emit_irc(NetAction::SendEmail { to: email, subject: mail.subject, text: mail.text, html: Some(mail.html) });
                     self.db.mark_account_warned(&account);
                 }
             }
             if let Some(ttl) = self.channel_ttl {
                 for (channel, email, left) in self.db.channels_to_warn(now, ttl, lead) {
-                    let mail = echo_api::email::expiry_warning(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), echo_api::email::ExpiryTarget::Channel, &channel, &human_duration(left));
+                    let mail = echo_api::email::expiry_warning(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), echo_api::email::ExpiryTarget::Channel, &channel, &human_duration(left), &self.db.default_language());
                     self.emit_irc(NetAction::SendEmail { to: email, subject: mail.subject, text: mail.text, html: Some(mail.html) });
                     self.db.mark_channel_warned(&channel);
                 }
@@ -1032,7 +1048,8 @@ impl Engine {
         for uid in fire {
             let guest = echo_api::next_guest_nick(&self.guest_nick, &mut self.enforce_seq, &self.network, &self.db);
             if let Some(ns) = self.nick_service.clone() {
-                self.emit_irc(NetAction::Notice { from: ns, to: uid.clone(), text: "You didn't identify in time; you've been renamed.".to_string() });
+                let text = echo_api::render(&self.db.default_language(), "You didn't identify in time; you've been renamed.", &[]);
+                self.emit_irc(NetAction::Notice { from: ns, to: uid.clone(), text });
             }
             self.emit_irc(NetAction::ForceNick { uid, nick: guest });
         }

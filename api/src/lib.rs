@@ -545,19 +545,27 @@ pub fn plural_category(lang: &str, n: u64) -> Plural {
     }
 }
 
+/// Render the `one` or `other` English template for `n` under `lang`'s plural
+/// rule, then substitute `{name}` args. The [`plural!`] macro wraps this for
+/// service call sites; the engine and email layer (which have no `ctx`) call it
+/// directly with an explicit language.
+pub fn render_plural(lang: &str, n: u64, one: &str, other: &str, args: &[(&str, String)]) -> String {
+    let key = match plural_category(lang, n) {
+        Plural::One => one,
+        Plural::Other => other,
+    };
+    render(lang, key, args)
+}
+
 /// Localize a count-dependent reply. Selects the `one` or `other` English
 /// template by the target language's plural rule, then renders it like [`t!`].
 /// Both forms are message ids, so both need a catalog entry in each language.
 /// `plural!(ctx, n, one = "…{n} entry…", other = "…{n} entries…", n = n, …)`.
 #[macro_export]
 macro_rules! plural {
-    ($ctx:expr, $n:expr, one = $one:literal, other = $other:literal $(, $name:ident = $val:expr)* $(,)?) => {{
-        let __key = match $crate::plural_category($ctx.lang(), ($n) as u64) {
-            $crate::Plural::One => $one,
-            $crate::Plural::Other => $other,
-        };
-        $crate::render($ctx.lang(), __key, &[$((stringify!($name), format!("{}", $val))),*])
-    }};
+    ($ctx:expr, $n:expr, one = $one:literal, other = $other:literal $(, $name:ident = $val:expr)* $(,)?) => {
+        $crate::render_plural($ctx.lang(), ($n) as u64, $one, $other, &[$((stringify!($name), format!("{}", $val))),*])
+    };
 }
 
 /// The intent sink a service writes to. A service never mutates the network or
@@ -2594,7 +2602,9 @@ pub fn require_oper(me: &str, from: &Sender, ctx: &mut ServiceCtx, need: Option<
         None => from.privs.any(),
     };
     if !ok {
-        ctx.notice(me, from.uid, format!("Access denied — {what} is for services operators."));
+        // Translate the action fragment, then the sentence around it.
+        let what = render(ctx.lang(), what, &[]);
+        ctx.notice(me, from.uid, render(ctx.lang(), "Access denied — {what} is for services operators.", &[("what", what)]));
     }
     ok
 }
