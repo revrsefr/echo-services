@@ -12,7 +12,17 @@ impl Engine {
         let arg = parts.next().unwrap_or("");
         let response = match cmd.as_str() {
             "VERSION" => format!("VERSION {}", crate::version::short()),
-            "PING" => format!("PING {arg}"),
+            "PING" => {
+                // Reflect the client's token, but cap it: an over-long token would
+                // push the client-facing line past 512 once the ircd expands our
+                // short service source into a full nick!user@host, stranding the
+                // closing \x01. A real PING token is a short timestamp.
+                let mut n = arg.len().min(200);
+                while !arg.is_char_boundary(n) {
+                    n -= 1;
+                }
+                format!("PING {}", &arg[..n])
+            }
             "TIME" => format!("TIME {}", echo_api::human_time(self.now_secs())),
             "CLIENTINFO" => "CLIENTINFO ACTION CLIENTINFO PING TIME VERSION".to_string(),
             _ => return None, // ACTION and unknown CTCPs: stay silent

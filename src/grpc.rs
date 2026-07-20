@@ -432,11 +432,12 @@ impl Admin for AdminService {
 
     async fn rehash(&self, req: Request<AdminRequest>) -> Result<Response<AdminResponse>, Status> {
         authorize(&req, &self.token)?;
-        // Same reload the OperServ REHASH path runs; the returned staff-feed notice
-        // has no oper to reach over gRPC, so it's dropped (the reload is logged).
-        let _ = self.engine.lock().await.rehash("gRPC control", "");
-        tracing::info!("configuration reloaded via gRPC control");
-        Ok(Response::new(AdminResponse { ok: true, message: "configuration reloaded".to_string() }))
+        // Same reload the OperServ REHASH path runs. control_rehash applies the
+        // config, delivers the staff-log announcement, and reports whether the new
+        // config actually loaded (a parse error keeps the running config).
+        let (ok, message) = self.engine.lock().await.control_rehash();
+        tracing::info!(ok, "configuration reload requested via gRPC control");
+        Ok(Response::new(AdminResponse { ok, message }))
     }
 }
 

@@ -770,7 +770,9 @@ impl Engine {
         self.network.clear_account(uid);
         self.emit_irc(NetAction::Metadata { target: uid.to_string(), key: "accountname".to_string(), value: String::new() });
         if let Some(ns) = self.nick_service.clone() {
-            let lang = self.lang_for_uid(uid);
+            // `clear_account(uid)` above already dropped the uid→account map, so
+            // resolve the language from the account name, not the (now-anonymous) uid.
+            let lang = self.lang_for_account(account);
             let reason = echo_api::render(&lang, reason, &[]);
             let text = echo_api::render(&lang, "Your account \x02{account}\x02 {reason}. You have been logged out.", &[("account", account.to_string()), ("reason", reason)]);
             self.emit_irc(NetAction::Notice { from: ns, to: uid.to_string(), text });
@@ -964,7 +966,10 @@ impl Engine {
     // keeps the running configuration untouched (validate-or-keep, like an ircd
     // rehash). Server identity (name/sid/protocol/uplink), service umodes and the
     // keycard endpoint are NOT reloadable — they need a restart.
-    pub fn rehash(&mut self, requester: &str, agent: &str) -> Vec<NetAction> {
+    // Reload config.toml and apply the reloadable settings live. Returns whether
+    // the new config actually loaded (a parse error keeps the running config) plus
+    // the notices to deliver to the requester and the staff log channel.
+    pub fn rehash(&mut self, requester: &str, agent: &str) -> (bool, Vec<NetAction>) {
         let path = self.config_path.clone();
         // Who ran it, for the DebugServ log-channel line (account, else nick).
         let oper = self
@@ -982,7 +987,7 @@ impl Engine {
                     out.push(line);
                 }
                 out.push(notice(format!("REHASH failed: {e}. The running configuration is unchanged.")));
-                return out;
+                return (false, out);
             }
         };
         let opers = cfg.opers();
@@ -1022,7 +1027,21 @@ impl Engine {
                 echo_api::Priv::valid_names()
             )));
         }
-        out
+        (true, out)
+    }
+
+    // Rehash driven by the gRPC control CLI. There's no oper session to notice, so
+    // the per-requester replies are dropped, but the staff log-channel line is still
+    // delivered and the real load result is reported back to the caller.
+    pub fn control_rehash(&mut self) -> (bool, String) {
+        let (ok, actions) = self.rehash("gRPC control", "");
+        for action in actions {
+            if matches!(action, NetAction::Privmsg { .. }) {
+                self.emit_irc(action);
+            }
+        }
+        let msg = if ok { "configuration reloaded" } else { "reload failed; running configuration unchanged" };
+        (ok, msg.to_string())
     }
 
     // A user arrived on (or changed to) a registered nick: if they aren't logged

@@ -186,7 +186,7 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
                             // OperServ REHASH: re-read config.toml and apply the
                             // reloadable settings live, reporting back to the oper.
                             NetAction::Rehash { requester, agent } => {
-                                engine.lock().await.rehash(&requester, &agent)
+                                engine.lock().await.rehash(&requester, &agent).1
                             }
                             action => vec![action],
                         };

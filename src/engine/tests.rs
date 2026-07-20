@@ -819,13 +819,21 @@
         e.set_debugserv_uid("42SAAAAAO");
         e.set_log_channel(Some("#services".to_string()));
 
-        let out = e.rehash("000AAAAAB", "42SAAAAAH");
+        let (ok, out) = e.rehash("000AAAAAB", "42SAAAAAH");
+        assert!(ok, "a valid config reloads successfully");
         let feed = out.iter().find_map(|a| match a {
             NetAction::Privmsg { from, to, text } if from == "42SAAAAAO" && to == "#services" => Some(text.clone()),
             _ => None,
         }).expect("DebugServ announces the reload in the log channel");
         assert!(feed.contains("reloaded the configuration"), "{feed}");
         assert!(feed.contains("#svc"), "the reloaded services channel is applied and shown: {feed}");
+
+        // A parse error must report failure (not a false "reloaded") so the control
+        // CLI shows ✗, and must keep the running config.
+        std::fs::write(&cfgpath, "this is not = valid toml [[[").unwrap();
+        let (ok, out) = e.rehash("000AAAAAB", "42SAAAAAH");
+        assert!(!ok, "a broken config reports failure");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("REHASH failed"))), "{out:?}");
         let _ = std::fs::remove_file(&cfgpath);
     }
 
