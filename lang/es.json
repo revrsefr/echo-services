@@ -1360,5 +1360,8 @@
  "\u0002{by}\u0002 removed you from \u0002{chan}\u0002's {word} list.": "\u0002{by}\u0002 te quitó de la lista {word} de \u0002{chan}\u0002.",
  "\u0002{by}\u0002 set your access on \u0002{chan}\u0002 to \u0002{letters}\u0002.": "\u0002{by}\u0002 estableció tu acceso en \u0002{chan}\u0002 a \u0002{letters}\u0002.",
  "\u0002{by}\u0002 transferred the \u0002{chan}\u0002 founder to you.": "\u0002{by}\u0002 te transfirió el estatus de fundador de \u0002{chan}\u0002.",
- "\u0002{by}\u0002 set you as successor of \u0002{chan}\u0002.": "\u0002{by}\u0002 te estableció como sucesor de \u0002{chan}\u0002."
+ "\u0002{by}\u0002 set you as successor of \u0002{chan}\u0002.": "\u0002{by}\u0002 te estableció como sucesor de \u0002{chan}\u0002.",
+ "Added \u0002{count}\u0002 channel to your auto-join list.": "\u0002{count}\u0002 canal añadido a tu lista de auto-unión.",
+ "Added \u0002{count}\u0002 channels to your auto-join list.": "\u0002{count}\u0002 canales añadidos a tu lista de auto-unión.",
+ "Unknown AJOIN command \u0002{other}\u0002. Use \u0002ADD\u0002, \u0002ADDALL\u0002, \u0002DEL\u0002 or \u0002LIST\u0002.": "Comando AJOIN desconocido \u0002{other}\u0002. Usa \u0002ADD\u0002, \u0002ADDALL\u0002, \u0002DEL\u0002 o \u0002LIST\u0002."
 }

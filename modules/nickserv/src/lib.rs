@@ -126,7 +126,7 @@ impl Service for NickServ {
             Some("RECOVER") => ghost::handle(me, &self.guest_nick, &mut self.guest_seq, from, args, ctx, net, db, true),
             Some("RESETPASS") => resetpass::handle(me, from, args, ctx, db),
             Some("CONFIRM") => confirm::handle(me, from, args, ctx, db),
-            Some("AJOIN") => ajoin::handle(me, from, args, ctx, db),
+            Some("AJOIN") => ajoin::handle(me, from, args, ctx, net, db),
             Some("SUSPEND") => suspend::handle(me, from, args, ctx, net, db, true),
             Some("UNSUSPEND") => suspend::handle(me, from, args, ctx, net, db, false),
             Some("NOEXPIRE") => noexpire::handle(me, from, args, ctx, db),

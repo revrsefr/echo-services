@@ -2318,6 +2318,7 @@ pub trait NetView {
     // A user's identity for extban / AKICK matching, if known.
     fn ban_target(&self, uid: &str) -> Option<BanTarget<'_>>;
     fn uids_logged_into(&self, account: &str) -> Vec<String>;
+    fn channels_of(&self, uid: &str) -> Vec<String>;
     fn is_op(&self, channel: &str, uid: &str) -> bool;
     fn channel_members(&self, channel: &str) -> Vec<String>;
     fn channel_key(&self, channel: &str) -> Option<&str>;

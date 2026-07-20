@@ -615,6 +615,9 @@ impl NetView for Network {
     fn uids_logged_into(&self, account: &str) -> Vec<String> {
         Network::uids_logged_into(self, account)
     }
+    fn channels_of(&self, uid: &str) -> Vec<String> {
+        Network::channels_of(self, uid)
+    }
     fn is_op(&self, channel: &str, uid: &str) -> bool {
         Network::is_op(self, channel, uid)
     }

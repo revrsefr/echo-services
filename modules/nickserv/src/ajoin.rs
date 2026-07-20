@@ -1,5 +1,4 @@
-use echo_api::Store;
-use echo_api::{Sender, ServiceCtx};
+use echo_api::{NetView, Sender, ServiceCtx, Store};
 use echo_api::t;
 
 // A sane cap so a runaway list can't bloat an account or flood a user on identify.
@@ -7,7 +6,7 @@ const MAX_AJOIN: usize = 25;
 
 // AJOIN [ADD <#channel> [key] | DEL <#channel> | LIST]: manage your auto-join
 // list — the channels NickServ joins you to each time you identify.
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
     let Some(account) = from.account else {
         ctx.notice(me, from.uid, "You must identify to NickServ to use \x02AJOIN\x02.");
         return;
@@ -32,6 +31,26 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 Ok(false) => ctx.notice(me, from.uid, t!(ctx, "Updated the key for \x02{channel}\x02 on your auto-join list.", channel = channel)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
+        }
+        Some("ADDALL") => {
+            let existing: std::collections::HashSet<String> =
+                db.ajoin_list(account).into_iter().map(|e| e.channel.to_ascii_lowercase()).collect();
+            let mut count = existing.len();
+            let mut added = 0u64;
+            for channel in net.channels_of(from.uid) {
+                if count >= MAX_AJOIN {
+                    break;
+                }
+                if existing.contains(&channel.to_ascii_lowercase()) {
+                    continue;
+                }
+                let key = net.channel_key(&channel).unwrap_or("");
+                if let Ok(true) = db.ajoin_add(account, &channel, key) {
+                    added += 1;
+                    count += 1;
+                }
+            }
+            ctx.notice(me, from.uid, echo_api::plural!(ctx, added, one = "Added \x02{count}\x02 channel to your auto-join list.", other = "Added \x02{count}\x02 channels to your auto-join list.", count = added));
         }
         Some("DEL") => {
             let Some(&channel) = args.get(2) else {
@@ -59,6 +78,6 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 }
             }
         }
-        Some(other) => ctx.notice(me, from.uid, t!(ctx, "Unknown AJOIN command \x02{other}\x02. Use \x02ADD\x02, \x02DEL\x02 or \x02LIST\x02.", other = other)),
+        Some(other) => ctx.notice(me, from.uid, t!(ctx, "Unknown AJOIN command \x02{other}\x02. Use \x02ADD\x02, \x02ADDALL\x02, \x02DEL\x02 or \x02LIST\x02.", other = other)),
     }
 }
