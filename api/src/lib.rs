@@ -2445,6 +2445,28 @@ pub fn next_guest_nick(base: &str, seq: &mut u32, net: &dyn NetView, store: &dyn
     candidate
 }
 
+/// Tell `target` account they were affected by someone else's action: notice
+/// every online session, or leave a memo (from `by`) if they're offline. The
+/// message renders in the target's own language. No-op when the actor is the
+/// target (self-service needs no notice).
+#[allow(clippy::too_many_arguments)]
+pub fn notify_or_memo(ctx: &mut ServiceCtx, net: &dyn NetView, store: &mut dyn Store, service: &str, by: &str, target: &str, msgid: &str, args: &[(&str, String)]) {
+    // A `!group` target is not a memo-able account, and self-service needs no notice.
+    if target.starts_with('!') || by.eq_ignore_ascii_case(target) {
+        return;
+    }
+    let lang = store.language_of(target).unwrap_or_else(|| store.default_language());
+    let text = render(&lang, msgid, args);
+    let online = net.uids_logged_into(target);
+    if online.is_empty() {
+        let _ = store.memo_send(target, by, &text, false);
+    } else {
+        for uid in online {
+            ctx.notice(service, &uid, text.clone());
+        }
+    }
+}
+
 // Reject a look-alike / mixed-script registration name (nick or channel): the
 // impersonation trick that a message-content filter never sees at the registration
 // seam. Returns a rejection reason, or None if the name is fine. Genuine

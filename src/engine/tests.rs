@@ -5209,6 +5209,37 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::Kick { channel, uid, reason, .. } if channel == "#c" && uid == "000AAAAAC" && reason.starts_with("begone"))), "{out:?}");
     }
 
+    // Being added to / removed from a channel's access list notifies the affected
+    // user: a memo while they're offline, a direct notice while they're online.
+    #[test]
+    fn access_change_notifies_the_affected_user() {
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-cs-access-notify.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register("bob", "hunter2", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+        let to_cs = |e: &mut Engine, from: &str, text: &str| {
+            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+        };
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h1".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+
+        to_cs(&mut e, "000AAAAAB", "ACCESS #c ADD bob op");
+        assert_eq!(e.db.unread_memos("bob"), 1, "offline user gets a memo");
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h2".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY hunter2".into() });
+        let out = to_cs(&mut e, "000AAAAAB", "ACCESS #c DEL bob");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "000AAAAAC" && text.contains("removed your access"))), "online user noticed: {out:?}");
+        assert_eq!(e.db.unread_memos("bob"), 1, "no extra memo when online");
+    }
+
     // ChanServ SET: description and founder transfer, founder-gated.
     #[test]
     fn chanserv_set() {

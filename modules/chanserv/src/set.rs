@@ -1,8 +1,8 @@
-use echo_api::{ChanSetting, Sender, ServiceCtx, Store};
+use echo_api::{ChanSetting, NetView, Sender, ServiceCtx, Store};
 use echo_api::t;
 
 // SET <#channel> FOUNDER <account> | DESC <text>: founder-only channel settings.
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
     let Some(&chan) = args.get(1) else {
         ctx.notice(me, from.uid, "Syntax: SET <#channel> FOUNDER <account> | DESC <text>");
         return;
@@ -32,7 +32,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             }
             match db.set_founder(chan, account) {
-                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Founder of \x02{chan}\x02 transferred to \x02{account}\x02.", chan = chan, account = account)),
+                Ok(()) => {
+                    ctx.notice(me, from.uid, t!(ctx, "Founder of \x02{chan}\x02 transferred to \x02{account}\x02.", chan = chan, account = account));
+                    let by = from.account.unwrap_or(from.nick);
+                    echo_api::notify_or_memo(ctx, net, db, me, by, account, "\x02{by}\x02 transferred the \x02{chan}\x02 founder to you.", &[("by", by.to_string()), ("chan", chan.to_string())]);
+                }
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
@@ -48,7 +52,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                         return;
                     }
                     match db.set_successor(chan, Some(acct)) {
-                        Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Successor of \x02{chan}\x02 set to \x02{acct}\x02. They inherit it if your account is dropped or expires.", chan = chan, acct = acct)),
+                        Ok(()) => {
+                            ctx.notice(me, from.uid, t!(ctx, "Successor of \x02{chan}\x02 set to \x02{acct}\x02. They inherit it if your account is dropped or expires.", chan = chan, acct = acct));
+                            let by = from.account.unwrap_or(from.nick);
+                            echo_api::notify_or_memo(ctx, net, db, me, by, acct, "\x02{by}\x02 set you as successor of \x02{chan}\x02.", &[("by", by.to_string()), ("chan", chan.to_string())]);
+                        }
                         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
                     }
                 }

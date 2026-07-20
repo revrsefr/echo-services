@@ -1,4 +1,4 @@
-use echo_api::{Flags, Sender, ServiceCtx, Store, ACCESS_FLAGS};
+use echo_api::{Flags, NetView, Sender, ServiceCtx, Store, ACCESS_FLAGS};
 use echo_api::t;
 
 // FLAGS <#channel> [account [+/-flags]]: the granular access model. With no
@@ -7,7 +7,7 @@ use echo_api::t;
 // t topic i invite a access-list s settings g greet. Viewing needs op access;
 // changing needs the founder or the \x02a\x02 flag. Every stored level — a tier
 // preset ("op"/"sop"/…) or a raw flag string — resolves through `Flags`.
-pub fn handle(me: &str, from: &Sender, chan: &str, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
+pub fn handle(me: &str, from: &Sender, chan: &str, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
     let Some(info) = db.channel(chan) else {
         ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 isn't registered.", chan = chan));
         return;
@@ -76,7 +76,11 @@ pub fn handle(me: &str, from: &Sender, chan: &str, args: &[&str], ctx: &mut Serv
     }
     let letters = updated.to_letters();
     match db.access_add(chan, target, &letters) {
-        Ok(()) => ctx.notice(me, from.uid, t!(ctx, "\x02{target}\x02 on \x02{chan}\x02 now holds \x02{letters}\x02.", target = target, chan = chan, letters = letters)),
+        Ok(()) => {
+            ctx.notice(me, from.uid, t!(ctx, "\x02{target}\x02 on \x02{chan}\x02 now holds \x02{letters}\x02.", target = target, chan = chan, letters = letters));
+            let by = from.account.unwrap_or(from.nick);
+            echo_api::notify_or_memo(ctx, net, db, me, by, target, "\x02{by}\x02 set your access on \x02{chan}\x02 to \x02{letters}\x02.", &[("by", by.to_string()), ("chan", chan.to_string()), ("letters", letters.clone())]);
+        }
         Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
     }
 }

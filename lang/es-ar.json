@@ -1353,5 +1353,12 @@
  "modulo by zero": "módulo por cero",
  "that expression rolls too many dice": "esa expresión tira demasiados dados",
  "hypot() takes two arguments": "hypot() toma dos argumentos",
- "pow() takes two arguments": "pow() toma dos argumentos"
+ "pow() takes two arguments": "pow() toma dos argumentos",
+ "\u0002{by}\u0002 added you to \u0002{chan}\u0002 as \u0002{level}\u0002.": "\u0002{by}\u0002 te agregó a \u0002{chan}\u0002 como \u0002{level}\u0002.",
+ "\u0002{by}\u0002 removed your access to \u0002{chan}\u0002.": "\u0002{by}\u0002 te sacó el acceso a \u0002{chan}\u0002.",
+ "\u0002{by}\u0002 added you to \u0002{chan}\u0002's {word} list.": "\u0002{by}\u0002 te agregó a la lista {word} de \u0002{chan}\u0002.",
+ "\u0002{by}\u0002 removed you from \u0002{chan}\u0002's {word} list.": "\u0002{by}\u0002 te sacó de la lista {word} de \u0002{chan}\u0002.",
+ "\u0002{by}\u0002 set your access on \u0002{chan}\u0002 to \u0002{letters}\u0002.": "\u0002{by}\u0002 estableció tu acceso en \u0002{chan}\u0002 a \u0002{letters}\u0002.",
+ "\u0002{by}\u0002 transferred the \u0002{chan}\u0002 founder to you.": "\u0002{by}\u0002 te transfirió el estatus de fundador de \u0002{chan}\u0002.",
+ "\u0002{by}\u0002 set you as successor of \u0002{chan}\u0002.": "\u0002{by}\u0002 te estableció como sucesor de \u0002{chan}\u0002."
 }

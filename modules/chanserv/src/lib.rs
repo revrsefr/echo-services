@@ -288,13 +288,13 @@ impl Service for ChanServ {
                 }
             }
             Some("MODE") => mode::handle(me, from, args, ctx, db),
-            Some("ACCESS") => access::handle(me, from, args, ctx, db),
+            Some("ACCESS") => access::handle(me, from, args, ctx, net, db),
             Some("FLAGS") => {
                 let Some(&chan) = args.get(1) else {
                     ctx.notice(me, from.uid, "Syntax: FLAGS <#channel> [account [+/-flags]]");
                     return;
                 };
-                flags::handle(me, from, chan, args, ctx, db);
+                flags::handle(me, from, chan, args, ctx, net, db);
             }
             Some("OP") => op::handle(me, from, "+o", args, ctx, net, db),
             Some("DEOP") => op::handle(me, from, "-o", args, ctx, net, db),
@@ -320,7 +320,7 @@ impl Service for ChanServ {
             Some("UNSUSPEND") => suspend::handle(me, from, args, ctx, net, db, false),
             Some("NOEXPIRE") => noexpire::handle(me, from, args, ctx, db),
             Some("LIST") => list::handle(me, from, args, ctx, db),
-            Some("SET") => set::handle(me, from, args, ctx, db),
+            Some("SET") => set::handle(me, from, args, ctx, net, db),
             Some("ENTRYMSG") => entrymsg::handle(me, from, args, ctx, db),
             Some("GETKEY") => getkey::handle(me, from, args, ctx, net, db),
             Some("SEEN") => seen::handle(me, from, args, ctx, net),
@@ -328,10 +328,10 @@ impl Service for ChanServ {
             // the mode lock and akick list, so SYNC is the same handler.
             Some("ENFORCE") | Some("SYNC") => enforce::handle(me, from, args, ctx, net, db),
             Some("CLONE") => clone::handle(me, from, args, ctx, db),
-            Some("SOP") => xop::handle(me, from, "SOP", "sop", args, ctx, db),
-            Some("AOP") => xop::handle(me, from, "AOP", "op", args, ctx, db),
-            Some("HOP") => xop::handle(me, from, "HOP", "halfop", args, ctx, db),
-            Some("VOP") => xop::handle(me, from, "VOP", "voice", args, ctx, db),
+            Some("SOP") => xop::handle(me, from, "SOP", "sop", args, ctx, net, db),
+            Some("AOP") => xop::handle(me, from, "AOP", "op", args, ctx, net, db),
+            Some("HOP") => xop::handle(me, from, "HOP", "halfop", args, ctx, net, db),
+            Some("VOP") => xop::handle(me, from, "VOP", "voice", args, ctx, net, db),
             Some("HELP") => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
             // Direct `/msg ChanServ FOO` earns this reply; the fantasy router
             // gates on COMMANDS first so an in-channel `!foo` stays silent.

@@ -1,5 +1,4 @@
-use echo_api::Store;
-use echo_api::{Sender, ServiceCtx};
+use echo_api::{NetView, Sender, ServiceCtx, Store};
 use echo_api::t;
 
 // The named tiers ACCESS ADD accepts, high to low; the granular FLAGS command
@@ -7,7 +6,7 @@ use echo_api::t;
 const TIERS: [&str; 4] = ["sop", "op", "halfop", "voice"];
 
 // ACCESS <#channel> LIST | ADD <account> <sop|op|halfop|voice> | DEL <account>
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
     let Some(&chan) = args.get(1) else {
         ctx.notice(me, from.uid, "Syntax: ACCESS <#channel> LIST | ADD <account|!group> <sop|op|halfop|voice> | DEL <account|!group>");
         return;
@@ -37,7 +36,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             }
             match db.access_add(chan, account, &level) {
-                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Added \x02{account}\x02 to \x02{chan}\x02 as \x02{level}\x02.", account = account, chan = chan, level = level)),
+                Ok(()) => {
+                    ctx.notice(me, from.uid, t!(ctx, "Added \x02{account}\x02 to \x02{chan}\x02 as \x02{level}\x02.", account = account, chan = chan, level = level));
+                    let by = from.account.unwrap_or(from.nick);
+                    echo_api::notify_or_memo(ctx, net, db, me, by, account, "\x02{by}\x02 added you to \x02{chan}\x02 as \x02{level}\x02.", &[("by", by.to_string()), ("chan", chan.to_string()), ("level", level.clone())]);
+                }
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
@@ -50,7 +53,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             }
             match db.access_del(chan, account) {
-                Ok(true) => ctx.notice(me, from.uid, t!(ctx, "Removed \x02{account}\x02 from \x02{chan}\x02.", account = account, chan = chan)),
+                Ok(true) => {
+                    ctx.notice(me, from.uid, t!(ctx, "Removed \x02{account}\x02 from \x02{chan}\x02.", account = account, chan = chan));
+                    let by = from.account.unwrap_or(from.nick);
+                    echo_api::notify_or_memo(ctx, net, db, me, by, account, "\x02{by}\x02 removed your access to \x02{chan}\x02.", &[("by", by.to_string()), ("chan", chan.to_string())]);
+                }
                 Ok(false) => ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 has no access to \x02{chan}\x02.", account = account, chan = chan)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }

@@ -1,10 +1,11 @@
-use echo_api::{access_role, Sender, ServiceCtx, Store};
+use echo_api::{access_role, NetView, Sender, ServiceCtx, Store};
 use echo_api::t;
 
 // SOP/AOP/HOP/VOP <#channel> ADD <account> | DEL <account> | LIST — tiered
 // shortcuts over the access list. `level` is the tier they map to ("sop", "op",
 // "halfop", "voice"); `word` is the tier the user typed ("SOP".."VOP").
-pub fn handle(me: &str, from: &Sender, word: &str, level: &str, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
+#[allow(clippy::too_many_arguments)]
+pub fn handle(me: &str, from: &Sender, word: &str, level: &str, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
     let Some(&chan) = args.get(1) else {
         ctx.notice(me, from.uid, t!(ctx, "Syntax: {word} <#channel> ADD <account> | DEL <account> | LIST", word = word));
         return;
@@ -30,7 +31,11 @@ pub fn handle(me: &str, from: &Sender, word: &str, level: &str, args: &[&str], c
                 return;
             }
             match db.access_add(chan, account, level) {
-                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Added \x02{account}\x02 to \x02{chan}\x02's {word} list.", account = account, chan = chan, word = word)),
+                Ok(()) => {
+                    ctx.notice(me, from.uid, t!(ctx, "Added \x02{account}\x02 to \x02{chan}\x02's {word} list.", account = account, chan = chan, word = word));
+                    let by = from.account.unwrap_or(from.nick);
+                    echo_api::notify_or_memo(ctx, net, db, me, by, account, "\x02{by}\x02 added you to \x02{chan}\x02's {word} list.", &[("by", by.to_string()), ("chan", chan.to_string()), ("word", word.to_string())]);
+                }
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
@@ -43,7 +48,11 @@ pub fn handle(me: &str, from: &Sender, word: &str, level: &str, args: &[&str], c
                 return;
             }
             match db.access_del(chan, account) {
-                Ok(true) => ctx.notice(me, from.uid, t!(ctx, "Removed \x02{account}\x02 from \x02{chan}\x02's {word} list.", account = account, chan = chan, word = word)),
+                Ok(true) => {
+                    ctx.notice(me, from.uid, t!(ctx, "Removed \x02{account}\x02 from \x02{chan}\x02's {word} list.", account = account, chan = chan, word = word));
+                    let by = from.account.unwrap_or(from.nick);
+                    echo_api::notify_or_memo(ctx, net, db, me, by, account, "\x02{by}\x02 removed you from \x02{chan}\x02's {word} list.", &[("by", by.to_string()), ("chan", chan.to_string()), ("word", word.to_string())]);
+                }
                 Ok(false) => ctx.notice(me, from.uid, t!(ctx, "\x02{account}\x02 has no access to \x02{chan}\x02.", account = account, chan = chan)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
