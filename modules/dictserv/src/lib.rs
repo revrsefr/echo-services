@@ -40,6 +40,21 @@ pub fn lookup_for(cmd: &str) -> Option<&'static Lookup> {
     LOOKUPS.iter().find(|l| l.cmd.eq_ignore_ascii_case(cmd))
 }
 
+// For the flagship `dict` command, prefer a dictionary keyed on the user's own
+// language so it recognises the words they actually type. dict.org has no
+// monolingual non-English dictionaries, so these are the FreeDict bilingual sets
+// (native headword, glossed to English); English and any other language keep
+// WordNet. Returns (database, label) or None to fall back.
+pub fn dict_db_for(lang: &str) -> Option<(&'static str, &'static str)> {
+    match lang {
+        "fr" => Some(("fd-fra-eng", "français")),
+        "es" | "es-ar" => Some(("fd-spa-eng", "español")),
+        "pt" | "pt-br" => Some(("fd-por-eng", "português")),
+        "de" => Some(("fd-deu-eng", "Deutsch")),
+        _ => None,
+    }
+}
+
 const BLURB: &str = "DictServ looks words up in the dict.org dictionaries. Try \x02dict\x02 <word> (WordNet), \x02define\x02 (GCIDE), \x02thes\x02 (thesaurus), \x02acronym\x02, \x02element\x02, \x02law\x02, \x02bible\x02, and more — \x02LOOKUP\x02 lists them all.";
 
 const TOPICS: &[HelpEntry] = &[
@@ -78,7 +93,13 @@ impl Service for DictServ {
                 ctx.notice(me, from.uid, t!(ctx, "Give a term to look up, e.g. \x02{cmd} cat\x02.", cmd = l.cmd));
                 return;
             }
-            ctx.dict_lookup(me, from.uid, l.database, l.label, query);
+            // `dict` follows the user's language where dict.org has a matching
+            // dictionary; the specific commands (define, thes, …) stay fixed.
+            let (database, label) = match (l.cmd, dict_db_for(ctx.lang())) {
+                ("dict", Some(loc)) => loc,
+                _ => (l.database, l.label),
+            };
+            ctx.dict_lookup(me, from.uid, database, label, query);
             return;
         }
         match cmd.to_ascii_uppercase().as_str() {
@@ -106,5 +127,16 @@ mod tests {
         assert_eq!(lookup_for("zipcodes").unwrap().database, "gaz2k-zips");
         assert!(lookup_for("nonsense").is_none());
         assert!(lookup_for("roll").is_none()); // not ours — DiceServ owns that
+    }
+
+    #[test]
+    fn dict_follows_the_user_language() {
+        assert_eq!(dict_db_for("fr"), Some(("fd-fra-eng", "français")));
+        assert_eq!(dict_db_for("es"), Some(("fd-spa-eng", "español")));
+        assert_eq!(dict_db_for("es-ar"), Some(("fd-spa-eng", "español")));
+        assert_eq!(dict_db_for("pt-br"), Some(("fd-por-eng", "português")));
+        assert_eq!(dict_db_for("de"), Some(("fd-deu-eng", "Deutsch")));
+        assert_eq!(dict_db_for("en"), None); // WordNet
+        assert_eq!(dict_db_for("it"), None); // no dictionary shipped -> WordNet
     }
 }
