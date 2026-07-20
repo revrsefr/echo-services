@@ -12,6 +12,7 @@ mod keycard;
 mod link;
 mod migrate;
 mod proto;
+mod wiktionary;
 #[cfg(test)]
 mod i18n_check;
 

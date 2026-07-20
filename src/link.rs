@@ -247,12 +247,22 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
 // through irc_tx so the link loop writes it like any services-initiated action. A
 // #channel target is spoken by the assigned bot (privmsg), a user gets a notice.
 fn dispatch_dict(server: &Option<String>, irc_tx: &mpsc::UnboundedSender<NetAction>, speak_as: String, target: String, database: String, label: String, query: String) {
-    let Some(server) = server.clone() else {
-        return tracing::warn!("dict lookup requested but no server configured");
-    };
     let tx = irc_tx.clone();
+    let server = server.clone();
     tokio::spawn(async move {
-        let result = crate::dict::lookup(&server, &database, &query).await;
+        // A `wikt-<lang>` database routes to Wiktionary (rich monolingual
+        // definitions) instead of the DICT server; its blocking HTTP call runs on
+        // the blocking pool so it never stalls the reactor.
+        let result = if let Some(lang) = database.strip_prefix("wikt-") {
+            let (lang, word) = (lang.to_string(), query.clone());
+            tokio::task::spawn_blocking(move || crate::wiktionary::lookup(&lang, &word))
+                .await
+                .unwrap_or_else(|_| "the dictionary is unavailable right now.".to_string())
+        } else if let Some(server) = server {
+            crate::dict::lookup(&server, &database, &query).await
+        } else {
+            return tracing::warn!("dict lookup requested but no server configured");
+        };
         let text = format!("\x02{query}\x02 ({label}): {result}");
         let action = if target.starts_with('#') || target.starts_with('&') {
             NetAction::Privmsg { from: speak_as, to: target, text }

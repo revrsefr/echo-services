@@ -47,7 +47,10 @@ pub fn lookup_for(cmd: &str) -> Option<&'static Lookup> {
 // WordNet. Returns (database, label) or None to fall back.
 pub fn dict_db_for(lang: &str) -> Option<(&'static str, &'static str)> {
     match lang {
-        "fr" => Some(("fd-fra-eng", "français")),
+        // French gets rich monolingual definitions from Wiktionary (the `wikt-`
+        // prefix routes to it in the link layer). The others use FreeDict
+        // bilingual sets, whose native headword still beats English-only WordNet.
+        "fr" => Some(("wikt-fr", "Wiktionnaire")),
         "es" | "es-ar" => Some(("fd-spa-eng", "español")),
         "pt" | "pt-br" => Some(("fd-por-eng", "português")),
         "de" => Some(("fd-deu-eng", "Deutsch")),
@@ -136,7 +139,7 @@ mod tests {
 
     #[test]
     fn dict_follows_the_user_language() {
-        assert_eq!(dict_db_for("fr"), Some(("fd-fra-eng", "français")));
+        assert_eq!(dict_db_for("fr"), Some(("wikt-fr", "Wiktionnaire")));
         assert_eq!(dict_db_for("es"), Some(("fd-spa-eng", "español")));
         assert_eq!(dict_db_for("es-ar"), Some(("fd-spa-eng", "español")));
         assert_eq!(dict_db_for("pt-br"), Some(("fd-por-eng", "português")));

@@ -72,7 +72,7 @@ axum = "0.7"
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 prost = "0.13"
 tokio-stream = "0.1"
-ureq = { version = "2", default-features = false }
+ureq = { version = "2", default-features = false, features = ["tls"] }
 
 [build-dependencies]
 tonic-build = "0.12"
