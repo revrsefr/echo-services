@@ -17,7 +17,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         match args.get(3).and_then(|s| s.parse::<u16>().ok()) {
             Some(n) => match db.set_ttb(chan, n) {
                 Ok(()) if n == 0 => ctx.notice(me, from.uid, t!(ctx, "The bot will only kick (not ban) in \x02{chan}\x02.", chan = chan)),
-                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "The bot will ban a user after \x02{n}\x02 kick(s) in \x02{chan}\x02.", n = n, chan = chan)),
+                Ok(()) => ctx.notice(me, from.uid, echo_api::plural!(ctx, n, one = "The bot will ban a user after \x02{n}\x02 kick in \x02{chan}\x02.", other = "The bot will ban a user after \x02{n}\x02 kicks in \x02{chan}\x02.", n = n, chan = chan)),
                 Err(_) => reg_error(me, from, chan, ctx),
             },
             None => ctx.notice(me, from.uid, "Syntax: KICK <#channel> TTB <number>"),

@@ -45,7 +45,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             };
             if nick == "*" {
                 match db.bot_del_all() {
-                    Ok(n) => ctx.notice(me, from.uid, t!(ctx, "Removed all \x02{n}\x02 bot(s).", n = n)),
+                    Ok(n) => ctx.notice(me, from.uid, echo_api::plural!(ctx, n, one = "Removed all \x02{n}\x02 bot.", other = "Removed all \x02{n}\x02 bots.", n = n)),
                     Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
                 }
                 return;

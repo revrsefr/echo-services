@@ -49,6 +49,6 @@ pub fn handle(me: &str, from: &Sender, chan: Option<&str>, ctx: &mut ServiceCtx,
     if opped == 0 {
         ctx.notice(me, from.uid, t!(ctx, "None of \x02{chan}\x02's trusted regulars are here right now.", chan = chan));
     } else {
-        ctx.notice(me, from.uid, t!(ctx, "Reopped \x02{opped}\x02 trusted regular(s) in \x02{chan}\x02.", opped = opped, chan = chan));
+        ctx.notice(me, from.uid, echo_api::plural!(ctx, opped, one = "Reopped \x02{opped}\x02 trusted regular in \x02{chan}\x02.", other = "Reopped \x02{opped}\x02 trusted regulars in \x02{chan}\x02.", opped = opped, chan = chan));
     }
 }

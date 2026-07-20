@@ -14,5 +14,5 @@ pub fn handle(me: &str, from: &Sender, chan: Option<&str>, ctx: &mut ServiceCtx,
     for (id, score) in scores.iter().take(15) {
         ctx.notice(me, from.uid, t!(ctx, "  \x02{score}\x02  {id}", score = score, id = id));
     }
-    ctx.notice(me, from.uid, t!(ctx, "Top {shown} of {total} scored identit{suffix} for \x02{chan}\x02.", shown = scores.len().min(15), total = scores.len(), suffix = if scores.len() == 1 { "y" } else { "ies" }, chan = chan));
+    ctx.notice(me, from.uid, echo_api::plural!(ctx, scores.len(), one = "Top {shown} of {total} scored identity for \x02{chan}\x02.", other = "Top {shown} of {total} scored identities for \x02{chan}\x02.", shown = scores.len().min(15), total = scores.len(), chan = chan));
 }

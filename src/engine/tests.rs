@@ -3308,7 +3308,7 @@
 
         // Per-channel view.
         let out = ss(&mut e, "#c");
-        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("line(s) seen"))), "channel lines: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("lines seen"))), "channel lines: {out:?}");
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("spammer") && text.contains("3"))), "top talker: {out:?}");
         // Global view (oper) shows the shared counters.
         let out = ss(&mut e, "SERVER");

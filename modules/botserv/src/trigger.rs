@@ -53,7 +53,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             }
         }
         Some("CLEAR") => match db.trigger_clear(chan) {
-            Ok(n) => ctx.notice(me, from.uid, t!(ctx, "Cleared \x02{n}\x02 trigger(s) from \x02{chan}\x02.", n = n, chan = chan)),
+            Ok(n) => ctx.notice(me, from.uid, echo_api::plural!(ctx, n, one = "Cleared \x02{n}\x02 trigger from \x02{chan}\x02.", other = "Cleared \x02{n}\x02 triggers from \x02{chan}\x02.", n = n, chan = chan)),
             Err(_) => reg_error(me, from, chan, ctx),
         },
         None | Some("LIST") => {

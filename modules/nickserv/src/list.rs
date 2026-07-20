@@ -20,5 +20,5 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         ctx.notice(me, from.uid, t!(ctx, "  \x02{name}\x02  registered {when}{flag}", name = a.name, when = human_time(a.ts), flag = flag));
     }
     let more = if matches.len() > MAX_SHOWN { t!(ctx, ", showing the first {max}", max = MAX_SHOWN) } else { String::new() };
-    ctx.notice(me, from.uid, t!(ctx, "End of list — {count} match(es){more}.", count = matches.len(), more = more));
+    ctx.notice(me, from.uid, echo_api::plural!(ctx, matches.len(), one = "End of list — {count} match{more}.", other = "End of list — {count} matches{more}.", count = matches.len(), more = more));
 }

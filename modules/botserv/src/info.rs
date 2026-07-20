@@ -50,6 +50,6 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
     if channels.is_empty() {
         ctx.notice(me, from.uid, "  Not assigned to any channel.");
     } else {
-        ctx.notice(me, from.uid, t!(ctx, "  Serving {count} channel(s): {list}", count = channels.len(), list = channels.join(", ")));
+        ctx.notice(me, from.uid, echo_api::plural!(ctx, channels.len(), one = "  Serving {count} channel: {list}", other = "  Serving {count} channels: {list}", count = channels.len(), list = channels.join(", ")));
     }
 }

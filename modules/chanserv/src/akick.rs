@@ -111,7 +111,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                     ctx.channel_mode(me, chan, &format!("-b {mask}"));
                 }
             }
-            ctx.notice(me, from.uid, t!(ctx, "Cleared \x02{count}\x02 entr{suffix} from \x02{chan}\x02's auto-kick list.", count = masks.len(), suffix = if masks.len() == 1 { "y" } else { "ies" }, chan = chan));
+            ctx.notice(me, from.uid, echo_api::plural!(ctx, masks.len(), one = "Cleared \x02{count}\x02 entry from \x02{chan}\x02's auto-kick list.", other = "Cleared \x02{count}\x02 entries from \x02{chan}\x02's auto-kick list.", count = masks.len(), chan = chan));
         }
         _ => ctx.notice(me, from.uid, "Syntax: AKICK <#channel> ADD <mask> [reason] | DEL <mask> | LIST | CLEAR"),
     }

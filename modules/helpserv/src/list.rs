@@ -20,5 +20,5 @@ pub fn handle(me: &str, from: &Sender, arg: Option<&str>, ctx: &mut ServiceCtx, 
         let short: String = t.message.chars().take(60).collect();
         ctx.notice(me, from.uid, t!(ctx, "\x02#{id}\x02 {requester} — {short}{state}", id = t.id, requester = t.requester, short = short, state = state));
     }
-    ctx.notice(me, from.uid, t!(ctx, "{count} ticket(s). \x02VIEW\x02 <id> for detail.", count = tickets.len()));
+    ctx.notice(me, from.uid, echo_api::plural!(ctx, tickets.len(), one = "{count} ticket. \x02VIEW\x02 <id> for detail.", other = "{count} tickets. \x02VIEW\x02 <id> for detail.", count = tickets.len()));
 }

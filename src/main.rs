@@ -12,6 +12,8 @@ mod keycard;
 mod link;
 mod migrate;
 mod proto;
+#[cfg(test)]
+mod i18n_check;
 
 use anyhow::Result;
 use std::sync::Arc;

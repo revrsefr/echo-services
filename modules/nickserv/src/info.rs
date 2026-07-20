@@ -39,7 +39,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         }
         let ajoin = db.ajoin_list(&acct.name);
         if !ajoin.is_empty() {
-            ctx.notice(me, from.uid, t!(ctx, "  Auto-join  : {count} channel(s) — see \x02AJOIN LIST\x02", count = ajoin.len()));
+            ctx.notice(me, from.uid, echo_api::plural!(ctx, ajoin.len(), one = "  Auto-join  : {count} channel — see \x02AJOIN LIST\x02", other = "  Auto-join  : {count} channels — see \x02AJOIN LIST\x02", count = ajoin.len()));
         }
     }
     // A staff note is for operators' eyes only, never the account's owner.

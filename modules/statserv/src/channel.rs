@@ -10,7 +10,7 @@ pub fn handle(me: &str, from: &Sender, chan: &str, ctx: &mut ServiceCtx, net: &d
         ctx.notice(me, from.uid, t!(ctx, "No activity recorded for \x02{chan}\x02 yet.", chan = chan));
         return;
     };
-    ctx.notice(me, from.uid, t!(ctx, "\x02{chan}\x02 — \x02{lines}\x02 line(s) seen.", chan = chan, lines = lines));
+    ctx.notice(me, from.uid, echo_api::plural!(ctx, lines, one = "\x02{chan}\x02 — \x02{lines}\x02 line seen.", other = "\x02{chan}\x02 — \x02{lines}\x02 lines seen.", chan = chan, lines = lines));
     if top.is_empty() {
         return;
     }

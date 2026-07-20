@@ -520,6 +520,46 @@ macro_rules! t {
     };
 }
 
+/// CLDR cardinal plural category. `one` vs `other` covers every language echo
+/// ships: en/de/es (and es-ar)/pt use `one` only for n==1, while fr and pt-br
+/// count 0 as singular too. A language with richer rules (Slavic `few`/`many`,
+/// Arabic) would need a real rule table here — and, because the catalog is keyed
+/// by the English text, English only offers one/other forms to key off, so such
+/// a language can't gain extra categories without a different catalog shape.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Plural {
+    One,
+    Other,
+}
+
+/// Pick the plural category for `n` under `lang`'s rule.
+pub fn plural_category(lang: &str, n: u64) -> Plural {
+    let is_one = match lang {
+        "fr" | "pt-br" => n == 0 || n == 1,
+        _ => n == 1,
+    };
+    if is_one {
+        Plural::One
+    } else {
+        Plural::Other
+    }
+}
+
+/// Localize a count-dependent reply. Selects the `one` or `other` English
+/// template by the target language's plural rule, then renders it like [`t!`].
+/// Both forms are message ids, so both need a catalog entry in each language.
+/// `plural!(ctx, n, one = "…{n} entry…", other = "…{n} entries…", n = n, …)`.
+#[macro_export]
+macro_rules! plural {
+    ($ctx:expr, $n:expr, one = $one:literal, other = $other:literal $(, $name:ident = $val:expr)* $(,)?) => {{
+        let __key = match $crate::plural_category($ctx.lang(), ($n) as u64) {
+            $crate::Plural::One => $one,
+            $crate::Plural::Other => $other,
+        };
+        $crate::render($ctx.lang(), __key, &[$((stringify!($name), format!("{}", $val))),*])
+    }};
+}
+
 /// The intent sink a service writes to. A service never mutates the network or
 /// the store itself; it pushes normalized actions (via [`ServiceCtx::notice`]
 /// and friends) that the engine drains and applies.
@@ -2885,6 +2925,26 @@ mod help_tests {
         );
         // An untranslated id still falls back to the English source even in fr.
         assert_eq!(render("fr", "not translated", &[]), "not translated");
+    }
+
+    #[test]
+    fn plural_rules_match_cldr() {
+        use Plural::{One, Other};
+        // Most languages: singular only for exactly 1.
+        for lang in ["en", "de", "es", "es-ar", "pt"] {
+            assert_eq!(plural_category(lang, 1), One, "{lang} 1");
+            assert_eq!(plural_category(lang, 0), Other, "{lang} 0");
+            assert_eq!(plural_category(lang, 2), Other, "{lang} 2");
+        }
+        // French and Brazilian Portuguese count 0 as singular.
+        for lang in ["fr", "pt-br"] {
+            assert_eq!(plural_category(lang, 0), One, "{lang} 0");
+            assert_eq!(plural_category(lang, 1), One, "{lang} 1");
+            assert_eq!(plural_category(lang, 2), Other, "{lang} 2");
+        }
+        // Unknown language falls back to the n==1 rule.
+        assert_eq!(plural_category("xx", 1), One);
+        assert_eq!(plural_category("xx", 5), Other);
     }
 
     #[test]

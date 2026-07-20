@@ -19,14 +19,14 @@ pub fn handle_session(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceC
             for (ip, n) in &over {
                 ctx.notice(me, from.uid, t!(ctx, "  \x02{n}\x02 sessions from \x02{ip}\x02", n = n, ip = ip));
             }
-            ctx.notice(me, from.uid, t!(ctx, "End of session list ({count} IP(s)).", count = over.len()));
+            ctx.notice(me, from.uid, echo_api::plural!(ctx, over.len(), one = "End of session list ({count} IP).", other = "End of session list ({count} IPs).", count = over.len()));
         }
         Some("VIEW") => {
             let Some(&ip) = args.get(2) else {
                 ctx.notice(me, from.uid, "Syntax: SESSION VIEW <ip>");
                 return;
             };
-            ctx.notice(me, from.uid, t!(ctx, "\x02{ip}\x02 has \x02{count}\x02 live session(s).", ip = ip, count = net.session_count(ip)));
+            ctx.notice(me, from.uid, echo_api::plural!(ctx, net.session_count(ip), one = "\x02{ip}\x02 has \x02{count}\x02 live session.", other = "\x02{ip}\x02 has \x02{count}\x02 live sessions.", ip = ip, count = net.session_count(ip)));
         }
         _ => ctx.notice(me, from.uid, "Syntax: SESSION LIST <min> | SESSION VIEW <ip>"),
     }

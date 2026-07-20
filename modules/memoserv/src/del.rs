@@ -9,7 +9,7 @@ pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut S
             for i in (0..count).rev() {
                 db.memo_del(account, i);
             }
-            ctx.notice(me, from.uid, t!(ctx, "Deleted all \x02{count}\x02 memo(s).", count = count));
+            ctx.notice(me, from.uid, echo_api::plural!(ctx, count, one = "Deleted all \x02{count}\x02 memo.", other = "Deleted all \x02{count}\x02 memos.", count = count));
         }
         Some(numstr) => {
             let Some(n) = numstr.parse::<usize>().ok().filter(|n| *n >= 1) else {

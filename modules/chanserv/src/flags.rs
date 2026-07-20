@@ -26,7 +26,7 @@ pub fn handle(me: &str, from: &Sender, chan: &str, args: &[&str], ctx: &mut Serv
         for a in &info.access {
             ctx.notice(me, from.uid, t!(ctx, "  \x02{account}\x02: \x02{flags}\x02", account = a.account, flags = Flags::from_level(&a.level).to_letters()));
         }
-        ctx.notice(me, from.uid, t!(ctx, "End of flags ({count} entr{suffix}).", count = info.access.len() + 1, suffix = if info.access.is_empty() { "y" } else { "ies" }));
+        ctx.notice(me, from.uid, echo_api::plural!(ctx, info.access.len() + 1, one = "End of flags ({count} entry).", other = "End of flags ({count} entries).", count = info.access.len() + 1));
         return;
     };
 

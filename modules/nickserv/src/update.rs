@@ -1,5 +1,4 @@
 use echo_api::{Sender, ServiceCtx, Store};
-use echo_api::t;
 
 // UPDATE: re-apply your account's auto-joins and vhost, and re-check for waiting
 // memos, without having to re-identify.
@@ -16,7 +15,7 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &dyn Store) {
     }
     let unread = db.unread_memos(account);
     if unread > 0 {
-        ctx.notice(me, from.uid, t!(ctx, "You have \x02{unread}\x02 new memo(s). Read them with \x02/msg MemoServ READ NEW\x02.", unread = unread));
+        ctx.notice(me, from.uid, echo_api::plural!(ctx, unread, one = "You have \x02{unread}\x02 new memo. Read it with \x02/msg MemoServ READ NEW\x02.", other = "You have \x02{unread}\x02 new memos. Read them with \x02/msg MemoServ READ NEW\x02.", unread = unread));
     }
     ctx.notice(me, from.uid, "Your status has been refreshed.");
 }

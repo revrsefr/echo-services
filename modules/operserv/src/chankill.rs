@@ -34,5 +34,5 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
             banned += 1;
         }
     }
-    ctx.notice(me, from.uid, t!(ctx, "CHANKILL on \x02{chan}\x02: \x02{banned}\x02 host(s) AKILL'd.", chan = chan, banned = banned));
+    ctx.notice(me, from.uid, echo_api::plural!(ctx, banned, one = "CHANKILL on \x02{chan}\x02: \x02{banned}\x02 host AKILL'd.", other = "CHANKILL on \x02{chan}\x02: \x02{banned}\x02 hosts AKILL'd.", chan = chan, banned = banned));
 }

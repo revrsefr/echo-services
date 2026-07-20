@@ -40,7 +40,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             }
         }
         Some("CLEAR") => match db.badword_clear(chan) {
-            Ok(n) => ctx.notice(me, from.uid, t!(ctx, "Cleared \x02{n}\x02 badword pattern(s) from \x02{chan}\x02.", n = n, chan = chan)),
+            Ok(n) => ctx.notice(me, from.uid, echo_api::plural!(ctx, n, one = "Cleared \x02{n}\x02 badword pattern from \x02{chan}\x02.", other = "Cleared \x02{n}\x02 badword patterns from \x02{chan}\x02.", n = n, chan = chan)),
             Err(_) => reg_error(me, from, chan, ctx),
         },
         None | Some("LIST") => {

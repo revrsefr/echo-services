@@ -1,4 +1,4 @@
-use echo_api::{t, Sender, ServiceCtx, Store};
+use echo_api::{Sender, ServiceCtx, Store};
 
 // INFO: a summary of your mailbox (total, unread, capacity).
 pub fn handle(me: &str, from: &Sender, account: &str, ctx: &mut ServiceCtx, db: &mut dyn Store) {
@@ -7,6 +7,6 @@ pub fn handle(me: &str, from: &Sender, account: &str, ctx: &mut ServiceCtx, db: 
     ctx.notice(
         me,
         from.uid,
-        t!(ctx, "You have \x02{total}\x02 memo(s), \x02{unread}\x02 unread, of a maximum \x02{max}\x02.", total = total, unread = unread, max = super::MAX_MEMOS),
+        echo_api::plural!(ctx, total, one = "You have \x02{total}\x02 memo, \x02{unread}\x02 unread, of a maximum \x02{max}\x02.", other = "You have \x02{total}\x02 memos, \x02{unread}\x02 unread, of a maximum \x02{max}\x02.", total = total, unread = unread, max = super::MAX_MEMOS),
     );
 }

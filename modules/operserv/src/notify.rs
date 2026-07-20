@@ -20,7 +20,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         Some("VIEW") => list(me, from, true, args.get(2).copied(), ctx, db),
         Some("CLEAR") => match db.notify_clear() {
             Ok(0) => ctx.notice(me, from.uid, "The notify list is already empty."),
-            Ok(n) => ctx.notice(me, from.uid, t!(ctx, "Cleared \x02{n}\x02 notify watch(es).", n = n)),
+            Ok(n) => ctx.notice(me, from.uid, echo_api::plural!(ctx, n, one = "Cleared \x02{n}\x02 notify watch.", other = "Cleared \x02{n}\x02 notify watches.", n = n)),
             Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
         },
         _ => ctx.notice(me, from.uid, SYNTAX),

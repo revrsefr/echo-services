@@ -47,7 +47,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         match args.get(3).and_then(|s| s.parse::<u16>().ok()) {
             Some(n) => match db.set_votekick(chan, n) {
                 Ok(()) if n == 0 => ctx.notice(me, from.uid, t!(ctx, "\x02!votekick\x02 is now disabled in \x02{chan}\x02.", chan = chan)),
-                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "\x02{n}\x02 vote(s) will now carry a \x02!votekick\x02/\x02!voteban\x02 in \x02{chan}\x02.", n = n, chan = chan)),
+                Ok(()) => ctx.notice(me, from.uid, echo_api::plural!(ctx, n, one = "\x02{n}\x02 vote will now carry a \x02!votekick\x02/\x02!voteban\x02 in \x02{chan}\x02.", other = "\x02{n}\x02 votes will now carry a \x02!votekick\x02/\x02!voteban\x02 in \x02{chan}\x02.", n = n, chan = chan)),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             },
             None => ctx.notice(me, from.uid, "Syntax: SET <#channel> VOTEKICK <number> (0 to disable)"),

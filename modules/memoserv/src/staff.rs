@@ -1,4 +1,4 @@
-use echo_api::{t, NetView, Priv, Sender, ServiceCtx, Store};
+use echo_api::{NetView, Priv, Sender, ServiceCtx, Store};
 
 // STAFF <text>: leave a memo on every operator's account. Admin-only, for
 // notes to the staff team that persist until read. Recipients are the union of
@@ -29,5 +29,5 @@ pub fn handle(me: &str, from: &Sender, account: &str, args: &[&str], ctx: &mut S
             sent += 1;
         }
     }
-    ctx.notice(me, from.uid, t!(ctx, "Memo sent to \x02{sent}\x02 operator(s).", sent = sent));
+    ctx.notice(me, from.uid, echo_api::plural!(ctx, sent, one = "Memo sent to \x02{sent}\x02 operator.", other = "Memo sent to \x02{sent}\x02 operators.", sent = sent));
 }

@@ -16,5 +16,5 @@ pub fn handle(me: &str, from: &Sender, ctx: &mut ServiceCtx, db: &mut dyn Store)
     for n in &names {
         ctx.notice(me, from.uid, t!(ctx, "  \x02{n}\x02", n = n));
     }
-    ctx.notice(me, from.uid, t!(ctx, "End of list ({count} group(s)).", count = names.len()));
+    ctx.notice(me, from.uid, echo_api::plural!(ctx, names.len(), one = "End of list ({count} group).", other = "End of list ({count} groups).", count = names.len()));
 }
