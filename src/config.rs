@@ -414,8 +414,11 @@ pub struct Server {
     #[serde(default)]
     pub service_host: String,
     // User modes the service pseudo-clients (services + bots) are introduced with.
-    // Default "iHkBT": invisible, hideoper, servprotect (unkillable — needs the
-    // services server U-lined), bot, block-CTCP. Set per the ircd's loaded modules.
+    // Default "iHkB": invisible, hideoper, servprotect (unkillable — needs the
+    // services server U-lined), bot. NOT +T (block-CTCP): echo answers CTCP
+    // VERSION/PING/TIME/CLIENTINFO itself (and ignores the rest), so a blanket
+    // ircd block would only stop those introspection replies. Set per the ircd's
+    // loaded modules; add "T" back to have the ircd drop all CTCP instead.
     #[serde(default = "default_service_modes")]
     pub service_modes: String,
     // Oper type the service pseudo-clients are flagged with, so WHOIS shows
@@ -438,7 +441,7 @@ fn default_services_channel() -> String {
 }
 
 fn default_service_modes() -> String {
-    "iHkBT".to_string() // invisible, hideoper, servprotect, bot, block-CTCP (matches the doc above)
+    "iHkB".to_string() // invisible, hideoper, servprotect, bot — CTCP handled by echo, not blocked at the ircd
 }
 
 fn default_service_oper_type() -> String {

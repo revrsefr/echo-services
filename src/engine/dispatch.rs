@@ -1,6 +1,29 @@
 use super::*;
 
 impl Engine {
+    // Answer a CTCP query addressed to a service pseudo-client. Replies to the
+    // standard introspection queries via a CTCP NOTICE (the CTCP convention);
+    // ACTION and anything unrecognised get no reply at all — a services daemon must
+    // not treat `\x01VERSION\x01` as a bad command.
+    fn ctcp_reply(&self, svc_uid: &str, to: &str, text: &str) -> Option<NetAction> {
+        let body = text.trim_matches('\x01');
+        let mut parts = body.splitn(2, ' ');
+        let cmd = parts.next().unwrap_or("").to_ascii_uppercase();
+        let arg = parts.next().unwrap_or("");
+        let response = match cmd.as_str() {
+            "VERSION" => format!("VERSION echo services {}", env!("CARGO_PKG_VERSION")),
+            "PING" => format!("PING {arg}"),
+            "TIME" => format!("TIME {}", echo_api::human_time(self.now_secs())),
+            "CLIENTINFO" => "CLIENTINFO ACTION CLIENTINFO PING TIME VERSION".to_string(),
+            _ => return None, // ACTION and unknown CTCPs: stay silent
+        };
+        Some(NetAction::Notice {
+            from: svc_uid.to_string(),
+            to: to.to_string(),
+            text: format!("\x01{response}\x01"),
+        })
+    }
+
     // Route a PRIVMSG addressed to a service (by uid or nick) into that service,
     // handing it the sender's resolved nick, login state, and the account store.
     pub(crate) fn dispatch(&mut self, from: &str, to: &str, text: &str) -> Vec<NetAction> {
@@ -70,6 +93,21 @@ impl Engine {
                         }
                     }
                 }
+            }
+            // A CTCP query to a service (a PRIVMSG wrapped in \x01) gets a proper
+            // CTCP NOTICE reply for VERSION/PING/TIME/CLIENTINFO, and is otherwise
+            // ignored — never bounced back as an "I don't know the command" notice.
+            if text.starts_with('\x01') {
+                let svc_uid = self.services.iter()
+                    .find(|s| to.eq_ignore_ascii_case(s.uid()) || to.eq_ignore_ascii_case(s.nick()))
+                    .map(|s| s.uid().to_string());
+                let mut out = Vec::new();
+                if let Some(uid) = svc_uid {
+                    if let Some(reply) = self.ctcp_reply(&uid, from, text) {
+                        out.push(reply);
+                    }
+                }
+                return out;
             }
             let mut matched: Option<String> = None;
             {

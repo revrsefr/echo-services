@@ -4017,6 +4017,34 @@
         assert!(os(&mut e, "000AAAAAS", "AKILL LIST").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("No matching"))), "list now empty");
     }
 
+    #[test]
+    fn ctcp_query_to_a_service_replies_or_stays_silent() {
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-ctcp.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let db = Db::open(&path, "42S");
+        let mut e = Engine::new(
+            vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })],
+            db,
+        );
+        e.set_sid("42S".into());
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
+
+        // VERSION → a CTCP NOTICE from the service, never an "unknown command".
+        let ver = ns(&mut e, "\x01VERSION\x01");
+        assert!(ver.iter().any(|a| matches!(a, NetAction::Notice { from, text, .. } if from == "42SAAAAAA" && text.starts_with("\x01VERSION echo") && text.ends_with('\x01'))), "VERSION reply: {ver:?}");
+        assert!(!ver.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("don't know"))), "no unknown-command bounce");
+        // PING echoes the token back verbatim.
+        assert!(ns(&mut e, "\x01PING tok123\x01").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text == "\x01PING tok123\x01")), "PING echo");
+        // ACTION and unrecognised CTCPs get no reply at all.
+        assert!(ns(&mut e, "\x01ACTION waves\x01").iter().all(|a| !matches!(a, NetAction::Notice { .. })), "ACTION silent");
+        assert!(ns(&mut e, "\x01FLOOBLE\x01").iter().all(|a| !matches!(a, NetAction::Notice { .. })), "unknown CTCP silent");
+        // A normal (non-CTCP) unknown command is still answered — the intercept
+        // didn't swallow ordinary routing.
+        assert!(ns(&mut e, "FLOOBLE").iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("don't know"))), "normal unknown command still answered");
+    }
+
     // An account approaching expiry with an email on file is warned once by
     // email, isn't dropped while still in the window, and isn't warned twice.
     #[test]

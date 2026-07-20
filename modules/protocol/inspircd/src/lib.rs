@@ -420,10 +420,10 @@ impl Protocol for InspIrcd {
                 uid = uid, ts = self.ts, nick = nick, host = host, ident = ident, modes = self.service_modes, gecos = gecos
             ))],
             NetAction::Privmsg { from, to, text } => {
-                vec![format!(":{} PRIVMSG {} :{}", from, to, text)]
+                split_body(text).into_iter().map(|chunk| format!(":{} PRIVMSG {} :{}", from, to, chunk)).collect()
             }
             NetAction::Notice { from, to, text } => {
-                vec![format!(":{} NOTICE {} :{}", from, to, text)]
+                split_body(text).into_iter().map(|chunk| format!(":{} NOTICE {} :{}", from, to, chunk)).collect()
             }
             // Standard reply: encapsulate for the target's server to re-emit locally
             // (FAIL/WARN/NOTE aren't s2s-routable). ENCAP * so only the server the
@@ -694,6 +694,49 @@ fn reason(rest: &str) -> String {
     }
 }
 
+// Message-body bytes kept per PRIVMSG/NOTICE line. The whole IRC line is 512
+// bytes incl. CR-LF; leaving ~110 for the ircd-expanded `:nick!user@host CMD
+// target :` prefix keeps even a max-length bot source under the limit, so the
+// ircd never truncates a reply mid-word.
+const MAX_MSG_TEXT: usize = 400;
+
+// Split an over-long message body into `MAX_MSG_TEXT`-byte chunks, breaking on a
+// char boundary (and preferably a space) so no NOTICE/PRIVMSG line is truncated.
+// A CTCP body (contains 0x01) is never split — a split would strand its delimiter.
+fn split_body(text: &str) -> Vec<&str> {
+    if text.len() <= MAX_MSG_TEXT || text.contains('\x01') {
+        return vec![text];
+    }
+    let mut out = Vec::new();
+    let mut rest = text;
+    while rest.len() > MAX_MSG_TEXT {
+        let mut cut = MAX_MSG_TEXT;
+        while cut > 0 && !rest.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        // Prefer to break at the last space in the back half of the window.
+        if let Some(sp) = rest[..cut].rfind(' ') {
+            if sp >= MAX_MSG_TEXT / 2 {
+                cut = sp;
+            }
+        }
+        if cut == 0 {
+            // A single word longer than the window: hard-split at a char boundary.
+            cut = rest.len().min(MAX_MSG_TEXT);
+            while !rest.is_char_boundary(cut) {
+                cut -= 1;
+            }
+        }
+        let (head, tail) = rest.split_at(cut);
+        out.push(head);
+        rest = tail.trim_start_matches(' ');
+    }
+    if !rest.is_empty() {
+        out.push(rest);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -956,6 +999,27 @@ mod tests {
         assert_eq!(lines, vec![":42S SVSPART 0IRAAAAAB #chan :bye".to_string()]);
         let lines = proto().serialize(&NetAction::ForcePart { uid: "0IRAAAAAB".into(), channel: "#chan".into(), reason: String::new() });
         assert_eq!(lines, vec![":42S SVSPART 0IRAAAAAB #chan".to_string()]);
+    }
+
+    #[test]
+    fn long_notice_splits_under_the_line_limit() {
+        let text = "word ".repeat(200).trim().to_string(); // 200 words, ~999 bytes
+        let lines = proto().serialize(&NetAction::Notice { from: "42SAAAAAA".into(), to: "0IRAAAAAB".into(), text });
+        assert!(lines.len() >= 3, "split into multiple lines, got {}", lines.len());
+        let mut words = 0;
+        for l in &lines {
+            assert!(l.len() <= 512, "each line under 512 bytes: {}", l.len());
+            let body = l.split_once(" :").expect("has a trailing param").1;
+            words += body.split_whitespace().count();
+        }
+        assert_eq!(words, 200, "every word preserved across the split");
+    }
+
+    #[test]
+    fn ctcp_body_is_never_split() {
+        let text = format!("\x01{}\x01", "A".repeat(700));
+        let lines = proto().serialize(&NetAction::Notice { from: "42SAAAAAA".into(), to: "0IRAAAAAB".into(), text });
+        assert_eq!(lines.len(), 1, "a CTCP body stays on one line (a split would strand its \\x01)");
     }
 
     // Free-form text with embedded line breaks must not smuggle a second line
