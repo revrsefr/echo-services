@@ -1366,5 +1366,7 @@
  "Unknown AJOIN command \u0002{other}\u0002. Use \u0002ADD\u0002, \u0002ADDALL\u0002, \u0002DEL\u0002 or \u0002LIST\u0002.": "Unbekannter AJOIN-Befehl \u0002{other}\u0002. Nutze \u0002ADD\u0002, \u0002ADDALL\u0002, \u0002DEL\u0002 oder \u0002LIST\u0002.",
  "Or confirm in one click: {link}": "Oder bestätige mit einem Klick: {link}",
  "Confirm now": "Jetzt bestätigen",
- "… and \u0002{more}\u0002 more; showing the first {cap}.": "… und \u0002{more}\u0002 weitere; die ersten {cap} werden angezeigt."
+ "… and \u0002{more}\u0002 more; showing the first {cap}.": "… und \u0002{more}\u0002 weitere; die ersten {cap} werden angezeigt.",
+ "log in and reclaim your nick": "anmelden und deinen Nick zurückholen",
+ "Syntax: \u0002LOGIN <nick> <password>\u0002\nLogs you in to <nick>'s account and moves you onto that nick, freeing any session already holding it.": "Syntax: \u0002LOGIN <Nick> <Passwort>\u0002\nMeldet dich beim Konto von <Nick> an und setzt dich auf diesen Nick, wobei jede Sitzung, die ihn belegt, freigegeben wird."
 }

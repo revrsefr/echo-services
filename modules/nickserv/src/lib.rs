@@ -6,6 +6,7 @@ use echo_api::NetView;
 mod register;
 #[path = "identify.rs"]
 mod identify;
+mod login;
 #[path = "logout.rs"]
 mod logout;
 #[path = "cert.rs"]
@@ -51,6 +52,7 @@ const BLURB: &str = "NickServ looks after your nickname and account: register it
 const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "REGISTER", summary: "register your nick as an account", detail: "Syntax: \x02REGISTER <password> [email]\x02\nRegisters your current nick as an account. If an email is given and confirmation is on, you get a code to \x02CONFIRM\x02." },
     HelpEntry { cmd: "IDENTIFY", summary: "log in to your account", detail: "Syntax: \x02IDENTIFY [account] <password>\x02\nLogs you in. Also \x02ID\x02." },
+    HelpEntry { cmd: "LOGIN", summary: "log in and reclaim your nick", detail: "Syntax: \x02LOGIN <nick> <password>\x02\nLogs you in to <nick>'s account and moves you onto that nick, freeing any session already holding it." },
     HelpEntry { cmd: "LOGOUT", summary: "log out to a guest nick", detail: "Syntax: \x02LOGOUT\x02\nLogs you out and moves you to a guest nick. Also \x02LOGOFF\x02." },
     HelpEntry { cmd: "INFO", summary: "show account information", detail: "Syntax: \x02INFO [account]\x02\nShows account information. The email is shown only to the owner." },
     HelpEntry { cmd: "ALIST", summary: "list channels you have access on", detail: "Syntax: \x02ALIST\x02\nLists the channels you hold access on." },
@@ -112,6 +114,7 @@ impl Service for NickServ {
         match cmd.as_deref() {
             Some("REGISTER") => register::handle(me, from, args, ctx, db),
             Some("IDENTIFY") | Some("ID") => identify::handle(me, from, args, ctx, db),
+            Some("LOGIN") => login::handle(me, from, args, ctx, db),
             Some("LOGOUT") | Some("LOGOFF") => logout::handle(me, &self.guest_nick, &mut self.guest_seq, from, ctx, net, db),
             Some("CERT") => cert::handle(me, from, args, ctx, db),
             Some("INFO") => info::handle(me, from, args, ctx, net, db),

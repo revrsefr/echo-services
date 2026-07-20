@@ -243,6 +243,9 @@ pub enum AuthThen {
     // NickServ IDENTIFY: `uid` logs in, `agent` (NickServ uid) sends the notices,
     // `name` is what the user typed (for lockout/note_auth), `account` is canonical.
     Identify { uid: String, agent: String, name: String, account: String },
+    // NickServ LOGIN: like Identify, but on success also reclaims `nick` — freeing
+    // any ghost holding it and moving the caller onto it.
+    Login { uid: String, agent: String, name: String, account: String, nick: String },
     // SASL: finish the exchange for `client`, sourced from `agent`. `password` is
     // whether this was a password verify (feeds the brute-force throttle) vs a
     // one-time keycard redemption (which must not touch the password lockout).

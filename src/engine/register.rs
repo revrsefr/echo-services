@@ -371,43 +371,13 @@ impl Engine {
     /// AJOIN, vhost, memo notice) stay identical.
     pub fn complete_authenticate(&mut self, ok: bool, then: AuthThen) -> Vec<NetAction> {
         let actions = match then {
-            AuthThen::Identify { uid, agent, name, account } => {
-                self.db.note_auth(&name, ok);
-                let lang = self.lang_for_account(&account);
-                let mut ctx = ServiceCtx { lang: lang.clone(), ..Default::default() };
-                if !ok {
-                    ctx.count("nickserv.identify_fail");
-                    ctx.fail(&agent, &uid, "IDENTIFY", "INVALID_CREDENTIALS", "Invalid password. Please try again.");
-                } else {
-                    ctx.login(&uid, &account);
-                    ctx.count("nickserv.identify");
-                    ctx.notice(&agent, &uid, echo_api::render(&lang, "You're now identified as \x02{account}\x02. Welcome back!", &[("account", account.clone())]));
-                    for entry in self.db.ajoin_list(&account) {
-                        ctx.force_join(&uid, &entry.channel, &entry.key);
-                    }
-                    let now = self.now_secs();
-                    let vhost = self.db.account(&account).and_then(|a| {
-                        a.vhost.as_ref().filter(|v| v.expires.is_none_or(|e| e > now)).map(|v| v.host.clone())
-                    });
-                    if let Some(host) = vhost {
-                        ctx.apply_vhost(&uid, &host);
-                    }
-                    let unread = self.db.unread_memos(&account);
-                    if unread > 0 && self.db.memo_notify_on(&account) {
-                        ctx.notice(&agent, &uid, echo_api::render_plural(&lang, unread as u64, "You have \x02{unread}\x02 new memo. Read it with \x02/msg MemoServ READ NEW\x02.", "You have \x02{unread}\x02 new memos. Read them with \x02/msg MemoServ READ NEW\x02.", &[("unread", unread.to_string())]));
-                    }
+            AuthThen::Identify { uid, agent, name, account } => self.finish_identify(ok, uid, agent, name, account),
+            AuthThen::Login { uid, agent, name, account, nick } => {
+                let mut out = self.finish_identify(ok, uid.clone(), agent, name, account);
+                if ok {
+                    out.extend(self.recover_nick(&uid, &nick));
                 }
-                for key in std::mem::take(&mut ctx.stats) {
-                    self.bump(&key);
-                }
-                let feed = if ok {
-                    self.auth_report(true, Some(&account), "NickServ IDENTIFY", &uid, None)
-                } else {
-                    self.auth_report(false, Some(&name), "NickServ IDENTIFY", &uid, Some("bad password"))
-                };
-                let mut actions = ctx.actions;
-                actions.extend(feed);
-                actions
+                out
             }
             AuthThen::Sasl { agent, client, account, password } => {
                 // Feed the same brute-force throttle IDENTIFY uses (success clears it,
@@ -431,5 +401,62 @@ impl Engine {
         // to use their access despite a successful login.
         self.track_accounts(&actions);
         actions
+    }
+
+    // The login side-effects shared by IDENTIFY and LOGIN: throttle bookkeeping,
+    // the welcome + auto-join + vhost + waiting-memo notice, and the auth-feed line.
+    fn finish_identify(&mut self, ok: bool, uid: String, agent: String, name: String, account: String) -> Vec<NetAction> {
+        self.db.note_auth(&name, ok);
+        let lang = self.lang_for_account(&account);
+        let mut ctx = ServiceCtx { lang: lang.clone(), ..Default::default() };
+        if !ok {
+            ctx.count("nickserv.identify_fail");
+            ctx.fail(&agent, &uid, "IDENTIFY", "INVALID_CREDENTIALS", "Invalid password. Please try again.");
+        } else {
+            ctx.login(&uid, &account);
+            ctx.count("nickserv.identify");
+            ctx.notice(&agent, &uid, echo_api::render(&lang, "You're now identified as \x02{account}\x02. Welcome back!", &[("account", account.clone())]));
+            for entry in self.db.ajoin_list(&account) {
+                ctx.force_join(&uid, &entry.channel, &entry.key);
+            }
+            let now = self.now_secs();
+            let vhost = self.db.account(&account).and_then(|a| {
+                a.vhost.as_ref().filter(|v| v.expires.is_none_or(|e| e > now)).map(|v| v.host.clone())
+            });
+            if let Some(host) = vhost {
+                ctx.apply_vhost(&uid, &host);
+            }
+            let unread = self.db.unread_memos(&account);
+            if unread > 0 && self.db.memo_notify_on(&account) {
+                ctx.notice(&agent, &uid, echo_api::render_plural(&lang, unread as u64, "You have \x02{unread}\x02 new memo. Read it with \x02/msg MemoServ READ NEW\x02.", "You have \x02{unread}\x02 new memos. Read them with \x02/msg MemoServ READ NEW\x02.", &[("unread", unread.to_string())]));
+            }
+        }
+        for key in std::mem::take(&mut ctx.stats) {
+            self.bump(&key);
+        }
+        let feed = if ok {
+            self.auth_report(true, Some(&account), "NickServ IDENTIFY", &uid, None)
+        } else {
+            self.auth_report(false, Some(&name), "NickServ IDENTIFY", &uid, Some("bad password"))
+        };
+        let mut actions = ctx.actions;
+        actions.extend(feed);
+        actions
+    }
+
+    // Reclaim `nick` for `uid` after a LOGIN: rename any other session off it (to a
+    // guest nick), then move the caller onto it.
+    fn recover_nick(&mut self, uid: &str, nick: &str) -> Vec<NetAction> {
+        let mut out = Vec::new();
+        if let Some(ghost) = self.network.uid_by_nick(nick).map(str::to_string) {
+            if ghost != uid {
+                let guest = echo_api::next_guest_nick(&self.guest_nick, &mut self.enforce_seq, &self.network, &self.db);
+                out.push(NetAction::ForceNick { uid: ghost, nick: guest });
+            }
+        }
+        if self.network.nick_of(uid) != Some(nick) {
+            out.push(NetAction::ForceNick { uid: uid.to_string(), nick: nick.to_string() });
+        }
+        out
     }
 }

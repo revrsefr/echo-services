@@ -854,6 +854,20 @@
         assert_eq!(e.network.account_of("000AAAAAB"), Some("foo"), "and is authoritative in echo's own map");
     }
 
+    // NS LOGIN identifies AND reclaims the nick: after the deferred verify succeeds,
+    // any ghost on the target nick is renamed off and the caller is moved onto it.
+    #[test]
+    fn login_recovers_the_nick_after_the_deferred_verify() {
+        let mut e = engine_with("login", "alice", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "Guest7".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        let then = echo_api::AuthThen::Login { uid: "000AAAAAB".into(), agent: "42SAAAAAA".into(), name: "alice".into(), account: "alice".into(), nick: "alice".into() };
+        let out = e.complete_authenticate(true, then);
+        assert_eq!(e.network.account_of("000AAAAAB"), Some("alice"), "caller is identified");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAC" && nick != "alice")), "ghost renamed off the nick: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAB" && nick == "alice")), "caller takes the nick: {out:?}");
+    }
+
     // A suspension that arrives by gossip must end local sessions on that account,
     // just as a local SUSPEND does — the account and its channels stay put.
     #[test]
