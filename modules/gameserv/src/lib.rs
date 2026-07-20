@@ -151,6 +151,13 @@ impl GameServ {
             ctx.notice(me, from.uid, "You cannot challenge yourself.");
             return;
         }
+        // Reclaim pending challenges both of whose parties have since gone offline:
+        // an abandoned offer can never be accepted, so it shouldn't keep holding a
+        // slot against the caps below. Active games are left alone (a player may
+        // reconnect and resume).
+        self.games.retain(|_, g| {
+            g.status != Status::Pending || net.uid_by_nick(&g.nick_a).is_some() || net.uid_by_nick(&g.nick_b).is_some()
+        });
         // Global cap: the per-user cap keys on a churnable identity (a guest's nick),
         // so a single connection could otherwise cycle nicks to grow the games map
         // without bound. Bounding the total makes that impossible regardless.

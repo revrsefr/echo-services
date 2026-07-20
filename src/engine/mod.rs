@@ -825,6 +825,27 @@ impl Engine {
             .unwrap_or_else(|| self.db.default_language())
     }
 
+    // Forget kicker caches for channels that no longer exist (dropped by command
+    // or expired), so a long-running process doesn't accumulate them. Correctness
+    // never relied on this — entries are keyed by (rev, ts) and a re-registered
+    // channel gets a fresh ts, so a stale entry can't false-match; this only
+    // reclaims memory. Runs on the periodic sweep, covering both drop paths.
+    fn prune_kicker_caches(&mut self) {
+        let (dead_bw, dead_tr) = {
+            let db = &self.db;
+            (
+                self.badword_cache.keys().filter(|c| db.channel(c.as_str()).is_none()).cloned().collect::<Vec<_>>(),
+                self.trigger_cache.keys().filter(|c| db.channel(c.as_str()).is_none()).cloned().collect::<Vec<_>>(),
+            )
+        };
+        for c in dead_bw {
+            self.badword_cache.remove(&c);
+        }
+        for c in dead_tr {
+            self.trigger_cache.remove(&c);
+        }
+    }
+
     pub fn expire_sweep(&mut self) {
         let now = self.now_secs();
         // First, warn owners whose account/channel is approaching expiry and for
@@ -881,6 +902,7 @@ impl Engine {
         for action in self.reconcile_bots() {
             self.emit_irc(action);
         }
+        self.prune_kicker_caches();
     }
 
     // The news items of `kind` as server-sourced notices to `uid`, each tagged

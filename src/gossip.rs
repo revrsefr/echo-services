@@ -8,6 +8,10 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use subtle::ConstantTimeEq;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+use rand_core::{OsRng, RngCore};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 // Caps to keep an untrusted (or not-yet-authenticated) peer from exhausting us: a
 // single line can't grow an unbounded buffer, and the handshake can't hang forever.
@@ -34,10 +38,27 @@ async fn read_line_capped<R: AsyncBufRead + Unpin>(reader: &mut R, max: usize) -
     }
 }
 
-// Constant-time equality for the shared secret, so a connecting peer can't learn it
-// byte-by-byte from a timing side channel.
-fn secret_eq(a: &str, b: &str) -> bool {
+// Constant-time string equality (for the handshake proof), so a peer can't learn
+// it byte-by-byte from a timing side channel.
+fn ct_str_eq(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.as_bytes().ct_eq(b.as_bytes()).into()
+}
+
+// A fresh random challenge nonce.
+fn make_nonce() -> String {
+    let mut b = [0u8; 24];
+    OsRng.fill_bytes(&mut b);
+    STANDARD.encode(b)
+}
+
+// Proof of holding the shared secret: HMAC-SHA256(secret, the peer's nonce). The
+// secret itself never crosses the wire — the peer verifies this against the nonce
+// it chose, so an eavesdropper (or a peer with the wrong secret) can't reproduce
+// it and can't replay it on a later connection (fresh nonce each time).
+fn auth_proof(secret: &str, nonce: &str) -> String {
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
+    mac.update(nonce.as_bytes());
+    STANDARD.encode(mac.finalize().into_bytes())
 }
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, Mutex};
@@ -61,7 +82,8 @@ const REDIAL: Duration = Duration::from_secs(5); // reconnect backoff for dialed
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "lowercase")]
 enum Msg {
-    Hello { secret: String, origin: String },
+    Hello { origin: String, nonce: String },
+    Auth { proof: String },
     // A version vector. `reply` asks the peer to answer with its own digest, so a
     // node that dropped a push can pull back exactly what the peer is missing.
     Digest {
@@ -84,9 +106,11 @@ pub async fn run(engine: Shared, cfg: Gossip, peers: Vec<Peer>, origin: String, 
     let acceptor = tls.as_ref().map(|(a, _)| a.clone());
     let connector = tls.as_ref().map(|(_, c)| c.clone());
     if cfg.tls.is_none() {
-        // The handshake exchanges the shared secret before the peer is authenticated,
-        // so without TLS a passive eavesdropper on the link can learn it. Encrypt it.
-        tracing::warn!("gossip has no [gossip.tls] — the shared secret crosses the wire in plaintext; enable TLS for any non-loopback peer");
+        // The secret itself is never sent (auth is challenge-response), but without
+        // TLS the replicated records still cross the wire in cleartext and aren't
+        // integrity-protected at the transport, so an active MITM could tamper with
+        // unsigned entries. Encrypt any non-loopback link.
+        tracing::warn!("gossip has no [gossip.tls] — replicated data crosses the wire unencrypted; enable TLS (and per-origin signing) for any non-loopback peer");
     }
     if let Some(bind) = cfg.bind.clone() {
         tokio::spawn(listen(bind, engine.clone(), cfg.secret.clone(), origin.clone(), outbound.clone(), acceptor));
@@ -193,6 +217,15 @@ fn load_roots(path: &str) -> anyhow::Result<RootCertStore> {
     Ok(roots)
 }
 
+// Read one handshake message, timeout-bounded and size-capped. `None` on EOF,
+// read/parse error, oversized line, or timeout.
+async fn read_handshake<R: AsyncBufRead + Unpin>(reader: &mut R) -> Option<Msg> {
+    match tokio::time::timeout(HANDSHAKE_TIMEOUT, read_line_capped(reader, MAX_GOSSIP_LINE)).await {
+        Ok(Ok(Some(line))) => serde_json::from_str::<Msg>(&line).ok(),
+        _ => None,
+    }
+}
+
 // One peer connection: authenticate, then run anti-entropy until it drops.
 async fn session<S>(stream: S, engine: Shared, secret: String, origin: String, outbound: Outbound) -> anyhow::Result<()>
 where
@@ -211,21 +244,27 @@ where
         }
     });
 
-    // Handshake: send our hello, require a matching secret back.
-    let _ = send(&tx, &Msg::Hello { secret: secret.clone(), origin }).await;
-    let hello = tokio::time::timeout(HANDSHAKE_TIMEOUT, read_line_capped(&mut reader, MAX_GOSSIP_LINE)).await;
-    match hello {
-        Ok(Ok(Some(line))) => match serde_json::from_str::<Msg>(&line) {
-            Ok(Msg::Hello { secret: s, .. }) if secret_eq(&s, &secret) => {}
-            _ => {
-                writer.abort();
-                anyhow::bail!("bad gossip handshake");
-            }
-        },
+    // Handshake: a mutual challenge-response over the shared secret, so the secret
+    // itself never crosses the wire. Each side sends a random nonce, then proves it
+    // holds the secret by returning HMAC(secret, the peer's nonce); each verifies
+    // the peer's proof against the nonce it chose. A wrong secret (or an
+    // eavesdropper) can't produce a valid proof, and a fresh nonce per link stops
+    // replay.
+    let my_nonce = make_nonce();
+    let _ = send(&tx, &Msg::Hello { origin, nonce: my_nonce.clone() }).await;
+    let peer_nonce = match read_handshake(&mut reader).await {
+        Some(Msg::Hello { nonce, .. }) => nonce,
         _ => {
-            // EOF, read error, oversized line, or the handshake timed out.
             writer.abort();
             anyhow::bail!("peer failed to complete the handshake");
+        }
+    };
+    let _ = send(&tx, &Msg::Auth { proof: auth_proof(&secret, &peer_nonce) }).await;
+    match read_handshake(&mut reader).await {
+        Some(Msg::Auth { proof }) if ct_str_eq(&proof, &auth_proof(&secret, &my_nonce)) => {}
+        _ => {
+            writer.abort();
+            anyhow::bail!("bad gossip handshake");
         }
     }
 
