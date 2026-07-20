@@ -114,7 +114,7 @@ impl Service for NickServ {
         match cmd.as_deref() {
             Some("REGISTER") => register::handle(me, from, args, ctx, db),
             Some("IDENTIFY") | Some("ID") => identify::handle(me, from, args, ctx, db),
-            Some("LOGIN") => login::handle(me, from, args, ctx, db),
+            Some("LOGIN") => login::handle(me, &self.guest_nick, &mut self.guest_seq, from, args, ctx, net, db),
             Some("LOGOUT") | Some("LOGOFF") => logout::handle(me, &self.guest_nick, &mut self.guest_seq, from, ctx, net, db),
             Some("CERT") => cert::handle(me, from, args, ctx, db),
             Some("INFO") => info::handle(me, from, args, ctx, net, db),

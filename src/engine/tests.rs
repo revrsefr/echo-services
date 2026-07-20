@@ -868,6 +868,20 @@
         assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAB" && nick == "alice")), "caller takes the nick: {out:?}");
     }
 
+    // LOGIN from a session already identified to that account skips the (wasteful)
+    // re-verify and just reclaims the nick, like RECOVER.
+    #[test]
+    fn login_while_identified_reclaims_without_reverify() {
+        let mut e = engine_with("loginid", "alice", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "Guest1".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.complete_authenticate(true, echo_api::AuthThen::Identify { uid: "000AAAAAB".into(), agent: "42SAAAAAA".into(), name: "alice".into(), account: "alice".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "LOGIN alice sesame".into() });
+        assert!(!out.iter().any(|a| matches!(a, NetAction::DeferAuthenticate { .. })), "no re-verify when already identified: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAC" && nick != "alice")), "ghost freed: {out:?}");
+        assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAB" && nick == "alice")), "caller regains the nick: {out:?}");
+    }
+
     // A suspension that arrives by gossip must end local sessions on that account,
     // just as a local SUSPEND does — the account and its channels stay put.
     #[test]
