@@ -12,7 +12,14 @@
     }
 
     fn engine_with(name: &str, account: &str, password: &str) -> Engine {
-        let path = std::env::temp_dir().join(format!("echo-sasl-{name}.jsonl"));
+        // A globally-unique path per call: tests run in parallel and some share a
+        // `name` (e.g. every scram_exchange caller), so a fixed path would race.
+        let path = {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static SEQ: AtomicU64 = AtomicU64::new(0);
+            let n = SEQ.fetch_add(1, Ordering::Relaxed);
+            std::env::temp_dir().join(format!("echo-sasl-{name}-{}-{n}.jsonl", std::process::id()))
+        };
         let _ = std::fs::remove_file(&path);
         let mut db = Db::open(&path, "test");
         db.scram_iterations = 4096; // keep the debug-build verifier cheap in tests
