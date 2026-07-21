@@ -499,8 +499,30 @@ impl Service for GameServ {
         (BLURB, TOPICS)
     }
 
-    fn on_user_quit(&mut self, uid: &str) {
+    fn on_user_quit(&mut self, uid: &str, net: &dyn NetView, store: &dyn Store) -> Vec<NetAction> {
+        // Tell each still-online opponent of an ACTIVE game that the departing guest
+        // ended it (in the opponent's language), then drop the guest's games.
+        let me = self.uid.clone();
+        let mut out = Vec::new();
+        for g in self.games.values() {
+            if g.status != Status::Active {
+                continue;
+            }
+            let opp = if g.acc_a == uid {
+                &g.nick_b
+            } else if g.acc_b == uid {
+                &g.nick_a
+            } else {
+                continue;
+            };
+            if let Some(ouid) = net.uid_by_nick(opp).map(str::to_string) {
+                let lang = net.account_of(&ouid).and_then(|a| store.language_of(a)).unwrap_or_else(|| store.default_language());
+                let text = echo_api::render(&lang, "Your opponent left. Game \x02#{id}\x02 is over.", &[("id", g.id.to_string())]);
+                out.push(NetAction::Notice { from: me.clone(), to: ouid, text });
+            }
+        }
         self.drop_guest_games(uid);
+        out
     }
 
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, _store: &mut dyn Store) {

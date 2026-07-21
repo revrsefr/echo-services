@@ -736,11 +736,16 @@ impl Engine {
 
     // Forget a user who left the network (QUIT or KILL): drop their membership,
     // any half-finished SASL exchange, and their pending nick-protection timer.
-    fn forget_user(&mut self, uid: &str) {
+    fn forget_user(&mut self, uid: &str) -> Vec<NetAction> {
         // Let services drop state keyed on this uid (e.g. GamesServ guest games)
-        // before the uid can be recycled to a new connection.
-        for svc in self.services.iter_mut() {
-            svc.on_user_quit(uid);
+        // before the uid can be recycled to a new connection; collect any notices
+        // they hand back (e.g. telling an opponent their game just ended).
+        let mut notices = Vec::new();
+        {
+            let Self { services, network, db, .. } = self;
+            for svc in services.iter_mut() {
+                notices.extend(svc.on_user_quit(uid, &*network, &*db));
+            }
         }
         let chans = self.network.channels_of(uid);
         self.network.user_quit(uid);
@@ -751,6 +756,7 @@ impl Engine {
         self.sasl_source.remove(uid); // the captured SASL host/IP dies with the connection too
         self.pending_enforce.retain(|p| p.uid != uid);
         self.forget_chatter_everywhere(uid);
+        notices
     }
 
     // Forget a channel once it's truly gone on the ircd — no members AND no resident
@@ -1607,8 +1613,8 @@ impl Engine {
             NetEvent::Quit { uid, reason } => {
                 // Match before we forget them, so their identity is still resolvable.
                 let what = if reason.is_empty() { "disconnected".to_string() } else { format!("disconnected ({reason})") };
-                let out: Vec<NetAction> = self.notify_line('d', &uid, None, &what).into_iter().collect();
-                self.forget_user(&uid);
+                let mut out: Vec<NetAction> = self.notify_line('d', &uid, None, &what).into_iter().collect();
+                out.extend(self.forget_user(&uid));
                 out
             }
             NetEvent::UserMode { uid, modes } => {
@@ -1641,8 +1647,7 @@ impl Engine {
                     let bots = self.reconcile_bots();
                     return self.finish(out, bots);
                 }
-                self.forget_user(&uid);
-                Vec::new()
+                self.forget_user(&uid)
             }
             NetEvent::ServerLink { sid, parent } => {
                 self.network.server_link(&sid, &parent);
@@ -1653,7 +1658,9 @@ impl Engine {
                 // forget every user behind the departed server and its descendants.
                 for sid in self.network.server_split(&server) {
                     for uid in self.network.uids_on_server(&sid) {
-                        self.forget_user(&uid);
+                        // Drop guest games as usual, but swallow the opponent notices:
+                        // a netsplit is a mass event and must not spray "opponent left".
+                        let _ = self.forget_user(&uid);
                     }
                 }
                 Vec::new()

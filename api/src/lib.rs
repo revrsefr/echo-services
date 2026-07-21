@@ -2465,8 +2465,11 @@ pub trait Service: Send {
     }
     // A user left the network (QUIT / KILL / netsplit). Lets a service drop any
     // per-connection state it keyed on that departing uid before the uid is recycled
-    // to a new connection. Default: nothing to do.
-    fn on_user_quit(&mut self, _uid: &str) {}
+    // to a new connection, and return any notices to emit as a result (e.g. telling
+    // an opponent their game just ended). Default: nothing to do.
+    fn on_user_quit(&mut self, _uid: &str, _net: &dyn NetView, _store: &dyn Store) -> Vec<NetAction> {
+        Vec::new()
+    }
 
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, store: &mut dyn Store);
 }

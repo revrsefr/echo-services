@@ -1372,5 +1372,6 @@
  "Syntax: \u0002LOGIN <nick> <password>\u0002\nLogs you in to <nick>'s account and moves you onto that nick, freeing any session already holding it.": "Sintaxe: \u0002LOGIN <alcunha> <palavra-passe>\u0002\nInicia sessão na conta de <alcunha> e move-o para essa alcunha, libertando qualquer sessão que já a ocupe.",
  "Syntax: \u0002SET <#channel> FOUNDER <account> | DESC <text> | URL [address] | EMAIL [address] | SUCCESSOR <account>|OFF | SIGNKICK|PRIVATE|PEACE|SECUREOPS|SECUREVOICES|RESTRICTED|AUTOOP|KEEPTOPIC|TOPICLOCK {ON|OFF}\u0002\nTransfers the founder or changes a channel setting.": "Sintaxe: \u0002SET <#channel> FOUNDER <account> | DESC <text> | URL [address] | EMAIL [address] | SUCCESSOR <account>|OFF | SIGNKICK|PRIVATE|PEACE|SECUREOPS|SECUREVOICES|RESTRICTED|AUTOOP|KEEPTOPIC|TOPICLOCK {ON|OFF}\u0002\nTransfere o fundador ou altera uma definição do canal.",
  "Your account is pending. Ask an existing member to vouch for you with \u0002/msg NickServ VOUCH {account}\u0002.": "A sua conta está pendente. Peça a um membro existente que o avalize com \u0002/msg NickServ VOUCH {account}\u0002.",
- "You vouched for \u0002{account}\u0002; their account is now active.": "Avalizou \u0002{account}\u0002; a conta está agora ativa."
+ "You vouched for \u0002{account}\u0002; their account is now active.": "Avalizou \u0002{account}\u0002; a conta está agora ativa.",
+ "Your opponent left. Game \u0002#{id}\u0002 is over.": "O teu adversário saiu. O jogo \u0002#{id}\u0002 acabou."
 }

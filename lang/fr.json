@@ -1372,5 +1372,6 @@
  "Syntax: \u0002LOGIN <nick> <password>\u0002\nLogs you in to <nick>'s account and moves you onto that nick, freeing any session already holding it.": "Syntaxe : \u0002LOGIN <pseudo> <mot de passe>\u0002\nVous connecte au compte de <pseudo> et vous place sur ce pseudo, en libérant toute session qui l'occupe déjà.",
  "Syntax: \u0002SET <#channel> FOUNDER <account> | DESC <text> | URL [address] | EMAIL [address] | SUCCESSOR <account>|OFF | SIGNKICK|PRIVATE|PEACE|SECUREOPS|SECUREVOICES|RESTRICTED|AUTOOP|KEEPTOPIC|TOPICLOCK {ON|OFF}\u0002\nTransfers the founder or changes a channel setting.": "Syntaxe : \u0002SET <#channel> FOUNDER <account> | DESC <text> | URL [address] | EMAIL [address] | SUCCESSOR <account>|OFF | SIGNKICK|PRIVATE|PEACE|SECUREOPS|SECUREVOICES|RESTRICTED|AUTOOP|KEEPTOPIC|TOPICLOCK {ON|OFF}\u0002\nTransfère le fondateur ou modifie un réglage du salon.",
  "Your account is pending. Ask an existing member to vouch for you with \u0002/msg NickServ VOUCH {account}\u0002.": "Votre compte est en attente. Demandez à un membre existant de vous parrainer avec \u0002/msg NickServ VOUCH {account}\u0002.",
- "You vouched for \u0002{account}\u0002; their account is now active.": "Vous avez parrainé \u0002{account}\u0002 ; son compte est maintenant actif."
+ "You vouched for \u0002{account}\u0002; their account is now active.": "Vous avez parrainé \u0002{account}\u0002 ; son compte est maintenant actif.",
+ "Your opponent left. Game \u0002#{id}\u0002 is over.": "Ton adversaire est parti. La partie \u0002#{id}\u0002 est terminée."
 }
