@@ -108,11 +108,22 @@ impl GameServ {
     }
 
     // A player's game identity: their account if registered, else their connection
-    // UID (not their nick, which is mutable — keying on it lets a nick-reuser hijack
-    // an abandoned guest game, and lets a nick-cycler evade the per-user game cap).
-    // `nick_a`/`nick_b` hold the display name separately.
+    // UID (not their nick, which is mutable — keying on it lets a nick-cycler evade
+    // the per-user game cap). `nick_a`/`nick_b` hold the display name separately.
+    // A guest's UID is a per-connection handle, so their games are dropped the moment
+    // they disconnect (see `on_user_quit`) — a recycled UID can never inherit one, and
+    // a guest can't resume anyway (they reconnect under a fresh UID).
     fn ident<'a>(from: &'a Sender) -> &'a str {
         from.account.unwrap_or(from.uid)
+    }
+
+    // Drop every game a departing GUEST was in. A guest is keyed by their connection
+    // uid; that uid dies with this QUIT and is recycled to some later connection, so
+    // an abandoned guest game must go now or a stranger could inherit it. Registered
+    // parties are keyed by their (stable) account, never a uid, so their games survive
+    // a disconnect and resume once they re-identify.
+    fn drop_guest_games(&mut self, uid: &str) {
+        self.games.retain(|_, g| g.acc_a != uid && g.acc_b != uid);
     }
 
     // The side an account plays in a game (A = challenger), or None if not a party.
@@ -488,6 +499,10 @@ impl Service for GameServ {
         (BLURB, TOPICS)
     }
 
+    fn on_user_quit(&mut self, uid: &str) {
+        self.drop_guest_games(uid);
+    }
+
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, _store: &mut dyn Store) {
         let me = self.uid.clone();
         match args.first().map(|s| s.to_ascii_uppercase()).as_deref() {
@@ -542,5 +557,19 @@ mod tests {
         assert_eq!(loser.losses, 1);
         // Casual (unranked) game: no delta.
         assert_eq!(read_stats_with_delta(&counters, GameType::Ttt, "Win", Side::A, None).wins, 3);
+    }
+
+    // A guest is keyed by uid; when they disconnect their game must go (so a recycled
+    // uid can't inherit it), while a registered-vs-registered game is untouched.
+    #[test]
+    fn a_departing_guest_drops_only_their_games() {
+        let mut gs = GameServ::new("42G".to_string());
+        // guest (uid 001AAAAAA) vs registered "bob"
+        gs.games.insert(1, Game::new(1, GameType::Ttt, "001AAAAAA".to_string(), false, "bob".to_string(), true, "guest".to_string(), "bob".to_string()));
+        // registered "alice" vs registered "bob"
+        gs.games.insert(2, Game::new(2, GameType::Chess, "alice".to_string(), true, "bob".to_string(), true, "alice".to_string(), "bob".to_string()));
+        gs.drop_guest_games("001AAAAAA");
+        assert!(!gs.games.contains_key(&1), "the departing guest's game is gone");
+        assert!(gs.games.contains_key(&2), "a registered-vs-registered game is untouched");
     }
 }

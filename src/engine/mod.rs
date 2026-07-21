@@ -737,6 +737,11 @@ impl Engine {
     // Forget a user who left the network (QUIT or KILL): drop their membership,
     // any half-finished SASL exchange, and their pending nick-protection timer.
     fn forget_user(&mut self, uid: &str) {
+        // Let services drop state keyed on this uid (e.g. GamesServ guest games)
+        // before the uid can be recycled to a new connection.
+        for svc in self.services.iter_mut() {
+            svc.on_user_quit(uid);
+        }
         let chans = self.network.channels_of(uid);
         self.network.user_quit(uid);
         for c in &chans {
