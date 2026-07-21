@@ -269,9 +269,15 @@ impl Protocol for InspIrcd {
                 match (source.as_deref(), a.first()) {
                     (Some(src), Some(chan)) if !src.starts_with(self.sid.as_str()) && chan.starts_with('#') => {
                         // FTOPIC <chan> <chanTS> <topicTS> [setby] :<topic>. The optional
-                        // setby (index 3) is the author's nick!ident@host; a ':'-prefixed
-                        // token there is the trailing topic, meaning no setby was sent.
-                        let setby = a.get(3).filter(|s| !s.starts_with(':')).map(|s| s.to_string()).unwrap_or_default();
+                        // setby (index 3) is the author's nick!ident@host. Reject a
+                        // ':'-prefixed token (that's the trailing topic — no setby sent)
+                        // AND a digit-leading one: a nick never starts with a digit, so
+                        // that is a bare uid the ircd echoed back from a prior push, not a
+                        // real author, and a uid is meaningless once its owner reconnects.
+                        let setby = a.get(3)
+                            .filter(|s| !s.starts_with(':') && !s.starts_with(|c: char| c.is_ascii_digit()))
+                            .map(|s| s.to_string())
+                            .unwrap_or_default();
                         vec![NetEvent::TopicChange { channel: chan.to_string(), setter: src.to_string(), topic: trailing(rest), setby }]
                     }
                     _ => vec![],
@@ -547,10 +553,10 @@ impl Protocol for InspIrcd {
             // always accepts it; sourced from the given pseudoclient.
             NetAction::Topic { from, channel, topic, setter } => {
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(self.ts);
-                // The setby field must be a nick / nick!ident@host — never a uid. When
-                // we don't know the author, omit it so the ircd credits the source's
-                // nick instead of printing our raw source uid.
-                if setter.is_empty() {
+                // The setby field must be a nick / nick!ident@host — never a uid. Omit it
+                // (the ircd then credits the source's nick) when we have no author, or a
+                // stale uid-form value (a nick never starts with a digit).
+                if setter.is_empty() || setter.starts_with(|c: char| c.is_ascii_digit()) {
                     vec![format!(":{} FTOPIC {} 1 {} :{}", from, channel, now, topic)]
                 } else {
                     vec![format!(":{} FTOPIC {} 1 {} {} :{}", from, channel, now, setter, topic)]
@@ -1099,6 +1105,20 @@ mod tests {
         let head = without[0].split(" :").next().unwrap();
         assert!(head.split(' ').next_back().unwrap().chars().all(|c| c.is_ascii_digit()),
             "unknown author -> no setby token (ends with topicTS), no uid: {without:?}");
+
+        // A stale uid-form setter (the ircd echoing back a prior bad push) is omitted too.
+        let uidform = proto().serialize(&NetAction::Topic { from: "42SAAAAAA".into(), channel: "#c".into(), topic: "hi".into(), setter: "00DB00000".into() });
+        let head = uidform[0].split(" :").next().unwrap();
+        assert!(head.split(' ').next_back().unwrap().chars().all(|c| c.is_ascii_digit()),
+            "uid setter omitted, never emitted: {uidform:?}");
+    }
+
+    // The ircd can echo back a bare uid in the setby slot (a stale value from an
+    // earlier push); we must not trust it as an author.
+    #[test]
+    fn ftopic_rejects_a_uid_in_the_setby_slot() {
+        let ev = proto().parse(":001 FTOPIC #chan 1 2 00DB00000 :hello");
+        assert!(matches!(ev.as_slice(), [NetEvent::TopicChange { setby, .. }] if setby.is_empty()), "uid setby rejected: {ev:?}");
     }
 
     #[test]

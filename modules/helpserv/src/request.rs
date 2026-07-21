@@ -9,7 +9,9 @@ pub fn handle(me: &str, from: &Sender, rest: &[&str], ctx: &mut ServiceCtx, net:
     }
     let requester = from.account.unwrap_or(from.nick);
     // Rate-limit on the real host, not the spoofable nick (see REPORT).
-    let cooldown_key = net.host_of(from.uid).unwrap_or(from.uid);
+    // Rate-limit by host; fall back to the nick, never the uid (a uid is per-connection,
+    // so keying on it would reset the cooldown on every reconnect).
+    let cooldown_key = net.host_of(from.uid).unwrap_or(from.nick);
     match db.help_request(requester, cooldown_key, &message) {
         Some(id) => ctx.notice(me, from.uid, t!(ctx, "Thanks — your request (\x02#{id}\x02) is in the queue. A staff member will be with you.", id = id)),
         None => ctx.notice(me, from.uid, "You just opened a ticket — please wait a moment before opening another."),

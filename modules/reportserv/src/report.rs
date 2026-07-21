@@ -14,7 +14,9 @@ pub fn handle(me: &str, from: &Sender, rest: &[&str], ctx: &mut ServiceCtx, net:
     let reporter = from.account.unwrap_or(from.nick);
     // Rate-limit on the real host, not the (spoofable) nick a flooder could cycle to
     // reset the cooldown. Anonymous reports still work; the host anchors the limit.
-    let cooldown_key = net.host_of(from.uid).unwrap_or(from.uid);
+    // Rate-limit by host; fall back to the nick, never the uid (a uid is per-connection,
+    // so keying on it would reset the cooldown on every reconnect).
+    let cooldown_key = net.host_of(from.uid).unwrap_or(from.nick);
     match db.report_file(reporter, cooldown_key, target, &reason) {
         Some(id) => ctx.notice(me, from.uid, t!(ctx, "Thanks — your report (\x02#{id}\x02) about \x02{target}\x02 has been sent to the staff.", id = id, target = target)),
         None => ctx.notice(me, from.uid, "You just filed a report — please wait a moment before filing another."),
