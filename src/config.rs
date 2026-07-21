@@ -400,6 +400,13 @@ pub struct Uplink {
     pub host: String,
     pub port: u16,
     pub password: String,
+    // Connect to the uplink over TLS, authenticated by pinning the server's SPKI
+    // fingerprint (base64 SHA256 of its SubjectPublicKeyInfo) rather than a CA — the
+    // link cert is typically self-signed. Off by default (plaintext, e.g. loopback).
+    #[serde(default)]
+    pub tls: bool,
+    #[serde(default)]
+    pub spki_fingerprint: String,
 }
 
 #[derive(Debug, Deserialize)]

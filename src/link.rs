@@ -1,14 +1,56 @@
 use std::borrow::Cow;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use anyhow::Result;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
+use tokio_rustls::client::TlsStream;
+use tokio_rustls::rustls::pki_types::ServerName;
+use tokio_rustls::TlsConnector;
 
 use crate::engine::db::Db;
 use crate::engine::Engine;
 use crate::proto::{NetAction, Protocol};
+
+// The uplink socket, plaintext or TLS. Both inner types are Unpin, so projecting
+// the pin is a plain re-pin of the inner stream.
+enum UplinkStream {
+    Plain(TcpStream),
+    Tls(Box<TlsStream<TcpStream>>),
+}
+
+impl AsyncRead for UplinkStream {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            UplinkStream::Plain(s) => Pin::new(s).poll_read(cx, buf),
+            UplinkStream::Tls(s) => Pin::new(s.as_mut()).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for UplinkStream {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            UplinkStream::Plain(s) => Pin::new(s).poll_write(cx, buf),
+            UplinkStream::Tls(s) => Pin::new(s.as_mut()).poll_write(cx, buf),
+        }
+    }
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            UplinkStream::Plain(s) => Pin::new(s).poll_flush(cx),
+            UplinkStream::Tls(s) => Pin::new(s.as_mut()).poll_flush(cx),
+        }
+    }
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            UplinkStream::Plain(s) => Pin::new(s).poll_shutdown(cx),
+            UplinkStream::Tls(s) => Pin::new(s.as_mut()).poll_shutdown(cx),
+        }
+    }
+}
 
 // Cap on one uplink line (well above IRC's 512 + generous room for message tags),
 // so a misbehaving uplink can't grow an unbounded read buffer.
@@ -100,13 +142,19 @@ fn redact(line: &str) -> Cow<'_, str> {
 // The engine is shared with the gossip layer, so it is locked per operation and
 // never held across the registration key-stretching await.
 #[allow(clippy::too_many_arguments)] // the link driver legitimately wires up many collaborators
-pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr: &str, mut irc_rx: mpsc::UnboundedReceiver<NetAction>, irc_tx: mpsc::UnboundedSender<NetAction>, email: Option<crate::config::Email>, keycard: Option<crate::config::Keycard>, dict_server: Option<String>) -> Result<()> {
-    let stream = TcpStream::connect(addr).await?;
+pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr: &str, tls: Option<(TlsConnector, ServerName<'static>)>, mut irc_rx: mpsc::UnboundedReceiver<NetAction>, irc_tx: mpsc::UnboundedSender<NetAction>, email: Option<crate::config::Email>, keycard: Option<crate::config::Keycard>, dict_server: Option<String>) -> Result<()> {
+    let tcp = TcpStream::connect(addr).await?;
     // Disable Nagle: service replies are small multi-line bursts, and without this
     // the last segment of a reply is held ~40ms waiting on a delayed ACK, so a
     // HELP visibly lags before it lands. Every ircd sets this on every socket.
-    stream.set_nodelay(true)?;
-    let (read, mut write) = stream.into_split();
+    tcp.set_nodelay(true)?;
+    // Wrap in TLS (SPKI-pinned) when configured; otherwise stay plaintext.
+    let stream = match tls {
+        Some((connector, name)) => UplinkStream::Tls(Box::new(connector.connect(name, tcp).await?)),
+        None => UplinkStream::Plain(tcp),
+    };
+    let (read, write) = tokio::io::split(stream);
+    let mut write = write;
     let mut reader = BufReader::new(read);
 
     for line in proto.handshake() {

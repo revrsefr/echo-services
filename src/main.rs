@@ -11,6 +11,7 @@ mod health;
 mod jsonrpc;
 mod keycard;
 mod link;
+mod uplink_tls;
 mod migrate;
 mod proto;
 mod version;
@@ -377,13 +378,20 @@ async fn main() -> Result<()> {
     }
 
     let addr = format!("{}:{}", cfg.uplink.host, cfg.uplink.port);
-    tracing::info!(server = %cfg.server.name, %addr, "linking to uplink");
+    let uplink_tls = match uplink_tls::connector(&cfg.uplink) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(%e, "uplink TLS misconfigured");
+            return Err(e);
+        }
+    };
+    tracing::info!(server = %cfg.server.name, %addr, tls = uplink_tls.is_some(), "linking to uplink");
     // Run until the uplink loop ends or the process is asked to stop. Every
     // committed change is already fsync'd, so a clean stop loses nothing; this
     // just lets systemd stop us without waiting out the kill timeout.
     let shutdown_engine = engine.clone();
     tokio::select! {
-        res = link::run(proto, engine, &addr, irc_rx, irc_tx, cfg.email.clone(), cfg.keycard.clone(), cfg.dictserv.as_ref().map(|d| d.server.clone())) => res,
+        res = link::run(proto, engine, &addr, uplink_tls, irc_rx, irc_tx, cfg.email.clone(), cfg.keycard.clone(), cfg.dictserv.as_ref().map(|d| d.server.clone())) => res,
         _ = shutdown_signal() => {
             // Flush stat counters + the incident ring so a clean stop/restart keeps
             // StatServ history and OperServ LOGSEARCH.
