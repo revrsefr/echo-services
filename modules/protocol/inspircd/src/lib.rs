@@ -268,7 +268,11 @@ impl Protocol for InspIrcd {
                 let a: Vec<&str> = tokens.collect();
                 match (source.as_deref(), a.first()) {
                     (Some(src), Some(chan)) if !src.starts_with(self.sid.as_str()) && chan.starts_with('#') => {
-                        vec![NetEvent::TopicChange { channel: chan.to_string(), setter: src.to_string(), topic: trailing(rest) }]
+                        // FTOPIC <chan> <chanTS> <topicTS> [setby] :<topic>. The optional
+                        // setby (index 3) is the author's nick!ident@host; a ':'-prefixed
+                        // token there is the trailing topic, meaning no setby was sent.
+                        let setby = a.get(3).filter(|s| !s.starts_with(':')).map(|s| s.to_string()).unwrap_or_default();
+                        vec![NetEvent::TopicChange { channel: chan.to_string(), setter: src.to_string(), topic: trailing(rest), setby }]
                     }
                     _ => vec![],
                 }
@@ -541,9 +545,16 @@ impl Protocol for InspIrcd {
             }
             // FTOPIC <chan> <chanTS> <topicTS> <setter> :<topic>. TS 1 so the ircd
             // always accepts it; sourced from the given pseudoclient.
-            NetAction::Topic { from, channel, topic } => {
+            NetAction::Topic { from, channel, topic, setter } => {
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(self.ts);
-                vec![format!(":{} FTOPIC {} 1 {} {} :{}", from, channel, now, from, topic)]
+                // The setby field must be a nick / nick!ident@host — never a uid. When
+                // we don't know the author, omit it so the ircd credits the source's
+                // nick instead of printing our raw source uid.
+                if setter.is_empty() {
+                    vec![format!(":{} FTOPIC {} 1 {} :{}", from, channel, now, topic)]
+                } else {
+                    vec![format!(":{} FTOPIC {} 1 {} {} :{}", from, channel, now, setter, topic)]
+                }
             }
             // INVITE <uid> <chan> <chanTS> <expiry>. Expiry 0 = no expiry.
             NetAction::Invite { from, uid, channel } => {
@@ -1076,6 +1087,20 @@ mod tests {
         assert!(matches!(ev.as_slice(), [NetEvent::Privmsg { msgid: None, .. }]));
     }
 
+    // The FTOPIC setby field is a nick / nick!ident@host when known, and omitted
+    // otherwise — never our raw source uid (which is meaningless after a reconnect).
+    #[test]
+    fn topic_setby_is_a_mask_or_omitted_never_a_uid() {
+        let with = proto().serialize(&NetAction::Topic { from: "42SAAAAAA".into(), channel: "#c".into(), topic: "hi".into(), setter: "bob!u@host".into() });
+        let head = with[0].split(" :").next().unwrap();
+        assert!(head.ends_with("bob!u@host"), "known author -> mask in setby: {with:?}");
+
+        let without = proto().serialize(&NetAction::Topic { from: "42SAAAAAA".into(), channel: "#c".into(), topic: "hi".into(), setter: String::new() });
+        let head = without[0].split(" :").next().unwrap();
+        assert!(head.split(' ').next_back().unwrap().chars().all(|c| c.is_ascii_digit()),
+            "unknown author -> no setby token (ends with topicTS), no uid: {without:?}");
+    }
+
     #[test]
     fn serializes_svspart() {
         let lines = proto().serialize(&NetAction::ForcePart { uid: "0IRAAAAAB".into(), channel: "#chan".into(), reason: "bye".into() });
@@ -1197,12 +1222,12 @@ mod tests {
     fn parses_ftopic_and_filters_own() {
         let ev = proto().parse(":0IRAAAAAB FTOPIC #chan 1783845132 1783845140 :Welcome all");
         assert!(
-            matches!(ev.as_slice(), [NetEvent::TopicChange { channel, setter, topic }] if channel == "#chan" && setter == "0IRAAAAAB" && topic == "Welcome all"),
+            matches!(ev.as_slice(), [NetEvent::TopicChange { channel, setter, topic, setby }] if channel == "#chan" && setter == "0IRAAAAAB" && topic == "Welcome all" && setby.is_empty()),
             "{ev:?}"
         );
         // The burst/RESYNC form carries a setby field before the topic.
         let ev = proto().parse(":0IRAAAAAB FTOPIC #chan 1783845132 1783845140 someone!u@h :Hi there");
-        assert!(matches!(ev.as_slice(), [NetEvent::TopicChange { topic, .. }] if topic == "Hi there"), "{ev:?}");
+        assert!(matches!(ev.as_slice(), [NetEvent::TopicChange { topic, setby, .. }] if topic == "Hi there" && setby == "someone!u@h"), "{ev:?}");
         // Our own topic changes are filtered so enforcement can't loop.
         let ev = proto().parse(":42S FTOPIC #chan 1 1 :nope");
         assert!(!ev.iter().any(|e| matches!(e, NetEvent::TopicChange { .. })), "own change filtered: {ev:?}");

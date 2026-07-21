@@ -12,10 +12,10 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
         return;
     }
     let text = if args.len() > 2 { args[2..].join(" ") } else { String::new() };
-    ctx.topic(me, chan, &text);
+    ctx.topic(me, chan, &text, from.nick);
     // Persist it too: the ircd filters our own FTOPIC back out, so without this the
     // stored topic stays stale and KEEPTOPIC/TOPICLOCK restore the old one on
     // recreation/restart. Ignore NoChannel (require_op already proved it exists).
-    let _ = db.set_channel_topic(chan, &text);
+    let _ = db.set_channel_topic(chan, &text, from.nick);
     ctx.notice(me, from.uid, t!(ctx, "Topic for \x02{chan}\x02 updated.", chan = chan));
 }

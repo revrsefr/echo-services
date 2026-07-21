@@ -147,6 +147,7 @@
  "  Email      : {email} (unconfirmed)": "  Email : {email} (non confirmé)",
  "  Filed    : {when}": "  Déposé   : {when}",
  "  Founder    : \u0002{founder}\u0002": "  Fondateur  : \u0002{founder}\u0002",
+ "  Topic by   : \u0002{who}\u0002": "  Défini par : \u0002{who}\u0002",
  "  Founder : \u0002{founder}\u0002": "  Fondateur : \u0002{founder}\u0002",
  "  From    : \u0002{requester}\u0002": "  De       : \u0002{requester}\u0002",
  "  Greet      : {greet}": "  Message d'accueil : {greet}",

@@ -246,7 +246,8 @@ pub fn import_anope(anope_path: &str, out_path: &str, node: &str) -> std::io::Re
             db.migrate_append(Event::ChannelDescSet { channel: name.to_string(), desc: desc.to_string() })?;
         }
         if let Some(topic) = field(ci, "last_topic") {
-            db.migrate_append(Event::ChannelTopicSet { channel: name.to_string(), topic: topic.to_string() })?;
+            let setter = field(ci, "last_topic_setter").unwrap_or("").to_string();
+            db.migrate_append(Event::ChannelTopicSet { channel: name.to_string(), topic: topic.to_string(), setter })?;
         }
         if let Some(bot) = field(ci, "bi") {
             if !SERVICE_NICKS.contains(&bot.to_ascii_lowercase().as_str()) {

@@ -62,7 +62,9 @@ pub enum NetEvent {
     ChannelKey { channel: String, key: Option<String> },
     // A channel's topic changed (FTOPIC), for KEEPTOPIC / TOPICLOCK. `setter` is
     // the source uid; our own changes are filtered out by the protocol layer.
-    TopicChange { channel: String, setter: String, topic: String },
+    // `setter` is the ephemeral source uid (for auth/notify only — never persisted).
+    // `setby` is the ircd's nick!ident@host author mask, the stable value to store.
+    TopicChange { channel: String, setter: String, topic: String, setby: String },
     // A user disconnected (QUIT). `reason` is the quit message (may be empty).
     Quit { uid: String, reason: String },
     // A user was forcibly removed (KILL). Handled like a quit, except a killed
@@ -175,7 +177,10 @@ pub enum NetAction {
     // Kick a user from a channel, sourced from pseudoclient `from`.
     Kick { from: String, channel: String, uid: String, reason: String },
     // Set a channel's topic, sourced from pseudoclient `from`.
-    Topic { from: String, channel: String, topic: String },
+    // `setter` is the name attributed as having set the topic (the FTOPIC "setby"
+    // field); empty falls back to `from`. Lets a KEEPTOPIC restore credit the
+    // original author rather than the service.
+    Topic { from: String, channel: String, topic: String, setter: String },
     // Invite a user to a channel, sourced from pseudoclient `from`.
     Invite { from: String, uid: String, channel: String },
     // Add a network ban (X-line — `kind` is the ircd's line type, e.g. "G" for a
@@ -909,12 +914,14 @@ impl ServiceCtx {
         });
     }
 
-    // Set a channel's topic, sourced from pseudoclient `from`.
-    pub fn topic(&mut self, from: &str, channel: &str, topic: &str) {
+    // Set a channel's topic, sourced from pseudoclient `from`, credited to `setter`
+    // in the FTOPIC "setby" field (empty = credit `from`).
+    pub fn topic(&mut self, from: &str, channel: &str, topic: &str, setter: &str) {
         self.actions.push(NetAction::Topic {
             from: from.to_string(),
             channel: channel.to_string(),
             topic: topic.to_string(),
+            setter: setter.to_string(),
         });
     }
 
@@ -1906,6 +1913,8 @@ pub struct ChannelView {
     pub suspended: bool,
     // Last known topic (for KEEPTOPIC / TOPICLOCK).
     pub topic: String,
+    // Who last set the topic (a nick), shown in INFO; empty if unknown.
+    pub topic_setter: String,
     // BotServ bot assigned to this channel, if any.
     pub assigned_bot: Option<String>,
     // BotServ: whether members' personal greets are shown on join.
@@ -2316,7 +2325,7 @@ pub trait Store {
     fn trigger_del(&mut self, channel: &str, index: usize) -> Result<bool, ChanError>;
     fn trigger_clear(&mut self, channel: &str) -> Result<usize, ChanError>;
     fn triggers(&self, channel: &str) -> Vec<TriggerView>;
-    fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError>;
+    fn set_channel_topic(&mut self, channel: &str, topic: &str, setter: &str) -> Result<(), ChanError>;
     fn suspend_channel(&mut self, channel: &str, by: &str, reason: &str, expires: Option<u64>) -> Result<(), ChanError>;
     fn unsuspend_channel(&mut self, channel: &str) -> Result<bool, ChanError>;
     fn is_channel_suspended(&self, channel: &str) -> bool;

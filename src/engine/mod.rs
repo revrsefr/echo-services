@@ -1412,9 +1412,10 @@ impl Engine {
                 match self.db.channel(&channel) {
                     Some(info) => {
                         let mut out = vec![NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: info.lock_modes() }];
-                        // KEEPTOPIC: restore the remembered topic on a recreated channel.
+                        // KEEPTOPIC: restore the remembered topic on a recreated channel,
+                        // credited to whoever originally set it.
                         if info.settings.keeptopic && !info.topic.is_empty() {
-                            out.push(NetAction::Topic { from, channel, topic: info.topic.clone() });
+                            out.push(NetAction::Topic { from, channel, topic: info.topic.clone(), setter: info.topic_setter.clone() });
                         }
                         out
                     }
@@ -1563,20 +1564,34 @@ impl Engine {
                 self.network.set_channel_key(&channel, key);
                 Vec::new()
             }
-            NetEvent::TopicChange { channel, setter, topic } => {
+            NetEvent::TopicChange { channel, setter, topic, setby } => {
                 let watch = self.notify_line('t', &setter, Some(&channel), &format!("changed the topic of {channel}"));
-                let info = self.db.channel(&channel).map(|c| (c.settings.keeptopic, c.settings.topiclock, c.topic.clone()));
+                // Who set it, as a stable nick!ident@host — NEVER the source uid, which
+                // is recycled to another user the instant this connection drops. Prefer
+                // the ircd's own setby mask; else snapshot the still-connected source.
+                let author = if !setby.is_empty() {
+                    setby
+                } else {
+                    match self.network.nick_of(&setter) {
+                        Some(nick) => match (self.network.ident_of(&setter), self.network.host_of(&setter)) {
+                            (Some(ident), Some(host)) => format!("{nick}!{ident}@{host}"),
+                            _ => nick.to_string(),
+                        },
+                        None => String::new(),
+                    }
+                };
+                let info = self.db.channel(&channel).map(|c| (c.settings.keeptopic, c.settings.topiclock, c.topic.clone(), c.topic_setter.clone()));
                 // The setter may change a locked topic only with op-level access.
                 let authorized = self.network.account_of(&setter).and_then(|a| self.db.channel(&channel).map(|c| c.is_op(a))).unwrap_or(false);
                 let mut out: Vec<NetAction> = match info {
-                    // TOPICLOCK + unauthorised: put the kept topic back.
-                    Some((_, true, stored)) if !authorized => {
+                    // TOPICLOCK + unauthorised: put the kept topic back, keeping its author.
+                    Some((_, true, stored, stored_by)) if !authorized => {
                         let from = self.chan_service.clone().unwrap_or_default();
-                        vec![NetAction::Topic { from, channel, topic: stored }]
+                        vec![NetAction::Topic { from, channel, topic: stored, setter: stored_by }]
                     }
                     // Otherwise remember the new topic if the channel keeps it.
-                    Some((keep, lock, _)) if keep || lock => {
-                        let _ = self.db.set_channel_topic(&channel, &topic);
+                    Some((keep, lock, _, _)) if keep || lock => {
+                        let _ = self.db.set_channel_topic(&channel, &topic, &author);
                         Vec::new()
                     }
                     _ => Vec::new(),

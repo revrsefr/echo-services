@@ -515,8 +515,8 @@ impl Store for Db {
     fn triggers(&self, channel: &str) -> Vec<TriggerView> {
         Db::triggers(self, channel).iter().map(|t| TriggerView { pattern: t.pattern.clone(), response: t.response.clone(), cooldown: t.cooldown }).collect()
     }
-    fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError> {
-        Db::set_channel_topic(self, channel, topic)
+    fn set_channel_topic(&mut self, channel: &str, topic: &str, setter: &str) -> Result<(), ChanError> {
+        Db::set_channel_topic(self, channel, topic, setter)
     }
     fn suspend_channel(&mut self, channel: &str, by: &str, reason: &str, expires: Option<u64>) -> Result<(), ChanError> {
         Db::suspend_channel(self, channel, by, reason, expires)
@@ -661,6 +661,7 @@ fn channel_view(c: &ChannelInfo) -> ChannelView {
         keeptopic: c.settings.keeptopic,
         topiclock: c.settings.topiclock,
         topic: c.topic.clone(),
+        topic_setter: c.topic_setter.clone(),
         suspended: c.suspension.as_ref().is_some_and(|s| s.expires.is_none_or(|e| e > now())),
         assigned_bot: c.assigned_bot.clone(),
         bot_greet: c.settings.bot_greet,

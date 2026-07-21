@@ -193,6 +193,9 @@ impl Service for ChanServ {
                             ctx.notice(me, from.uid, t!(ctx, "  Email      : {email}", email = info.email));
                         }
                         ctx.notice(me, from.uid, t!(ctx, "  Registered : {when}", when = echo_api::human_time(info.ts)));
+                        if !info.topic_setter.is_empty() {
+                            ctx.notice(me, from.uid, t!(ctx, "  Topic by   : \x02{who}\x02", who = info.topic_setter));
+                        }
                         if let Some(s) = db.channel_suspension(chan) {
                             ctx.notice(me, from.uid, t!(ctx, "  Suspended  : by \x02{by}\x02 — {reason}", by = s.by, reason = s.reason));
                         }

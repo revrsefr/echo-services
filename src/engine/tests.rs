@@ -3810,11 +3810,11 @@
         db.register_channel("#c", "boss").unwrap();
         db.set_channel_setting("#c", db::ChanSetting::KeepTopic, true).unwrap();
         db.set_channel_setting("#c", db::ChanSetting::TopicLock, true).unwrap();
-        db.set_channel_topic("#c", "Official topic").unwrap();
+        db.set_channel_topic("#c", "Official topic", "alice").unwrap();
         let mut e = Engine::new(vec![Box::new(ChanServ { uid: "42SAAAAAB".into() })], db);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "rando".into(), host: "h".into() , ip: "0.0.0.0".into() });
         // A user without access changes the topic -> reverted to the stored one.
-        let out = e.handle(NetEvent::TopicChange { channel: "#c".into(), setter: "000AAAAAB".into(), topic: "hacked".into() });
+        let out = e.handle(NetEvent::TopicChange { channel: "#c".into(), setter: "000AAAAAB".into(), topic: "hacked".into(), setby: String::new() });
         assert!(out.iter().any(|a| matches!(a, NetAction::Topic { topic, .. } if topic == "Official topic")), "topiclock reverts: {out:?}");
         // KEEPTOPIC restores the remembered topic on channel (re)creation.
         let out = e.handle(NetEvent::ChannelCreate { channel: "#c".into() });

@@ -15,7 +15,7 @@ impl Db {
         self.log
             .append(Event::ChannelRegistered { name: name.to_string(), founder: founder.to_string(), ts })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), lock_params: Vec::new(), access: Vec::new(), akick: Vec::new(), levels: Vec::new(), successor: None, desc: String::new(), entrymsg: String::new(), url: String::new(), email: String::new(), settings: ChanSettings::default(), topic: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
+        self.channels.insert(k, ChannelInfo { name: name.to_string(), founder: founder.to_string(), ts, lock_on: String::new(), lock_off: String::new(), lock_params: Vec::new(), access: Vec::new(), akick: Vec::new(), levels: Vec::new(), successor: None, desc: String::new(), entrymsg: String::new(), url: String::new(), email: String::new(), settings: ChanSettings::default(), topic: String::new(), topic_setter: String::new(), suspension: None, assigned_bot: None , kickers: KickerSettings::default() , badwords: Vec::new(), badwords_rev: 0 , triggers: Vec::new(), triggers_rev: 0, last_used: ts, noexpire: false, expiry_warned: false, oper_note: None });
         Ok(())
     }
 
@@ -505,16 +505,18 @@ impl Db {
         Ok(())
     }
 
-    /// Remember a channel's topic (KEEPTOPIC / TOPICLOCK).
-    pub fn set_channel_topic(&mut self, channel: &str, topic: &str) -> Result<(), ChanError> {
+    /// Remember a channel's topic and who set it (KEEPTOPIC / TOPICLOCK / INFO).
+    pub fn set_channel_topic(&mut self, channel: &str, topic: &str, setter: &str) -> Result<(), ChanError> {
         let k = key(channel);
         if !self.channels.contains_key(&k) {
             return Err(ChanError::NoChannel);
         }
         self.log
-            .append(Event::ChannelTopicSet { channel: channel.to_string(), topic: topic.to_string() })
+            .append(Event::ChannelTopicSet { channel: channel.to_string(), topic: topic.to_string(), setter: setter.to_string() })
             .map_err(|_| ChanError::Internal)?;
-        self.channels.get_mut(&k).unwrap().topic = topic.to_string();
+        let c = self.channels.get_mut(&k).unwrap();
+        c.topic = topic.to_string();
+        c.topic_setter = setter.to_string();
         Ok(())
     }
 

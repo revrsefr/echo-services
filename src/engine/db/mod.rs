@@ -501,6 +501,10 @@ pub struct ChannelInfo {
     // Last known topic, kept for KEEPTOPIC / TOPICLOCK.
     #[serde(default)]
     pub topic: String,
+    // Nick credited with setting `topic`, restored as the FTOPIC "setby" on
+    // KEEPTOPIC and shown in INFO. Empty if unknown (e.g. pre-upgrade state).
+    #[serde(default)]
+    pub topic_setter: String,
     // Services suspension, if any (channel frozen while set and unexpired).
     #[serde(default)]
     pub suspension: Option<Suspension>,
@@ -1384,7 +1388,7 @@ impl Db {
                 snapshot.push(Event::ChannelSettingsSet { channel: c.name.clone(), settings: c.settings });
             }
             if !c.topic.is_empty() {
-                snapshot.push(Event::ChannelTopicSet { channel: c.name.clone(), topic: c.topic.clone() });
+                snapshot.push(Event::ChannelTopicSet { channel: c.name.clone(), topic: c.topic.clone(), setter: c.topic_setter.clone() });
             }
             if let Some(s) = &c.suspension {
                 snapshot.push(Event::ChannelSuspended { channel: c.name.clone(), by: s.by.clone(), reason: s.reason.clone(), ts: s.ts, expires: s.expires });
