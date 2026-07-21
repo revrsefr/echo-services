@@ -1489,9 +1489,11 @@ impl Engine {
                 // A services bot assigned here is opped on join and is never subject
                 // to secureops/restricted — it's staff, not a member.
                 let is_bot = self.bot_uids.values().any(|b| b == &uid);
+                // A user barred by the deny flag never keeps status (#549).
+                let denied = account.as_deref().is_some_and(|a| self.db.channel(&channel).is_some_and(|c| c.denied(a)));
                 // SECUREOPS: a user who arrives opped (FJOIN prefix) but lacks op-level
                 // access loses it, unless we're about to grant it to them anyway.
-                if op && !has_op_access && !is_bot && self.db.channel(&channel).is_some_and(|c| c.settings.secureops) {
+                if op && !is_bot && (denied || (!has_op_access && self.db.channel(&channel).is_some_and(|c| c.settings.secureops))) {
                     acts.push(NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: format!("-o {uid}") });
                 }
                 // RESTRICTED: only users with access (or opers) may be in the channel.
@@ -1564,8 +1566,13 @@ impl Engine {
                 // to secureops (the Join path exempts it the same way).
                 let is_bot = self.bot_uids.values().any(|b| b == &uid);
                 if op && !is_bot {
+                    let account = self.network.account_of(&uid).map(str::to_string);
                     if let Some(c) = self.db.channel(&channel) {
-                        if c.settings.secureops && !self.network.account_of(&uid).is_some_and(|a| c.is_op(a)) {
+                        // Strip +o for a denied user (always), or under secureops from a
+                        // user without op-level access.
+                        let denied = account.as_deref().is_some_and(|a| c.denied(a));
+                        let secure = c.settings.secureops && !account.as_deref().is_some_and(|a| c.is_op(a));
+                        if denied || secure {
                             let from = self.chan_service.clone().unwrap_or_default();
                             return self.finish(out, vec![NetAction::ChannelMode { from, channel, modes: format!("-o {uid}") }]);
                         }
@@ -1579,8 +1586,13 @@ impl Engine {
                 // access loses it. A services bot is staff, never a member.
                 let is_bot = self.bot_uids.values().any(|b| b == &uid);
                 if voice && !is_bot {
+                    let account = self.network.account_of(&uid).map(str::to_string);
                     if let Some(c) = self.db.channel(&channel) {
-                        if c.settings.securevoices && !self.network.account_of(&uid).is_some_and(|a| c.join_mode(a).is_some()) {
+                        // Strip +v for a denied user (always), or under securevoices from
+                        // a user without voice-level (or higher) access.
+                        let denied = account.as_deref().is_some_and(|a| c.denied(a));
+                        let secure = c.settings.securevoices && !account.as_deref().is_some_and(|a| c.join_mode(a).is_some());
+                        if denied || secure {
                             let from = self.chan_service.clone().unwrap_or_default();
                             return self.finish(out, vec![NetAction::ChannelMode { from, channel, modes: format!("-v {uid}") }]);
                         }

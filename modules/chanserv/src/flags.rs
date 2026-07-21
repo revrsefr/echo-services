@@ -4,7 +4,7 @@ use echo_api::t;
 // FLAGS <#channel> [account [+/-flags]]: the granular access model. With no
 // account, list the access entries and their flags; with an account, show or
 // change its flags. Letters: f full o auto-op O op h auto-halfop v auto-voice
-// t topic i invite a access-list s settings g greet. Viewing needs op access;
+// t topic i invite a access-list s settings g greet d deny-status. Viewing needs op access;
 // changing needs the founder or the \x02a\x02 flag. Every stored level — a tier
 // preset ("op"/"sop"/…) or a raw flag string — resolves through `Flags`.
 pub fn handle(me: &str, from: &Sender, chan: &str, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {

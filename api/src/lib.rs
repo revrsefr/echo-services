@@ -1023,8 +1023,8 @@ pub struct ChanAccessView {
 // via the same primitive, by GroupServ. Each letter grants a capability:
 //   f full/co-founder   o auto-op        O op commands    h auto-halfop
 //   v auto-voice        t topic          i invite         a modify access list
-//   s channel settings  g greet shown
-pub const ACCESS_FLAGS: &str = "foOhvtiasg";
+//   s channel settings  g greet shown    d deny all status (barred from op/voice)
+pub const ACCESS_FLAGS: &str = "foOhvtiasgd";
 
 /// A channel access rank, ordered lowest to highest. The derived `Ord` mirrors
 /// the ircd's prefix ranks (voice < halfop < op < admin < founder), so services
@@ -1122,12 +1122,13 @@ pub enum Flag {
     Access,  // a — manage the access / flags / akick lists
     Set,     // s — change channel settings
     Greet,   // g — greeting shown on join
+    NoStatus, // d — barred from ANY status: no auto op/voice, and services strip it
 }
 
 impl Flag {
     /// Every flag, in canonical (display / ACCESS_FLAGS) order.
-    pub const ALL: [Flag; 10] = [
-        Flag::Founder, Flag::AutoOp, Flag::Op, Flag::Halfop, Flag::Voice, Flag::Topic, Flag::Invite, Flag::Access, Flag::Set, Flag::Greet,
+    pub const ALL: [Flag; 11] = [
+        Flag::Founder, Flag::AutoOp, Flag::Op, Flag::Halfop, Flag::Voice, Flag::Topic, Flag::Invite, Flag::Access, Flag::Set, Flag::Greet, Flag::NoStatus,
     ];
 
     /// The flag's letter. Exhaustive, so a new variant forces choosing its letter.
@@ -1143,6 +1144,7 @@ impl Flag {
             Flag::Access => 'a',
             Flag::Set => 's',
             Flag::Greet => 'g',
+            Flag::NoStatus => 'd',
         }
     }
 
@@ -1181,7 +1183,10 @@ impl Flags {
         let op = autoop || self.has(Flag::Op);
         let access = self.has(Flag::Access);
         // Auto-op plus access-list management is the SOP tier: auto protect + op.
-        let auto = if autoop {
+        // NoStatus (deny) overrides every status flag: the user is granted nothing.
+        let auto = if self.has(Flag::NoStatus) {
+            None
+        } else if autoop {
             if access { Some("+ao") } else { Some("+o") }
         } else if self.has(Flag::Halfop) {
             Some("+h")

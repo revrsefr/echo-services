@@ -686,6 +686,15 @@ impl ChannelInfo {
                 .is_some_and(|a| echo_api::level_caps(&a.level).op)
     }
 
+    /// Whether `account` is barred from any channel status by the NoStatus (deny)
+    /// access flag — services grant them nothing and strip op/voice they're given.
+    pub fn denied(&self, account: &str) -> bool {
+        self.access
+            .iter()
+            .find(|a| a.account.eq_ignore_ascii_case(account))
+            .is_some_and(|a| echo_api::Flags::from_level(&a.level).has(echo_api::Flag::NoStatus))
+    }
+
     /// The auto-kick entry matching a live user (plain host mask or extban), if any.
     pub fn akick_match(&self, target: &echo_api::BanTarget) -> Option<&ChanAkick> {
         self.akick.iter().find(|k| echo_api::akick_matches(&k.mask, target))

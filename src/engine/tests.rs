@@ -5245,6 +5245,31 @@
     }
 
     // Being added to / removed from a channel's access list notifies the affected
+    // The NoStatus (deny) flag bars a user from any channel status: op/voice they
+    // are given is stripped straight back, regardless of secureops/securevoices.
+    #[test]
+    fn deny_flag_strips_op_and_voice() {
+        use echo_chanserv::ChanServ;
+        let path = std::env::temp_dir().join("echo-cs-deny.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        db.register("bob", "hunter2", None).unwrap();
+        db.register_channel("#c", "alice").unwrap();
+        db.access_add("#c", "bob", "d").unwrap();
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let cs = ChanServ { uid: "42SAAAAAB".into() };
+        let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY hunter2".into() });
+        e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#c".into(), op: false });
+        let op = e.handle(NetEvent::ChannelOp { channel: "#c".into(), uid: "000AAAAAC".into(), op: true });
+        assert!(op.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#c" && modes == "-o 000AAAAAC")), "deny strips op: {op:?}");
+        let voice = e.handle(NetEvent::ChannelVoice { channel: "#c".into(), uid: "000AAAAAC".into(), voice: true });
+        assert!(voice.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#c" && modes == "-v 000AAAAAC")), "deny strips voice: {voice:?}");
+    }
+
     // user: a memo while they're offline, a direct notice while they're online.
     #[test]
     fn access_change_notifies_the_affected_user() {
