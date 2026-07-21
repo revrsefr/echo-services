@@ -1202,6 +1202,23 @@ impl Engine {
         self.services.iter().any(|s| s.uid() == uid) || self.bot_uids.values().any(|v| v == uid)
     }
 
+    // Restore a user's host after they deoper: their services vhost if one is
+    // assigned, otherwise the connect-time cloak the oper vhost had replaced (the
+    // ircd doesn't put it back itself). An `ident@host` vhost also sets the ident.
+    fn restore_host_after_deoper(&self, uid: &str) -> Vec<NetAction> {
+        let vhost = self.network.account_of(uid).and_then(|a| self.db.active_vhost(a));
+        let Some(host) = vhost.or_else(|| self.network.host_of(uid).map(str::to_string)) else {
+            return Vec::new();
+        };
+        match host.split_once('@') {
+            Some((ident, h)) => vec![
+                NetAction::SetIdent { uid: uid.to_string(), ident: ident.to_string() },
+                NetAction::SetHost { uid: uid.to_string(), host: h.to_string() },
+            ],
+            None => vec![NetAction::SetHost { uid: uid.to_string(), host }],
+        }
+    }
+
     pub fn startup_actions(&mut self) -> Vec<NetAction> {
         // Fresh link: our pseudo-clients (re)sign on now — remember it for IDLE.
         self.services_signon = self.now_secs();
@@ -1618,7 +1635,13 @@ impl Engine {
                 out
             }
             NetEvent::UserMode { uid, modes } => {
-                self.notify_line('u', &uid, None, &format!("set user mode {modes}")).into_iter().collect()
+                let mut out: Vec<NetAction> = self.notify_line('u', &uid, None, &format!("set user mode {modes}")).into_iter().collect();
+                // On deoper the ircd leaves the oper vhost applied; put back the user's
+                // services vhost, or the connect-time cloak if they have none (#462).
+                if !self.is_own_client(&uid) && mode_removed(&modes, 'o') {
+                    out.extend(self.restore_host_after_deoper(&uid));
+                }
+                out
             }
             NetEvent::OperUp { uid, oper_type } => {
                 let what = if oper_type.is_empty() { "opered up".to_string() } else { format!("opered up as \x02{oper_type}\x02") };
@@ -2100,6 +2123,20 @@ fn audit_summary(event: &db::Event) -> Option<String> {
 
 // Rewrite the source uid of an action from `old` to `new`, where the variant
 // carries a `from`. Used to make fantasy output appear to come from the bot.
+// True if an IRC mode string (e.g. "+i-o") removes `letter`.
+fn mode_removed(modes: &str, letter: char) -> bool {
+    let mut adding = true;
+    for c in modes.chars() {
+        match c {
+            '+' => adding = true,
+            '-' => adding = false,
+            l if l == letter && !adding => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 fn resource_action(a: &mut NetAction, old: &str, new: &str) {
     let from = match a.inner_mut() {
         NetAction::Notice { from, .. }

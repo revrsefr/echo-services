@@ -5293,6 +5293,19 @@
     }
 
     // Logging out reverses a services vhost, restoring the connect-time host (the
+    // When an oper deopers, the ircd leaves the oper vhost in place; echo puts the
+    // connect-time cloak back (or the services vhost, if one is assigned).
+    #[test]
+    fn deoper_restores_the_connect_cloak() {
+        let mut e = engine_with("deop", "alice", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "bob".into(), host: "cloak.example".into(), ip: "0.0.0.0".into() });
+        let out = e.handle(NetEvent::UserMode { uid: "000AAAAAB".into(), modes: "-o".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::SetHost { uid, host } if uid == "000AAAAAB" && host == "cloak.example")), "deoper restores cloak: {out:?}");
+        // Opering up (+o) is not a restore.
+        let out = e.handle(NetEvent::UserMode { uid: "000AAAAAB".into(), modes: "+o".into() });
+        assert!(!out.iter().any(|a| matches!(a, NetAction::SetHost { .. })), "operup does not restore: {out:?}");
+    }
+
     // cloak we were given at UserConnect), not the real host.
     #[test]
     fn logout_restores_the_connect_host_over_a_vhost() {
