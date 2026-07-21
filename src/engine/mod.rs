@@ -1638,7 +1638,7 @@ impl Engine {
                 }
                 Vec::new()
             }
-            NetEvent::Privmsg { from, to, text } => self.dispatch(&from, &to, &text),
+            NetEvent::Privmsg { from, to, text, msgid } => self.dispatch(&from, &to, &text, msgid),
             NetEvent::AccountRequest { reqid, origin, kind, account, p2, p3 } => {
                 self.account_request(reqid, origin, kind, account, p2, p3)
             }
@@ -1688,13 +1688,14 @@ impl Engine {
     // (or `*** text` when there's no command), sourced from the same service.
     fn degrade_standard_replies(&self, actions: &mut [NetAction]) {
         for a in actions.iter_mut() {
-            if let NetAction::StandardReply { from, to, command, text, .. } = a {
+            let slot = a.inner_mut();
+            if let NetAction::StandardReply { from, to, command, text, .. } = slot {
                 let body = if command.is_empty() || command == "*" {
                     format!("*** {text}")
                 } else {
                     format!("*** {command}: {text}")
                 };
-                *a = NetAction::Notice { from: std::mem::take(from), to: std::mem::take(to), text: body };
+                *slot = NetAction::Notice { from: std::mem::take(from), to: std::mem::take(to), text: body };
             }
         }
     }
@@ -2073,7 +2074,7 @@ fn audit_summary(event: &db::Event) -> Option<String> {
 // Rewrite the source uid of an action from `old` to `new`, where the variant
 // carries a `from`. Used to make fantasy output appear to come from the bot.
 fn resource_action(a: &mut NetAction, old: &str, new: &str) {
-    let from = match a {
+    let from = match a.inner_mut() {
         NetAction::Notice { from, .. }
         | NetAction::Privmsg { from, .. }
         | NetAction::ChannelMode { from, .. }

@@ -19,7 +19,10 @@ pub enum NetEvent {
     // idle half of a routed WHOIS (`WHOIS x x` / mIRC's double-click). Must be
     // answered or that WHOIS produces no output at all.
     Idle { requester: String, target: String },
-    Privmsg { from: String, to: String, text: String },
+    // `msgid` is the uplink's IRCv3 message-id tag on the incoming line, if any —
+    // threaded back onto our replies as `+draft/reply` so a client can group them
+    // under the command that triggered them.
+    Privmsg { from: String, to: String, text: String, msgid: Option<String> },
     UserConnect { uid: String, nick: String, host: String, ip: String },
     // The rest of a user's UID that UserConnect omits — ident, real host, and
     // real name (gecos). The ircd sends them in the same UID line; extban
@@ -132,6 +135,10 @@ pub enum NetAction {
     IntroduceUser { uid: String, nick: String, ident: String, host: String, gecos: String },
     Privmsg { from: String, to: String, text: String },
     Notice { from: String, to: String, text: String },
+    // Wrap another action with IRCv3 client-only message tags (keys begin with
+    // `+`, e.g. `+draft/reply`, `+draft/channel-context`). The serializer prepends
+    // them to each emitted line, or drops them if the uplink can't relay client tags.
+    Tagged { tags: Vec<(String, String)>, inner: Box<NetAction> },
     // An IRCv3 standard reply (FAIL/WARN/NOTE) from a service to a client. Not
     // routable over s2s directly, so it's encapsulated for the target's server
     // (m_services_stdrpl) to re-emit locally, cap-gated. `command`/`from` may be
@@ -591,6 +598,18 @@ macro_rules! plural {
     };
 }
 
+impl NetAction {
+    // The action inside a [`NetAction::Tagged`] wrapper, or this action itself.
+    // Lets an engine transform that rewrites a Notice/Privmsg/StandardReply reach
+    // the real action through any `+draft/…` reply tag it carries.
+    pub fn inner_mut(&mut self) -> &mut NetAction {
+        match self {
+            NetAction::Tagged { inner, .. } => inner,
+            other => other,
+        }
+    }
+}
+
 /// The intent sink a service writes to. A service never mutates the network or
 /// the store itself; it pushes normalized actions (via [`ServiceCtx::notice`]
 /// and friends) that the engine drains and applies.
@@ -614,6 +633,11 @@ pub struct ServiceCtx {
     // preference, else the network default). Set by the engine before dispatch;
     // empty means English. Read via [`ServiceCtx::lang`] / the `t!` macro.
     pub lang: String,
+    // The uid that sent the command being handled, and the IRCv3 msgid of that
+    // line (if the uplink tagged it). A reply going back to `sender_uid` is
+    // threaded with `+draft/reply=<reply_to>`; replies to anyone else are not.
+    pub sender_uid: String,
+    pub reply_to: Option<String>,
 }
 
 // A login-attempt outcome a module hands back for the auth audit feed.
@@ -642,7 +666,32 @@ impl ServiceCtx {
         // unchanged). Interpolated messages must use the `t!` macro so their template
         // — not the already-filled-in text — is the lookup key.
         let text = render(self.lang(), &text.into(), &[]);
-        self.actions.push(NetAction::Notice { from: from.to_string(), to: to.to_string(), text });
+        let inner = NetAction::Notice { from: from.to_string(), to: to.to_string(), text };
+        self.push_tagged(inner, to, Vec::new());
+    }
+
+    // Like [`notice`], but with extra IRCv3 client tags attached (e.g.
+    // `+draft/channel-context=#chan`). The reply-thread tag, if any, is merged in.
+    pub fn notice_tagged(&mut self, from: &str, to: &str, text: impl Into<String>, tags: Vec<(String, String)>) {
+        let text = render(self.lang(), &text.into(), &[]);
+        let inner = NetAction::Notice { from: from.to_string(), to: to.to_string(), text };
+        self.push_tagged(inner, to, tags);
+    }
+
+    // Queue an action, wrapping it in [`NetAction::Tagged`] when there are tags to
+    // carry. A reply to the command's own sender also gets `+draft/reply` so the
+    // client can thread it under the triggering line.
+    fn push_tagged(&mut self, inner: NetAction, to: &str, mut tags: Vec<(String, String)>) {
+        if to == self.sender_uid {
+            if let Some(id) = &self.reply_to {
+                tags.push(("+draft/reply".to_string(), id.clone()));
+            }
+        }
+        self.actions.push(if tags.is_empty() {
+            inner
+        } else {
+            NetAction::Tagged { tags, inner: Box::new(inner) }
+        });
     }
 
     // IRCv3 standard replies from a service (`from` uid) to a client (`to` uid).
@@ -664,14 +713,15 @@ impl ServiceCtx {
 
     fn standard_reply(&mut self, kind: ReplyKind, from: &str, to: &str, command: &str, code: &str, text: impl Into<String>) {
         let text = render(self.lang(), &text.into(), &[]); // auto-localize static replies (see `notice`)
-        self.actions.push(NetAction::StandardReply {
+        let inner = NetAction::StandardReply {
             kind,
             from: from.to_string(),
             to: to.to_string(),
             command: command.to_string(),
             code: code.to_string(),
             text,
-        });
+        };
+        self.push_tagged(inner, to, Vec::new());
     }
 
     // Record a stat counter bump (namespaced, e.g. "chanserv.register"). Folded
@@ -2499,8 +2549,14 @@ pub fn notify_or_memo(ctx: &mut ServiceCtx, net: &dyn NetView, store: &mut dyn S
     if online.is_empty() {
         let _ = store.memo_send(target, by, &text, false);
     } else {
+        // Tag the notice with the channel it's about (`+draft/channel-context`) so a
+        // client can file this "your access changed" line under that channel.
+        let tags: Vec<(String, String)> = args.iter()
+            .find(|(k, _)| *k == "chan")
+            .map(|(_, chan)| vec![("+draft/channel-context".to_string(), chan.clone())])
+            .unwrap_or_default();
         for uid in online {
-            ctx.notice(service, &uid, text.clone());
+            ctx.notice_tagged(service, &uid, text.clone(), tags.clone());
         }
     }
 }

@@ -319,7 +319,7 @@
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
         let fp = "aabbccddeeff00112233445566778899";
 
-        let out = e.handle(NetEvent::Privmsg {
+        let out = e.handle(NetEvent::Privmsg { msgid: None,
             from: "000AAAAAB".into(),
             to: "42SAAAAAA".into(),
             text: format!("CERT ADD sesame {fp}"),
@@ -337,7 +337,7 @@
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
         let fp = "aabbccddeeff00112233445566778899";
 
-        let bad = e.handle(NetEvent::Privmsg {
+        let bad = e.handle(NetEvent::Privmsg { msgid: None,
             from: "000AAAAAB".into(),
             to: "42SAAAAAA".into(),
             text: format!("CERT ADD wrongpw {fp}"),
@@ -355,9 +355,9 @@
     fn cert_works_for_identified_user_without_password() {
         let mut e = engine_with("certid", "foo", "sesame");
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         let fp = "aabbccddeeff00112233445566778899";
-        let cert = |e: &mut Engine, t: String| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t });
+        let cert = |e: &mut Engine, t: String| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t });
 
         let add = cert(&mut e, format!("CERT ADD {fp}"));
         assert!(add.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Added"))), "add without password: {add:?}");
@@ -375,7 +375,7 @@
         let connect = |e: &mut Engine| {
             e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "h".into(), ip: "0.0.0.0".into() });
         };
-        let identify_unregistered = |e: &mut Engine| e.handle(NetEvent::Privmsg {
+        let identify_unregistered = |e: &mut Engine| e.handle(NetEvent::Privmsg { msgid: None,
             from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY ghost pw".into(),
         });
 
@@ -404,14 +404,14 @@
         let mut e = engine_with("nslogout", "foo", "sesame");
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
 
-        let login = e.handle(NetEvent::Privmsg {
+        let login = e.handle(NetEvent::Privmsg { msgid: None,
             from: "000AAAAAB".into(),
             to: "42SAAAAAA".into(),
             text: "IDENTIFY sesame".into(),
         });
         assert!(login.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "foo")), "{login:?}");
 
-        let out = e.handle(NetEvent::Privmsg {
+        let out = e.handle(NetEvent::Privmsg { msgid: None,
             from: "000AAAAAB".into(),
             to: "42SAAAAAA".into(),
             text: "LOGOUT".into(),
@@ -422,7 +422,7 @@
     }
 
     fn logout(e: &mut Engine, uid: &str) -> Vec<NetAction> {
-        e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "LOGOUT".into() })
+        e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: "LOGOUT".into() })
     }
 
     // SET LANGUAGE stores the preference and switches replies to that language:
@@ -449,8 +449,8 @@
         db.register("bob", "password1", None).unwrap();
         let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "bob".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
-        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
 
         let out = ns(&mut e, "SET LANGUAGE fr");
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Votre langue est maintenant"))), "confirmation is French: {out:?}");
@@ -467,7 +467,7 @@
     fn logout_skips_an_occupied_guest_nick() {
         let mut e = engine_with("guestskip", "foo", "sesame");
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         // Someone already holds Guest12345 (the first nick the counter would pick).
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "Guest12345".into(), host: "h".into() , ip: "0.0.0.0".into() });
         let out = logout(&mut e, "000AAAAAB");
@@ -493,7 +493,7 @@
     fn logout_twice_renames_only_once() {
         let mut e = engine_with("twice", "foo", "sesame");
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 
         let first = logout(&mut e, "000AAAAAB");
         assert!(first.iter().any(|a| matches!(a, NetAction::ForceNick { .. })), "first logout renames: {first:?}");
@@ -523,7 +523,7 @@
     fn identify_twice_does_not_relogin() {
         let mut e = engine_with("reident", "foo", "sesame");
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
-        let ident = |e: &mut Engine| e.handle(NetEvent::Privmsg {
+        let ident = |e: &mut Engine| e.handle(NetEvent::Privmsg { msgid: None,
             from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into(),
         });
 
@@ -560,7 +560,7 @@
         let mut e = engine_with("renameident", "realnick", "sesame");
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "Guest99999".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::NickChange { uid: "000AAAAAB".into(), nick: "realnick".into() });
-        let out = e.handle(NetEvent::Privmsg {
+        let out = e.handle(NetEvent::Privmsg { msgid: None,
             from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into(),
         });
         assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "realnick")), "must log into the current nick's account: {out:?}");
@@ -590,10 +590,10 @@
         opers.insert("alice".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         e.db.register_channel("#hers", "alice").unwrap();
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "BOT ADD Bendy bot serv.host Helper".into() });
-        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "ASSIGN #hers Bendy".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "BOT ADD Bendy bot serv.host Helper".into() });
+        let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "ASSIGN #hers Bendy".into() });
         assert!(out.iter().any(|a| matches!(a, NetAction::ServiceJoin { channel, .. } if channel == "#hers")), "bot joins the channel");
 
         // alice is dropped on another node; the drop arrives by gossip and, being a
@@ -634,9 +634,9 @@
         opers.insert("alice".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "BOT ADD Bendy bot serv.host Helper".into() });
-        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "ASSIGN #room Bendy".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "BOT ADD Bendy bot serv.host Helper".into() });
+        let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "ASSIGN #room Bendy".into() });
         let botuid = out.iter().find_map(|a| match a {
             NetAction::ServiceJoin { uid, channel, .. } if channel == "#room" => Some(uid.clone()),
             _ => None,
@@ -678,10 +678,10 @@
         opers.insert("alice".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAA".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        let assign = e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAD".into(), text: "BOT ADD Bendy bot serv.host Helper".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let assign = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAA".into(), to: "42SAAAAAD".into(), text: "BOT ADD Bendy bot serv.host Helper".into() });
         let _ = assign;
-        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAD".into(), text: "ASSIGN #room Bendy".into() });
+        let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAA".into(), to: "42SAAAAAD".into(), text: "ASSIGN #room Bendy".into() });
         let botuid = out.iter().find_map(|a| match a {
             NetAction::ServiceJoin { uid, channel, .. } if channel == "#room" => Some(uid.clone()),
             _ => None,
@@ -689,10 +689,10 @@
 
         // bob speaks in the channel but never joins it (online, not a member).
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "#room".into(), text: "bye bye friends".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "#room".into(), text: "bye bye friends".into() });
 
         // Online elsewhere but not in #room -> report his last message, NOT "here".
-        let away = e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "#room".into(), text: "!seen bob".into() });
+        let away = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAA".into(), to: "#room".into(), text: "!seen bob".into() });
         assert!(
             away.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text }
                 if from == &botuid && to == "#room" && text.contains("bye bye friends") && !text.contains("here right now"))),
@@ -701,7 +701,7 @@
 
         // Now bob is actually in the channel -> "here right now".
         e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: false });
-        let here = e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "#room".into(), text: "!seen bob".into() });
+        let here = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAA".into(), to: "#room".into(), text: "!seen bob".into() });
         assert!(
             here.iter().any(|a| matches!(a, NetAction::Privmsg { from, to, text }
                 if from == &botuid && to == "#room" && text.contains("here right now"))),
@@ -717,8 +717,8 @@
         e.db.register("bob", "hunter2", None).unwrap();
         e.handle(NetEvent::UserConnect { uid: "0IRAAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "0XYAAAAAB".into(), nick: "bob".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "0IRAAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        e.handle(NetEvent::Privmsg { from: "0XYAAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY hunter2".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "0IRAAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "0XYAAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY hunter2".into() });
         assert_eq!(e.network.account_of("0IRAAAAAB"), Some("alice"));
         assert_eq!(e.network.account_of("0XYAAAAAB"), Some("bob"));
 
@@ -741,9 +741,9 @@
         e.handle(NetEvent::UserConnect { uid: "0HBAAAAAA".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "0LFAAAAAA".into(), nick: "bob".into(), host: "h".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "0OKAAAAAA".into(), nick: "carol".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "0HBAAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        e.handle(NetEvent::Privmsg { from: "0LFAAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY hunter2".into() });
-        e.handle(NetEvent::Privmsg { from: "0OKAAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "0HBAAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "0LFAAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY hunter2".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "0OKAAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
 
         // The hub splits — it and everything behind it are gone.
         e.handle(NetEvent::ServerSplit { server: "0HB".into() });
@@ -789,16 +789,16 @@
         opers.insert("bob".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 
         // Root: hands off the reload, addressed back to the requesting oper.
-        let a = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: "REHASH".into() });
+        let a = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: "REHASH".into() });
         assert!(a.iter().any(|x| matches!(x, NetAction::Rehash { requester, agent } if requester == "000AAAAAB" && agent == "42SAAAAAH")), "{a:?}");
 
         // An administrator (not root): denied, no reload handed off.
-        let b = e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAH".into(), text: "REHASH".into() });
+        let b = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAC".into(), to: "42SAAAAAH".into(), text: "REHASH".into() });
         assert!(!b.iter().any(|x| matches!(x, NetAction::Rehash { .. })), "a non-root oper must not rehash: {b:?}");
         assert!(b.iter().any(|x| matches!(x, NetAction::Notice { text, .. } if text.contains("root"))), "{b:?}");
     }
@@ -883,7 +883,7 @@
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "Guest1".into(), host: "h".into(), ip: "0.0.0.0".into() });
         e.complete_authenticate(true, echo_api::AuthThen::Identify { uid: "000AAAAAB".into(), agent: "42SAAAAAA".into(), name: "alice".into(), account: "alice".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "LOGIN alice sesame".into() });
+        let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "LOGIN alice sesame".into() });
         assert!(!out.iter().any(|a| matches!(a, NetAction::DeferAuthenticate { .. })), "no re-verify when already identified: {out:?}");
         assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAC" && nick != "alice")), "ghost freed: {out:?}");
         assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAB" && nick == "alice")), "caller regains the nick: {out:?}");
@@ -902,7 +902,7 @@
         let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
         e.set_sid("42S".into());
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         assert_eq!(e.network.account_of("000AAAAAB"), Some("alice"), "logged in first");
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -974,7 +974,7 @@
         e.set_irc_out(tx);
         // A local user logs into alice and registers a channel as founder.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         assert_eq!(e.network.account_of("000AAAAAB"), Some("alice"), "logged in before the conflict");
         e.db.register_channel("#hers", "alice").unwrap();
 
@@ -1023,11 +1023,11 @@
         let cs = ChanServ { uid: "42SAAAAAB".into() };
         let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
         let to_ns = |e: &mut Engine, text: &str| {
-            e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() })
+            e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() })
         };
         let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 
         let info = to_ns(&mut e, "INFO");
         assert!(notice(&info, "Information for \x02alice\x02"));
@@ -1086,7 +1086,7 @@
         db.register("bob", "hunter2", None).unwrap();
         let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
         let mut e = Engine::new(vec![Box::new(ns)], db);
-        let send = |e: &mut Engine, uid: &str, text: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: text.into() });
+        let send = |e: &mut Engine, uid: &str, text: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: text.into() });
         let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
         e.handle(NetEvent::UserConnect { uid: "000AAAAAA".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
         send(&mut e, "000AAAAAA", "IDENTIFY sesame");
@@ -1114,8 +1114,8 @@
     fn nickserv_set_password_and_email() {
         let mut e = engine_with("nsset", "alice", "sesame");
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        let to_ns = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let to_ns = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() });
         let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
 
         assert!(notice(&to_ns(&mut e, "SET EMAIL alice@example.org"), "updated"));
@@ -1141,8 +1141,8 @@
         let mut e = engine_with("nsdrop", "alice", "sesame");
         e.db.register_channel("#a", "alice").unwrap();
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        let to_ns = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let to_ns = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() });
         let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
 
         assert!(notice(&to_ns(&mut e, "DROP wrongpass"), "Invalid password"));
@@ -1161,7 +1161,7 @@
     #[test]
     fn nickserv_grouped_nicks() {
         let mut e = engine_with("nsgroup", "alice", "sesame");
-        let to_ns = |e: &mut Engine, uid: &str, text: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: text.into() });
+        let to_ns = |e: &mut Engine, uid: &str, text: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: text.into() });
         let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
         // A user on a different nick groups it to alice by password.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "ali".into(), host: "h".into() , ip: "0.0.0.0".into() });
@@ -1184,7 +1184,7 @@
         e.db.set_email_enabled(true);
         e.db.set_email("alice", Some("alice@example.org".into())).unwrap();
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "someone".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        let to_ns = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() });
+        let to_ns = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() });
 
         // Request: a code is emailed to the address on file.
         let out = to_ns(&mut e, "RESETPASS alice");
@@ -1218,7 +1218,7 @@
         e.db.set_email_enabled(true);
         e.db.set_email("alice", Some("alice@example.org".into())).unwrap();
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "someone".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        let to_ns = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() });
+        let to_ns = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: text.into() });
 
         assert!(to_ns(&mut e, "RESETPASS alice").iter().any(|a| matches!(a, NetAction::SendEmail { .. })), "first request emails a code");
         let out = to_ns(&mut e, "RESETPASS alice");
@@ -1239,7 +1239,7 @@
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "newbie".into(), host: "h".into() , ip: "0.0.0.0".into() });
 
         // REGISTER with an email defers; complete it as the link layer would.
-        let reg = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "REGISTER correcthorse newbie@example.org".into() });
+        let reg = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "REGISTER correcthorse newbie@example.org".into() });
         let (account, password, email, reply) = reg.iter().find_map(|a| match a {
             NetAction::DeferRegister { account, password, email, reply } => Some((account.clone(), password.clone(), email.clone(), reply.clone())),
             _ => None,
@@ -1253,7 +1253,7 @@
         let code = body.split("CONFIRM ").nth(1).unwrap().split_whitespace().next().unwrap().to_string();
 
         // CONFIRM verifies (the user was auto-logged-in by register).
-        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: format!("CONFIRM {code}") });
+        let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: format!("CONFIRM {code}") });
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("now confirmed"))), "{out:?}");
         assert!(e.db.is_verified("newbie"), "confirmed after CONFIRM");
     }
@@ -1336,8 +1336,8 @@
 
         // Owner identifies (holding the nick) and turns protection off.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAA".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "SET KILL OFF".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "SET KILL OFF".into() });
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("off"))), "KILL OFF confirmed: {out:?}");
         assert!(!e.db.account_wants_protect("alice"), "protection preference stored off");
         e.handle(NetEvent::Quit { uid: "000AAAAAA".into(), reason: String::new() });
@@ -1354,8 +1354,8 @@
         // Turning it back on restores enforcement for the next arrival.
         e.handle(NetEvent::Quit { uid: "000AAAAAB".into(), reason: String::new() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAA".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "SET KILL ON".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAA".into(), to: "42SAAAAAA".into(), text: "SET KILL ON".into() });
         assert!(e.db.account_wants_protect("alice"), "protection preference stored on");
         e.handle(NetEvent::Quit { uid: "000AAAAAA".into(), reason: String::new() });
         let out = e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
@@ -1370,7 +1370,7 @@
         e.now_override = Some(1000);
         e.handle(NetEvent::EndBurst);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         e.set_irc_out(tx);
@@ -1383,11 +1383,11 @@
     #[test]
     fn nickserv_ghost() {
         let mut e = engine_with("nsghost", "alice", "sesame");
-        let to_ns = |e: &mut Engine, uid: &str, text: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: text.into() });
+        let to_ns = |e: &mut Engine, uid: &str, text: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: text.into() });
         // A ghost sits on nick alice; the owner identifies from another nick.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "owner".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY alice sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY alice sesame".into() });
         let out = to_ns(&mut e, "000AAAAAC", "GHOST alice");
         assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, .. } if uid == "000AAAAAB")), "ghost renamed off: {out:?}");
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("freed"))), "{out:?}");
@@ -1399,20 +1399,20 @@
     fn identify_two_arg_account_form() {
         let mut e = engine_with("twoarg", "realacct", "sesame");
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "someguest".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
-        let out = e.handle(NetEvent::Privmsg {
+        let out = e.handle(NetEvent::Privmsg { msgid: None,
             from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY realacct sesame".into(),
         });
         assert!(out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == "realacct")), "two-arg identify logs into the named account: {out:?}");
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "other".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
-        let bad = e.handle(NetEvent::Privmsg {
+        let bad = e.handle(NetEvent::Privmsg { msgid: None,
             from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY realacct wrongpw".into(),
         });
         assert!(bad.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Invalid password"))), "{bad:?}");
         assert!(!bad.iter().any(|a| matches!(a, NetAction::Metadata { .. })), "wrong password must not log in: {bad:?}");
 
         // An unregistered account says so, rather than "Invalid password".
-        let missing = e.handle(NetEvent::Privmsg {
+        let missing = e.handle(NetEvent::Privmsg { msgid: None,
             from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY ghost whatever".into(),
         });
         assert!(missing.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't registered"))), "{missing:?}");
@@ -1460,10 +1460,10 @@
             db,
         );
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false });
 
-        let cs = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: text.into() });
+        let cs = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: text.into() });
         let out = cs(&mut e, "UP #c");
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+qo 000AAAAAB 000AAAAAB")), "UP applies the founder's +qo: {out:?}");
         let out = cs(&mut e, "DOWN #c");
@@ -1494,11 +1494,11 @@
         );
         for (uid, nick) in [("000AAAAAA", "alice"), ("000AAAAAB", "mik")] {
             e.handle(NetEvent::UserConnect { uid: uid.into(), nick: nick.into(), host: "h".into(), ip: "0.0.0.0".into() });
-            e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+            e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         }
         // Founder makes mik a SOP and turns secureops on.
-        e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAB".into(), text: "SOP #c ADD mik".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAB".into(), text: "SET #c SECUREOPS ON".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAA".into(), to: "42SAAAAAB".into(), text: "SOP #c ADD mik".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAA".into(), to: "42SAAAAAB".into(), text: "SET #c SECUREOPS ON".into() });
 
         // On join mik is granted op + protect (+ao, the nick once per mode).
         let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false });
@@ -1534,9 +1534,9 @@
             db,
         );
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: true });
-        let cs = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: text.into() });
+        let cs = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: text.into() });
         cs(&mut e, "SET #c PEACE ON");
         let out = cs(&mut e, "DEOP #c"); // no target = self
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "-o 000AAAAAB")), "self-deop applies -o: {out:?}");
@@ -1569,13 +1569,13 @@
         );
         for (uid, nick) in [("000AAAAAA", "alice"), ("000AAAAAB", "bob"), ("000AAAAAC", "carol")] {
             e.handle(NetEvent::UserConnect { uid: uid.into(), nick: nick.into(), host: "h".into(), ip: "0.0.0.0".into() });
-            e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+            e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
             e.handle(NetEvent::Join { uid: uid.into(), channel: "#c".into(), op: true });
         }
-        e.handle(NetEvent::Privmsg { from: "000AAAAAA".into(), to: "42SAAAAAB".into(), text: "SET #c PEACE ON".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAA".into(), to: "42SAAAAAB".into(), text: "SET #c PEACE ON".into() });
 
         let kick = |e: &mut Engine, from: &str, target: &str| {
-            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: format!("KICK #c {target}") })
+            e.handle(NetEvent::Privmsg { msgid: None, from: from.into(), to: "42SAAAAAB".into(), text: format!("KICK #c {target}") })
         };
         let blocked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("PEACE")));
         let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { .. }));
@@ -1611,8 +1611,8 @@
             db,
         );
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "FLAGS #c bob +v".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "FLAGS #c bob +v".into() });
 
         let ci = e.db.channel("#c").unwrap();
         assert!(!ci.is_op("bob"), "halfop + voice must not gain op or founder");
@@ -1635,14 +1635,14 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Auspex));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
         let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "rando".into(), host: "h".into(), ip: "0.0.0.0".into() });
 
         assert!(notice(&ns(&mut e, "000AAAAAB", "LIST *"), "Access denied"), "non-oper LIST refused");
-        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         let out = ns(&mut e, "000AAAAAC", "LIST al*");
         assert!(notice(&out, "alice") && notice(&out, "albert"), "LIST al* shows the matches: {out:?}");
         assert!(!notice(&out, "\x02staff\x02"), "LIST al* excludes non-matches: {out:?}");
@@ -1674,8 +1674,8 @@
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
-        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAE".into(), text: "SENDALL hello everyone".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAE".into(), text: "SENDALL hello everyone".into() });
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("sent to") && text.contains('3'))), "sent to all 3: {out:?}");
         assert_eq!(e.db.unread_memos("alice"), 1);
         assert_eq!(e.db.unread_memos("bob"), 1);
@@ -1706,8 +1706,8 @@
         opers.insert("mod".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
-        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAE".into(), text: "STAFF heads up team".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAE".into(), text: "STAFF heads up team".into() });
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("2"))), "memoed 2 opers: {out:?}");
         assert_eq!(e.db.unread_memos("mod"), 1, "the other operator got it");
         assert_eq!(e.db.unread_memos("alice"), 0, "a non-operator did not");
@@ -1731,7 +1731,7 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
         let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
         ns(&mut e, "000AAAAAB", "IDENTIFY pw");
@@ -1767,13 +1767,13 @@
             ],
             db,
         );
-        let ms = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAE".into(), text: t.into() });
+        let ms = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAE".into(), text: t.into() });
         let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
 
         // alice ignores bob.
         assert!(notice(&ms(&mut e, "000AAAAAB", "IGNORE ADD bob"), "ignoring"), "ignore added");
@@ -1805,12 +1805,12 @@
             ],
             db,
         );
-        let ms = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAE".into(), text: t.into() });
+        let ms = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAE".into(), text: t.into() });
         let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
 
         assert!(notice(&ms(&mut e, "000AAAAAB", "SET NOTIFY OFF"), "off"), "notify off");
         assert!(!e.db.memo_notify_on("alice"), "notify pref stored");
@@ -1842,12 +1842,12 @@
             ],
             db,
         );
-        let ms = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAE".into(), text: t.into() });
+        let ms = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAE".into(), text: t.into() });
         let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
 
         assert!(notice(&ms(&mut e, "000AAAAAC", "RSEND alice testing"), "Memo sent"), "rsend delivered");
         assert_eq!(e.db.unread_memos("bob"), 0, "bob has no receipt yet");
@@ -1879,8 +1879,8 @@
             db,
         );
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
-        let cs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: t.into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        let cs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: t.into() });
         cs(&mut e, "AKICK #c ADD *!*@bad1");
         cs(&mut e, "AKICK #c ADD *!*@bad2");
         let out = cs(&mut e, "AKICK #c CLEAR");
@@ -1909,12 +1909,12 @@
             db,
         );
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
 
-        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
         let mode = |out: &[NetAction], m: &str| out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == m));
 
         assert!(mode(&cs(&mut e, "000AAAAAB", "OWNER #c"), "+q 000AAAAAB"), "founder grants +q to self");
@@ -1947,12 +1947,12 @@
             db,
         );
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "SET #c SUCCESSOR bob".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "SET #c SUCCESSOR bob".into() });
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Successor") && text.contains("bob"))), "successor set: {out:?}");
 
         // alice drops her account -> #c is inherited by bob, not released.
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "DROP sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "DROP sesame".into() });
         assert_eq!(e.db.channel("#c").map(|c| c.founder.clone()), Some("bob".to_string()), "channel inherited by the successor");
         assert!(e.db.account("alice").is_none(), "the dropped account is gone");
     }
@@ -1978,8 +1978,8 @@
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
-        let os = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: t.into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        let os = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: t.into() });
         let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
 
         assert!(notice(&os(&mut e, "FORBID ADD NICK evil* squatting"), "Forbade"), "nick forbid added");
@@ -1999,7 +1999,7 @@
         e.complete_register("newbie", Db::derive_credentials("pw", 4096), Some("ok@good.tld".into()), ereply());
         assert!(e.db.exists("newbie"), "a clean email registers fine");
         // boss (identified) can't SET EMAIL to a forbidden address either.
-        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "SET EMAIL nope@spam.tld".into() });
+        let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "SET EMAIL nope@spam.tld".into() });
         assert!(notice(&out, "email address is forbidden"), "SET EMAIL rejects a forbidden address: {out:?}");
 
         assert!(notice(&os(&mut e, "FORBID LIST"), "evil*"), "list shows the nick forbid");
@@ -2008,7 +2008,7 @@
 
         // A non-oper cannot FORBID.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAD".into(), nick: "rando".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        assert!(notice(&e.handle(NetEvent::Privmsg { from: "000AAAAAD".into(), to: "42SAAAAAH".into(), text: "FORBID ADD NICK x y".into() }), "Access denied"), "non-oper refused");
+        assert!(notice(&e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAD".into(), to: "42SAAAAAH".into(), text: "FORBID ADD NICK x y".into() }), "Access denied"), "non-oper refused");
     }
 
     // OperServ SET READONLY locks out writes: while on, a channel can't be
@@ -2035,10 +2035,10 @@
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Root));
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
         e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: true });
-        let os = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: t.into() });
-        let cs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: t.into() });
+        let os = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: t.into() });
+        let cs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: t.into() });
         let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
 
         assert!(notice(&os(&mut e, "SET READONLY ON"), "read-only"), "readonly enabled");
@@ -2075,8 +2075,8 @@
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Root));
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
 
         // A non-oper is refused and no Shutdown action is produced.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAD".into(), nick: "rando".into(), host: "h".into(), ip: "0.0.0.0".into() });
@@ -2113,14 +2113,14 @@
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY pw".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "victim".into(), host: "h".into(), ip: "0.0.0.0".into() });
 
-        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: "SVSPART victim #trouble go away".into() });
+        let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: "SVSPART victim #trouble go away".into() });
         assert!(out.iter().any(|a| matches!(a, NetAction::ForcePart { uid, channel, .. } if uid == "000AAAAAC" && channel == "#trouble")), "victim parted: {out:?}");
         // A non-oper can't.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAD".into(), nick: "rando".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAD".into(), to: "42SAAAAAH".into(), text: "SVSPART victim #trouble".into() });
+        let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAD".into(), to: "42SAAAAAH".into(), text: "SVSPART victim #trouble".into() });
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-oper refused: {out:?}");
     }
 
@@ -2139,7 +2139,7 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Auspex));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
         let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "rando".into(), host: "h".into(), ip: "0.0.0.0".into() });
@@ -2164,9 +2164,9 @@
         // A ghost sits on nick "alice"; the owner is on another nick and identifies.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "owner".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY alice sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY alice sesame".into() });
 
-        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "RECOVER alice".into() });
+        let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "RECOVER alice".into() });
         assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAB" && nick.starts_with("Guest"))), "ghost freed: {out:?}");
         assert!(out.iter().any(|a| matches!(a, NetAction::ForceNick { uid, nick } if uid == "000AAAAAC" && nick == "alice")), "caller regained the nick: {out:?}");
     }
@@ -2190,8 +2190,8 @@
             db,
         );
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "SET #c RESTRICTED ON".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "SET #c RESTRICTED ON".into() });
 
         // The founder has access and is not kicked.
         let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false });
@@ -2229,14 +2229,14 @@
             db,
         );
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         let opped = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+qo 000AAAAAB 000AAAAAB"));
 
         // Default: the founder is auto-opped on join.
         assert!(opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false })), "auto-op on by default");
         e.handle(NetEvent::Part { uid: "000AAAAAB".into(), channel: "#c".into(), reason: String::new() });
         // Turn AUTOOP off; now a join is not auto-opped.
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "SET #c AUTOOP OFF".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "SET #c AUTOOP OFF".into() });
         assert!(!opped(&e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#c".into(), op: false })), "no auto-op when AUTOOP is off");
     }
 
@@ -2260,8 +2260,8 @@
             db,
         );
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
         let opped = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == "+qo 000AAAAAB 000AAAAAB"));
         let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
 
@@ -2300,7 +2300,7 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
         let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "rando".into(), host: "h".into() , ip: "0.0.0.0".into() });
@@ -2309,7 +2309,7 @@
         // A non-oper cannot add a bot.
         assert!(notice(&bs(&mut e, "000AAAAAB", "BOT ADD Bendy bot serv.host Helper"), "Access denied"));
         // The admin oper identifies, adds a bot, and sees it listed.
-        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         assert!(notice(&bs(&mut e, "000AAAAAC", "BOT ADD Bendy bot serv.host A Helper"), "added"));
         assert!(notice(&bs(&mut e, "000AAAAAC", "BOT LIST"), "Bendy"));
     }
@@ -2337,12 +2337,12 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
-        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
         let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         bs(&mut e, "000AAAAAC", "BOT ADD Bendy bot serv.host A Helper");
 
         // BOTLIST shows the bot; setting a nonexistent default is rejected.
@@ -2383,9 +2383,9 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
 
         // Adding a bot introduces it on the network with a SID-prefixed uid.
         let out = bs(&mut e, "000AAAAAC", "BOT ADD Bendy bot serv.host A Helper");
@@ -2422,8 +2422,8 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
-        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
@@ -2462,8 +2462,8 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
         ns(&mut e, "IDENTIFY password1");
         bs(&mut e, "BOT ADD Bendy bot serv.host Helper");
@@ -2500,8 +2500,8 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
         ns(&mut e, "IDENTIFY password1");
         bs(&mut e, "BOT ADD Bendy bot serv.host Helper");
@@ -2555,8 +2555,8 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
         ns(&mut e, "IDENTIFY password1");
         bs(&mut e, "BOT ADD Bendy bot serv.host Helper");
@@ -2664,9 +2664,9 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         bs(&mut e, "BOT ADD One a serv.host Bot");
         bs(&mut e, "BOT ADD Two b serv.host Bot");
 
@@ -2700,8 +2700,8 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
         ns(&mut e, "IDENTIFY password1");
         bs(&mut e, "BOT ADD Bendy bot serv.host Helper");
@@ -2745,9 +2745,9 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
-        let boss = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
-        let owner = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAO".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let boss = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let owner = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAO".into(), to: "42SAAAAAD".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAO".into(), nick: "owner".into(), host: "h".into() , ip: "0.0.0.0".into() });
         ns(&mut e, "000AAAAAB", "IDENTIFY password1");
@@ -2790,8 +2790,8 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
-        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAR".into(), nick: "rando".into(), host: "h".into() , ip: "0.0.0.0".into() });
@@ -2841,9 +2841,9 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
-        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
-        let say = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "#c".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "#c".into(), text: t.into() });
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAR".into(), nick: "rando".into(), host: "h".into() , ip: "0.0.0.0".into() });
@@ -2872,8 +2872,8 @@
     #[test]
     fn botserv_repeat_kicker_kicks() {
         let (mut e, _p) = kicker_fixture("bsrepeat");
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
-        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
         bs(&mut e, "KICK #c REPEAT ON 2"); // kick on the third identical line
 
         let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { from, uid, .. } if from.starts_with("42SB") && uid == "000AAAAAS"));
@@ -2889,8 +2889,8 @@
     #[test]
     fn botserv_flood_kicker_kicks() {
         let (mut e, _p) = kicker_fixture("bsflood");
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
-        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
         bs(&mut e, "KICK #c FLOOD ON 3 10"); // 3 lines in 10 seconds
         let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAS"));
 
@@ -2910,8 +2910,8 @@
     #[test]
     fn botserv_badwords_kicker_kicks() {
         let (mut e, _p) = kicker_fixture("bsbadwords");
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
-        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
         let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { from, uid, .. } if from.starts_with("42SB") && uid == "000AAAAAS"));
 
         bs(&mut e, "BADWORDS #c ADD fr[ao]g");
@@ -2953,9 +2953,9 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         bs(&mut e, "KICK #c CAPS ON");
         bs(&mut e, "BADWORDS #c ADD fr[ao]g");
         bs(&mut e, "KICK #c BADWORDS ON");
@@ -2974,8 +2974,8 @@
     #[test]
     fn botserv_trigger_auto_responds() {
         let (mut e, _p) = kicker_fixture("bstrigger");
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
-        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
         bs(&mut e, "TRIGGER #c ADD (?i)hello|Hi $nick, welcome!");
 
         // A matching line gets a bot response addressed with the speaker's nick.
@@ -2992,8 +2992,8 @@
     #[test]
     fn botserv_votekick_reaches_threshold() {
         let (mut e, _p) = kicker_fixture("bsvote");
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
-        let vote = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "#c".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let vote = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "#c".into(), text: t.into() });
         bs(&mut e, "SET #c VOTEKICK 2");
         e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "victim".into(), host: "h".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "carol".into(), host: "h".into() , ip: "0.0.0.0".into() });
@@ -3031,8 +3031,8 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
-        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
         let sethost = |out: &[NetAction], uid: &str, host: &str| out.iter().any(|a| matches!(a, NetAction::SetHost { uid: u, host: h } if u == uid && h == host));
@@ -3079,8 +3079,8 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
-        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAW".into(), nick: "bob".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
@@ -3123,8 +3123,8 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
-        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAW".into(), nick: "bob".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
@@ -3163,8 +3163,8 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
-        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
         ns(&mut e, "000AAAAAB", "IDENTIFY password1");
@@ -3207,8 +3207,8 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
-        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
         ns(&mut e, "000AAAAAB", "IDENTIFY password1");
@@ -3246,7 +3246,7 @@
             db,
         );
         e.set_sid("42S".into());
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
 
         let out = ns(&mut e, "000AAAAAV", "IDENTIFY password1");
@@ -3278,8 +3278,8 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
-        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAG".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAW".into(), nick: "bob".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
@@ -3337,12 +3337,12 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin).with(echo_api::Priv::Auspex));
         e.set_opers(opers);
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
-        let ss = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAF".into(), text: t.into() });
-        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let ss = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAF".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "spammer".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         bs(&mut e, "BOT ADD Bendy bot serv.host Helper");
         bs(&mut e, "ASSIGN #c Bendy");
         say(&mut e, "one");
@@ -3364,8 +3364,8 @@
     #[test]
     fn stats_registry_collects_across_services() {
         let (mut e, _p) = kicker_fixture("bsstats");
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
-        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
         // The fixture already ran a NickServ IDENTIFY and BotServ BOT ADD/ASSIGN.
         bs(&mut e, "KICK #c CAPS ON");
         say(&mut e, "SHOUTING LOUDLY NOW"); // one kick
@@ -3384,8 +3384,8 @@
     #[test]
     fn botserv_dontkickvoices_exempts() {
         let (mut e, _p) = kicker_fixture("bsdkv");
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
-        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
         let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAS"));
         bs(&mut e, "KICK #c CAPS ON");
         bs(&mut e, "KICK #c DONTKICKVOICES ON");
@@ -3402,8 +3402,8 @@
     #[test]
     fn botserv_trigger_captures_and_cooldown() {
         let (mut e, _p) = kicker_fixture("bstrigcap");
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
-        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
         bs(&mut e, "TRIGGER #c ADD (?i)hi (\\w+)|Hi $1!|30"); // capture group + 30s cooldown
         let response = |out: &[NetAction]| out.iter().find_map(|a| match a {
             NetAction::Privmsg { text, .. } => Some(text.clone()),
@@ -3424,8 +3424,8 @@
     #[test]
     fn botserv_warn_before_kick() {
         let (mut e, _p) = kicker_fixture("bswarn");
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
-        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
         bs(&mut e, "KICK #c CAPS ON");
         bs(&mut e, "KICK #c WARN ON");
         let kicked = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Kick { uid, .. } if uid == "000AAAAAS"));
@@ -3442,7 +3442,7 @@
     #[test]
     fn botserv_kick_test_dry_run() {
         let (mut e, _p) = kicker_fixture("bskicktest");
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
         bs(&mut e, "KICK #c CAPS ON");
         bs(&mut e, "BADWORDS #c ADD fr[ao]g");
         bs(&mut e, "KICK #c BADWORDS ON");
@@ -3458,8 +3458,8 @@
     #[test]
     fn botserv_ttb_bans_and_expires() {
         let (mut e, _p) = kicker_fixture("bsttb");
-        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
-        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
+        let bs = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        let say = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "#c".into(), text: t.into() });
         bs(&mut e, "KICK #c CAPS ON");
         bs(&mut e, "KICK #c TTB 2");
         bs(&mut e, "SET #c BANEXPIRE 1m");
@@ -3508,9 +3508,9 @@
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "spammer".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "BOT ADD Bendy bot serv.host Helper".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "ASSIGN #c Bendy".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "BOT ADD Bendy bot serv.host Helper".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "ASSIGN #c Bendy".into() });
         (e, path)
     }
 
@@ -3540,8 +3540,8 @@
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         e.chan_service = Some("42SAAAAAB".into());
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
-        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
         ns(&mut e, "000AAAAAB", "IDENTIFY password1");
@@ -3591,11 +3591,11 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
-        let chan = |e: &mut Engine, uid: &str, c: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: c.into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let chan = |e: &mut Engine, uid: &str, c: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: c.into(), text: t.into() });
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         bs(&mut e, "000AAAAAB", "BOT ADD Bendy bot serv.host Helper");
         bs(&mut e, "000AAAAAB", "ASSIGN #c Bendy");
 
@@ -3633,9 +3633,9 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("boss".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
-        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
-        let chan = |e: &mut Engine, uid: &str, c: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: c.into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let bs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAD".into(), text: t.into() });
+        let chan = |e: &mut Engine, uid: &str, c: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: c.into(), text: t.into() });
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
         ns(&mut e, "000AAAAAB", "IDENTIFY password1");
@@ -3677,8 +3677,8 @@
             ],
             db,
         );
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
-        let ms = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAE".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let ms = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAE".into(), text: t.into() });
         let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
 
         // alice identifies and sends bob (offline) a memo.
@@ -3714,8 +3714,8 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Suspend));
         e.set_opers(opers);
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
-        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
         let notice = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
@@ -3752,7 +3752,7 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Suspend));
         e.set_opers(opers);
-        let to_ns = |e: &mut Engine, uid: &str, text: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: text.into() });
+        let to_ns = |e: &mut Engine, uid: &str, text: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: text.into() });
         let notice = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "victim".into(), host: "h".into() , ip: "0.0.0.0".into() });
@@ -3785,13 +3785,13 @@
         opers.insert("operator".to_string(), Privs::default().with(echo_api::Priv::Auspex));
         e.set_opers(opers);
         let info_alice = |e: &mut Engine, uid: &str| {
-            e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "INFO alice".into() })
+            e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: "INFO alice".into() })
         };
         let shows_email = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("alice@example.org")));
 
         // The auspex oper identifies and sees alice's email.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "operator".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         assert!(shows_email(&info_alice(&mut e, "000AAAAAB")), "auspex oper sees the email");
 
         // An unidentified (non-oper) viewer does not.
@@ -3836,7 +3836,7 @@
         let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
 
         let to_cs = |e: &mut Engine, from: &str, text: &str| {
-            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+            e.handle(NetEvent::Privmsg { msgid: None, from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
         };
         let notice = |out: &[NetAction], needle: &str| {
             out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)))
@@ -3847,7 +3847,7 @@
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "REGISTER #room"), "logged in"));
 
         // Identify, then register. Registration needs operator status in the channel.
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "REGISTER #room"), "channel operator"), "op required to register");
         e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: true });
         let out = to_cs(&mut e, "000AAAAAB", "REGISTER #room");
@@ -3903,7 +3903,7 @@
         e.set_sid("42S".into());
         e.set_log_channel(Some("#services".into()));
         let to_cs = |e: &mut Engine, from: &str, text: &str| {
-            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+            e.handle(NetEvent::Privmsg { msgid: None, from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
         };
         // The audit line is a Notice to the log channel, from the services SID.
         let audit = |out: &[NetAction], needle: &str| {
@@ -3911,7 +3911,7 @@
                 if from == "42S" && to == "#services" && text.contains(needle)))
         };
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#room".into(), op: true });
 
         // Registering a channel is announced with the actor and the founder.
@@ -3966,12 +3966,12 @@
 
         // staff (an oper) pins one account and one channel against expiry.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "NOEXPIRE pinned ON".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAB".into(), text: "NOEXPIRE #pinned ON".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "NOEXPIRE pinned ON".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAB".into(), text: "NOEXPIRE #pinned ON".into() });
         // active keeps a live session; #live keeps a member sitting in it.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "active".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         e.handle(NetEvent::Join { uid: "000AAAAAC".into(), channel: "#live".into(), op: false });
 
         // Jump far past the threshold and sweep.
@@ -4027,12 +4027,12 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAN".into(), nick: "nobody".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAN".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAN".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
 
         // A non-admin can't even see OperServ exists beyond the refusal.
         let denied = os(&mut e, "000AAAAAN", "AKILL ADD *@evil.host being evil");
@@ -4072,7 +4072,7 @@
         );
         e.set_sid("42S".into());
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
+        let ns = |e: &mut Engine, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: t.into() });
 
         // VERSION → a CTCP NOTICE from the service, never an "unknown command".
         let ver = ns(&mut e, "\x01VERSION\x01");
@@ -4156,12 +4156,12 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAP".into(), nick: "plain".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAP".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAP".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "spammer".into(), host: "h".into() , ip: "0.0.0.0".into() });
 
         // SQLINE drives a Q-line on the nick mask, tracked separately from AKILLs.
@@ -4218,12 +4218,12 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAP".into(), nick: "plain".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAP".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAP".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAT".into(), nick: "target".into(), host: "h".into() , ip: "0.0.0.0".into() });
 
         // A status mode's nick target is resolved to its uid in the FMODE.
@@ -4268,13 +4268,13 @@
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Root));
         opers.insert("mod".to_string(), Privs::default().with(echo_api::Priv::Suspend));
         e.set_opers(opers);
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
         let has = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAM".into(), nick: "mod".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAM".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAM".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAT".into(), nick: "troll".into(), host: "h".into(), ip: "0.0.0.0".into() });
 
         os(&mut e, "000AAAAAS", "AKILL ADD *@evil.host spamming");
@@ -4313,10 +4313,10 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAT".into(), nick: "troll".into(), host: "h".into(), ip: "0.0.0.0".into() });
 
         // The kick reason carries a bracketed id, and the incident is searchable.
@@ -4355,11 +4355,11 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
         let conn = |e: &mut Engine, uid: &str, host: &str| e.handle(NetEvent::UserConnect { uid: uid.into(), nick: uid.into(), host: host.into(), ip: "0.0.0.0".into() });
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "staffhost".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         conn(&mut e, "000AAAAA1", "bad1");
         conn(&mut e, "000AAAAA2", "bad2");
         conn(&mut e, "000AAAAA3", "bad1"); // same host as A1 → deduped
@@ -4398,10 +4398,10 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "9.9.9.9".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
 
         // Juping introduces a fake server holding the name.
         let out = os(&mut e, "000AAAAAS", "JUPE rogue.example evil twin");
@@ -4439,8 +4439,8 @@
             db,
         );
         e.set_sid("42S".into());
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
-        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
         let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
@@ -4485,13 +4485,13 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
-        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
         let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
         let killed = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::KillUser { .. }));
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "1.1.1.1".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         e.handle(NetEvent::Join { uid: "000AAAAAS".into(), channel: "#room".into(), op: true });
 
         // Setting a level announces it network-wide.
@@ -4543,12 +4543,12 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
         let conn = |e: &mut Engine, uid: &str, ip: &str| e.handle(NetEvent::UserConnect { uid: uid.into(), nick: uid.into(), host: "h".into(), ip: ip.into() });
         let killed = |out: &[NetAction], who: &str| out.iter().any(|a| matches!(a, NetAction::KillUser { uid, .. } if uid == who));
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "9.9.9.9".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
 
         // Two sessions from one IP are fine; the third is killed.
         assert!(!killed(&conn(&mut e, "000AAAAA1", "5.5.5.5"), "000AAAAA1"), "1st ok");
@@ -4592,13 +4592,13 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Root));
         e.set_opers(opers);
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
         let denied = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied")));
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAL".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAL".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAL".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
 
         // Before the grant, alice is a plain user — OperServ shuts her out.
         assert!(denied(&os(&mut e, "000AAAAAL", "STATS")), "alice not an oper yet");
@@ -4637,13 +4637,13 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Root));
         e.set_opers(opers);
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
         let denied = |out: &[NetAction]| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied")));
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAP".into(), nick: "temp".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAP".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAP".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
 
         // A one-hour admin grant is active now...
         os(&mut e, "000AAAAAS", "OPER ADD temp admin +1h");
@@ -4678,12 +4678,12 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin).with(echo_api::Priv::Auspex));
         e.set_opers(opers);
-        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAN".into(), text: t.into() });
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let hs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAN".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
         let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAU".into(), nick: "newbie".into(), host: "h".into(), ip: "0.0.0.0".into() });
 
         // A user asks for help; it queues and is searchable via the audit trail.
@@ -4725,12 +4725,12 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin).with(echo_api::Priv::Auspex));
         e.set_opers(opers);
-        let rs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAK".into(), text: t.into() });
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let rs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAK".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
         let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAU".into(), nick: "victim".into(), host: "h".into(), ip: "0.0.0.0".into() });
 
         // An ordinary (unidentified) user files a report.
@@ -4775,11 +4775,11 @@
         e.set_opers(opers);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         e.set_irc_out(tx);
-        let is = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAJ".into(), text: t.into() });
+        let is = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAJ".into(), text: t.into() });
         let has = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
 
         is(&mut e, "000AAAAAS", "POST Welcome to the network");
         is(&mut e, "000AAAAAS", "OPOST Staff meeting at 5");
@@ -4792,7 +4792,7 @@
         // An operator logging in is shown the oper bulletin (over the outbound path).
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into() , ip: "0.0.0.0".into() });
         while rx.try_recv().is_ok() {} // drain the connect's public bulletin
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         let mut oper_bulletin = false;
         while let Ok(a) = rx.try_recv() {
             if let NetAction::Notice { to, text, .. } = a {
@@ -4838,15 +4838,15 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin).with(echo_api::Priv::Auspex));
         e.set_opers(opers);
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
-        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
         let has = |out: &[NetAction], needle: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)));
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAL".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAL".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAL".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
 
         // Admin attaches a note; it shows in NickServ INFO to the oper.
         os(&mut e, "000AAAAAS", "INFO ADD alice known troublemaker");
@@ -4887,10 +4887,10 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAT".into(), nick: "target".into(), host: "h".into() , ip: "0.0.0.0".into() });
 
         // SVSNICK forces the rename.
@@ -4926,11 +4926,11 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
-        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
-        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let ns = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: t.into() });
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAM".into(), nick: "menace".into(), host: "bad.host".into() , ip: "0.0.0.0".into() });
 
         // Before the ignore, a NickServ command gets a reply.
@@ -4959,9 +4959,9 @@
         let mut e = engine_with("noexp", "alice", "sesame");
         e.db.register("mallory", "password1", None).unwrap();
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         // alice is not an oper: refused, and the flag is untouched.
-        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "NOEXPIRE mallory ON".into() });
+        let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "NOEXPIRE mallory ON".into() });
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-oper refused: {out:?}");
     }
 
@@ -4989,13 +4989,13 @@
         let mut opers = std::collections::HashMap::new();
         opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Auspex));
         e.set_opers(opers);
-        let cf = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAM".into(), text: t.into() });
+        let cf = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAM".into(), text: t.into() });
         let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
         let opped = |out: &[NetAction], who: &str| out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == &format!("+o {who}")));
 
         for (uid, nick) in [("000AAAAAA", "alice"), ("000AAAAAB", "bob"), ("000AAAAAS", "staff")] {
             e.handle(NetEvent::UserConnect { uid: uid.into(), nick: nick.into(), host: "h".into(), ip: "0.0.0.0".into() });
-            e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+            e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         }
         // alice and bob hold ops in an unregistered #lobby; score their op-time.
         e.handle(NetEvent::Join { uid: "000AAAAAA".into(), channel: "#lobby".into(), op: true });
@@ -5041,14 +5041,14 @@
             ],
             db,
         );
-        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
-        let gs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAL".into(), text: t.into() });
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let gs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAL".into(), text: t.into() });
         let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
         let opped = |out: &[NetAction], who: &str| out.iter().any(|a| matches!(a, NetAction::ChannelMode { modes, .. } if modes == &format!("+o {who}")));
 
         for (uid, nick) in [("000AAAAAA", "alice"), ("000AAAAAB", "bob"), ("000AAAAAC", "carol")] {
             e.handle(NetEvent::UserConnect { uid: uid.into(), nick: nick.into(), host: "h".into(), ip: "0.0.0.0".into() });
-            e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+            e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         }
 
         // alice makes a group, adds bob, and grants the group op access on #room.
@@ -5094,12 +5094,12 @@
             ],
             db,
         );
-        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
+        let cs = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAB".into(), text: t.into() });
         let has = |out: &[NetAction], n: &str| out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(n)));
 
         for (uid, nick) in [("000AAAAAA", "alice"), ("000AAAAAB", "bob"), ("000AAAAAC", "carol")] {
             e.handle(NetEvent::UserConnect { uid: uid.into(), nick: nick.into(), host: "h".into(), ip: "0.0.0.0".into() });
-            e.handle(NetEvent::Privmsg { from: uid.into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+            e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
         }
 
         // Founder grants bob auto-op + topic via flags.
@@ -5144,11 +5144,11 @@
         let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
 
         let to_cs = |e: &mut Engine, from: &str, text: &str| {
-            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+            e.handle(NetEvent::Privmsg { msgid: None, from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
         };
         // Founder alice identifies; target bob connects with a known host.
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h1".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "1.2.3.4".into() , ip: "0.0.0.0".into() });
 
         // OP a user by nick.
@@ -5187,10 +5187,10 @@
         let cs = ChanServ { uid: "42SAAAAAB".into() };
         let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
         let to_cs = |e: &mut Engine, from: &str, text: &str| {
-            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+            e.handle(NetEvent::Privmsg { msgid: None, from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
         };
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h1".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "bad.host".into() , ip: "0.0.0.0".into() });
 
         // TOPIC and INVITE are sourced from ChanServ.
@@ -5229,10 +5229,10 @@
         let cs = ChanServ { uid: "42SAAAAAB".into() };
         let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
         let to_cs = |e: &mut Engine, from: &str, text: &str| {
-            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+            e.handle(NetEvent::Privmsg { msgid: None, from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
         };
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h1".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         to_cs(&mut e, "000AAAAAB", "AKICK #c ADD evil!*@* begone");
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "clean.host".into(), ip: "0.0.0.0".into() });
@@ -5260,19 +5260,36 @@
         let cs = ChanServ { uid: "42SAAAAAB".into() };
         let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
         let to_cs = |e: &mut Engine, from: &str, text: &str| {
-            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+            e.handle(NetEvent::Privmsg { msgid: None, from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
         };
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h1".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 
         to_cs(&mut e, "000AAAAAB", "ACCESS #c ADD bob op");
         assert_eq!(e.db.unread_memos("bob"), 1, "offline user gets a memo");
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h2".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY hunter2".into() });
-        let out = to_cs(&mut e, "000AAAAAB", "ACCESS #c DEL bob");
-        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "000AAAAAC" && text.contains("removed your access"))), "online user noticed: {out:?}");
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAC".into(), to: "42SAAAAAA".into(), text: "IDENTIFY hunter2".into() });
+        let mut out = to_cs(&mut e, "000AAAAAB", "ACCESS #c DEL bob");
+        // The notice is wrapped with a +draft/channel-context tag, so look through it.
+        assert!(out.iter_mut().any(|a| matches!(a.inner_mut(), NetAction::Notice { to, text, .. } if to == "000AAAAAC" && text.contains("removed your access"))), "online user noticed");
         assert_eq!(e.db.unread_memos("bob"), 1, "no extra memo when online");
+    }
+
+    // A reply to the command's own sender is wrapped with +draft/reply carrying the
+    // incoming line's msgid, so a client can thread it under the triggering command.
+    #[test]
+    fn reply_threads_the_incoming_msgid() {
+        let mut e = engine_with("thread", "alice", "sesame");
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        let out = e.handle(NetEvent::Privmsg { msgid: Some("m-42".into()), from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "HELP".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Tagged { tags, inner }
+            if tags.iter().any(|(k, v)| k == "+draft/reply" && v == "m-42")
+            && matches!(inner.as_ref(), NetAction::Notice { to, .. } if to == "000AAAAAB"))),
+            "reply to sender threaded: {out:?}");
+        // No msgid on the incoming line -> a plain, untagged notice.
+        let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "HELP".into() });
+        assert!(!out.iter().any(|a| matches!(a, NetAction::Tagged { .. })), "no wrapper without a msgid: {out:?}");
     }
 
     // Logging out reverses a services vhost, restoring the connect-time host (the
@@ -5288,8 +5305,8 @@
         let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
         let mut e = Engine::new(vec![Box::new(ns)], db);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "cloak.host".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "LOGOUT".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "LOGOUT".into() });
         assert!(out.iter().any(|a| matches!(a, NetAction::SetHost { uid, host } if uid == "000AAAAAB" && host == "cloak.host")), "logout restores the cloak: {out:?}");
     }
 
@@ -5308,8 +5325,8 @@
         let cs = ChanServ { uid: "42SAAAAAB".into() };
         let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "SET #c SECUREVOICES ON".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "SET #c SECUREVOICES ON".into() });
 
         e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "bob".into(), host: "h".into(), ip: "0.0.0.0".into() });
         let out = e.handle(NetEvent::ChannelVoice { channel: "#c".into(), uid: "000AAAAAC".into(), voice: true });
@@ -5333,10 +5350,10 @@
         let cs = ChanServ { uid: "42SAAAAAB".into() };
         let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
         let to_cs = |e: &mut Engine, from: &str, text: &str| {
-            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+            e.handle(NetEvent::Privmsg { msgid: None, from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
         };
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
         e.handle(NetEvent::UserConnect { uid: "000AAAAAE".into(), nick: "eve".into(), host: "h".into(), ip: "0.0.0.0".into() });
         e.handle(NetEvent::Join { uid: "000AAAAAE".into(), channel: "#c".into(), op: false });
 
@@ -5366,8 +5383,8 @@
         let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
         let mut e = Engine::new(vec![Box::new(ns)], db);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "VOUCH bob".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "VOUCH bob".into() });
         assert!(out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("vouched"))), "vouch confirmation: {out:?}");
         assert!(e.db.is_verified("bob"), "bob is now active after the vouch");
     }
@@ -5390,8 +5407,8 @@
         opers.insert("alice".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        let to_os = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: text.into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        let to_os = |e: &mut Engine, text: &str| e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: text.into() });
 
         let out = to_os(&mut e, "FORBID ADD NICK badname reserved");
         assert!(out.iter().any(|a| matches!(a, NetAction::AddLine { kind, mask, .. } if kind == "Q" && mask == "badname")), "qline set: {out:?}");
@@ -5424,8 +5441,8 @@
         opers.insert("alice".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: "PROTECT ALL".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: "PROTECT ALL".into() });
         assert!(e.db.account_wants_protect("bob"), "bob is now protected after PROTECT ALL");
     }
 
@@ -5449,8 +5466,8 @@
         opers.insert("alice".to_string(), Privs::default().with(echo_api::Priv::Admin));
         e.set_opers(opers);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: "SETALL SECUREOPS ON".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAH".into(), text: "SETALL SECUREOPS ON".into() });
         assert!(e.db.channel("#one").unwrap().settings.secureops, "#one now has secureops");
         assert!(e.db.channel("#two").unwrap().settings.secureops, "#two now has secureops");
     }
@@ -5470,13 +5487,13 @@
         let cs = ChanServ { uid: "42SAAAAAB".into() };
         let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
         let to_cs = |e: &mut Engine, from: &str, text: &str| {
-            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+            e.handle(NetEvent::Privmsg { msgid: None, from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
         };
         let notice = |out: &[NetAction], needle: &str| {
             out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)))
         };
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h1".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 
         // Description is stored and shows in INFO.
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "SET #c DESC a friendly place"), "updated"));
@@ -5517,13 +5534,13 @@
         let cs = ChanServ { uid: "42SAAAAAB".into() };
         let mut e = Engine::new(vec![Box::new(ns), Box::new(cs)], db);
         let to_cs = |e: &mut Engine, from: &str, text: &str| {
-            e.handle(NetEvent::Privmsg { from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
+            e.handle(NetEvent::Privmsg { msgid: None, from: from.into(), to: "42SAAAAAB".into(), text: text.into() })
         };
         let notice = |out: &[NetAction], needle: &str| {
             out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains(needle)))
         };
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h1".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 
         // ENTRYMSG: set it, then a joining user is noticed it.
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "ENTRYMSG #c welcome aboard"), "updated"));
@@ -5556,7 +5573,7 @@
 
         // CLONE: copy #c's settings (incl. the AOP) into a second owned channel.
         e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#d".into(), op: true });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "REGISTER #d".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: "REGISTER #d".into() });
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "CLONE #c #d"), "Copied"));
         assert!(notice(&to_cs(&mut e, "000AAAAAB", "AOP #d LIST"), "carol"));
     }
@@ -5613,7 +5630,7 @@
         let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
         let mut e = Engine::new(vec![Box::new(ns)], db);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 
         let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#x".into(), op: false });
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#x" && modes == "+qo 000AAAAAB 000AAAAAB")), "founder opped: {out:?}");
@@ -5635,7 +5652,7 @@
         let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
         let mut e = Engine::new(vec![Box::new(ns)], db);
         e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "carol".into(), host: "host.example".into() , ip: "0.0.0.0".into() });
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 
         let out = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: "#y".into(), op: false });
         assert!(out.iter().any(|a| matches!(a, NetAction::ChannelMode { channel, modes, .. } if channel == "#y" && modes == "+v 000AAAAAB")), "{out:?}");
@@ -5658,7 +5675,7 @@ fn helpserv_fronts_the_network_help_index() {
     e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "foo".into(), host: "h".into(), ip: "0.0.0.0".into() });
 
     let ask = |e: &mut Engine, text: &str| {
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAN".into(), text: text.into() })
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAN".into(), text: text.into() })
             .into_iter()
             .filter_map(|a| match a {
                 NetAction::Notice { text, .. } => Some(text),
@@ -5692,7 +5709,7 @@ fn helpserv_fronts_the_network_help_index() {
 // must already be registered in the engine's db.
 fn svc_login(e: &mut Engine, acct: &str) {
     e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: acct.into(), host: "h".into(), ip: "0.0.0.0".into() });
-    e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+    e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
 }
 
 // Grant the account full operator privileges.
@@ -5705,7 +5722,7 @@ fn svc_oper(e: &mut Engine, acct: &str) {
 
 // Send a command to a service uid; return the NOTICE texts it produced.
 fn svc_ask(e: &mut Engine, uid: &str, text: &str) -> Vec<String> {
-    e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: uid.into(), text: text.into() })
+    e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: uid.into(), text: text.into() })
         .into_iter()
         .filter_map(|a| match a { NetAction::Notice { text, .. } => Some(text), _ => None })
         .collect()
@@ -6008,12 +6025,12 @@ fn fantasy_dict_emits_a_lookup_via_the_bot() {
     e.set_opers(opers);
     e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "h".into(), ip: "0.0.0.0".into() });
     e.handle(NetEvent::UserConnect { uid: "000AAAAAR".into(), nick: "rando".into(), host: "h".into(), ip: "0.0.0.0".into() });
-    e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
-    e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "BOT ADD Bendy bot serv.host Helper".into() });
-    e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "ASSIGN #c Bendy".into() });
+    e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+    e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "BOT ADD Bendy bot serv.host Helper".into() });
+    e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: "ASSIGN #c Bendy".into() });
     e.handle(NetEvent::Join { uid: "000AAAAAR".into(), channel: "#c".into(), op: false });
 
-    let out = e.handle(NetEvent::Privmsg { from: "000AAAAAR".into(), to: "#c".into(), text: "!dict cat".into() });
+    let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAR".into(), to: "#c".into(), text: "!dict cat".into() });
     assert!(
         out.iter().any(|a| matches!(a, NetAction::DictLookup { target, database, query, speak_as, .. }
             if target == "#c" && database == "wn" && query == "cat" && speak_as.starts_with("42SB"))),
@@ -6033,10 +6050,10 @@ fn confusable_register_alerts_the_staff_feed() {
     e.set_log_channel(Some("#services".into()));
     e.set_debugserv_uid("42SAAAAAO");
     e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "boss".into(), host: "host.fr".into(), ip: "1.2.3.4".into() });
-    e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+    e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
     let chan = "#teѕt"; // Latin te + Cyrillic ѕ + Latin t — a look-alike
     e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: chan.into(), op: true });
-    let out = e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: format!("REGISTER {chan}") });
+    let out = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAB".into(), text: format!("REGISTER {chan}") });
     // The user is refused,
     assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "000AAAAAB" && text.contains("alphabets"))), "user refused: {out:?}");
     // and #services is told who tried it.
@@ -6081,7 +6098,7 @@ fn bench_engine_throughput() {
     // cost (the realistic case), not the kick path.
     let (mut e, _p) = kicker_fixture("bench_hot");
     let bs = |e: &mut Engine, t: &str| {
-        e.handle(NetEvent::Privmsg { from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAD".into(), text: t.into() });
     };
     bs(&mut e, "KICK #c CAPS ON");
     bs(&mut e, "KICK #c REPEAT ON 100000");
@@ -6097,7 +6114,7 @@ fn bench_engine_throughput() {
     let msgs = 200_000usize;
     let t = Instant::now();
     for i in 0..msgs {
-        e.handle(NetEvent::Privmsg { from: muid(i % members), to: "#c".into(), text: format!("just chatting line {i} nothing special here") });
+        e.handle(NetEvent::Privmsg { msgid: None, from: muid(i % members), to: "#c".into(), text: format!("just chatting line {i} nothing special here") });
     }
     let el = t.elapsed();
     println!(

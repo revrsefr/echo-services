@@ -36,14 +36,14 @@ impl Engine {
 
     // Route a PRIVMSG addressed to a service (by uid or nick) into that service,
     // handing it the sender's resolved nick, login state, and the account store.
-    pub(crate) fn dispatch(&mut self, from: &str, to: &str, text: &str) -> Vec<NetAction> {
+    pub(crate) fn dispatch(&mut self, from: &str, to: &str, text: &str, msgid: Option<String>) -> Vec<NetAction> {
         let nick = self.network.nick_of(from).unwrap_or(from).to_string();
         let account = self.network.account_of(from).map(str::to_string);
         let privs = account.as_deref().map(|a| self.oper_privs(a)).unwrap_or_default();
         // Render this command's replies in the sender's language: their account
         // preference if set, otherwise the network default.
         let lang = account.as_deref().and_then(|a| self.db.language_of(a)).unwrap_or_else(|| self.db.default_language());
-        let mut ctx = ServiceCtx { lang, ..Default::default() };
+        let mut ctx = ServiceCtx { lang, sender_uid: from.to_string(), reply_to: msgid, ..Default::default() };
         // Mark the log so we can tell exactly which events this command appends.
         let audit_mark = self.db.log_len();
         let sender = Sender { uid: from, nick: &nick, account: account.as_deref(), privs };
@@ -194,7 +194,7 @@ impl Engine {
     fn apply_msg_style(&self, out: &mut [NetAction]) {
         let mut named: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
         for a in out.iter_mut() {
-            let NetAction::Notice { from, to, text } = a else { continue };
+            let NetAction::Notice { from, to, text } = a.inner_mut() else { continue };
             let Some(account) = self.network.account_of(to) else { continue };
             if !self.db.account_wants_snotice(account) {
                 continue;
@@ -230,8 +230,9 @@ impl Engine {
             self.route_to(&dsuid, sender, &args, ctx);
             // Turn DiceServ's private notices into the bot speaking to the channel.
             for a in ctx.actions[mark..].iter_mut() {
-                if let NetAction::Notice { text, .. } = a {
-                    *a = NetAction::Privmsg { from: botuid.clone(), to: chan.to_string(), text: std::mem::take(text) };
+                let slot = a.inner_mut();
+                if let NetAction::Notice { text, .. } = slot {
+                    *slot = NetAction::Privmsg { from: botuid.clone(), to: chan.to_string(), text: std::mem::take(text) };
                 }
             }
             return;
@@ -265,11 +266,12 @@ impl Engine {
         // Fantasy is public: the bot speaks ChanServ's text replies into the channel,
         // and its actions (modes, kicks) are re-sourced from the bot.
         for a in ctx.actions[mark..].iter_mut() {
-            match a {
+            let slot = a.inner_mut();
+            match slot {
                 NetAction::Notice { text, .. } => {
-                    *a = NetAction::Privmsg { from: botuid.clone(), to: chan.to_string(), text: std::mem::take(text) };
+                    *slot = NetAction::Privmsg { from: botuid.clone(), to: chan.to_string(), text: std::mem::take(text) };
                 }
-                _ => resource_action(a, &csuid, &botuid),
+                _ => resource_action(slot, &csuid, &botuid),
             }
         }
     }

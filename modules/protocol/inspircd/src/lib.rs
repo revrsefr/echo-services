@@ -21,11 +21,15 @@ pub struct InspIrcd {
     // consults this so a param-taking mode outside the static fallback table (e.g.
     // m_chanfilter's +g) doesn't desync the param cursor and mispair status/key args.
     chanmodes: std::collections::HashMap<char, echo_api::ChanModeCap>,
+    // Whether the uplink loaded m_ircv3_ctctags (learned from CAPAB MODULES). Only
+    // then can it relay the client-only `+` tags we attach to replies; otherwise we
+    // emit the reply untagged.
+    supports_ctctags: bool,
 }
 
 impl InspIrcd {
     pub fn new(name: String, description: String, sid: String, password: String, protocol: u32, ts: u64, service_modes: String) -> Self {
-        Self { sid, name, description, password, protocol, ts, service_modes, membid: 0, chanmodes: std::collections::HashMap::new() }
+        Self { sid, name, description, password, protocol, ts, service_modes, membid: 0, chanmodes: std::collections::HashMap::new(), supports_ctctags: false }
     }
 
     fn sourced(&self, cmd: String) -> String {
@@ -44,12 +48,14 @@ impl Protocol for InspIrcd {
     }
 
     fn parse(&mut self, line: &str) -> Vec<NetEvent> {
-        // Strip an optional IRCv3 message-tag prefix (@k=v;… ) — insp tags PRIVMSGs
-        // with time/msgid, and it sits before the :source.
-        let line = match line.strip_prefix('@') {
-            Some(rest) => rest.split_once(' ').map(|x| x.1).unwrap_or(""),
-            None => line,
+        // Split off an optional IRCv3 message-tag prefix (@k=v;… ) — insp tags
+        // PRIVMSGs with time/msgid, and it sits before the :source. We keep the
+        // msgid to thread onto our replies (+draft/reply); the rest is parsed as-is.
+        let (tag_prefix, line) = match line.strip_prefix('@') {
+            Some(rest) => rest.split_once(' ').unwrap_or((rest, "")),
+            None => ("", line),
         };
+        let msgid = tag_prefix.split(';').find_map(|kv| kv.strip_prefix("msgid=")).map(str::to_string);
         let (source, rest) = match line.strip_prefix(':') {
             Some(s) => {
                 let mut it = s.splitn(2, ' ');
@@ -119,6 +125,7 @@ impl Protocol for InspIrcd {
                     from: source.unwrap_or_default(),
                     to,
                     text: trailing(rest),
+                    msgid,
                 }]
             }
             // UID <uuid> <nickts> <nick> … — track who's online so services can
@@ -374,6 +381,9 @@ impl Protocol for InspIrcd {
                 // which echo verifies its dependencies against.
                 Some(s) if s.eq_ignore_ascii_case("MODULES") || s.eq_ignore_ascii_case("MODSUPPORT") => {
                     let modules: Vec<_> = trailing(rest).split_whitespace().map(module_name).collect();
+                    if modules.iter().any(|m| m == "ircv3_ctctags") {
+                        self.supports_ctctags = true;
+                    }
                     if modules.is_empty() {
                         vec![]
                     } else {
@@ -424,6 +434,20 @@ impl Protocol for InspIrcd {
             }
             NetAction::Notice { from, to, text } => {
                 split_body(text).into_iter().map(|chunk| format!(":{} NOTICE {} :{}", from, to, chunk)).collect()
+            }
+            // Prepend the client tags to each line of the wrapped action — but only
+            // if the uplink can relay them; otherwise emit the inner action untagged.
+            NetAction::Tagged { tags, inner } => {
+                let inner_lines = self.serialize(inner);
+                if !self.supports_ctctags || tags.is_empty() {
+                    inner_lines
+                } else {
+                    let prefix = tags.iter()
+                        .map(|(k, v)| format!("{}={}", k, escape_tag_value(v)))
+                        .collect::<Vec<_>>()
+                        .join(";");
+                    inner_lines.into_iter().map(|l| format!("@{} {}", prefix, l)).collect()
+                }
             }
             // Standard reply: encapsulate for the target's server to re-emit locally
             // (FAIL/WARN/NOTE aren't s2s-routable). ENCAP * so only the server the
@@ -683,6 +707,23 @@ fn trailing(rest: &str) -> String {
     }
 }
 
+// Escape a value for an IRCv3 message tag (the mandatory five substitutions), so
+// a channel name or msgid carrying a space/semicolon can't break the tag list.
+fn escape_tag_value(v: &str) -> String {
+    let mut out = String::with_capacity(v.len());
+    for c in v.chars() {
+        match c {
+            ';' => out.push_str("\\:"),
+            ' ' => out.push_str("\\s"),
+            '\\' => out.push_str("\\\\"),
+            '\r' => out.push_str("\\r"),
+            '\n' => out.push_str("\\n"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 // A free-text reason param (PART/KICK/QUIT), which the ircd always sends as a
 // `:`-prefixed trailing. Unlike `trailing()`, a MISSING reason yields "" rather
 // than the last preceding word — so `KICK #c target` (no reason) doesn't record
@@ -844,7 +885,7 @@ mod tests {
     fn squery_is_handled_like_privmsg() {
         let mut p = proto();
         assert!(matches!(p.parse(":0IRAAAAAB SQUERY 42SAAAAAB :HELP").as_slice(),
-            [NetEvent::Privmsg { from, to, text }] if from == "0IRAAAAAB" && to == "42SAAAAAB" && text == "HELP"));
+            [NetEvent::Privmsg { from, to, text, .. }] if from == "0IRAAAAAB" && to == "42SAAAAAB" && text == "HELP"));
     }
 
     // CAPAB CAPABILITIES surfaces CASEMAPPING (echo verifies it's ascii).
@@ -991,6 +1032,48 @@ mod tests {
         assert_eq!(with, vec![":42SAAAAAA REDACT #c abc :spam".to_string()]);
         let without = proto().serialize(&NetAction::Redact { from: "42SAAAAAA".into(), target: "alice".into(), msgid: "xyz".into(), reason: String::new() });
         assert_eq!(without, vec![":42SAAAAAA REDACT alice xyz".to_string()], "no trailing when reason is empty");
+    }
+
+    // A tagged reply carries its `+draft/…` tags only after the uplink advertises
+    // m_ircv3_ctctags; before that (or with no tags) it's emitted plain.
+    #[test]
+    fn serializes_tagged_notice_only_when_ctctags_loaded() {
+        let tagged = || NetAction::Tagged {
+            tags: vec![("+draft/reply".to_string(), "abc123".to_string())],
+            inner: Box::new(NetAction::Notice { from: "42SAAAAAA".into(), to: "0IRAAAAAB".into(), text: "hi".into() }),
+        };
+        // No ctctags module -> tags dropped, plain notice.
+        assert_eq!(proto().serialize(&tagged()), vec![":42SAAAAAA NOTICE 0IRAAAAAB :hi".to_string()]);
+        // After CAPAB MODULES lists it -> the tag is prepended.
+        let mut p = proto();
+        p.parse("CAPAB MODULES :account ircv3_ctctags");
+        assert_eq!(p.serialize(&tagged()), vec!["@+draft/reply=abc123 :42SAAAAAA NOTICE 0IRAAAAAB :hi".to_string()]);
+    }
+
+    // Tag values with reserved characters are escaped, and every split line of a
+    // multi-line inner action carries the tags.
+    #[test]
+    fn tagged_values_escaped_and_applied_per_line() {
+        let mut p = proto();
+        p.parse("CAPAB MODULES :ircv3_ctctags");
+        let out = p.serialize(&NetAction::Tagged {
+            tags: vec![("+draft/channel-context".to_string(), "#a b".to_string())],
+            inner: Box::new(NetAction::Notice { from: "42SAAAAAA".into(), to: "0IRAAAAAB".into(), text: "word ".repeat(200).trim().to_string() }),
+        });
+        assert!(out.len() >= 2, "long notice split into multiple lines");
+        assert!(out.iter().all(|l| l.starts_with("@+draft/channel-context=#a\\sb :")), "every line tagged + escaped: {out:?}");
+    }
+
+    // insp tags an incoming PRIVMSG with a msgid; we capture it so the reply can
+    // thread against it.
+    #[test]
+    fn parses_msgid_from_privmsg_tags() {
+        let ev = proto().parse("@msgid=xyz789;time=2026-01-01T00:00:00Z :0IRAAAAAB PRIVMSG 42SAAAAAB :HELP");
+        assert!(matches!(ev.as_slice(),
+            [NetEvent::Privmsg { msgid: Some(m), text, .. }] if m == "xyz789" && text == "HELP"));
+        // No tag prefix -> no msgid.
+        let ev = proto().parse(":0IRAAAAAB PRIVMSG 42SAAAAAB :HELP");
+        assert!(matches!(ev.as_slice(), [NetEvent::Privmsg { msgid: None, .. }]));
     }
 
     #[test]
