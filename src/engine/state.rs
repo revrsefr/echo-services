@@ -162,6 +162,11 @@ impl Network {
         }
     }
 
+    // A user's TLS cert fingerprint, if they presented one on connect.
+    pub fn fingerprint_of(&self, uid: &str) -> Option<&str> {
+        self.users.get(uid).map(|u| u.fingerprint.as_str()).filter(|f| !f.is_empty())
+    }
+
     // Record a server's name for its SID, so the `server` extban can resolve which
     // server a user is on (their uid's SID prefix).
     pub fn set_server_name(&mut self, sid: &str, name: String) {

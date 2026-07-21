@@ -5318,6 +5318,24 @@
     }
 
     // Logging out reverses a services vhost, restoring the connect-time host (the
+    // On oper-up, echo warns a user whose TLS cert isn't on their account's list —
+    // but only after the burst, and not when the cert is registered.
+    #[test]
+    fn oper_up_warns_on_a_certfp_not_on_the_account() {
+        let mut e = engine_with("certwarn", "alice", "sesame");
+        e.db.certfp_add("alice", &"a".repeat(64)).unwrap();
+        e.handle(NetEvent::EndBurst); // arm the warning (synced)
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        e.handle(NetEvent::UserCert { uid: "000AAAAAB".into(), fp: "b".repeat(64) });
+        let out = e.handle(NetEvent::OperUp { uid: "000AAAAAB".into(), oper_type: "NetAdmin".into() });
+        assert!(out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "000AAAAAB" && text.contains("isn't on your account"))), "warns on a mismatched cert: {out:?}");
+        // With the registered cert, no warning.
+        e.handle(NetEvent::UserCert { uid: "000AAAAAB".into(), fp: "a".repeat(64) });
+        let out = e.handle(NetEvent::OperUp { uid: "000AAAAAB".into(), oper_type: "NetAdmin".into() });
+        assert!(!out.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("isn't on your account"))), "no warning with a registered cert: {out:?}");
+    }
+
     // When an oper deopers, the ircd leaves the oper vhost in place; echo puts the
     // connect-time cloak back (or the services vhost, if one is assigned).
     #[test]

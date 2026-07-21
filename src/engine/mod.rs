@@ -1657,7 +1657,21 @@ impl Engine {
             }
             NetEvent::OperUp { uid, oper_type } => {
                 let what = if oper_type.is_empty() { "opered up".to_string() } else { format!("opered up as \x02{oper_type}\x02") };
-                self.notify_line('o', &uid, None, &what).into_iter().collect()
+                let mut out: Vec<NetAction> = self.notify_line('o', &uid, None, &what).into_iter().collect();
+                // #556: once linked (not on the burst), warn an oper who authed with a
+                // TLS cert that isn't on their account — the ircd only checks the oper
+                // block, never the account's own cert list.
+                if self.synced {
+                    if let (Some(ns), Some(account), Some(fp)) = (self.nick_service.clone(), self.network.account_of(&uid).map(str::to_string), self.network.fingerprint_of(&uid).map(|f| f.to_ascii_lowercase())) {
+                        let certs = self.db.certfps(&account);
+                        if !certs.is_empty() && !certs.contains(&fp) {
+                            let lang = self.lang_for_uid(&uid);
+                            let text = echo_api::render(&lang, "You opered up with a TLS certificate fingerprint that isn't on your account. Add it with \x02/msg NickServ CERT ADD\x02.", &[]);
+                            out.push(NetAction::Notice { from: ns, to: uid.clone(), text });
+                        }
+                    }
+                }
+                out
             }
             NetEvent::UserKilled { uid } => {
                 // A killed service agent (NickServ, ChanServ, …) has a fixed uid;

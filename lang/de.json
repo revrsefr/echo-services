@@ -1373,5 +1373,6 @@
  "Syntax: \u0002SET <#channel> FOUNDER <account> | DESC <text> | URL [address] | EMAIL [address] | SUCCESSOR <account>|OFF | SIGNKICK|PRIVATE|PEACE|SECUREOPS|SECUREVOICES|RESTRICTED|AUTOOP|KEEPTOPIC|TOPICLOCK {ON|OFF}\u0002\nTransfers the founder or changes a channel setting.": "Syntax: \u0002SET <#channel> FOUNDER <account> | DESC <text> | URL [address] | EMAIL [address] | SUCCESSOR <account>|OFF | SIGNKICK|PRIVATE|PEACE|SECUREOPS|SECUREVOICES|RESTRICTED|AUTOOP|KEEPTOPIC|TOPICLOCK {ON|OFF}\u0002\nÜberträgt den Gründer oder ändert eine Kanaleinstellung.",
  "Your account is pending. Ask an existing member to vouch for you with \u0002/msg NickServ VOUCH {account}\u0002.": "Dein Konto ist ausstehend. Bitte ein bestehendes Mitglied, mit \u0002/msg NickServ VOUCH {account}\u0002 für dich zu bürgen.",
  "You vouched for \u0002{account}\u0002; their account is now active.": "Du hast für \u0002{account}\u0002 gebürgt; das Konto ist jetzt aktiv.",
- "Your opponent left. Game \u0002#{id}\u0002 is over.": "Dein Gegner hat die Verbindung getrennt. Spiel \u0002#{id}\u0002 ist vorbei."
+ "Your opponent left. Game \u0002#{id}\u0002 is over.": "Dein Gegner hat die Verbindung getrennt. Spiel \u0002#{id}\u0002 ist vorbei.",
+ "You opered up with a TLS certificate fingerprint that isn't on your account. Add it with \u0002/msg NickServ CERT ADD\u0002.": "Du hast dich mit einem TLS-Zertifikat-Fingerabdruck geopert, der nicht in deinem Konto hinterlegt ist. Füge ihn mit \u0002/msg NickServ CERT ADD\u0002 hinzu."
 }
