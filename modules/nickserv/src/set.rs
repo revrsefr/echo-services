@@ -1,9 +1,9 @@
-use echo_api::{ForbidKind, Store};
+use echo_api::{ForbidKind, NetView, ProfileField, Store};
 use echo_api::{Sender, ServiceCtx};
 use echo_api::t;
 
 // SET PASSWORD <newpassword> | SET EMAIL [address]: change your account settings.
-pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: &mut dyn Store) {
+pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
     let Some(account) = from.account else {
         ctx.notice(me, from.uid, "You need to be logged in. Identify to NickServ first.");
         return;
@@ -140,8 +140,58 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
-        _ => ctx.notice(me, from.uid, "Syntax: SET PASSWORD <newpassword> | SET EMAIL [address] | SET GREET [message] | SET AUTOOP {ON|OFF} | SET KILL {ON|OFF} | SET HIDE STATUS {ON|OFF} | SET SNOTICE {ON|OFF}"),
+        Some("AVATAR") | Some("BIO") | Some("PRONOUNS") | Some("TIMEZONE") | Some("TZ") | Some("URL") | Some("WEBSITE") => {
+            let field = ProfileField::parse(sub.as_deref().unwrap()).unwrap();
+            // No value clears the field; otherwise the rest of the line is the value
+            // (a bio can contain spaces).
+            let value = if args.len() > 2 { Some(args[2..].join(" ")) } else { None };
+            if let Some(v) = &value {
+                if let Err(msg) = validate_profile(field, v) {
+                    ctx.notice(me, from.uid, msg);
+                    return;
+                }
+            }
+            let label = field.meta_key();
+            match db.set_profile(account, field, value.clone()) {
+                Ok(()) => {
+                    // Publish the change as IRCv3 metadata to every live session.
+                    let mval = value.clone().unwrap_or_default();
+                    for uid in net.uids_logged_into(account) {
+                        ctx.metadata(&uid, field.meta_key(), &mval);
+                    }
+                    match &value {
+                        Some(v) => ctx.notice(me, from.uid, t!(ctx, "Your {field} is now: {value}", field = label, value = v.clone())),
+                        None => ctx.notice(me, from.uid, t!(ctx, "Your {field} has been cleared.", field = label)),
+                    }
+                }
+                Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+            }
+        }
+        _ => ctx.notice(me, from.uid, "Syntax: SET PASSWORD <newpassword> | SET EMAIL [address] | SET GREET [message] | SET AVATAR [url] | SET BIO [text] | SET PRONOUNS [text] | SET TIMEZONE [tz] | SET URL [url] | SET AUTOOP {ON|OFF} | SET KILL {ON|OFF} | SET HIDE STATUS {ON|OFF} | SET SNOTICE {ON|OFF}"),
     }
+}
+
+// Validate a profile field value before it is stored and broadcast as metadata.
+fn validate_profile(field: ProfileField, v: &str) -> Result<(), &'static str> {
+    use echo_api::ProfileField::*;
+    if v.chars().any(|c| c.is_control()) {
+        return Err("That contains control characters — please remove them.");
+    }
+    let max = match field {
+        Bio => 300,
+        Pronouns => 40,
+        Timezone => 64,
+        Avatar | Url => 256,
+    };
+    if v.chars().count() > max {
+        return Err("That's too long.");
+    }
+    if matches!(field, Avatar | Url)
+        && (!(v.starts_with("https://") || v.starts_with("http://")) || v.contains(char::is_whitespace))
+    {
+        return Err("That must be a full http(s):// URL.");
+    }
+    Ok(())
 }
 
 fn parse_toggle(s: &str) -> Option<bool> {

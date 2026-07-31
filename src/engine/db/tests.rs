@@ -32,7 +32,7 @@
         // which of the two competing registrations we're looking at.
         let alice = |tag: &str, ts: u64, home: &str| Account {
             name: "alice".into(), email: Some(tag.into()),
-            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None, vhost: None, vhost_request: None, last_seen: ts, noexpire: false, expiry_warned: false, oper_note: None,
+            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None, profile: Default::default(), vhost: None, vhost_request: None, last_seen: ts, noexpire: false, expiry_warned: false, oper_note: None,
         };
         let converge = |first: &Account, second: &Account| {
             let (mut acc, mut ch, mut gr, mut bo, mut hc, mut nd) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HostConfig::default(), NetData::default());
@@ -81,7 +81,7 @@
             scram256: Some(verifier.into()), scram512: None, certfps: vec![], verified: true,
             ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true,
             memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false,
-            hide_status: false, snotice: false, language: None, vhost: None, vhost_request: None, last_seen: ts, noexpire: false,
+            hide_status: false, snotice: false, language: None, profile: Default::default(), vhost: None, vhost_request: None, last_seen: ts, noexpire: false,
             expiry_warned: false, oper_note: None,
         };
         let reg = |origin: &str, a: Account| LogEntry::for_test(origin, 0, 1, Event::AccountRegistered(Box::new(a)));
@@ -439,7 +439,7 @@
         db.register("alice", "pw", None).unwrap();
         let bob = Account {
             name: "bob".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None, vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None, profile: Default::default(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
         };
         let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, epoch: 0, sig: None, event: Event::AccountRegistered(Box::new(bob)) };
         db.ingest(entry).unwrap();
@@ -550,7 +550,7 @@
                 scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![],
                 suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true,
                 memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false,
-                hide_status: false, snotice: false, language: None, vhost: None, vhost_request: None, last_seen: 1,
+                hide_status: false, snotice: false, language: None, profile: Default::default(), vhost: None, vhost_request: None, last_seen: 1,
                 noexpire: false, expiry_warned: false, oper_note: None,
             }))).unwrap();
         }

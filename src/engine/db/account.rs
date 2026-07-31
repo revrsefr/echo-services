@@ -24,6 +24,7 @@ impl Db {
             suspension: None,
             memos: Vec::new(), memo_ignore: Vec::new(), memo_notify: true, memo_limit: None,
             greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None,
+            profile: Default::default(),
             vhost: None,
             vhost_request: None,
             last_seen: ts,
@@ -80,6 +81,7 @@ impl Db {
             suspension: None,
             memos: Vec::new(), memo_ignore: Vec::new(), memo_notify: true, memo_limit: None,
             greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None,
+            profile: Default::default(),
             vhost: None,
             vhost_request: None,
             last_seen: ts,
@@ -548,6 +550,22 @@ impl Db {
     /// `account`'s preferred language, if it set one.
     pub fn language_of(&self, account: &str) -> Option<String> {
         self.accounts.get(&key(account)).and_then(|a| a.language.clone())
+    }
+
+    /// Set (or clear, with None) a field of `account`'s public profile.
+    pub fn set_profile(&mut self, account: &str, field: ProfileField, value: Option<String>) -> Result<(), RegError> {
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return Err(RegError::Internal);
+        }
+        self.log.append(Event::AccountProfileSet { account: account.to_string(), field: field.meta_key().to_string(), value: value.clone() }).map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().profile.set(field, value);
+        Ok(())
+    }
+
+    /// The stored value of one of `account`'s public-profile fields, if set.
+    pub fn profile_field(&self, account: &str, field: ProfileField) -> Option<String> {
+        self.accounts.get(&key(account)).and_then(|a| a.profile.get(field).map(str::to_string))
     }
 
     /// Set whether `account` wants to be auto-opped on join (NickServ SET AUTOOP).

@@ -431,6 +431,12 @@ impl Engine {
             if let Some(host) = vhost {
                 ctx.apply_vhost(&uid, &host);
             }
+            // Publish the account's public profile as IRCv3 metadata to this session.
+            for field in echo_api::ProfileField::ALL {
+                if let Some(v) = self.db.profile_field(&account, field) {
+                    ctx.metadata(&uid, field.meta_key(), &v);
+                }
+            }
             let unread = self.db.unread_memos(&account);
             if unread > 0 && self.db.memo_notify_on(&account) {
                 ctx.notice(&agent, &uid, echo_api::render_plural(&lang, unread as u64, "You have \x02{unread}\x02 new memo. Read it with \x02/msg MemoServ READ NEW\x02.", "You have \x02{unread}\x02 new memos. Read them with \x02/msg MemoServ READ NEW\x02.", &[("unread", unread.to_string())]));

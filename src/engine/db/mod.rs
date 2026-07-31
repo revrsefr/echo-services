@@ -41,7 +41,7 @@ pub(crate) use event::{apply, Scope};
 // echo-api SDK crate; re-exported so the engine keeps naming them locally and
 // modules importing `crate::engine::db::{ChanError, ...}` are unaffected.
 pub use echo_api::{
-    AccountView, AjoinView, AkillView, BotView, Caps, ForbidKind, ForbidView, GroupView, HelpView, IgnoreView, MemoView, NewsKind, NewsView, NotifyView, Privs, ReportView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView, XlineKind,
+    AccountView, AjoinView, AkillView, BotView, Caps, ForbidKind, ForbidView, GroupView, HelpView, IgnoreView, MemoView, NewsKind, NewsView, NotifyView, Privs, ProfileField, ReportView, SuspensionView, ChanAccessView, ChanAkickView, ChanError, ChanSetting, ChannelView, CertError, CodeKind, Kicker, RegError, Store, TriggerView, VhostView, XlineKind,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,6 +115,10 @@ pub struct Account {
     // NickServ SET LANGUAGE: preferred reply language (None = the network default).
     #[serde(default)]
     pub language: Option<String>,
+    // NickServ SET AVATAR/BIO/PRONOUNS/TIMEZONE/URL: public profile, published as
+    // IRCv3 draft/metadata so clients (Orbit) show it in WHOIS / profile cards.
+    #[serde(default)]
+    pub profile: Profile,
     // Assigned vhost (HostServ), applied to the displayed host on identify.
     #[serde(default)]
     pub vhost: Option<Vhost>,
@@ -153,6 +157,44 @@ pub struct Vhost {
     // Absolute unix-seconds expiry, or None for a permanent vhost.
     #[serde(default)]
     pub expires: Option<u64>,
+}
+
+// An account's public profile. Every field is optional; unset fields are absent
+// from the serialized account. Each set field is published to the network as an
+// IRCv3 draft/metadata key (see ProfileField::meta_key) so clients can show it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Profile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bio: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pronouns: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+impl Profile {
+    pub fn set(&mut self, field: ProfileField, value: Option<String>) {
+        match field {
+            ProfileField::Avatar => self.avatar = value,
+            ProfileField::Bio => self.bio = value,
+            ProfileField::Pronouns => self.pronouns = value,
+            ProfileField::Timezone => self.timezone = value,
+            ProfileField::Url => self.url = value,
+        }
+    }
+    pub fn get(&self, field: ProfileField) -> Option<&str> {
+        match field {
+            ProfileField::Avatar => self.avatar.as_deref(),
+            ProfileField::Bio => self.bio.as_deref(),
+            ProfileField::Pronouns => self.pronouns.as_deref(),
+            ProfileField::Timezone => self.timezone.as_deref(),
+            ProfileField::Url => self.url.as_deref(),
+        }
+    }
 }
 
 fn verified_default() -> bool {

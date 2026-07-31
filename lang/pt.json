@@ -1374,5 +1374,8 @@
  "Your account is pending. Ask an existing member to vouch for you with \u0002/msg NickServ VOUCH {account}\u0002.": "A sua conta está pendente. Peça a um membro existente que o avalize com \u0002/msg NickServ VOUCH {account}\u0002.",
  "You vouched for \u0002{account}\u0002; their account is now active.": "Avalizou \u0002{account}\u0002; a conta está agora ativa.",
  "Your opponent left. Game \u0002#{id}\u0002 is over.": "O teu adversário saiu. O jogo \u0002#{id}\u0002 acabou.",
- "You opered up with a TLS certificate fingerprint that isn't on your account. Add it with \u0002/msg NickServ CERT ADD\u0002.": "Tornou-se operador com uma impressão digital de certificado TLS que não está na sua conta. Adicione-a com \u0002/msg NickServ CERT ADD\u0002."
+ "You opered up with a TLS certificate fingerprint that isn't on your account. Add it with \u0002/msg NickServ CERT ADD\u0002.": "Tornou-se operador com uma impressão digital de certificado TLS que não está na sua conta. Adicione-a com \u0002/msg NickServ CERT ADD\u0002.",
+ "Your {field} is now: {value}": "O teu {field} agora é: {value}",
+ "Your {field} has been cleared.": "O teu {field} foi limpo.",
+ "  {label} : {value}": "  {label} : {value}"
 }

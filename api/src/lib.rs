@@ -845,6 +845,16 @@ impl ServiceCtx {
         });
     }
 
+    // Publish an IRCv3 draft/metadata key on a user (e.g. a profile's avatar/bio),
+    // broadcast to subscribing clients. An empty value clears the key.
+    pub fn metadata(&mut self, uid: &str, key: &str, value: &str) {
+        self.actions.push(NetAction::Metadata {
+            target: uid.to_string(),
+            key: key.to_string(),
+            value: value.to_string(),
+        });
+    }
+
     // Force a user's nick (SVSNICK), e.g. to a guest nick after logout.
     pub fn force_nick(&mut self, uid: &str, nick: &str) {
         self.actions.push(NetAction::ForceNick {
@@ -1954,6 +1964,44 @@ pub enum ChanSetting {
     NoBot,
 }
 
+// A field of an account's public profile (NickServ SET AVATAR/BIO/...). Each is
+// published to the network as an IRCv3 draft/metadata key (see `meta_key`) so
+// clients such as Orbit can show it in WHOIS / profile cards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileField {
+    Avatar,
+    Bio,
+    Pronouns,
+    Timezone,
+    Url,
+}
+
+impl ProfileField {
+    // Parse a NickServ SET sub-option into a field.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_uppercase().as_str() {
+            "AVATAR" => Some(Self::Avatar),
+            "BIO" => Some(Self::Bio),
+            "PRONOUNS" => Some(Self::Pronouns),
+            "TIMEZONE" | "TZ" => Some(Self::Timezone),
+            "URL" | "WEBSITE" => Some(Self::Url),
+            _ => None,
+        }
+    }
+    // The IRCv3 metadata key this field is published under.
+    pub fn meta_key(self) -> &'static str {
+        match self {
+            Self::Avatar => "avatar",
+            Self::Bio => "bio",
+            Self::Pronouns => "pronouns",
+            Self::Timezone => "timezone",
+            Self::Url => "url",
+        }
+    }
+    pub const ALL: [ProfileField; 5] =
+        [Self::Avatar, Self::Bio, Self::Pronouns, Self::Timezone, Self::Url];
+}
+
 // A BotServ kicker: the assigned bot kicks a message that trips an enabled one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kicker {
@@ -2156,6 +2204,10 @@ pub trait Store {
     fn language_of(&self, account: &str) -> Option<String>;
     fn available_languages(&self) -> Vec<String>;
     fn default_language(&self) -> String;
+    // NickServ SET AVATAR/BIO/PRONOUNS/TIMEZONE/URL: a field of the public profile.
+    fn set_profile(&mut self, account: &str, field: ProfileField, value: Option<String>) -> Result<(), RegError>;
+    // The stored value of one public-profile field, if set.
+    fn profile_field(&self, account: &str, field: ProfileField) -> Option<String>;
     // NickServ SET AUTOOP: whether this account is auto-opped on join.
     fn set_account_autoop(&mut self, account: &str, on: bool) -> Result<(), RegError>;
     fn account_wants_autoop(&self, account: &str) -> bool;

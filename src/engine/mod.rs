@@ -614,6 +614,14 @@ impl Engine {
                 None => out.push(NetAction::SetHost { uid: uid.to_string(), host: vhost }),
             }
         }
+        // Publish the account's public profile as IRCv3 metadata on this session,
+        // so clients (Orbit) show avatar/bio/etc. Metadata lives on the connection,
+        // so it must be re-sent on every login.
+        for field in echo_api::ProfileField::ALL {
+            if let Some(v) = self.db.profile_field(account, field) {
+                out.push(NetAction::Metadata { target: uid.to_string(), key: field.meta_key().to_string(), value: v });
+            }
+        }
         let unread = self.db.unread_memos(account);
         if unread > 0 && self.db.memo_notify_on(account) {
             if let Some(ns) = &self.nick_service {
@@ -2147,7 +2155,7 @@ fn audit_summary(event: &db::Event) -> Option<String> {
             format!("{verb} channel \x02{channel}\x02 against expiry")
         }
         // Private, self-service, or cosmetic — not surfaced.
-        AjoinAdded { .. } | AjoinRemoved { .. } | AccountGreetSet { .. } | AccountLanguageSet { .. } | AccountAutoOpSet { .. } | AccountKillSet { .. } | AccountHideStatusSet { .. } | AccountSnoticeSet { .. } | VhostRequested { .. }
+        AjoinAdded { .. } | AjoinRemoved { .. } | AccountGreetSet { .. } | AccountLanguageSet { .. } | AccountProfileSet { .. } | AccountAutoOpSet { .. } | AccountKillSet { .. } | AccountHideStatusSet { .. } | AccountSnoticeSet { .. } | VhostRequested { .. }
         | VhostRequestCleared { .. } | MemoSent { .. } | MemoRead { .. } | MemoDeleted { .. }
         | MemoIgnoreAdd { .. } | MemoIgnoreDel { .. } | MemoPrefsSet { .. }
         | ChannelMlock { .. } | ChannelDescSet { .. } | ChannelEntryMsgSet { .. } | ChannelUrlSet { .. } | ChannelEmailSet { .. } | ChannelSettingsSet { .. }

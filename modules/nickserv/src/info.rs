@@ -1,4 +1,4 @@
-use echo_api::{human_time, NetView, Priv, Store};
+use echo_api::{human_time, NetView, Priv, ProfileField, Store};
 use echo_api::{Sender, ServiceCtx};
 use echo_api::t;
 
@@ -27,6 +27,14 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
     // A greet is public — the bot shows it in-channel to everyone anyway.
     if !acct.greet.is_empty() {
         ctx.notice(me, from.uid, t!(ctx, "  Greet      : {greet}", greet = acct.greet));
+    }
+    // Public profile fields (avatar/bio/pronouns/timezone/url), shown to everyone —
+    // the same values are published to clients as IRCv3 metadata.
+    for field in ProfileField::ALL {
+        if let Some(v) = db.profile_field(&acct.name, field) {
+            let label = format!("{:<8}", field.meta_key());
+            ctx.notice(me, from.uid, t!(ctx, "  {label} : {value}", label = label, value = v));
+        }
     }
     if privileged {
         if let Some(s) = db.suspension(&acct.name) {

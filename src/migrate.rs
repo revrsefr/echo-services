@@ -201,6 +201,7 @@ pub fn import_anope(anope_path: &str, out_path: &str, node: &str) -> std::io::Re
             // or accounts that never toggled the flag get the wrong value.
             memo_notify: flag(nc, "MEMO_SIGNON"),
             memo_limit: match num(nc, "memomax") { 0 => None, n => Some(n as u32) },
+            profile: Default::default(),
             greet: String::new(),
             no_autoop: !flag(nc, "AUTOOP"),
             no_protect: !flag(nc, "PROTECT"),

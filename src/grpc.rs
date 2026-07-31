@@ -212,7 +212,8 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::OperGranted { .. }
         | Event::OperRevoked { .. }
         | Event::SessionExceptionAdded { .. }
-        | Event::SessionExceptionRemoved { .. } => return None,
+        | Event::SessionExceptionRemoved { .. }
+        | Event::AccountProfileSet { .. } => return None,
     };
     Some(ReplicationEvent { origin: entry.origin().to_string(), seq: entry.seq(), lamport: entry.lamport(), kind: Some(kind) })
 }
@@ -529,6 +530,7 @@ mod tests {
             memo_notify: true,
             memo_limit: None,
             greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None,
+            profile: Default::default(),
             vhost: None,
             vhost_request: None,
             last_seen: 111,

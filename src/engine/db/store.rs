@@ -111,6 +111,12 @@ impl Store for Db {
     fn language_of(&self, account: &str) -> Option<String> {
         Db::language_of(self, account)
     }
+    fn set_profile(&mut self, account: &str, field: ProfileField, value: Option<String>) -> Result<(), RegError> {
+        Db::set_profile(self, account, field, value)
+    }
+    fn profile_field(&self, account: &str, field: ProfileField) -> Option<String> {
+        Db::profile_field(self, account, field)
+    }
     fn available_languages(&self) -> Vec<String> {
         Db::available_languages(self).to_vec()
     }
