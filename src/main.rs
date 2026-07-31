@@ -10,6 +10,7 @@ mod grpc;
 mod health;
 mod jsonrpc;
 mod keycard;
+mod panel;
 mod link;
 mod uplink_tls;
 mod migrate;
@@ -335,6 +336,10 @@ async fn main() -> Result<()> {
     // Liveness + Prometheus metrics endpoint (plain HTTP, localhost).
     if let Some(health_cfg) = cfg.health.clone() {
         tokio::spawn(health::run(engine.clone(), health_cfg));
+    }
+
+    if let Some(panel_cfg) = cfg.panel.clone() {
+        tokio::spawn(panel::run(engine.clone(), panel_cfg));
     }
 
     // Periodically fold log churn into a snapshot when it grows past the accounts.

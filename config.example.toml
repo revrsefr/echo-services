@@ -105,6 +105,14 @@ protocol = 1206                # InspIRCd link protocol (1206 = insp4, 1205 = in
 # [health]
 # bind = "127.0.0.1:9099"
 
+# Web admin panel (plain HTTP) — a self-contained admin site served by echo itself, so any
+# operator gets it with no extra stack. Staff sign in with their echo account; only services
+# operators may enter, and every action is gated by their oper tier. Serve it behind a TLS
+# reverse proxy — passwords and the session cookie must not cross plain HTTP. Omit to disable.
+# [panel]
+# bind = "127.0.0.1:9100"
+# brand = "My Network"          # optional; shown in the header (defaults to the server name)
+
 # gRPC directory of accounts and channels for a website to mirror (identity and metadata
 # only, never credentials), plus the Accounts API to register and confirm accounts with
 # the token. See proto/echo.proto. Omit to disable.

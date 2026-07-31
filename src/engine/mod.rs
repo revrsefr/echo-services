@@ -660,6 +660,17 @@ impl Engine {
         (self.db.accounts().cloned().collect(), self.db.channels().cloned().collect())
     }
 
+    // Read accessors for the admin panel (in-process, under the shared lock).
+    pub fn account_privs(&self, account: &str) -> Privs {
+        self.oper_privs(account)
+    }
+    pub fn opers(&self) -> Vec<(String, Vec<String>, Option<u64>)> {
+        self.db.opers_list()
+    }
+    pub fn akills(&self) -> Vec<echo_api::AkillView> {
+        self.db.akills()
+    }
+
     pub fn gossip_ingest(&mut self, entry: LogEntry) -> std::io::Result<()> {
         // If ingesting a peer's entry removed an account a local session or channel
         // relied on (lost a conflict, or dropped elsewhere), clean up after it.

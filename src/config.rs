@@ -24,6 +24,11 @@ pub struct Config {
     // start. Bind to localhost; unauthenticated by design (read-only gauges).
     #[serde(default)]
     pub health: Option<Health>,
+    // Web admin panel (plain HTTP; put it behind a TLS reverse proxy). Absent =
+    // it does not start. Staff log in with their echo account; only operators
+    // may enter, and each action is gated by their oper tier.
+    #[serde(default)]
+    pub panel: Option<Panel>,
     // Localization. Absent = English only. `default` is the reply language for
     // users with no preference; `dir` holds `<code>.json` catalogs; `available`
     // lists the codes a user may pick with NickServ SET LANGUAGE.
@@ -318,6 +323,16 @@ pub struct Health {
     // the endpoint is unauthenticated and serves read-only gauges for a monitor
     // (Prometheus scrape of /metrics, or /health for a liveness probe).
     pub bind: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Panel {
+    // Address to accept HTTP on, e.g. "127.0.0.1:9100". Serve it through a TLS
+    // reverse proxy — the session cookie and passwords must not cross plain HTTP.
+    pub bind: String,
+    // Network name shown in the panel header. Defaults to the server name.
+    #[serde(default)]
+    pub brand: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
