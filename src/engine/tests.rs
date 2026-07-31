@@ -926,6 +926,38 @@
         assert!(told, "the user is told they were suspended");
     }
 
+    // Identifying sets the +r ("registered") user mode; logging out clears it.
+    #[test]
+    fn login_sets_registered_umode_and_logout_clears_it() {
+        use echo_nickserv::NickServ;
+        let path = std::env::temp_dir().join("echo-umode-r.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "test");
+        db.scram_iterations = 4096;
+        db.register("alice", "sesame", None).unwrap();
+        let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+        e.set_sid("42S".into());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        e.set_irc_out(tx);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "alice".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "IDENTIFY sesame".into() });
+        assert_eq!(e.network.account_of("000AAAAAB"), Some("alice"), "logged in");
+        let set_r = std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|a| matches!(a, NetAction::UserMode { uid, modes } if uid == "000AAAAAB" && modes == "+r"));
+        assert!(set_r, "login sets +r");
+
+        // Changing nick while logged in re-asserts +r (the ircd drops it on rename).
+        e.handle(NetEvent::NickChange { uid: "000AAAAAB".into(), nick: "alice2".into() });
+        let re_r = std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|a| matches!(a, NetAction::UserMode { uid, modes } if uid == "000AAAAAB" && modes == "+r"));
+        assert!(re_r, "nick change re-asserts +r while logged in");
+
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAB".into(), to: "42SAAAAAA".into(), text: "LOGOUT".into() });
+        let clear_r = std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|a| matches!(a, NetAction::UserMode { uid, modes } if uid == "000AAAAAB" && modes == "-r"));
+        assert!(clear_r, "logout clears +r");
+    }
+
     // A network ban that arrives by gossip is pushed to the local ircd right
     // away, not just held for the next netburst — otherwise a banned user could
     // hop to a peer network until its next relink.
@@ -981,7 +1013,7 @@
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None, vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None, profile: Default::default(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)));
         e.gossip_ingest(entry).unwrap();

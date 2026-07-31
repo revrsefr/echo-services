@@ -174,6 +174,9 @@ pub enum NetAction {
     // the pseudoclient uid to source it from (empty = the services server). The
     // protocol stamps a timestamp the ircd will accept.
     ChannelMode { from: String, channel: String, modes: String },
+    // Set user modes on a user from the services server, e.g. +r when they log
+    // into an account and -r when they log out. Only a server may change +r.
+    UserMode { uid: String, modes: String },
     // Kick a user from a channel, sourced from pseudoclient `from`.
     Kick { from: String, channel: String, uid: String, reason: String },
     // Set a channel's topic, sourced from pseudoclient `from`.

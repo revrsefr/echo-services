@@ -546,6 +546,9 @@ impl Protocol for InspIrcd {
                     vec![format!(":{} {}", from, cmd)]
                 }
             }
+            // MODE <uid> <modes> from the services server. +r (u_registered) may
+            // only be changed by a server, so this is always server-sourced.
+            NetAction::UserMode { uid, modes } => vec![self.sourced(format!("MODE {} {}", uid, modes))],
             NetAction::Kick { from, channel, uid, reason } => {
                 vec![format!(":{} KICK {} {} :{}", from, channel, uid, reason)]
             }

@@ -1421,6 +1421,13 @@ impl Engine {
                 self.pending_enforce.retain(|p| p.uid != uid); // they left the old nick
                 let mut out = self.enforce_registered_nick(&uid, &new_nick);
                 out.extend(self.enforce_akick_on_nick(&uid));
+                // The ircd drops +r on any nick change (m_services), but a logged-in
+                // user keeps their account across a rename, so re-assert +r on the
+                // new nick — otherwise identifying under a guest nick then switching
+                // to the account nick would silently lose the registered mode.
+                if self.network.account_of(&uid).is_some() {
+                    out.push(NetAction::UserMode { uid: uid.clone(), modes: "+r".to_string() });
+                }
                 if let Some(line) = self.notify_line('n', &uid, None, &format!("changed nick (was {old_nick})")) {
                     out.push(line);
                 }
@@ -1827,8 +1834,12 @@ impl Engine {
                 if key == "accountname" && target != "*" {
                     if value.is_empty() {
                         self.network.clear_account(target);
+                        // Drop the "registered" user mode when logging out.
+                        self.emit_irc(NetAction::UserMode { uid: target.clone(), modes: "-r".to_string() });
                     } else {
                         self.network.set_account(target, value);
+                        // Set the "registered" user mode (+r) now that they're identified.
+                        self.emit_irc(NetAction::UserMode { uid: target.clone(), modes: "+r".to_string() });
                         // Identified now: cancel any pending nick-protection rename.
                         self.pending_enforce.retain(|p| p.uid != *target);
                         // A login is activity: keep the account from expiring.
