@@ -664,9 +664,6 @@ impl Engine {
     pub fn account_privs(&self, account: &str) -> Privs {
         self.oper_privs(account)
     }
-    pub fn opers(&self) -> Vec<(String, Vec<String>, Option<u64>)> {
-        self.db.opers_list()
-    }
     pub fn akills(&self) -> Vec<echo_api::AkillView> {
         self.db.akills()
     }

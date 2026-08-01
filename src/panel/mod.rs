@@ -267,7 +267,7 @@ async fn accounts(oper: Oper, State(st): State<AppState>, Query(q): Query<Accoun
     let e = st.engine.lock().await;
     let (mut accts, _) = e.directory_snapshot();
     accts.retain(|a| needle.is_empty() || a.name.to_lowercase().contains(&needle));
-    accts.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    accts.sort_by_key(|a| a.name.to_lowercase());
     let total = accts.len();
     let rows: String = accts
         .iter()
