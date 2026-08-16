@@ -5,6 +5,9 @@ config.toml
 
 fedserv.db.jsonl
 
+# TLS material (private keys) — jsonrpc/grpc/gossip certs. Never commit.
+/certs
+
 # Local demo/test scaffolding
 /demo-certs
 /demo-start.sh
