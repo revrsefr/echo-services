@@ -531,6 +531,13 @@ impl Engine {
                     // op and ordinary ops still can't kick or deop them — the
                     // standard bot default.
                     out.push(NetAction::ServiceJoin { uid: uid.clone(), channel: chan.clone(), modes: "ao".into() });
+                    // The bot's join (re)creates the channel on the uplink, and the
+                    // uplink sends IJOIN (no modes) for later member joins — so nothing
+                    // else re-applies the registered mode-lock (+r). Re-assert it here.
+                    if let Some(modes) = self.db.channel(chan).map(|c| c.lock_modes()).filter(|m| !m.is_empty()) {
+                        let from = self.channel_mode_source(chan);
+                        out.push(NetAction::ChannelMode { from, channel: chan.clone(), modes });
+                    }
                     self.bot_channels.insert((bot_lc.clone(), chan.clone()));
                 }
             }
