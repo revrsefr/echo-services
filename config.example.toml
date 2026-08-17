@@ -25,7 +25,7 @@ protocol = 1206                # InspIRCd link protocol (1206 = insp4, 1205 = in
 # service_modes = "iHkB"       # invisible, hideoper, servprotect (needs a U-line), bot
 # service_oper_type = "Network Service"   # shown in /whois; empty = non-opers
 # services_channel = "#services"          # channel every pseudo-client joins; empty = none
-# standard_replies = false     # IRCv3 FAIL/WARN/NOTE; needs m_services_stdrpl on the ircd
+# standard_replies = true      # IRCv3 FAIL/WARN/NOTE (default on; echoIRCd re-emits them)
 
 # Which service modules to start. Omit for the full standard suite; list names to run a
 # subset. Add "example" to also start the example template service.

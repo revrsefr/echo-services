@@ -463,12 +463,15 @@ pub struct Server {
     #[serde(default = "default_services_channel")]
     pub services_channel: String,
     // Emit IRCv3 standard replies (FAIL/WARN/NOTE) for service errors instead of
-    // plain notices. Needs m_services_stdrpl loaded on the ircd; off until then,
-    // otherwise the replies are dropped. Off = today's notice behaviour.
-    #[serde(default)]
+    // plain notices. On by default: echoIRCd re-emits them and degrades to a plain
+    // notice for clients that didn't negotiate standard-replies.
+    #[serde(default = "default_true")]
     pub standard_replies: bool,
 }
 
+fn default_true() -> bool {
+    true
+}
 fn default_services_channel() -> String {
     "#services".to_string()
 }
