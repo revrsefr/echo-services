@@ -1,4 +1,6 @@
 {
+ "\u0002{new}\u0002 is already in use. Pick another name.": "\u0002{new}\u0002 já está em uso. Escolha outro nome.",
+ "\u0002{old}\u0002 has been renamed to \u0002{new}\u0002.": "\u0002{old}\u0002 foi renomeado para \u0002{new}\u0002.",
  "\u0002!votekick\u0002 is now disabled in \u0002{chan}\u0002.": "\u0002!votekick\u0002 agora está desativado em \u0002{chan}\u0002.",
  "\u0002#{id}\u0002 {reporter} → \u0002{target}\u0002: {short}{flag}": "\u0002#{id}\u0002 {reporter} → \u0002{target}\u0002: {short}{flag}",
  "\u0002#{id}\u0002 {requester} — {short}{state}": "\u0002#{id}\u0002 {requester} — {short}{state}",

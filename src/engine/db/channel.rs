@@ -844,4 +844,24 @@ impl Db {
         self.channels.remove(&k);
         Ok(())
     }
+
+    /// Move `old`'s registration to `new`, keeping every setting. `NoChannel` if
+    /// `old` isn't registered, `Exists` if `new` already is (a case-only change of
+    /// the same channel is allowed).
+    pub fn rename_channel(&mut self, old: &str, new: &str) -> Result<(), ChanError> {
+        let (ko, kn) = (key(old), key(new));
+        if !self.channels.contains_key(&ko) {
+            return Err(ChanError::NoChannel);
+        }
+        if ko != kn && self.channels.contains_key(&kn) {
+            return Err(ChanError::Exists);
+        }
+        self.log
+            .append(Event::ChannelRenamed { old: old.to_string(), new: new.to_string() })
+            .map_err(|_| ChanError::Internal)?;
+        let mut c = self.channels.remove(&ko).unwrap();
+        c.name = new.to_string();
+        self.channels.insert(kn, c);
+        Ok(())
+    }
 }

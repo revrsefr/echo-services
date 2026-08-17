@@ -410,6 +410,18 @@ impl Network {
         }
     }
 
+    // A channel was renamed in place: carry its membership tracking to the new
+    // name so status/enforcement keep working under it.
+    pub fn channel_rename(&mut self, old: &str, new: &str) {
+        let (ko, kn) = (lc(old), lc(new));
+        if ko == kn {
+            return;
+        }
+        if let Some(c) = self.channels.remove(&ko) {
+            self.channels.insert(kn, c);
+        }
+    }
+
     // Set or clear a user's channel-operator status (FMODE +o/-o).
     pub fn set_op(&mut self, channel: &str, uid: &str, op: bool) {
         let c = self.channels.entry(lc(channel)).or_default();

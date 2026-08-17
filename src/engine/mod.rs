@@ -1589,6 +1589,17 @@ impl Engine {
                 out.extend(self.member_left(&channel, &uid));
                 out
             }
+            // A channel was renamed elsewhere (a client on another server, or an
+            // ircd oper override). Move our membership projection, and — if it was
+            // a registered channel we didn't rename ourselves — move the
+            // registration too so the DB name matches the live channel.
+            NetEvent::ChannelRename { old, new } => {
+                self.network.channel_rename(&old, &new);
+                if self.db.channel(&old).is_some() && self.db.channel(&new).is_none() {
+                    let _ = self.db.rename_channel(&old, &new);
+                }
+                Vec::new()
+            }
             NetEvent::ChannelOp { channel, uid, op } => {
                 self.network.set_op(&channel, &uid, op);
                 // SECUREOPS: a user who gains +o without op-level access loses it.
@@ -2088,6 +2099,7 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         VhostDeleted { account } => format!("removed the vhost on \x02{account}\x02"),
         ChannelRegistered { name, founder, .. } => format!("registered channel \x02{name}\x02 (founder \x02{founder}\x02)"),
         ChannelDropped { name } => format!("dropped channel \x02{name}\x02"),
+        ChannelRenamed { old, new } => format!("renamed channel \x02{old}\x02 to \x02{new}\x02"),
         ChannelFounderSet { channel, founder } => format!("set founder of \x02{channel}\x02 to \x02{founder}\x02"),
         ChannelSuccessorSet { channel, successor } => match successor {
             Some(s) => format!("set successor of \x02{channel}\x02 to \x02{s}\x02"),

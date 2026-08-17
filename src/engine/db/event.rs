@@ -42,6 +42,7 @@ pub enum Event {
     NickUngrouped { nick: String },
     ChannelRegistered { name: String, founder: String, ts: u64 },
     ChannelDropped { name: String },
+    ChannelRenamed { old: String, new: String },
     ChannelMlock { name: String, on: String, off: String, #[serde(default)] params: Vec<(char, String)> },
     ChannelAccessAdd { channel: String, account: String, level: String },
     ChannelAccessDel { channel: String, account: String },
@@ -236,6 +237,7 @@ impl Event {
             | Event::SessionExceptionRemoved { .. } => Scope::Global,
             Event::ChannelRegistered { .. }
             | Event::ChannelDropped { .. }
+            | Event::ChannelRenamed { .. }
             | Event::ChannelMlock { .. }
             | Event::ChannelAccessAdd { .. }
             | Event::ChannelAccessDel { .. }
@@ -504,6 +506,12 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         }
         Event::ChannelDropped { name } => {
             channels.remove(&key(&name));
+        }
+        Event::ChannelRenamed { old, new } => {
+            if let Some(mut c) = channels.remove(&key(&old)) {
+                c.name = new.clone();
+                channels.insert(key(&new), c);
+            }
         }
         Event::ChannelMlock { name, on, off, params } => {
             if let Some(c) = channels.get_mut(&key(&name)) {

@@ -122,6 +122,30 @@
     }
 
     #[test]
+    fn rename_channel_moves_registration_and_persists() {
+        let path = tmp("rename");
+        {
+            let mut db = Db::open(&path, "N1");
+            db.register_channel("#old", "alice").unwrap();
+            db.set_mlock("#old", "nt", "").unwrap();
+            db.rename_channel("#old", "#new").unwrap();
+            assert!(db.channel("#old").is_none(), "old name gone");
+            let info = db.channel("#new").expect("new name registered");
+            assert_eq!(info.founder, "alice");
+            assert_eq!(info.name, "#new", "display name updated");
+            assert_eq!(info.lock_on, "nt", "settings carried over");
+            // Can't rename onto an existing registration, nor rename a ghost.
+            db.register_channel("#taken", "bob").unwrap();
+            assert!(matches!(db.rename_channel("#new", "#taken"), Err(ChanError::Exists)));
+            assert!(matches!(db.rename_channel("#ghost", "#whatever"), Err(ChanError::NoChannel)));
+        }
+        // The rename replays from the log on reopen.
+        let db = Db::open(&path, "N1");
+        assert!(db.channel("#old").is_none(), "old name still gone after replay");
+        assert_eq!(db.channel("#new").map(|c| c.lock_on.clone()), Some("nt".to_string()));
+    }
+
+    #[test]
     fn akick_add_del_and_match() {
         let mut db = Db::open(tmp("akick"), "N1");
         db.register_channel("#c", "founder").unwrap();

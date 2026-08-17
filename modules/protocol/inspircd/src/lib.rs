@@ -216,6 +216,24 @@ impl Protocol for InspIrcd {
                     _ => vec![],
                 }
             }
+            // :<src> RENAME <old> <new> :<reason> — draft/channel-rename. Move our
+            // projection (and any registration) to the new name. Skip our own
+            // ChanServ-sourced renames; the command that sent them already moved
+            // the registration.
+            "RENAME" => {
+                let old = tokens.next().unwrap_or("");
+                let new = tokens.next().unwrap_or("");
+                match source.as_deref() {
+                    Some(src)
+                        if !src.starts_with(self.sid.as_str())
+                            && old.starts_with('#')
+                            && new.starts_with('#') =>
+                    {
+                        vec![NetEvent::ChannelRename { old: old.to_string(), new: new.to_string() }]
+                    }
+                    _ => vec![],
+                }
+            }
             // :<src> FMODE <chan> <ts> <modes> [params] — a channel mode change.
             // Skip changes we made ourselves so enforcement can't loop.
             "FMODE" => {
@@ -568,6 +586,11 @@ impl Protocol for InspIrcd {
             // INVITE <uid> <chan> <chanTS> <expiry>. Expiry 0 = no expiry.
             NetAction::Invite { from, uid, channel } => {
                 vec![format!(":{} INVITE {} {} 1 0", from, uid, channel)]
+            }
+            // RENAME <old> <new> :<reason> — draft/channel-rename, sourced from a
+            // pseudoclient. The ircd moves the live channel and notifies clients.
+            NetAction::RenameChannel { from, old, new, reason } => {
+                vec![format!(":{} RENAME {} {} :{}", from, old, new, reason)]
             }
             // ADDLINE <type> <mask> <setter> <set-time> <duration> :<reason>. A
             // duration of 0 is permanent; the ircd applies it to matching users
@@ -1270,6 +1293,27 @@ mod tests {
         // InspIRCd sends IJOIN with a membid (and optionally ts+modes) — tolerate it.
         let ev = proto().parse(":0IRAAAAAD IJOIN #chan 42");
         assert!(matches!(ev.as_slice(), [NetEvent::Join { uid, channel, op: false }] if uid == "0IRAAAAAD" && channel == "#chan"), "{ev:?}");
+    }
+
+    #[test]
+    fn parses_rename_and_filters_own() {
+        // A rename from another server surfaces as a ChannelRename.
+        let ev = proto().parse(":0IRAAAAAB RENAME #old #new :moving");
+        assert!(matches!(ev.as_slice(), [NetEvent::ChannelRename { old, new }] if old == "#old" && new == "#new"), "{ev:?}");
+        // Our own ChanServ-sourced rename (42S…) is filtered so we don't reprocess it.
+        let ev = proto().parse(":42SAAAAAA RENAME #old #new :moving");
+        assert!(ev.is_empty(), "own-sourced rename filtered: {ev:?}");
+    }
+
+    #[test]
+    fn serializes_rename_channel() {
+        let lines = proto().serialize(&NetAction::RenameChannel {
+            from: "42SAAAAAA".into(),
+            old: "#old".into(),
+            new: "#new".into(),
+            reason: "by founder".into(),
+        });
+        assert_eq!(lines, vec![":42SAAAAAA RENAME #old #new :by founder"]);
     }
 
     // Our own IJOIN must carry a membid, or the ircd rejects the link with

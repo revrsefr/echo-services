@@ -455,6 +455,9 @@ impl Store for Db {
     fn drop_channel(&mut self, name: &str) -> Result<(), ChanError> {
         Db::drop_channel(self, name)
     }
+    fn rename_channel(&mut self, old: &str, new: &str) -> Result<(), ChanError> {
+        Db::rename_channel(self, old, new)
+    }
     fn set_mlock(&mut self, name: &str, on: &str, off: &str, params: Vec<(char, String)>) -> Result<(), ChanError> {
         Db::set_mlock_params(self, name, on, off, params)
     }

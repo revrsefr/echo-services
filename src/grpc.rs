@@ -148,6 +148,7 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::MemoIgnoreAdd { .. }
         | Event::MemoIgnoreDel { .. }
         | Event::MemoPrefsSet { .. }
+        | Event::ChannelRenamed { .. }
         | Event::ChannelMlock { .. }
         | Event::ChannelAccessAdd { .. }
         | Event::ChannelAccessDel { .. }

@@ -41,6 +41,8 @@ mod seen;
 mod enforce;
 #[path = "clone.rs"]
 mod clone;
+#[path = "rename.rs"]
+mod rename;
 #[path = "xop.rs"]
 mod xop;
 #[path = "suspend.rs"]
@@ -73,6 +75,7 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "GETKEY", summary: "show the channel key", detail: "Syntax: \x02GETKEY <#channel>\x02\nShows the channel key (+k), if one is set." },
     HelpEntry { cmd: "SEEN", summary: "when a nick was last seen", detail: "Syntax: \x02SEEN <nick>\x02\nShows when a nick was last seen." },
     HelpEntry { cmd: "CLONE", summary: "copy channel settings", detail: "Syntax: \x02CLONE <source> <target>\x02\nCopies one channel's settings to another you own." },
+    HelpEntry { cmd: "RENAME", summary: "rename the channel", detail: "Syntax: \x02RENAME <#channel> <#newname>\x02\nRenames a registered channel, keeping its settings, members, modes and topic. Founder only; the new name must be free and unoccupied." },
     HelpEntry { cmd: "MODE", summary: "set channel modes", detail: "Syntax: \x02MODE <#channel> <modes>\x02\nSets modes on the channel, e.g. MODE #chan +nt. For extban ban types, see \x02/msg HelpServ HELP EXTBANS\x02." },
     HelpEntry { cmd: "MLOCK", summary: "lock channel modes", detail: "Syntax: \x02MLOCK <#channel> [modes]\x02\nLocks modes set or unset, e.g. MLOCK #chan +nt-s." },
     HelpEntry { cmd: "DROP", summary: "delete the registration", detail: "Syntax: \x02DROP <#channel>\x02\nDeletes the channel registration." },
@@ -89,7 +92,7 @@ pub const COMMANDS: &[&str] = &[
     "DEVOICE", "UP", "DOWN", "OWNER", "DEOWNER", "PROTECT", "ADMIN", "DEPROTECT", "DEADMIN",
     "HALFOP", "DEHALFOP", "KICK", "BAN", "UNBAN", "TOPIC", "INVITE", "AKICK", "LEVELS",
     "STATUS", "SUSPEND", "UNSUSPEND", "NOEXPIRE", "LIST", "SET", "ENTRYMSG", "GETKEY",
-    "SEEN", "ENFORCE", "SYNC", "CLONE", "SOP", "AOP", "HOP", "VOP", "HELP",
+    "SEEN", "ENFORCE", "SYNC", "CLONE", "RENAME", "SOP", "AOP", "HOP", "VOP", "HELP",
 ];
 
 /// True if `cmd` (any case) is a command ChanServ handles.
@@ -333,6 +336,7 @@ impl Service for ChanServ {
             // the mode lock and akick list, so SYNC is the same handler.
             Some("ENFORCE") | Some("SYNC") => enforce::handle(me, from, args, ctx, net, db),
             Some("CLONE") => clone::handle(me, from, args, ctx, db),
+            Some("RENAME") => rename::handle(me, from, args, ctx, net, db),
             Some("SOP") => xop::handle(me, from, "SOP", "sop", args, ctx, net, db),
             Some("AOP") => xop::handle(me, from, "AOP", "op", args, ctx, net, db),
             Some("HOP") => xop::handle(me, from, "HOP", "halfop", args, ctx, net, db),

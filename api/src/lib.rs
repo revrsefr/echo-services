@@ -45,6 +45,11 @@ pub enum NetEvent {
     // A user was kicked from a channel: `by` is the kicker's uid, `reason` the kick
     // message. Membership is dropped the same as a part.
     Kicked { channel: String, uid: String, by: String, reason: String },
+    // A channel was renamed in place (IRCv3 draft/channel-rename), by a user on
+    // another server or by ChanServ elsewhere in the mesh. Membership, modes and
+    // topic carry over; we move our projection (and any registration) to `new`.
+    // Our own ChanServ-sourced renames are filtered out by the protocol layer.
+    ChannelRename { old: String, new: String },
     // A user's own modes changed (`:uid MODE uid <modes>`), e.g. going +i. Our own
     // pseudo-clients are filtered out by the protocol layer.
     UserMode { uid: String, modes: String },
@@ -186,6 +191,10 @@ pub enum NetAction {
     Topic { from: String, channel: String, topic: String, setter: String },
     // Invite a user to a channel, sourced from pseudoclient `from`.
     Invite { from: String, uid: String, channel: String },
+    // Rename a channel in place (IRCv3 draft/channel-rename), sourced from
+    // pseudoclient `from` (ChanServ). The ircd moves the live channel — members,
+    // modes and topic intact — and notifies its clients.
+    RenameChannel { from: String, old: String, new: String, reason: String },
     // Add a network ban (X-line — `kind` is the ircd's line type, e.g. "G" for a
     // G-line) covering `mask`, applied to matching users already online and to
     // future connections. `duration` in seconds, 0 = permanent.
@@ -944,6 +953,17 @@ impl ServiceCtx {
             from: from.to_string(),
             uid: uid.to_string(),
             channel: channel.to_string(),
+        });
+    }
+
+    // Rename a channel in place (draft/channel-rename), sourced from pseudoclient
+    // `from` (ChanServ). The ircd carries membership, modes and topic across.
+    pub fn rename_channel(&mut self, from: &str, old: &str, new: &str, reason: &str) {
+        self.actions.push(NetAction::RenameChannel {
+            from: from.to_string(),
+            old: old.to_string(),
+            new: new.to_string(),
+            reason: reason.to_string(),
         });
     }
 
@@ -2359,6 +2379,8 @@ pub trait Store {
     fn session_exceptions(&self) -> Vec<(String, u32, String)>;
     fn register_channel(&mut self, name: &str, founder: &str) -> Result<(), ChanError>;
     fn drop_channel(&mut self, name: &str) -> Result<(), ChanError>;
+    // Move a channel registration to a new name, keeping all its settings.
+    fn rename_channel(&mut self, old: &str, new: &str) -> Result<(), ChanError>;
     fn set_mlock(&mut self, name: &str, on: &str, off: &str, params: Vec<(char, String)>) -> Result<(), ChanError>;
     fn set_desc(&mut self, channel: &str, desc: &str) -> Result<(), ChanError>;
     fn set_url(&mut self, channel: &str, url: &str) -> Result<(), ChanError>;
