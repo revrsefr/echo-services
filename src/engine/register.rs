@@ -441,6 +441,11 @@ impl Engine {
             if let Some(swhois) = self.db.swhois(&account) {
                 ctx.metadata(&uid, "swhois", &swhois);
             }
+            // Re-apply the account's persistent SIGNORE list (per-connection too).
+            let signore = self.db.signore(&account);
+            if !signore.is_empty() {
+                ctx.metadata(&uid, "signore", &signore.join(" "));
+            }
             let unread = self.db.unread_memos(&account);
             if unread > 0 && self.db.memo_notify_on(&account) {
                 ctx.notice(&agent, &uid, echo_api::render_plural(&lang, unread as u64, "You have \x02{unread}\x02 new memo. Read it with \x02/msg MemoServ READ NEW\x02.", "You have \x02{unread}\x02 new memos. Read them with \x02/msg MemoServ READ NEW\x02.", &[("unread", unread.to_string())]));

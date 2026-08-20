@@ -117,6 +117,12 @@ impl Store for Db {
     fn swhois(&self, account: &str) -> Option<String> {
         Db::swhois(self, account)
     }
+    fn set_signore(&mut self, account: &str, list: Vec<String>) -> Result<(), RegError> {
+        Db::set_signore(self, account, list)
+    }
+    fn signore(&self, account: &str) -> Vec<String> {
+        Db::signore(self, account)
+    }
     fn set_profile(&mut self, account: &str, field: ProfileField, value: Option<String>) -> Result<(), RegError> {
         Db::set_profile(self, account, field, value)
     }

@@ -319,6 +319,11 @@ impl Protocol for InspIrcd {
                             let flags = parts.next().unwrap_or("");
                             let fp = if flags.contains('E') { "" } else { parts.next().unwrap_or("").split(',').next().unwrap_or("") };
                             vec![NetEvent::UserCert { uid: target.to_string(), fp: fp.to_string() }]
+                        } else if key.eq_ignore_ascii_case("signore") {
+                            // A user edited their persistent SIGNORE list on the ircd;
+                            // masks are space-separated (an empty value clears it).
+                            let list: Vec<String> = trailing(rest).split(' ').filter(|m| !m.is_empty()).map(|m| m.to_string()).collect();
+                            vec![NetEvent::SignoreSet { uid: target.to_string(), list }]
                         } else {
                             vec![]
                         }
@@ -869,6 +874,18 @@ mod tests {
             [NetEvent::AccountLogin { uid, account }] if uid == "0IRAAAAAB" && account.is_empty()), "empty value = logout");
         assert!(p.parse(":42S METADATA 0IRAAAAAB accountname :bob").is_empty(), "our own echo is ignored");
         assert!(p.parse(":0IR METADATA 0IRAAAAAB swhois :hi").is_empty(), "unhandled keys ignored");
+    }
+
+    // A user's edited SIGNORE list arrives as `signore` metadata (space-separated
+    // masks) for us to persist on their account; an empty value clears the list.
+    #[test]
+    fn parses_signore_metadata() {
+        let mut p = proto();
+        assert!(matches!(p.parse(":0IR METADATA 0IRAAAAAB signore :bob!*@* eve!*@*").as_slice(),
+            [NetEvent::SignoreSet { uid, list }] if uid == "0IRAAAAAB" && list.as_slice() == ["bob!*@*", "eve!*@*"]), "masks parsed");
+        assert!(matches!(p.parse(":0IR METADATA 0IRAAAAAB signore :").as_slice(),
+            [NetEvent::SignoreSet { list, .. }] if list.is_empty()), "empty value = cleared list");
+        assert!(p.parse(":42S METADATA 0IRAAAAAB signore :bob!*@*").is_empty(), "our own echo is ignored");
     }
 
     // `ssl_cert` metadata surfaces the TLS fingerprint (2nd field) for the extban;

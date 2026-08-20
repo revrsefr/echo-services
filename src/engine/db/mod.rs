@@ -142,6 +142,10 @@ pub struct Account {
     // An extra WHOIS line (OperServ SWHOIS), re-applied to the ircd on each login.
     #[serde(default)]
     pub swhois: Option<String>,
+    // Personal SIGNORE masks (mutual server-side ignore) the user manages from the
+    // ircd; replayed on each login so the list follows the account, not the socket.
+    #[serde(default)]
+    pub signore: Vec<String>,
 }
 
 // A requested vhost awaiting approval.

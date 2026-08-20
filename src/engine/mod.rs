@@ -633,6 +633,11 @@ impl Engine {
         if let Some(swhois) = self.db.swhois(account) {
             out.push(NetAction::Metadata { target: uid.to_string(), key: "swhois".to_string(), value: swhois });
         }
+        // Re-apply the account's persistent SIGNORE list (per-connection too).
+        let signore = self.db.signore(account);
+        if !signore.is_empty() {
+            out.push(NetAction::Metadata { target: uid.to_string(), key: "signore".to_string(), value: signore.join(" ") });
+        }
         let unread = self.db.unread_memos(account);
         if unread > 0 && self.db.memo_notify_on(account) {
             if let Some(ns) = &self.nick_service {
@@ -1441,6 +1446,15 @@ impl Engine {
                 }
                 Vec::new()
             }
+            NetEvent::SignoreSet { uid, list } => {
+                // A logged-in user edited their SIGNORE list on the ircd; persist it to
+                // their account so it's replayed on the next login. With no known
+                // account there's nothing to store it on, so drop it.
+                if let Some(account) = self.network.account_of(&uid).map(str::to_string) {
+                    let _ = self.db.set_signore(&account, list);
+                }
+                Vec::new()
+            }
             NetEvent::NickChange { uid, nick } => {
                 let new_nick = nick.clone();
                 let old_nick = self.network.nick_of(&uid).unwrap_or("?").to_string();
@@ -2190,7 +2204,7 @@ fn audit_summary(event: &db::Event) -> Option<String> {
             format!("{verb} channel \x02{channel}\x02 against expiry")
         }
         // Private, self-service, or cosmetic — not surfaced.
-        AjoinAdded { .. } | AjoinRemoved { .. } | AccountGreetSet { .. } | AccountLanguageSet { .. } | AccountProfileSet { .. } | AccountAutoOpSet { .. } | AccountKillSet { .. } | AccountHideStatusSet { .. } | AccountSnoticeSet { .. } | VhostRequested { .. }
+        AjoinAdded { .. } | AjoinRemoved { .. } | AccountGreetSet { .. } | AccountSignoreSet { .. } | AccountLanguageSet { .. } | AccountProfileSet { .. } | AccountAutoOpSet { .. } | AccountKillSet { .. } | AccountHideStatusSet { .. } | AccountSnoticeSet { .. } | VhostRequested { .. }
         | VhostRequestCleared { .. } | MemoSent { .. } | MemoRead { .. } | MemoDeleted { .. }
         | MemoIgnoreAdd { .. } | MemoIgnoreDel { .. } | MemoPrefsSet { .. }
         | ChannelMlock { .. } | ChannelDescSet { .. } | ChannelEntryMsgSet { .. } | ChannelUrlSet { .. } | ChannelEmailSet { .. } | ChannelSettingsSet { .. }

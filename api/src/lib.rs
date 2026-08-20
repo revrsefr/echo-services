@@ -33,6 +33,9 @@ pub enum NetEvent {
     // replayed on a services netburst so we can restore who was identified. An
     // empty `account` means they logged out.
     AccountLogin { uid: String, account: String },
+    // The ircd pushed a user's edited SIGNORE list up to persist on their account
+    // (METADATA <uid> signore). Space-separated masks; empty value means cleared.
+    SignoreSet { uid: String, list: Vec<String> },
     // A channel was created or bursted (an FJOIN). Subsequent single joins arrive
     // as IJOIN and are not surfaced.
     ChannelCreate { channel: String },
@@ -2225,6 +2228,8 @@ pub trait Store {
     // OperServ SWHOIS: an extra WHOIS line stored on the account (None clears it).
     fn set_swhois(&mut self, account: &str, text: Option<String>) -> Result<(), RegError>;
     fn swhois(&self, account: &str) -> Option<String>;
+    fn set_signore(&mut self, account: &str, list: Vec<String>) -> Result<(), RegError>;
+    fn signore(&self, account: &str) -> Vec<String>;
     fn available_languages(&self) -> Vec<String>;
     fn default_language(&self) -> String;
     // NickServ SET AVATAR/BIO/PRONOUNS/TIMEZONE/URL: a field of the public profile.

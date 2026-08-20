@@ -32,6 +32,7 @@ impl Db {
             expiry_warned: false,
             oper_note: None,
             swhois: None,
+            signore: Vec::new(),
         };
         self.log.append(Event::AccountRegistered(Box::new(account.clone()))).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
@@ -90,6 +91,7 @@ impl Db {
             expiry_warned: false,
             oper_note: None,
             swhois: None,
+            signore: Vec::new(),
         };
         self.log.append(Event::AccountRegistered(Box::new(account.clone()))).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
@@ -568,6 +570,23 @@ impl Db {
     /// `account`'s extra WHOIS line, if it has one.
     pub fn swhois(&self, account: &str) -> Option<String> {
         self.accounts.get(&key(account)).and_then(|a| a.swhois.clone())
+    }
+
+    /// Replace `account`'s persistent SIGNORE list (the ircd pushes the whole list on
+    /// each edit, so this is a straight set, not a delta).
+    pub fn set_signore(&mut self, account: &str, list: Vec<String>) -> Result<(), RegError> {
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return Err(RegError::Internal);
+        }
+        self.log.append(Event::AccountSignoreSet { account: account.to_string(), list: list.clone() }).map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().signore = list;
+        Ok(())
+    }
+
+    /// `account`'s persistent SIGNORE masks (empty if none).
+    pub fn signore(&self, account: &str) -> Vec<String> {
+        self.accounts.get(&key(account)).map(|a| a.signore.clone()).unwrap_or_default()
     }
 
     /// Set (or clear, with None) a field of `account`'s public profile.

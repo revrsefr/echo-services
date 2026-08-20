@@ -81,4 +81,4 @@ Stable Rust (2021 edition) and Cargo, then `cargo build --release`. echo is chec
 
 ## License
 
-AGPL-3.0-or-later; see [LICENSE](LICENSE). Original, clean-room work, not derived from another services project's source.
+AGPL-3.0-or-later; see [LICENSE](LICENSE).

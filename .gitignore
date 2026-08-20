@@ -20,3 +20,13 @@ echo.db.jsonl
 cutover-echo.log
 test-net/echo.db.jsonl
 test-net/*.log
+
+# db test
+reputation.db
+permchannels.db
+echoircd.conf.bak-20260816-114429
+
+# Config backups — may hold the uplink/link password. Never commit.
+*.bak
+*.bak-*
+config.toml.bak*

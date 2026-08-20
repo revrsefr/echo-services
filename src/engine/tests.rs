@@ -1013,7 +1013,7 @@
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None, profile: Default::default(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None, swhois: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None, profile: Default::default(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None, swhois: None, signore: vec![],
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)));
         e.gossip_ingest(entry).unwrap();
@@ -4235,6 +4235,55 @@
         let cleared = os(&mut e, "000AAAAAS", "SWHOIS target -");
         assert!(swhois_meta(&cleared, "000AAAAAT", ""), "empty swhois metadata clears it live: {cleared:?}");
         assert_eq!(e.db.swhois("target"), None, "swhois removed from the account");
+    }
+
+    // Persistent SIGNORE: the ircd pushes a logged-in user's edited SIGNORE list up as
+    // METADATA; services store it on the account, replay it on the next login, drop a
+    // push with no known account, and clear it when pushed an empty list. The list
+    // follows the account, not the socket.
+    #[test]
+    fn signore_persist_replay_clear() {
+        let path = std::env::temp_dir().join("echo-signore-persist.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("target", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })],
+            db,
+        );
+        e.set_sid("42S".into());
+        let sig_meta = |out: &[NetAction], uid: &str, val: &str| out.iter().any(|a| matches!(a, NetAction::Metadata { target, key, value } if target == uid && key == "signore" && value == val));
+
+        // A user connects, identifies, then edits their SIGNORE list on the ircd.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAT".into(), nick: "target".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAT".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::SignoreSet { uid: "000AAAAAT".into(), list: vec!["bob!*@*".into(), "eve!*@*".into()] });
+        assert_eq!(e.db.signore("target"), vec!["bob!*@*".to_string(), "eve!*@*".to_string()], "signore persisted on the account");
+
+        // A push for a uid with no known account is dropped (nothing to store it on).
+        e.handle(NetEvent::SignoreSet { uid: "000AAAAZZ".into(), list: vec!["x!*@*".into()] });
+
+        // It re-applies when the account logs in again on a fresh session.
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "other".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        let relog = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAV".into(), to: "42SAAAAAA".into(), text: "IDENTIFY target password1".into() });
+        assert!(sig_meta(&relog, "000AAAAAV", "bob!*@* eve!*@*"), "signore re-applied on login: {relog:?}");
+
+        // Survives a full reopen of the event log.
+        drop(e);
+        let db2 = Db::open(&path, "42S");
+        assert_eq!(db2.signore("target"), vec!["bob!*@*".to_string(), "eve!*@*".to_string()], "signore survives log replay");
+
+        // A pushed-empty list clears it.
+        let mut e = Engine::new(
+            vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })],
+            db2,
+        );
+        e.set_sid("42S".into());
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAT".into(), nick: "target".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAT".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::SignoreSet { uid: "000AAAAAT".into(), list: vec![] });
+        assert!(e.db.signore("target").is_empty(), "pushed-empty list clears the account signore");
     }
 
     // OperServ SQLINE (nick bans), GLOBAL (announce to all), and KILL (disconnect

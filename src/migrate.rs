@@ -213,6 +213,7 @@ pub fn import_anope(anope_path: &str, out_path: &str, node: &str) -> std::io::Re
             expiry_warned: false,
             oper_note: None,
             swhois: None,
+            signore: Vec::new(),
         };
         db.migrate_append(Event::AccountRegistered(Box::new(account)))?;
         sum.accounts += 1;
