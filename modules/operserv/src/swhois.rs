@@ -27,7 +27,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         ctx.notice(me, from.uid, "Access denied — changing a SWHOIS needs the \x02admin\x02 privilege.");
         return;
     }
-    let value = if rest.trim() == "-" { None } else { Some(rest) };
+    // Wrap the line in bold (\x02) so it stands out in /WHOIS.
+    let value = if rest.trim() == "-" { None } else { Some(format!("\x02{rest}\x02")) };
     if db.set_swhois(&account, value.clone()).is_err() {
         ctx.notice(me, from.uid, format!("Couldn't update \x02{account}\x02."));
         return;

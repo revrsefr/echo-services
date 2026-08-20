@@ -4203,18 +4203,18 @@
 
         // Admin sets it: applied live to the target's online session + persisted.
         let out = os(&mut e, "000AAAAAS", "SWHOIS target is a Network Administrator");
-        assert!(swhois_meta(&out, "000AAAAAT", "is a Network Administrator"), "swhois pushed to the online session: {out:?}");
-        assert_eq!(e.db.swhois("target").as_deref(), Some("is a Network Administrator"), "swhois persisted on the account");
+        assert!(swhois_meta(&out, "000AAAAAT", "\u{2}is a Network Administrator\u{2}"), "swhois pushed (bold) to the online session: {out:?}");
+        assert_eq!(e.db.swhois("target").as_deref(), Some("\u{2}is a Network Administrator\u{2}"), "swhois persisted (bold) on the account");
 
         // It re-applies when the account logs in again (a fresh session).
         e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "other".into(), host: "h".into(), ip: "0.0.0.0".into() });
         let relog = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAV".into(), to: "42SAAAAAA".into(), text: "IDENTIFY target password1".into() });
-        assert!(swhois_meta(&relog, "000AAAAAV", "is a Network Administrator"), "swhois re-applied on login: {relog:?}");
+        assert!(swhois_meta(&relog, "000AAAAAV", "\u{2}is a Network Administrator\u{2}"), "swhois re-applied (bold) on login: {relog:?}");
 
         // Survives a full reopen of the event log.
         drop(e);
         let db2 = Db::open(&path, "42S");
-        assert_eq!(db2.swhois("target").as_deref(), Some("is a Network Administrator"), "swhois survives log replay");
+        assert_eq!(db2.swhois("target").as_deref(), Some("\u{2}is a Network Administrator\u{2}"), "swhois survives log replay");
 
         // A bare "-" clears it: empty metadata to the online session + gone from the account.
         let mut e = Engine::new(
