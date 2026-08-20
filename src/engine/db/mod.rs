@@ -139,6 +139,9 @@ pub struct Account {
     // A staff note (OperServ INFO), shown only to operators.
     #[serde(default)]
     pub oper_note: Option<String>,
+    // An extra WHOIS line (OperServ SWHOIS), re-applied to the ircd on each login.
+    #[serde(default)]
+    pub swhois: Option<String>,
 }
 
 // A requested vhost awaiting approval.

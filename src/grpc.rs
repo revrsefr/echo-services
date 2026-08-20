@@ -214,7 +214,8 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         | Event::OperRevoked { .. }
         | Event::SessionExceptionAdded { .. }
         | Event::SessionExceptionRemoved { .. }
-        | Event::AccountProfileSet { .. } => return None,
+        | Event::AccountProfileSet { .. }
+        | Event::AccountSwhoisSet { .. } => return None,
     };
     Some(ReplicationEvent { origin: entry.origin().to_string(), seq: entry.seq(), lamport: entry.lamport(), kind: Some(kind) })
 }
@@ -538,6 +539,7 @@ mod tests {
             noexpire: false,
             expiry_warned: false,
             oper_note: None,
+            swhois: None,
         };
         let registered = LogEntry::for_test("A", 0, 1, Event::AccountRegistered(Box::new(acct)));
         let wire = to_wire(&registered).expect("account registration replicates");

@@ -629,6 +629,10 @@ impl Engine {
                 out.push(NetAction::Metadata { target: uid.to_string(), key: field.meta_key().to_string(), value: v });
             }
         }
+        // Re-apply the account's OperServ SWHOIS line (per-connection on the ircd).
+        if let Some(swhois) = self.db.swhois(account) {
+            out.push(NetAction::Metadata { target: uid.to_string(), key: "swhois".to_string(), value: swhois });
+        }
         let unread = self.db.unread_memos(account);
         if unread > 0 && self.db.memo_notify_on(account) {
             if let Some(ns) = &self.nick_service {
@@ -2085,6 +2089,10 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         AccountEmailSet { account, email } => match email {
             Some(_) => format!("set the email on \x02{account}\x02"),
             None => format!("cleared the email on \x02{account}\x02"),
+        },
+        AccountSwhoisSet { account, text } => match text {
+            Some(t) => format!("set the SWHOIS on \x02{account}\x02 to \x02{t}\x02"),
+            None => format!("cleared the SWHOIS on \x02{account}\x02"),
         },
         CertAdded { account, fp } => format!("added cert \x02{fp}\x02 to \x02{account}\x02"),
         CertRemoved { account, fp } => format!("removed cert \x02{fp}\x02 from \x02{account}\x02"),

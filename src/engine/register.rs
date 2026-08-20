@@ -437,6 +437,10 @@ impl Engine {
                     ctx.metadata(&uid, field.meta_key(), &v);
                 }
             }
+            // Re-apply the account's OperServ SWHOIS line (per-connection on the ircd).
+            if let Some(swhois) = self.db.swhois(&account) {
+                ctx.metadata(&uid, "swhois", &swhois);
+            }
             let unread = self.db.unread_memos(&account);
             if unread > 0 && self.db.memo_notify_on(&account) {
                 ctx.notice(&agent, &uid, echo_api::render_plural(&lang, unread as u64, "You have \x02{unread}\x02 new memo. Read it with \x02/msg MemoServ READ NEW\x02.", "You have \x02{unread}\x02 new memos. Read them with \x02/msg MemoServ READ NEW\x02.", &[("unread", unread.to_string())]));

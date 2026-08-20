@@ -31,6 +31,7 @@ impl Db {
             noexpire: false,
             expiry_warned: false,
             oper_note: None,
+            swhois: None,
         };
         self.log.append(Event::AccountRegistered(Box::new(account.clone()))).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
@@ -88,6 +89,7 @@ impl Db {
             noexpire: false,
             expiry_warned: false,
             oper_note: None,
+            swhois: None,
         };
         self.log.append(Event::AccountRegistered(Box::new(account.clone()))).map_err(|_| RegError::Internal)?;
         self.accounts.insert(key(name), account);
@@ -550,6 +552,22 @@ impl Db {
     /// `account`'s preferred language, if it set one.
     pub fn language_of(&self, account: &str) -> Option<String> {
         self.accounts.get(&key(account)).and_then(|a| a.language.clone())
+    }
+
+    /// Set (or clear, with None) `account`'s extra WHOIS line (OperServ SWHOIS).
+    pub fn set_swhois(&mut self, account: &str, text: Option<String>) -> Result<(), RegError> {
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return Err(RegError::Internal);
+        }
+        self.log.append(Event::AccountSwhoisSet { account: account.to_string(), text: text.clone() }).map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().swhois = text;
+        Ok(())
+    }
+
+    /// `account`'s extra WHOIS line, if it has one.
+    pub fn swhois(&self, account: &str) -> Option<String> {
+        self.accounts.get(&key(account)).and_then(|a| a.swhois.clone())
     }
 
     /// Set (or clear, with None) a field of `account`'s public profile.

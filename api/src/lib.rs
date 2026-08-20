@@ -2222,6 +2222,9 @@ pub trait Store {
     fn set_greet(&mut self, account: &str, greet: &str) -> Result<(), RegError>;
     fn set_language(&mut self, account: &str, language: Option<String>) -> Result<(), RegError>;
     fn language_of(&self, account: &str) -> Option<String>;
+    // OperServ SWHOIS: an extra WHOIS line stored on the account (None clears it).
+    fn set_swhois(&mut self, account: &str, text: Option<String>) -> Result<(), RegError>;
+    fn swhois(&self, account: &str) -> Option<String>;
     fn available_languages(&self) -> Vec<String>;
     fn default_language(&self) -> String;
     // NickServ SET AVATAR/BIO/PRONOUNS/TIMEZONE/URL: a field of the public profile.

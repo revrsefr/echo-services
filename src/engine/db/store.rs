@@ -111,6 +111,12 @@ impl Store for Db {
     fn language_of(&self, account: &str) -> Option<String> {
         Db::language_of(self, account)
     }
+    fn set_swhois(&mut self, account: &str, text: Option<String>) -> Result<(), RegError> {
+        Db::set_swhois(self, account, text)
+    }
+    fn swhois(&self, account: &str) -> Option<String> {
+        Db::swhois(self, account)
+    }
     fn set_profile(&mut self, account: &str, field: ProfileField, value: Option<String>) -> Result<(), RegError> {
         Db::set_profile(self, account, field, value)
     }

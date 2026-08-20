@@ -32,6 +32,8 @@ mod stats;
 mod svs;
 #[path = "info.rs"]
 mod info;
+#[path = "swhois.rs"]
+mod swhois;
 #[path = "oper.rs"]
 mod oper;
 #[path = "session.rs"]
@@ -99,6 +101,7 @@ impl Service for OperServ {
             Some(cmd) if cmd.eq_ignore_ascii_case("SVSJOIN") => svs::join(me, from, args, ctx, net),
             Some(cmd) if cmd.eq_ignore_ascii_case("SVSPART") => svs::part(me, from, args, ctx, net),
             Some(cmd) if cmd.eq_ignore_ascii_case("INFO") => info::handle(me, from, args, ctx, db),
+            Some(cmd) if cmd.eq_ignore_ascii_case("SWHOIS") => swhois::handle(me, from, args, ctx, net, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("OPER") => oper::handle(me, from, args, ctx, db),
             Some(cmd) if cmd.eq_ignore_ascii_case("SESSION") => session::handle_session(me, from, args, ctx, net),
             Some(cmd) if cmd.eq_ignore_ascii_case("EXCEPTION") => session::handle_exception(me, from, args, ctx, db),
@@ -142,6 +145,7 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "SVSJOIN", summary: "force a channel join", detail: "Syntax: \x02SVSJOIN <nick> <#channel> [key]\x02\nForces a user to join a channel." },
     HelpEntry { cmd: "SVSPART", summary: "force a channel part", detail: "Syntax: \x02SVSPART <nick> <#channel> [reason]\x02\nForces a user out of a channel." },
     HelpEntry { cmd: "INFO", summary: "staff notes on a target", detail: "Syntax: \x02INFO <target> | INFO ADD <target> <note> | INFO DEL <target>\x02\nReads or sets staff notes on an account or channel. (Bulletins are on InfoServ.)" },
+    HelpEntry { cmd: "SWHOIS", summary: "extra WHOIS line on an account", detail: "Syntax: \x02SWHOIS <account> [text]\x02\nSets an extra line shown in that account's /WHOIS, e.g. \x02SWHOIS reverse is a Network Administrator\x02. It's stored on the account and re-applied on every login. With no text it shows the current line; a bare \x02-\x02 clears it. Reading needs operator; changing needs admin." },
     HelpEntry { cmd: "OPER", summary: "runtime operators", detail: "Syntax: \x02OPER ADD <account> <priv[,priv]> [+duration] | OPER DEL <account> | OPER LIST\x02\nGrants or revokes runtime operator privileges: auspex, suspend, admin." },
     HelpEntry { cmd: "SESSION", summary: "inspect per-IP sessions", detail: "Syntax: \x02SESSION LIST <min> | SESSION VIEW <ip>\x02\nInspects per-IP session counts." },
     HelpEntry { cmd: "EXCEPTION", summary: "session-limit exceptions", detail: "Syntax: \x02EXCEPTION ADD <ip-mask> <limit> [reason] | EXCEPTION DEL <ip-mask> | EXCEPTION LIST\x02\nAdjusts the per-IP session limit for a mask (0 = unlimited)." },

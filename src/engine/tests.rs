@@ -1013,7 +1013,7 @@
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None, profile: Default::default(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None,
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None, profile: Default::default(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None, swhois: None,
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)));
         e.gossip_ingest(entry).unwrap();
@@ -4163,6 +4163,78 @@
             }
         }
         assert_eq!(again, 0, "warning isn't repeated while still idle");
+    }
+
+    // OperServ SWHOIS: an admin sets an extra WHOIS line on an account; it's applied
+    // live (swhois metadata to the online session), persisted in the log so it
+    // re-applies on the next login, and cleared with a bare "-".
+    #[test]
+    fn operserv_swhois_set_apply_persist_clear() {
+        use echo_operserv::OperServ;
+        let path = std::env::temp_dir().join("echo-swhois.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("staff", "password1", None).unwrap();
+        db.register("target", "password1", None).unwrap();
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        let os = |e: &mut Engine, uid: &str, t: &str| e.handle(NetEvent::Privmsg { msgid: None, from: uid.into(), to: "42SAAAAAH".into(), text: t.into() });
+        let swhois_meta = |out: &[NetAction], uid: &str, val: &str| out.iter().any(|a| matches!(a, NetAction::Metadata { target, key, value } if target == uid && key == "swhois" && value == val));
+
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAT".into(), nick: "target".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAT".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+
+        // A non-oper can't use OperServ at all.
+        let denied = os(&mut e, "000AAAAAT", "SWHOIS target is a Network Administrator");
+        assert!(denied.iter().any(|a| matches!(a, NetAction::Notice { text, .. } if text.contains("Access denied"))), "non-oper refused: {denied:?}");
+        assert!(!swhois_meta(&denied, "000AAAAAT", "is a Network Administrator"), "no swhois from a non-oper");
+
+        // Admin sets it: applied live to the target's online session + persisted.
+        let out = os(&mut e, "000AAAAAS", "SWHOIS target is a Network Administrator");
+        assert!(swhois_meta(&out, "000AAAAAT", "is a Network Administrator"), "swhois pushed to the online session: {out:?}");
+        assert_eq!(e.db.swhois("target").as_deref(), Some("is a Network Administrator"), "swhois persisted on the account");
+
+        // It re-applies when the account logs in again (a fresh session).
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "other".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        let relog = e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAV".into(), to: "42SAAAAAA".into(), text: "IDENTIFY target password1".into() });
+        assert!(swhois_meta(&relog, "000AAAAAV", "is a Network Administrator"), "swhois re-applied on login: {relog:?}");
+
+        // Survives a full reopen of the event log.
+        drop(e);
+        let db2 = Db::open(&path, "42S");
+        assert_eq!(db2.swhois("target").as_deref(), Some("is a Network Administrator"), "swhois survives log replay");
+
+        // A bare "-" clears it: empty metadata to the online session + gone from the account.
+        let mut e = Engine::new(
+            vec![
+                Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 }),
+                Box::new(OperServ { uid: "42SAAAAAH".into() }),
+            ],
+            db2,
+        );
+        e.set_sid("42S".into());
+        let mut opers = std::collections::HashMap::new();
+        opers.insert("staff".to_string(), Privs::default().with(echo_api::Priv::Admin));
+        e.set_opers(opers);
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAS".into(), nick: "staff".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAS".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAT".into(), nick: "target".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        e.handle(NetEvent::Privmsg { msgid: None, from: "000AAAAAT".into(), to: "42SAAAAAA".into(), text: "IDENTIFY password1".into() });
+        let cleared = os(&mut e, "000AAAAAS", "SWHOIS target -");
+        assert!(swhois_meta(&cleared, "000AAAAAT", ""), "empty swhois metadata clears it live: {cleared:?}");
+        assert_eq!(e.db.swhois("target"), None, "swhois removed from the account");
     }
 
     // OperServ SQLINE (nick bans), GLOBAL (announce to all), and KILL (disconnect

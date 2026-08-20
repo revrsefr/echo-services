@@ -212,6 +212,7 @@ pub fn import_anope(anope_path: &str, out_path: &str, node: &str) -> std::io::Re
             noexpire: false,
             expiry_warned: false,
             oper_note: None,
+            swhois: None,
         };
         db.migrate_append(Event::AccountRegistered(Box::new(account)))?;
         sum.accounts += 1;
