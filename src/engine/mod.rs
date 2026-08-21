@@ -1354,8 +1354,38 @@ impl Engine {
                 self.notify_line('c', &uid, None, "connected").into_iter().collect()
             }
             NetEvent::UserCert { uid, fp } => {
-                self.network.set_user_cert(&uid, fp);
-                Vec::new()
+                self.network.set_user_cert(&uid, fp.clone());
+                // Transparent certfp login: a cert already registered to an account
+                // logs that account in the moment they connect — no SASL EXTERNAL and
+                // no NickServ IDENTIFY needed. Skip when already authed (e.g. they used
+                // SASL during registration) or the cert was rejected (empty fp).
+                if fp.is_empty() || self.network.account_of(&uid).is_some() {
+                    return Vec::new();
+                }
+                let Some(account) = self.db.certfp_owner(&fp).map(str::to_string) else {
+                    return Vec::new();
+                };
+                if self.db.is_suspended(&account) {
+                    return Vec::new();
+                }
+                self.network.set_account(&uid, &account);
+                let mut out = vec![NetAction::Metadata {
+                    target: uid.clone(),
+                    key: "accountname".to_string(),
+                    value: account.clone(),
+                }];
+                if let Some(ns) = &self.nick_service {
+                    out.push(NetAction::Notice {
+                        from: ns.clone(),
+                        to: uid.clone(),
+                        text: format!(
+                            "You are now identified for \x02{account}\x02 (via your certificate fingerprint)."
+                        ),
+                    });
+                }
+                out.extend(self.auth_report(true, Some(&account), "CERTFP", &uid, None));
+                out.extend(self.login_connect_effects(&uid, &account));
+                out
             }
             NetEvent::ServerInfo { sid, name } => {
                 self.network.set_server_name(&sid, name);

@@ -4286,6 +4286,42 @@
         assert!(e.db.signore("target").is_empty(), "pushed-empty list clears the account signore");
     }
 
+    // A TLS cert registered to an account logs it in transparently on connect (the
+    // ircd relays the fingerprint as ssl_cert metadata) — no SASL EXTERNAL or IDENTIFY.
+    #[test]
+    fn certfp_connect_auto_logs_in() {
+        let fp = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899";
+        let path = std::env::temp_dir().join("echo-certfp-login.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.register("alice", "password1", None).unwrap();
+        db.certfp_add("alice", fp).unwrap();
+        let mut e = Engine::new(
+            vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })],
+            db,
+        );
+        e.set_sid("42S".into());
+        let logs_in = |out: &[NetAction], acct: &str| {
+            out.iter().any(|a| matches!(a, NetAction::Metadata { key, value, .. } if key == "accountname" && value == acct))
+        };
+
+        // connect under any nick; the relayed cert auto-identifies the account
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAB".into(), nick: "guest1".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        let out = e.handle(NetEvent::UserCert { uid: "000AAAAAB".into(), fp: fp.into() });
+        assert!(logs_in(&out, "alice"), "known cert logs the account in on connect: {out:?}");
+        assert_eq!(e.network.account_of("000AAAAAB"), Some("alice"));
+
+        // an unknown cert logs nobody in
+        e.handle(NetEvent::UserConnect { uid: "000AAAAAC".into(), nick: "guest2".into(), host: "h".into(), ip: "0.0.0.0".into() });
+        let none = e.handle(NetEvent::UserCert { uid: "000AAAAAC".into(), fp: "00".repeat(32) });
+        assert!(!logs_in(&none, "alice") && e.network.account_of("000AAAAAC").is_none(), "unknown cert doesn't log in: {none:?}");
+
+        // a cert on an already-authed session doesn't re-login
+        let dup = e.handle(NetEvent::UserCert { uid: "000AAAAAB".into(), fp: fp.into() });
+        assert!(!logs_in(&dup, "alice"), "already-authed session isn't re-logged-in: {dup:?}");
+    }
+
     // OperServ SQLINE (nick bans), GLOBAL (announce to all), and KILL (disconnect
     // a user): the Q-line, the $* broadcast, and the KILL all reach the ircd, and
     // each is admin-gated.
