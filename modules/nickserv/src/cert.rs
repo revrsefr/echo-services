@@ -29,7 +29,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
                 return;
             };
             match db.certfp_add(&account, fp) {
-                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Added fingerprint \x02{fp}\x02. You can now log in with SASL EXTERNAL.", fp = fp)),
+                Ok(()) => ctx.notice(me, from.uid, t!(ctx, "Added fingerprint \x02{fp}\x02. Reconnecting with this certificate now logs you in automatically, or use SASL EXTERNAL.", fp = fp)),
                 Err(CertError::InUse) => ctx.notice(me, from.uid, "That fingerprint is already registered."),
                 Err(CertError::Invalid) => ctx.notice(me, from.uid, "That does not look like a certificate fingerprint."),
                 Err(CertError::Full) => ctx.notice(me, from.uid, "You have too many fingerprints registered. Remove one first."),

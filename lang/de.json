@@ -249,7 +249,7 @@
  "Added a \u0002{which}\u0002 bulletin.": "Ein \u0002{which}\u0002-Bulletin hinzugefügt.",
  "Added a trigger to \u0002{chan}\u0002.": "Einen Trigger zu \u0002{chan}\u0002 hinzugefügt.",
  "Added badword pattern to \u0002{chan}\u0002: {pattern}": "Badword-Muster zu \u0002{chan}\u0002 hinzugefügt: {pattern}",
- "Added fingerprint \u0002{fp}\u0002. You can now log in with SASL EXTERNAL.": "Fingerabdruck \u0002{fp}\u0002 hinzugefügt. Du kannst dich jetzt mit SASL EXTERNAL anmelden.",
+ "Added fingerprint \u0002{fp}\u0002. Reconnecting with this certificate now logs you in automatically, or use SASL EXTERNAL.": "Fingerabdruck \u0002{fp}\u0002 hinzugefügt. Beim erneuten Verbinden mit diesem Zertifikat wirst du jetzt automatisch angemeldet, oder nutze SASL EXTERNAL.",
  "Approve with \u0002ACTIVATE\u0002 <account> or turn down with \u0002REJECT\u0002 <account>.": "Genehmige mit \u0002ACTIVATE\u0002 <account> oder lehne ab mit \u0002REJECT\u0002 <account>.",
  "Assign one with \u0002ASSIGN <#channel> <bot>\u0002.": "Weise einen mit \u0002ASSIGN <#channel> <bot>\u0002 zu.",
  "Assigned \u0002{bot}\u0002 to \u0002{chan}\u0002. Change it with \u0002/msg BotServ ASSIGN\u0002.": "\u0002{bot}\u0002 zu \u0002{chan}\u0002 zugewiesen. Ändere ihn mit \u0002/msg BotServ ASSIGN\u0002.",

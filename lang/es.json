@@ -249,7 +249,7 @@
  "Added a \u0002{which}\u0002 bulletin.": "Se añadió un boletín \u0002{which}\u0002.",
  "Added a trigger to \u0002{chan}\u0002.": "Se añadió un disparador a \u0002{chan}\u0002.",
  "Added badword pattern to \u0002{chan}\u0002: {pattern}": "Patrón de palabra prohibida añadido a \u0002{chan}\u0002: {pattern}",
- "Added fingerprint \u0002{fp}\u0002. You can now log in with SASL EXTERNAL.": "Huella \u0002{fp}\u0002 añadida. Ahora puedes iniciar sesión con SASL EXTERNAL.",
+ "Added fingerprint \u0002{fp}\u0002. Reconnecting with this certificate now logs you in automatically, or use SASL EXTERNAL.": "Huella \u0002{fp}\u0002 añadida. Reconectarte con este certificado ahora te identifica automáticamente, o usa SASL EXTERNAL.",
  "Approve with \u0002ACTIVATE\u0002 <account> or turn down with \u0002REJECT\u0002 <account>.": "Aprueba con \u0002ACTIVATE\u0002 <account> o rechaza con \u0002REJECT\u0002 <account>.",
  "Assign one with \u0002ASSIGN <#channel> <bot>\u0002.": "Asigna uno con \u0002ASSIGN <#channel> <bot>\u0002.",
  "Assigned \u0002{bot}\u0002 to \u0002{chan}\u0002. Change it with \u0002/msg BotServ ASSIGN\u0002.": "\u0002{bot}\u0002 asignado a \u0002{chan}\u0002. Cámbialo con \u0002/msg BotServ ASSIGN\u0002.",
