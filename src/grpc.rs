@@ -17,6 +17,11 @@ use crate::engine::db::{Account, ChannelInfo, Db, Event, LogEntry};
 use crate::engine::{AuthorityStatus, Engine};
 
 pub mod pb {
+    // tonic-generated: every service method returns `Result<_, tonic::Status>`, and
+    // Status is ~176 bytes, so clippy's result_large_err fires on the generated trait
+    // signatures. Not ours to box (and boxing would fight tonic's convention, see
+    // `authorize` below), so allow it for the whole generated module.
+    #![allow(clippy::result_large_err)]
     tonic::include_proto!("echo.v1");
 }
 
