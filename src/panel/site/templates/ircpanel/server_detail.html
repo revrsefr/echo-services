@@ -1,23 +1,34 @@
 {% extends "ircpanel/base.html" %}
 {% block title %}{{ name }}{% endblock %}
-{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg>{% endblock %}
-{% block eyebrow %}Serveur{% endblock %}
-{% block heading %}{{ name }}{% endblock %}
+{% block pagehead %}{% endblock %}
 {% block content %}
-<a class="up-back" href="/servers"><svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Serveurs</a>
+<a class="up-back" href="/servers"><svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Tous les serveurs</a>
+
 {% if !found %}
 <div class="up-card"><div class="ircp-empty">Serveur <b class="mono">{{ name }}</b> introuvable.</div></div>
 {% else %}
-<div class="up-stats">
-  <div class="up-stat frost-success"><div class="up-stat-num">{{ users }}</div><div class="up-stat-lbl">Utilisateurs</div></div>
-  <div class="up-stat frost-warning"><div class="up-stat-num">{{ opers }}</div><div class="up-stat-lbl">Opérateurs</div></div>
+<div class="srv-hero">
+  <div class="srv-hero-ico">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6"/></svg>
+  </div>
+  <div class="srv-hero-main">
+    <div class="srv-hero-name">{{ name }}{% if hub %} <span class="net-hub-badge">HUB</span>{% endif %}</div>
+    <div class="srv-hero-sub">{% if hub %}Hub du réseau{% else %}↑ lié à {{ uplink }}{% endif %}</div>
+  </div>
+  <div class="srv-hero-stats">
+    <div class="srv-stat"><b>{{ users }}</b><span>utilisateurs</span></div>
+    <div class="srv-stat"><b>{{ opers }}</b><span>opérateurs</span></div>
+  </div>
 </div>
-<div class="up-card">
+
+<div class="up-card" style="max-width:560px">
   <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg> Détails</div>
-  <div class="up-kv"><span class="k">Nom</span><span class="v mono">{{ name }}</span></div>
-  <div class="up-kv"><span class="k">Uplink</span><span class="v">{% if hub %}— (racine / hub){% else %}{{ uplink }}{% endif %}</span></div>
-  <div class="up-kv"><span class="k">Utilisateurs</span><span class="v">{{ users }}</span></div>
-  <div class="up-kv"><span class="k">Opérateurs</span><span class="v">{{ opers }}</span></div>
+  <div class="up-kv">
+    <div class="k">Nom</div><div class="v mono">{{ name }}</div>
+    <div class="k">Uplink</div><div class="v">{% if hub %}— (racine du réseau){% else %}{{ uplink }}{% endif %}</div>
+    <div class="k">Utilisateurs</div><div class="v">{{ users }}</div>
+    <div class="k">Opérateurs</div><div class="v">{{ opers }}</div>
+  </div>
 </div>
 {% endif %}
 {% endblock %}

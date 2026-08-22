@@ -31,7 +31,7 @@ use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
 
 use crate::config::Panel as PanelCfg;
-use crate::engine::{scram, Engine};
+use crate::engine::{scram, state, Engine};
 use echo_api::Privs;
 
 mod render;
@@ -553,7 +553,6 @@ struct SRow {
     hub: bool,
     users: usize,
     opers: usize,
-    pct: u64,
 }
 
 #[derive(askama::Template)]
@@ -564,21 +563,60 @@ struct ServersTpl {
     count: usize,
     users: usize,
     opers: usize,
+    hub_name: String,
+    tree_html: String,
+}
+
+// Build the nested <li>/<ul> topology under `parent` (matched by uplink name).
+// A node with no known parent is a root; the hub (empty uplink) gets the badge.
+fn render_tree(servers: &[state::NetSrv], parent: &str) -> String {
+    let mut out = String::new();
+    for s in servers.iter().filter(|s| s.uplink == parent) {
+        let hub = s.uplink.is_empty();
+        out.push_str("<li><div class=\"net-node");
+        if hub {
+            out.push_str(" is-hub");
+        }
+        out.push_str("\"><span class=\"net-node-ico\"><svg viewBox=\"0 0 24 24\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"6\" rx=\"1.5\"/><rect x=\"3\" y=\"14\" width=\"18\" height=\"6\" rx=\"1.5\"/><path d=\"M7 7h.01M7 17h.01\"/></svg></span>");
+        out.push_str(&format!(
+            "<span class=\"net-node-body\"><a class=\"net-node-name\" href=\"/servers/{}\">{}</a><span class=\"net-node-meta\"><span title=\"utilisateurs\">👤 {}</span><span title=\"opérateurs\">⚡ {}</span></span></span>",
+            tmpl::url_seg(&s.name), esc(&s.name), s.users, s.opers
+        ));
+        if hub {
+            out.push_str("<span class=\"net-hub-badge\">HUB</span>");
+        }
+        out.push_str("</div>");
+        let kids = render_tree(servers, &s.name);
+        if !kids.is_empty() {
+            out.push_str("<ul>");
+            out.push_str(&kids);
+            out.push_str("</ul>");
+        }
+        out.push_str("</li>");
+    }
+    out
 }
 
 async fn page_servers(oper: Oper, State(st): State<AppState>) -> Html<String> {
     let e = st.engine.lock().await;
     let srv = e.net_servers_detailed();
-    let total_users = e.net_user_count();
     drop(e);
     let count = srv.len();
     let users: usize = srv.iter().map(|s| s.users).sum();
     let opers: usize = srv.iter().map(|s| s.opers).sum();
+    let hub_name = srv.iter().find(|s| s.uplink.is_empty()).or_else(|| srv.first()).map(|s| s.name.clone()).unwrap_or_default();
+    let names: std::collections::HashSet<String> = srv.iter().map(|s| s.name.clone()).collect();
+    // Roots = empty uplink or an uplink we don't actually know (orphans surface at top).
+    let mut tree_html = render_tree(&srv, "");
+    for s in &srv {
+        if !s.uplink.is_empty() && !names.contains(&s.uplink) {
+            tree_html.push_str(&render_tree(&srv, &s.uplink));
+        }
+    }
     let rows = srv
         .into_iter()
         .map(|s| SRow {
             hub: s.uplink.is_empty(),
-            pct: pct(s.users, total_users),
             name: s.name,
             uplink: s.uplink,
             users: s.users,
@@ -591,6 +629,8 @@ async fn page_servers(oper: Oper, State(st): State<AppState>) -> Html<String> {
         count,
         users,
         opers,
+        hub_name,
+        tree_html,
     })
 }
 
@@ -1418,7 +1458,7 @@ mod tests {
             rows: vec![CRow { name: "#a".into(), slug: "%23a".into(), topic: "hi".into(), users: 3, modes: "nt".into(), secret: false, private: false, inviteonly: false, keyed: false, moderated: false, registered: true, pct: 100 }],
         }.render().unwrap().contains("#a"));
 
-        assert!(ServersTpl { chrome: ch("servers"), count: 1, users: 5, opers: 1, rows: vec![SRow { name: "irc.a".into(), uplink: String::new(), hub: true, users: 5, opers: 1, pct: 100 }] }.render().unwrap().contains("irc.a"));
+        assert!(ServersTpl { chrome: ch("servers"), count: 1, users: 5, opers: 1, hub_name: "irc.a".into(), tree_html: "<li>irc.a</li>".into(), rows: vec![SRow { name: "irc.a".into(), uplink: String::new(), hub: true, users: 5, opers: 1 }] }.render().unwrap().contains("irc.a"));
 
         let pr = || vec![PRow { kind: "G".into(), mask: "*@bad".into(), reason: "spam".into(), set_by: "op".into(), set_ago: "1j".into(), expires: "permanent".into(), perm: true }];
         assert!(BansTpl { chrome: ch("bans"), rows: pr(), total: 1, perm: 1, heading: "Bans", subtitle: "s", empty: "none" }.render().unwrap().contains("*@bad"));

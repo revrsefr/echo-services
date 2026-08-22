@@ -1,41 +1,48 @@
 {% extends "ircpanel/base.html" %}
 {% block title %}Serveurs{% endblock %}
 {% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg>{% endblock %}
-{% block eyebrow %}Topologie du réseau{% endblock %}
-{% block heading %}Serveurs <span class="ircp-count">{{ count }}</span>{% endblock %}
-{% block subtitle %}Serveurs liés et leur charge, vus depuis echo.{% endblock %}
+{% block eyebrow %}Réseau{% endblock %}
+{% block heading %}Réseau de serveurs <span class="ircp-count">{{ count }}</span>{% endblock %}
+{% block subtitle %}Les serveurs liés et la topologie du réseau.{% endblock %}
 {% block content %}
+{% if rows.is_empty() %}
+<div class="up-card"><div class="ircp-empty">Aucun serveur lié.</div></div>
+{% else %}
 
-<div class="up-stats">
-  <div class="up-stat frost-secondary"><div class="up-stat-num">{{ count }}</div><div class="up-stat-lbl">Serveurs liés</div></div>
-  <div class="up-stat frost-success"><div class="up-stat-num">{{ users }}</div><div class="up-stat-lbl">Utilisateurs</div></div>
-  <div class="up-stat frost-warning"><div class="up-stat-num">{{ opers }}</div><div class="up-stat-lbl">Opérateurs</div></div>
-</div>
-
-<div class="up-card srvnet-card">
-  <div class="up-card-h">
-    <svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg>
-    Réseau lié
+<div class="srv-hero">
+  <div class="srv-hero-ico">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6"/></svg>
   </div>
-  <div class="srvnet">
-    {% for s in rows %}
-    <a class="srvnode" href="/servers/{{ s.name }}">
-      <div class="srvnode-h">
-        <span class="srvnode-ico"><svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg></span>
-        <span class="srvnode-id">
-          <b class="srvnode-name">{{ s.name }}</b>
-          <span class="srvnode-up">{% if s.hub %}★ hub{% else %}↑ {{ s.uplink }}{% endif %}</span>
-        </span>
-      </div>
-      <div class="srvnode-stats">
-        <span><b>{{ s.users }}</b> users</span>
-        <span><b>{{ s.opers }}</b> opers</span>
-        <span class="srvnode-pct">{{ s.pct }}%</span>
-      </div>
-      <div class="srvnode-share"><i style="width:{{ s.pct }}%"></i></div>
-    </a>
-    {% endfor %}
-    {% if rows.is_empty() %}<div class="ircp-empty">Aucun serveur lié.</div>{% endif %}
+  <div class="srv-hero-main">
+    <div class="srv-hero-name">{{ hub_name }}</div>
+    <div class="srv-hero-sub">Hub du réseau · {{ count }} serveur{% if count != 1 %}s{% endif %}</div>
+  </div>
+  <div class="srv-hero-stats">
+    <div class="srv-stat"><b>{{ users }}</b><span>utilisateurs</span></div>
+    <div class="srv-stat"><b>{{ opers }}</b><span>opérateurs</span></div>
+    <div class="srv-stat"><b>{{ count }}</b><span>serveurs</span></div>
   </div>
 </div>
+
+<div class="up-card srv-topo">
+  <div class="up-card-h"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><path d="M8.5 7.5 11 15.5M15.5 7.5 13 15.5M9 6h6"/></svg> Topologie du réseau</div>
+  <div class="srv-topo-scroll">
+    <ul class="net-tree">{{ tree_html|safe }}</ul>
+  </div>
+</div>
+
+<div class="mod-group-h" style="margin-top:6px"><span class="mod-group-ico">🖥️</span> Détail des serveurs</div>
+<div class="ircp-srv-grid">
+  {% for s in rows %}
+  <div class="ircp-srv">
+    <div class="ircp-srv-name">🖧 <a href="/servers/{{ s.name }}">{{ s.name }}</a></div>
+    <div class="ircp-srv-meta">
+      <span><b>{{ s.users }}</b> users</span>
+      <span><b>{{ s.opers }}</b> opers</span>
+    </div>
+    {% if s.hub %}<div class="ircp-srv-parent">★ hub du réseau</div>{% else %}<div class="ircp-srv-parent">↑ {{ s.uplink }}</div>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
 {% endblock %}
