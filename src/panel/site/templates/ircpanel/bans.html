@@ -1,47 +1,47 @@
 {% extends "ircpanel/base.html" %}
-{% block title %}Bans réseau{% endblock %}
+{% block title %}{{ heading }}{% endblock %}
+{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.5-3 7.5-8 10-5-2.5-8-5.5-8-10V6z"/></svg>{% endblock %}
+{% block eyebrow %}Protection du réseau{% endblock %}
+{% block heading %}{{ heading }} <span class="ircp-count">{{ total }}</span>{% endblock %}
+{% block subtitle %}{{ subtitle }}{% endblock %}
 {% block content %}
-<div class="up-head">
-  <div class="up-head-main">
-    <div class="up-head-text">
-      <h1>Bans réseau <span class="ircp-count">{{ rows.len() }}</span></h1>
-      <p class="up-head-sub">Lignes X actives poussées par echo (AKILL, G/K/Z/Q-lines).</p>
-    </div>
-  </div>
-</div>
 
 <input class="ircp-search" id="bq" type="search" placeholder="Filtrer par masque, motif ou opérateur…" autocomplete="off">
 
-<div class="up-card uroster-card">
-  <div class="uroster" id="broster">
+<div class="ufilters">
+  <button type="button" class="ufilter ufilter--static"><b>{{ total }}</b><span>Total</span></button>
+  <button type="button" class="ufilter ufilter--static"><b>{{ perm }}</b><span>Permanents</span></button>
+</div>
+
+<div class="up-card">
+  <div class="proster is-typed" id="broster">
+    <div class="prow-head">
+      <span>Type</span><span>Masque</span><span>Motif</span><span>Par</span><span>Expire</span>
+    </div>
     {% for b in rows %}
-    <div class="urow" data-q="{{ b.mask }} {{ b.reason }} {{ b.setter }} {{ b.kind }}">
-      <span class="urow-main">
-        <span class="urow-nick"><span class="ircp-tag ircp-tag--oper">{{ b.kind }}</span> <b class="mono">{{ b.mask }}</b></span>
-        <span class="urow-host">{{ b.reason }}</span>
+    <div class="prow" data-q="{{ b.mask }} {{ b.reason }} {{ b.set_by }} {{ b.kind }}">
+      <span class="ptag ptag--gline">{{ b.kind }}</span>
+      <span class="prow-main">
+        <span class="prow-mask mono">{{ b.mask }}</span>
+        <span class="prow-reason">{% if b.reason.is_empty() %}<span class="muted">Aucun motif</span>{% else %}{{ b.reason }}{% endif %}</span>
       </span>
-      <span class="urow-net">
-        <span class="urow-ip">par {{ b.setter }} · {{ b.set_ago }}</span>
-        <span class="urow-loc">{{ b.expires }}</span>
-      </span>
+      <span class="prow-by">{% if b.set_by.is_empty() %}—{% else %}{{ b.set_by }}{% endif %}{% if !b.set_ago.is_empty() %} · {{ b.set_ago }}{% endif %}</span>
+      <span class="prow-exp {% if b.perm %}is-perm{% endif %}">{{ b.expires }}</span>
     </div>
     {% endfor %}
-    {% if rows.is_empty() %}<div class="ircp-empty">Aucun ban actif.</div>{% endif %}
+    {% if rows.is_empty() %}<div class="prow-empty ircp-empty">{{ empty }}</div>{% endif %}
   </div>
-  <div class="uroster-empty" id="bEmpty" hidden>Aucun ban ne correspond.</div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-(function(){
-  var rows=[].slice.call(document.querySelectorAll('#broster .urow'));
-  var empty=document.getElementById('bEmpty');
-  var q=document.getElementById('bq');
-  q.addEventListener('input',function(){
-    var t=(q.value||'').toLowerCase();var n=0;
-    rows.forEach(function(r){var ok=!t||(r.dataset.q||'').toLowerCase().indexOf(t)>=0;r.hidden=!ok;if(ok)n++;});
-    if(empty)empty.hidden=n>0;
+(function () {
+  var rows = [].slice.call(document.querySelectorAll("#broster .prow"));
+  var q = document.getElementById("bq");
+  q.addEventListener("input", function () {
+    var t = (q.value || "").toLowerCase();
+    rows.forEach(function (r) { r.hidden = t && (r.dataset.q || "").toLowerCase().indexOf(t) < 0; });
   });
 })();
 </script>

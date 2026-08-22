@@ -1,84 +1,26 @@
 {% extends "ircpanel/base.html" %}
-{% load i18n %}
-{% block title %}{% trans "Accès & permissions" %}{% endblock %}
-{% block heading %}{% trans "Accès & permissions" %} <span class="ircp-count">{{ grants|length }}</span>{% endblock %}
-{% block eyebrow %}{% trans "Système" %}{% endblock %}
-{% block subtitle %}{% trans "Qui accède au panel et avec quelles permissions." %}{% endblock %}
-{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v6H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7M9 10V4a3 3 0 0 1 6 0v3"/></svg>{% endblock %}
-
+{% block title %}Accès & permissions{% endblock %}
+{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v6H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7"/></svg>{% endblock %}
+{% block eyebrow %}Système{% endblock %}
+{% block heading %}Accès & permissions <span class="ircp-count">{{ total }}</span>{% endblock %}
+{% block subtitle %}Comptes disposant de privilèges de services (lecture seule).{% endblock %}
 {% block content %}
-<div class="ufilters">
-  <div class="ufilter ufilter--static"><b>{{ acstats.total }}</b><span>{% trans "Accès" %}</span></div>
-  <div class="ufilter ufilter--static"><b>{{ acstats.withperms }}</b><span>{% trans "Avec droits" %}</span></div>
-  <div class="ufilter ufilter--static"><b>{{ acstats.readonly }}</b><span>{% trans "Lecture seule" %}</span></div>
-  <div class="ufilter ufilter--static"><b>{{ acstats.roots }}</b><span>{% trans "Roots" %}</span></div>
-</div>
-
-<div class="up-alert up-alert--info">
-  <b>ℹ</b> {% blocktrans %}Accordez l'accès au panel à un compte <b>Tchatou</b> existant, puis cochez ce qu'il peut faire. Sans aucune case cochée = <b>lecture seule</b>. Les comptes <b>root</b> ont automatiquement tous les droits.{% endblocktrans %}
-</div>
-
-<div class="up-card ircp-card--form">
-  <h3>{% trans "Accorder / modifier un accès" %}</h3>
-  <form method="post" action="{% url 'ircpanel:access_save' %}">
-    {% csrf_token %}
-    <div class="ircp-form">
-      <label class="ircp-form-grow">{% trans "Compte Tchatou (nom d'utilisateur)" %}
-        <input type="text" name="username" id="acUser" placeholder="{% trans "ex : ModoBob" %}" required></label>
-    </div>
-    <div class="up-perm-grid">
-      {% for key, label in all_perms %}
-      <label class="up-perm"><input type="checkbox" name="perm_{{ key }}" data-key="{{ key }}">
-        <span class="up-perm-check"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg></span>
-        <span class="up-perm-lbl">{{ label }}</span></label>
-      {% endfor %}
-    </div>
-    <button type="submit" class="ircp-btn" style="margin-top:14px">{% trans "Enregistrer l'accès" %}</button>
-  </form>
-</div>
-
 <div class="up-card uroster-card">
-  <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg> {% trans "Accès accordés" %}</div>
   <div class="acl-list">
     {% for g in grants %}
-    <div class="acl-row">
-      <span class="uava is-acct">{{ g.user.username|slice:":1"|upper }}</span>
+    <div class="acl-row {% if g.tier == "root" %}acl-row--root{% endif %}">
+      <span class="uava is-oper"></span>
       <span class="acl-main">
-        <span class="acl-name"><b>{{ g.user.username }}</b></span>
+        <span class="acl-name"><b>{{ g.name }}</b> <span class="ircp-tag ircp-tag--oper">{{ g.tier }}</span></span>
         <span class="acl-perms">
-          {% if g.perms %}{% for k in g.perms %}<span class="acl-pill">{{ k }}</span>{% endfor %}
-          {% else %}<span class="acl-pill acl-pill--ro">{% trans "lecture seule" %}</span>{% endif %}
+          {% for p in g.perms %}<span class="acl-pill">{{ p }}</span>{% endfor %}
+          {% if g.perms.is_empty() %}<span class="acl-pill acl-pill--root">tous les droits</span>{% endif %}
         </span>
       </span>
-      <span class="acl-by">{% trans "par" %} {{ g.obj.granted_by.username|default:"—" }}</span>
-      <span class="acl-act">
-        <button type="button" class="ircp-btn up-edit-grant" data-user="{{ g.user.username }}" data-perms="{{ g.obj.perms }}" style="padding:5px 11px">{% trans "Modifier" %}</button>
-        <form method="post" action="{% url 'ircpanel:access_revoke' %}" style="display:inline" data-confirm="{% blocktrans with u=g.user.username %}Révoquer l'accès de {{ u }} ?{% endblocktrans %}">
-          {% csrf_token %}<input type="hidden" name="access_id" value="{{ g.obj.pk }}"><input type="hidden" name="username" value="{{ g.user.username }}">
-          <button type="submit" class="ircp-btn ircp-btn--danger">{% trans "Révoquer" %}</button>
-        </form>
-      </span>
+      <span class="acl-by">{{ g.expires }}</span>
     </div>
-    {% empty %}
-    <div class="ircp-empty">{% trans "Aucun accès accordé pour l'instant." %}</div>
     {% endfor %}
-  </div>
-</div>
-
-<div class="up-card">
-  <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.5-3 7.5-8 10-5-2.5-8-5.5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg> {% trans "Administrateurs (accès total automatique)" %}</div>
-  <div class="acl-list">
-    {% for r in roots %}
-    <div class="acl-row acl-row--root">
-      <span class="uava is-oper">{{ r.username|slice:":1"|upper }}</span>
-      <span class="acl-main">
-        <span class="acl-name"><b>{{ r.username }}</b> <span class="acl-pill acl-pill--root">root</span></span>
-        <span class="acl-perms"><span class="acl-allperms">{% trans "Toutes les permissions" %}</span></span>
-      </span>
-      <span class="acl-by"></span>
-      <span class="acl-act"></span>
-    </div>
-    {% empty %}<div class="ircp-empty">{% trans "Aucun root." %}</div>{% endfor %}
+    {% if grants.is_empty() %}<div class="ircp-empty">Aucun octroi de privilège explicite (les opers sont définis dans la config).</div>{% endif %}
   </div>
 </div>
 {% endblock %}

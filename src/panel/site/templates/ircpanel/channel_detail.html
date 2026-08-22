@@ -1,156 +1,51 @@
 {% extends "ircpanel/base.html" %}
-{% load i18n panel_extras %}
 {% block title %}{{ name }}{% endblock %}
-{# rich channel profile hero below, suppress the shared page-head band #}
 {% block pagehead %}{% endblock %}
-
 {% block content %}
-<a class="up-back" href="{% url 'ircpanel:channels' %}"><svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> {% trans "Tous les salons" %}</a>
+<a class="up-back" href="/channels"><svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Salons</a>
 
-{% if c %}
-<!-- ── Channel profile hero ──────────────────────────────────────────────── -->
-<div class="up-card uprofile chprofile {% if c.restricted %}is-locked{% endif %}">
+{% if !found %}
+<div class="up-card"><div class="ircp-empty">Salon <b class="mono">{{ name }}</b> introuvable ou vide.</div></div>
+{% else %}
+<div class="up-card uprofile chprofile {% if keyed || inviteonly || secret %}is-locked{% endif %}">
   <div class="uprofile-cover"></div>
   <div class="uprofile-top">
-    <div class="uprofile-av chprofile-av">{% if c.restricted %}🔒{% else %}#{% endif %}</div>
+    <span class="uprofile-av chprofile-av">#</span>
     <div class="uprofile-id">
-      <h1 class="uprofile-name">{{ c.name }}</h1>
+      <div class="uprofile-name">{{ name }}</div>
       <div class="uprofile-tags">
-        <span class="upill upill--oper">{{ c.num_users }} {% trans "membres" %}</span>
-        {% if c.secret %}<span class="upill upill--warn">{% trans "secret" %}</span>{% endif %}
-        {% if c.private %}<span class="upill upill--warn">{% trans "privé" %}</span>{% endif %}
-        {% if c.inviteonly %}<span class="upill upill--warn">{% trans "sur invitation" %}</span>{% endif %}
-        {% if c.keyed %}<span class="upill upill--warn">{% trans "clé" %}</span>{% endif %}
-        {% if c.moderated %}<span class="upill upill--warn">{% trans "modéré" %}</span>{% endif %}
-        {% if c.permanent %}<span class="upill">{% trans "permanent" %}</span>{% endif %}
-        {% if c.registered %}<span class="upill upill--ok">{% trans "enregistré" %}</span>{% endif %}
+        {% if registered %}<span class="upill upill--ok">enregistré</span>{% endif %}
+        {% if secret %}<span class="upill upill--oper">+s secret</span>{% endif %}
+        {% if private %}<span class="upill upill--oper">+p privé</span>{% endif %}
+        {% if inviteonly %}<span class="upill upill--warn">+i sur invitation</span>{% endif %}
+        {% if keyed %}<span class="upill upill--warn">🔑 clé</span>{% endif %}
+        {% if moderated %}<span class="upill upill--warn">+m modéré</span>{% endif %}
       </div>
-      <div class="uprofile-meta chprofile-topic">{{ c.topic|default:"—" }}</div>
+      <div class="chprofile-topic">{% if topic.is_empty() %}<span class="muted">Aucun sujet</span>{% else %}{{ topic }}{% endif %}</div>
     </div>
   </div>
   <div class="uprofile-facts">
-    <div class="ufact">
-      <span class="ufact-ico"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg></span>
-      <div><b>{{ c.num_users }}</b><span>{% trans "Membres" %}</span></div>
-    </div>
-    <div class="ufact">
-      <span class="ufact-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span>
-      <div><b>{{ c.creation_dt|humanago|default:"—" }}</b><span>{% trans "Créé" %}</span></div>
-    </div>
-    <div class="ufact">
-      <span class="ufact-ico"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></svg></span>
-      <div><b>{{ c.topic_set_by|default:"—" }}</b><span>{% trans "Sujet par" %}</span></div>
-    </div>
-    <div class="ufact">
-      <span class="ufact-ico"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.5-3 7.5-8 10-5-2.5-8-5.5-8-10V6z"/></svg></span>
-      <div><b class="mono">{% if c.modes %}+{{ c.modes }}{% else %}—{% endif %}</b><span>{% trans "Modes" %}</span></div>
-    </div>
+    <div class="ufact"><span class="ufact-ico">👥</span><span>{{ users }} membre(s)</span></div>
+    <div class="ufact"><span class="ufact-ico">⚙</span><span class="mono">{% if modes.is_empty() %}—{% else %}+{{ modes }}{% endif %}</span></div>
+    <div class="ufact"><span class="ufact-ico">✍</span><span>{% if topic_setter.is_empty() %}—{% else %}{{ topic_setter }}{% endif %}</span></div>
   </div>
 </div>
 
-<div class="up-grid2">
-  <div>
-    <div class="up-card">
-      <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 3M3.05 13a9 9 0 1 0 .5-4.5L3 8"/></svg> {% trans "Sujet & modes" %}</div>
-      <div class="up-kv">
-        <div class="k">{% trans "Sujet" %}</div><div class="v">{{ c.topic|default:"—" }}</div>
-        <div class="k">{% trans "Sujet par" %}</div><div class="v">{{ c.topic_set_by|default:"—" }}{% if c.topic_dt %} <span class="muted" style="font-size:.82rem">· {{ c.topic_dt|humanago }}</span>{% endif %}</div>
-        <div class="k">{% trans "Créé le" %}</div><div class="v">{{ c.creation_dt|humandt|default:c.creation_time }}</div>
-        <div class="k">{% trans "Modes" %}</div><div class="v mono">{% if c.modes %}+{{ c.modes }}{% else %}—{% endif %}</div>
-      </div>
-      {% if c.mode_list %}
-      <div class="chmodes">
-        {% for m in c.mode_list %}
-        <span class="chmode{% if not m.label %} chmode--unknown{% endif %}" title="+{{ m.letter }}{% if m.label %} — {{ m.label }}{% endif %}">
-          <b>+{{ m.letter }}</b>{% if m.label %}<span class="chmode-lbl">{{ m.label }}</span>{% endif %}{% if m.param %}<code>{{ m.param }}</code>{% endif %}
-        </span>
-        {% endfor %}
-      </div>
-      {% endif %}
-      {% if 'chanmode' in panel_perms or 'notice' in panel_perms %}
-      <div class="up-actions" style="flex-direction:column;align-items:stretch;gap:10px">
-        {% if 'chanmode' in panel_perms %}<form class="up-actform" method="post" action="{% url 'ircpanel:channel_topic' %}">
-          {% csrf_token %}<input type="hidden" name="channel" value="{{ c.name }}">
-          <input type="text" name="topic" value="{{ c.topic }}" placeholder="{% trans "Nouveau sujet" %}" style="flex:1;min-width:160px">
-          <button type="submit" class="ircp-btn">{% trans "Sujet" %}</button>
-        </form>
-        <form class="up-actform" method="post" action="{% url 'ircpanel:channel_mode' %}">
-          {% csrf_token %}<input type="hidden" name="channel" value="{{ c.name }}">
-          <input type="text" name="modes" placeholder="+nt / -m / +k" style="width:120px">
-          <input type="text" name="param" placeholder="{% trans "paramètre (optionnel)" %}" style="flex:1;min-width:120px">
-          <button type="submit" class="ircp-btn">{% trans "Appliquer modes" %}</button>
-        </form>{% endif %}
-        {% if 'notice' in panel_perms %}<form class="up-actform" method="post" action="{% url 'ircpanel:send_notice' %}">
-          {% csrf_token %}<input type="hidden" name="target" value="{{ c.name }}"><input type="hidden" name="next" value="{{ request.path }}">
-          <input type="text" name="message" placeholder="{% trans "Notice au salon…" %}" style="flex:1;min-width:140px">
-          <button type="submit" class="ircp-btn">{% trans "Notice" %}</button>
-        </form>{% endif %}
-      </div>
-      {% endif %}
-    </div>
-
-    {% if 'chanmode' in panel_perms %}<div class="up-card">
-      <div class="up-card-h"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg> {% trans "Bans (+b)" %} <span class="ircp-count">{{ c.bans|length }}</span></div>
-      <table class="ircp-table">
-        <tbody>
-          {% for b in c.bans %}
-          <tr>
-            <td class="mono">{{ b.name }}</td>
-            <td class="muted">{{ b.set_by }}</td>
-            <td class="r">
-              <form method="post" action="{% url 'ircpanel:channel_mode' %}" style="display:inline">
-                {% csrf_token %}<input type="hidden" name="channel" value="{{ c.name }}">
-                <input type="hidden" name="modes" value="-b"><input type="hidden" name="param" value="{{ b.name }}">
-                <button type="submit" class="ircp-btn ircp-btn--danger">{% trans "Retirer" %}</button>
-              </form>
-            </td>
-          </tr>
-          {% empty %}<tr><td class="ircp-empty">{% trans "Aucun ban." %}</td></tr>{% endfor %}
-        </tbody>
-      </table>
-      <div class="up-actions">
-        <form class="up-actform" method="post" action="{% url 'ircpanel:channel_mode' %}" style="width:100%">
-          {% csrf_token %}<input type="hidden" name="channel" value="{{ c.name }}"><input type="hidden" name="modes" value="+b">
-          <input type="text" name="param" placeholder="*!*@host.à.bannir" style="flex:1;min-width:160px" required>
-          <button type="submit" class="ircp-btn">{% trans "Bannir" %}</button>
-        </form>
-      </div>
-    </div>{% endif %}
-  </div>
-
-  <div class="up-card chmembers-card">
-    <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg> {% trans "Membres" %} <span class="ircp-count">{{ c.members|length }}</span></div>
-    <div class="chmembers">
-      {% for m in c.members %}
-      <div class="chmember">
-        <a class="chmember-id" href="{% url 'ircpanel:user_detail' m.name %}">
-          <span class="uava {% if '@' in m.level or '~' in m.level or '&' in m.level %}is-oper{% elif '+' in m.level or '%' in m.level %}is-acct{% endif %}">{{ m.name|slice:":1"|upper }}</span>
-          <span class="chmember-main">
-            <b>{{ m.name }}</b>
-            {% if m.level %}<span class="chmember-lvl" title="{{ m.level }}">{{ m.level }}</span>{% endif %}
-          </span>
-        </a>
-        {% if 'chanmode' in panel_perms %}
-        <div class="chmember-acts">
-          {% for lbl, modes in member_actions %}
-          <form method="post" action="{% url 'ircpanel:channel_mode' %}">
-            {% csrf_token %}<input type="hidden" name="channel" value="{{ c.name }}">
-            <input type="hidden" name="modes" value="{{ modes }}"><input type="hidden" name="param" value="{{ m.name }}">
-            <button type="submit" class="chmember-btn" title="{{ lbl }}">{{ lbl }}</button>
-          </form>
-          {% endfor %}
-          <form method="post" action="{% url 'ircpanel:channel_kick' %}" data-confirm="Kick {{ m.name }} ?">
-            {% csrf_token %}<input type="hidden" name="channel" value="{{ c.name }}"><input type="hidden" name="nick" value="{{ m.name }}">
-            <button type="submit" class="chmember-btn chmember-btn--danger" title="{% trans "Kick" %}">{% trans "Kick" %}</button>
-          </form>
-        </div>
-        {% endif %}
-      </div>
-      {% empty %}<div class="ircp-empty">{% trans "Aucun membre." %}</div>{% endfor %}
-    </div>
+<div class="up-card chmembers-card">
+  <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg> Membres <span class="ircp-count">{{ users }}</span></div>
+  <div class="chmembers">
+    {% for m in members %}
+    <a class="chmember" href="/users/{{ m.nick }}">
+      <span class="uava {% if m.is_oper %}is-oper{% else if !m.account.is_empty() %}is-acct{% endif %}"></span>
+      <span class="chmember-main">
+        <span class="chmember-id"><span class="chmember-lvl mono">{{ m.prefix }}</span><b>{{ m.nick }}</b></span>
+        {% if !m.account.is_empty() %}<span class="ircp-tag ircp-tag--svc">{{ m.account }}</span>{% endif %}
+        {% if m.is_oper %}<span class="ircp-tag ircp-tag--oper">oper</span>{% endif %}
+      </span>
+    </a>
+    {% endfor %}
+    {% if members.is_empty() %}<div class="ircp-empty">Aucun membre.</div>{% endif %}
   </div>
 </div>
-{% else %}
-<div class="ircp-empty">{% trans "Salon introuvable." %}</div>
 {% endif %}
 {% endblock %}

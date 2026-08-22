@@ -1,37 +1,27 @@
 {% extends "ircpanel/base.html" %}
-{% load i18n %}
-{% load panel_extras %}
-{% block title %}{% trans "Historique (WHOWAS)" %}{% endblock %}
-{% block heading %}{% trans "Historique" %} <span class="ircp-count">WHOWAS</span>{% endblock %}
-{% block eyebrow %}{% trans "Investigation" %}{% endblock %}
-{% block subtitle %}{% trans "Historique des anciennes connexions (WHOWAS)." %}{% endblock %}
+{% block title %}Historique{% endblock %}
 {% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M3 3v5h5M3.05 13a9 9 0 1 0 .5-4.5L3 8M12 7v5l4 2"/></svg>{% endblock %}
-{% block topright %}
-<form method="get" class="ircp-search"><input type="text" name="q" value="{{ q }}" placeholder="{% trans "Nick à rechercher…" %}" autofocus><button>{% trans "Rechercher" %}</button></form>
-{% endblock %}
-
+{% block eyebrow %}Système{% endblock %}
+{% block heading %}Historique des pseudos{% endblock %}
+{% block subtitle %}Recherche un pseudo dans la vue réseau en direct.{% endblock %}
 {% block content %}
-{% if q %}
+<form method="get" class="ircp-search" action="/whowas">
+  <input type="search" name="q" value="{{ q }}" placeholder="Pseudo à rechercher…" autocomplete="off" autofocus>
+</form>
 <div class="up-card">
   <table class="ircp-table">
-    <thead><tr><th>{% trans "Nick" %}</th><th>Ident@Host</th><th>IP</th><th>{% trans "Nom réel" %}</th><th>{% trans "Serveur" %}</th><th>{% trans "Vu le" %}</th></tr></thead>
+    <thead><tr><th>Pseudo</th><th>Hôte</th><th>IP</th><th>Serveur</th></tr></thead>
     <tbody>
-      {% for e in entries %}
+      {% for u in rows %}
       <tr>
-        <td><b>{{ e.name }}</b></td>
-        <td class="mono">{{ e.username }}@{{ e.hostname }}</td>
-        <td class="mono muted">{{ e.ip }}</td>
-        <td class="muted">{{ e.realname }}</td>
-        <td class="muted">{{ e.server }}</td>
-        <td class="muted">{{ e.signon_dt|default:e.signon|humandt }}</td>
+        <td><a href="/users/{{ u.nick }}"><b>{{ u.nick }}</b></a>{% if u.is_oper %} <span class="ircp-tag ircp-tag--oper">oper</span>{% endif %}</td>
+        <td class="mono">{{ u.ident }}@{{ u.host }}</td>
+        <td class="mono">{{ u.ip }}</td>
+        <td>{% if u.server.is_empty() %}—{% else %}{{ u.server }}{% endif %}</td>
       </tr>
-      {% empty %}
-      <tr><td colspan="6" class="ircp-empty">Aucun historique pour « {{ q }} ».</td></tr>
       {% endfor %}
     </tbody>
   </table>
+  {% if rows.is_empty() %}<div class="ircp-empty">{% if q.is_empty() %}Saisis un pseudo pour le rechercher.{% else %}Aucune session en ligne pour « {{ q }} ».{% endif %}</div>{% endif %}
 </div>
-{% else %}
-<div class="ircp-empty">{% trans "Saisissez un nick pour consulter son historique de connexion." %}</div>
-{% endif %}
 {% endblock %}

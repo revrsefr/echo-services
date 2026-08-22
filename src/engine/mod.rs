@@ -683,6 +683,19 @@ impl Engine {
     pub fn akills(&self) -> Vec<echo_api::AkillView> {
         self.db.akills()
     }
+    pub fn filters(&self) -> Vec<echo_api::FilterView> {
+        self.db.filters()
+    }
+    pub fn session_exceptions(&self) -> Vec<(String, u32, String)> {
+        self.db.session_exceptions()
+    }
+    pub fn opers_grants(&self) -> Vec<(String, Vec<String>, Option<u64>)> {
+        self.db.opers_list()
+    }
+    // Recent moderation/action incidents (newest first) for the live feed / audit / logs.
+    pub fn recent_incidents(&self, limit: usize) -> Vec<echo_api::IncidentView> {
+        self.network.search_incidents("", limit)
+    }
     // Live network view (from the uplink burst) for the panel.
     pub fn net_user_count(&self) -> usize {
         self.network.user_count()
@@ -693,20 +706,40 @@ impl Engine {
     pub fn net_server_count(&self) -> usize {
         self.network.server_count()
     }
-    pub fn net_top_channels(&self, n: usize) -> Vec<(String, usize)> {
-        self.network.top_channels(n)
-    }
-    pub fn net_servers(&self) -> Vec<(String, usize)> {
-        self.network.server_summaries()
-    }
-    pub fn net_users(&self) -> Vec<(String, String, String, String, String)> {
-        self.network.user_rows()
-    }
-    pub fn net_channels(&self) -> Vec<(String, usize)> {
-        self.network.all_channels()
-    }
     pub fn net_module_names(&self) -> Vec<String> {
         self.network.module_names()
+    }
+    pub fn net_oper_count(&self) -> usize {
+        self.network.oper_count()
+    }
+    pub fn net_users_detailed(&self) -> Vec<state::NetUser> {
+        self.network.users_detailed()
+    }
+    pub fn net_user_detail(&self, nick: &str) -> Option<state::NetUser> {
+        self.network.user_detail(nick)
+    }
+    pub fn net_user_channels(&self, uid: &str) -> Vec<(String, &'static str)> {
+        self.network.user_channels(uid)
+    }
+    pub fn net_servers_detailed(&self) -> Vec<state::NetSrv> {
+        self.network.servers_detailed()
+    }
+    pub fn net_channel_members(&self, name: &str) -> Vec<state::NetMember> {
+        self.network.channel_member_views(name)
+    }
+    // Live channels with each one's registered flag resolved against the channel db.
+    pub fn net_channels_detailed(&self) -> Vec<state::NetChan> {
+        let mut v = self.network.channels_detailed();
+        for c in &mut v {
+            c.registered = self.db.channel(&c.name).is_some();
+        }
+        v
+    }
+    pub fn net_channel_detail(&self, name: &str) -> Option<state::NetChan> {
+        self.network.channel_detail(name).map(|mut c| {
+            c.registered = self.db.channel(&c.name).is_some();
+            c
+        })
     }
 
     pub fn gossip_ingest(&mut self, entry: LogEntry) -> std::io::Result<()> {
@@ -1555,6 +1588,7 @@ impl Engine {
             }
             // Enforce the mode lock: revert any change that broke it.
             NetEvent::ChannelModeChange { channel, modes, setter } => {
+                self.network.apply_channel_mode(&channel, &modes);
                 let mut out: Vec<NetAction> = self.notify_line('m', &setter, Some(&channel), &format!("set mode {modes} on {channel}")).into_iter().collect();
                 let from = self.channel_mode_source(&channel);
                 if let Some(revert) = self.db.channel(&channel).and_then(|info| info.enforce(&modes)) {
@@ -1734,6 +1768,7 @@ impl Engine {
                         None => String::new(),
                     }
                 };
+                self.network.set_channel_topic(&channel, topic.clone(), author.clone());
                 let info = self.db.channel(&channel).map(|c| (c.settings.keeptopic, c.settings.topiclock, c.topic.clone(), c.topic_setter.clone()));
                 // The setter may change a locked topic only with op-level access.
                 let authorized = self.network.account_of(&setter).and_then(|a| self.db.channel(&channel).map(|c| c.is_op(a))).unwrap_or(false);
@@ -1761,6 +1796,7 @@ impl Engine {
                 out
             }
             NetEvent::UserMode { uid, modes } => {
+                self.network.apply_user_mode(&uid, &modes);
                 let mut out: Vec<NetAction> = self.notify_line('u', &uid, None, &format!("set user mode {modes}")).into_iter().collect();
                 // On deoper the ircd leaves the oper vhost applied; put back the user's
                 // services vhost, or the connect-time cloak if they have none (#462).
@@ -1770,6 +1806,7 @@ impl Engine {
                 out
             }
             NetEvent::OperUp { uid, oper_type } => {
+                self.network.set_user_oper(&uid, oper_type.clone());
                 let what = if oper_type.is_empty() { "opered up".to_string() } else { format!("opered up as \x02{oper_type}\x02") };
                 let mut out: Vec<NetAction> = self.notify_line('o', &uid, None, &what).into_iter().collect();
                 // #556: once linked (not on the burst), warn an oper who authed with a

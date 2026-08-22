@@ -1,23 +1,39 @@
 {% extends "ircpanel/base.html" %}
 {% block title %}Serveurs{% endblock %}
+{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg>{% endblock %}
+{% block eyebrow %}Topologie du réseau{% endblock %}
+{% block heading %}Serveurs <span class="ircp-count">{{ count }}</span>{% endblock %}
+{% block subtitle %}Serveurs liés et leur charge, vus depuis echo.{% endblock %}
 {% block content %}
-<div class="up-head">
-  <div class="up-head-main">
-    <div class="up-head-text">
-      <h1>Serveurs <span class="ircp-count">{{ rows.len() }}</span></h1>
-      <p class="up-head-sub">Serveurs liés au réseau et leur charge en utilisateurs.</p>
-    </div>
-  </div>
+
+<div class="up-stats">
+  <div class="up-stat frost-secondary"><div class="up-stat-num">{{ count }}</div><div class="up-stat-lbl">Serveurs liés</div></div>
+  <div class="up-stat frost-success"><div class="up-stat-num">{{ users }}</div><div class="up-stat-lbl">Utilisateurs</div></div>
+  <div class="up-stat frost-warning"><div class="up-stat-num">{{ opers }}</div><div class="up-stat-lbl">Opérateurs</div></div>
 </div>
 
 <div class="up-card srvnet-card">
+  <div class="up-card-h">
+    <svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg>
+    Réseau lié
+  </div>
   <div class="srvnet">
     {% for s in rows %}
-    <div class="srvnode">
-      <div class="srvnode-h"><b class="srvnode-name">{{ s.name }}</b></div>
-      <div class="srvnode-stats"><span><b>{{ s.users }}</b> utilisateurs</span></div>
+    <a class="srvnode" href="/servers/{{ s.name }}">
+      <div class="srvnode-h">
+        <span class="srvnode-ico"><svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg></span>
+        <span class="srvnode-id">
+          <b class="srvnode-name">{{ s.name }}</b>
+          <span class="srvnode-up">{% if s.hub %}★ hub{% else %}↑ {{ s.uplink }}{% endif %}</span>
+        </span>
+      </div>
+      <div class="srvnode-stats">
+        <span><b>{{ s.users }}</b> users</span>
+        <span><b>{{ s.opers }}</b> opers</span>
+        <span class="srvnode-pct">{{ s.pct }}%</span>
+      </div>
       <div class="srvnode-share"><i style="width:{{ s.pct }}%"></i></div>
-    </div>
+    </a>
     {% endfor %}
     {% if rows.is_empty() %}<div class="ircp-empty">Aucun serveur lié.</div>{% endif %}
   </div>

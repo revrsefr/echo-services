@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // The read-only network view a module sees; re-exported so the engine keeps
@@ -95,6 +95,8 @@ pub struct User {
     pub ip: String,
     pub gecos: String,       // real name, for realname / realmask extbans
     pub fingerprint: String, // TLS cert fingerprint (ssl_cert metadata); empty = none
+    pub oper: String,        // oper type from OperUp; empty = not an oper
+    pub umodes: BTreeSet<char>, // live user modes, accumulated from UserMode deltas
 }
 
 // A channel's live membership, ops, and current key (+k), tracked from the burst.
@@ -104,6 +106,31 @@ pub struct Channel {
     pub ops: HashSet<String>,     // uids holding channel-operator status
     pub voices: HashSet<String>,  // uids holding +v
     pub key: Option<String>,
+    pub topic: String,            // live topic text
+    pub topic_setter: String,     // who set it (nick!user@host mask)
+    pub cmodes: BTreeSet<char>,   // simple channel-mode flags, from FMODE deltas
+}
+
+// Apply an IRC mode delta ("+nt-s", "+k key") to a flag set: letters after `+`
+// are added, after `-` removed; anything from the first space (params) is ignored.
+// `skip` names letters never recorded as flags (prefix/list modes for channels).
+fn apply_mode_delta(set: &mut BTreeSet<char>, delta: &str, skip: &str) {
+    let mut adding = true;
+    for ch in delta.chars() {
+        match ch {
+            '+' => adding = true,
+            '-' => adding = false,
+            ' ' => break,
+            c if c.is_ascii_alphabetic() && !skip.contains(c) => {
+                if adding {
+                    set.insert(c);
+                } else {
+                    set.remove(&c);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 // Per-channel BOTSTATS activity: total lines and per-nick counts (top talkers).
@@ -129,6 +156,49 @@ pub struct ChanSeen {
     pub msg: String,
 }
 
+// Rich per-entity views for the web panel (owned snapshots taken under the lock).
+pub struct NetUser {
+    pub uid: String,
+    pub nick: String,
+    pub ident: String,
+    pub host: String,
+    pub ip: String,
+    pub gecos: String,
+    pub account: String,
+    pub oper: String,
+    pub modes: String,
+    pub server: String,
+    pub secure: bool,
+}
+
+pub struct NetChan {
+    pub name: String,
+    pub users: usize,
+    pub topic: String,
+    pub topic_setter: String,
+    pub modes: String,
+    pub keyed: bool,
+    pub secret: bool,
+    pub private: bool,
+    pub moderated: bool,
+    pub inviteonly: bool,
+    pub registered: bool, // filled in by the engine (which holds the account/channel db)
+}
+
+pub struct NetSrv {
+    pub name: String,
+    pub users: usize,
+    pub opers: usize,
+    pub uplink: String,
+}
+
+pub struct NetMember {
+    pub nick: String,
+    pub prefix: &'static str, // "@", "+", or ""
+    pub account: String,
+    pub oper: bool,
+}
+
 fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
@@ -142,7 +212,43 @@ impl Network {
         if !ip.is_empty() {
             *self.sessions.entry(ip.clone()).or_insert(0) += 1;
         }
-        self.users.insert(uid.clone(), User { uid, nick, ident: String::new(), host, realhost: String::new(), ip, gecos: String::new(), fingerprint: String::new() });
+        self.users.insert(uid.clone(), User { uid, nick, ident: String::new(), host, realhost: String::new(), ip, gecos: String::new(), fingerprint: String::new(), oper: String::new(), umodes: BTreeSet::new() });
+    }
+
+    // Record a user's oper type (from OperUp); empty string clears it (deoper).
+    pub fn set_user_oper(&mut self, uid: &str, oper_type: String) {
+        if let Some(u) = self.users.get_mut(uid) {
+            if oper_type.is_empty() {
+                u.oper.clear();
+                u.umodes.remove(&'o');
+            } else {
+                u.oper = oper_type;
+                u.umodes.insert('o');
+            }
+        }
+    }
+
+    // Apply a user-mode delta to the live view; a `-o` also clears the oper type.
+    pub fn apply_user_mode(&mut self, uid: &str, delta: &str) {
+        if let Some(u) = self.users.get_mut(uid) {
+            apply_mode_delta(&mut u.umodes, delta, "");
+            if !u.umodes.contains(&'o') {
+                u.oper.clear();
+            }
+        }
+    }
+
+    // Remember a channel's live topic and who set it.
+    pub fn set_channel_topic(&mut self, channel: &str, topic: String, setter: String) {
+        let c = self.channels.entry(lc(channel)).or_default();
+        c.topic = topic;
+        c.topic_setter = setter;
+    }
+
+    // Apply a channel-mode delta to the live flag set (skipping prefix/list modes).
+    pub fn apply_channel_mode(&mut self, channel: &str, delta: &str) {
+        let c = self.channels.entry(lc(channel)).or_default();
+        apply_mode_delta(&mut c.cmodes, delta, "ovhaqbeI");
     }
 
     // Fill in the rest of a user's identity (ident, real host, real name), which
@@ -302,53 +408,127 @@ impl Network {
     pub fn server_count(&self) -> usize {
         self.server_names.len()
     }
-    /// Live channels, largest membership first: (name, member count).
-    pub fn top_channels(&self, n: usize) -> Vec<(String, usize)> {
-        let mut v: Vec<(String, usize)> =
-            self.channels.iter().map(|(name, c)| (name.clone(), c.members.len())).collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        v.truncate(n);
-        v
-    }
-    /// Every live channel, largest membership first: (name, member count).
-    pub fn all_channels(&self) -> Vec<(String, usize)> {
-        let mut v: Vec<(String, usize)> =
-            self.channels.iter().map(|(name, c)| (name.clone(), c.members.len())).collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        v
-    }
     /// Sorted names of the modules the ircd advertised in its CAPAB burst.
     pub fn module_names(&self) -> Vec<String> {
         let mut v: Vec<String> = self.ircd_modules.iter().cloned().collect();
         v.sort();
         v
     }
-    /// Linked servers: (name, live user count on it).
-    pub fn server_summaries(&self) -> Vec<(String, usize)> {
-        let mut v: Vec<(String, usize)> = self
-            .server_names
-            .iter()
-            .map(|(sid, name)| (name.clone(), self.uids_on_server(sid).len()))
-            .collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+    /// Online opers (users with a non-empty oper type).
+    pub fn oper_count(&self) -> usize {
+        self.users.values().filter(|u| !u.oper.is_empty()).count()
+    }
+
+    fn to_netuser(&self, u: &User) -> NetUser {
+        NetUser {
+            uid: u.uid.clone(),
+            nick: u.nick.clone(),
+            ident: u.ident.clone(),
+            host: u.host.clone(),
+            ip: u.ip.clone(),
+            gecos: u.gecos.clone(),
+            account: self.accounts.get(&u.uid).cloned().unwrap_or_default(),
+            oper: u.oper.clone(),
+            modes: u.umodes.iter().collect(),
+            server: u.uid.get(..3).and_then(|sid| self.server_names.get(sid)).cloned().unwrap_or_default(),
+            secure: !u.fingerprint.is_empty(),
+        }
+    }
+
+    /// Every online user, full detail, sorted by nick.
+    pub fn users_detailed(&self) -> Vec<NetUser> {
+        let mut v: Vec<NetUser> = self.users.values().map(|u| self.to_netuser(u)).collect();
+        v.sort_by(|a, b| a.nick.to_lowercase().cmp(&b.nick.to_lowercase()));
         v
     }
-    /// Online users for the users page: (nick, ident, host, ip, account-or-empty).
-    pub fn user_rows(&self) -> Vec<(String, String, String, String, String)> {
-        let mut v: Vec<_> = self
-            .users
+
+    /// One online user by nick (case-insensitive), full detail.
+    pub fn user_detail(&self, nick: &str) -> Option<NetUser> {
+        self.users.values().find(|u| u.nick.eq_ignore_ascii_case(nick)).map(|u| self.to_netuser(u))
+    }
+
+    /// The channels a uid is in, each with the user's prefix ("@"/"+"/"").
+    pub fn user_channels(&self, uid: &str) -> Vec<(String, &'static str)> {
+        let mut v: Vec<(String, &'static str)> = self
+            .channels
             .iter()
-            .map(|(uid, u)| {
-                (
-                    u.nick.clone(),
-                    u.ident.clone(),
-                    u.host.clone(),
-                    u.ip.clone(),
-                    self.accounts.get(uid).cloned().unwrap_or_default(),
-                )
+            .filter(|(_, c)| c.members.contains(uid))
+            .map(|(name, c)| {
+                let p = if c.ops.contains(uid) { "@" } else if c.voices.contains(uid) { "+" } else { "" };
+                (name.clone(), p)
             })
             .collect();
-        v.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        v
+    }
+
+    /// Every live channel, full detail, largest first. `registered` is left false
+    /// (the engine, which holds the channel db, fills it in).
+    pub fn channels_detailed(&self) -> Vec<NetChan> {
+        let mut v: Vec<NetChan> = self.channels.iter().map(|(name, c)| self.to_netchan(name, c)).collect();
+        v.sort_by(|a, b| b.users.cmp(&a.users).then_with(|| a.name.cmp(&b.name)));
+        v
+    }
+
+    /// One live channel by name (case-insensitive), full detail.
+    pub fn channel_detail(&self, name: &str) -> Option<NetChan> {
+        let key = lc(name);
+        self.channels.get(&key).map(|c| self.to_netchan(&key, c))
+    }
+
+    /// The members of a channel with their prefix and account, ops first.
+    pub fn channel_member_views(&self, name: &str) -> Vec<NetMember> {
+        let Some(c) = self.channels.get(&lc(name)) else { return Vec::new() };
+        let mut v: Vec<NetMember> = c
+            .members
+            .iter()
+            .filter_map(|uid| {
+                self.users.get(uid).map(|u| NetMember {
+                    nick: u.nick.clone(),
+                    prefix: if c.ops.contains(uid) { "@" } else if c.voices.contains(uid) { "+" } else { "" },
+                    account: self.accounts.get(uid).cloned().unwrap_or_default(),
+                    oper: !u.oper.is_empty(),
+                })
+            })
+            .collect();
+        // Ops first, then voice, then plain; alpha within each tier.
+        v.sort_by(|a, b| {
+            let rank = |p: &str| match p { "@" => 0, "+" => 1, _ => 2 };
+            rank(a.prefix).cmp(&rank(b.prefix)).then_with(|| a.nick.to_lowercase().cmp(&b.nick.to_lowercase()))
+        });
+        v
+    }
+
+    fn to_netchan(&self, name: &str, c: &Channel) -> NetChan {
+        NetChan {
+            name: name.to_string(),
+            users: c.members.len(),
+            topic: c.topic.clone(),
+            topic_setter: c.topic_setter.clone(),
+            modes: c.cmodes.iter().collect(),
+            keyed: c.key.is_some(),
+            secret: c.cmodes.contains(&'s'),
+            private: c.cmodes.contains(&'p'),
+            moderated: c.cmodes.contains(&'m'),
+            inviteonly: c.cmodes.contains(&'i'),
+            registered: false,
+        }
+    }
+
+    /// Linked servers, full detail (user + oper counts, uplink name).
+    pub fn servers_detailed(&self) -> Vec<NetSrv> {
+        let mut v: Vec<NetSrv> = self
+            .server_names
+            .iter()
+            .map(|(sid, name)| {
+                let uids = self.uids_on_server(sid);
+                let opers = uids.iter().filter(|u| self.users.get(*u).is_some_and(|x| !x.oper.is_empty())).count();
+                let uplink = self.servers.get(sid).and_then(|p| self.server_names.get(p)).cloned().unwrap_or_default();
+                NetSrv { name: name.clone(), users: uids.len(), opers, uplink }
+            })
+            .collect();
+        v.sort_by(|a, b| b.users.cmp(&a.users).then_with(|| a.name.cmp(&b.name)));
         v
     }
 

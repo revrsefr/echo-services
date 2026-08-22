@@ -1,222 +1,58 @@
 {% extends "ircpanel/base.html" %}
-{% load i18n %}
-{% load panel_extras %}
 {% block title %}{{ nick }}{% endblock %}
-{# this page uses its own rich profile hero below, so suppress the shared page-head band #}
 {% block pagehead %}{% endblock %}
-
 {% block content %}
-<a class="up-back" href="{% url 'ircpanel:users' %}"><svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> {% trans "Tous les utilisateurs" %}</a>
+<a class="up-back" href="/users"><svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Utilisateurs</a>
 
-{% if u %}
-<!-- ── Profile hero ──────────────────────────────────────────────────────── -->
-<div class="up-card uprofile {% if u.user.operlogin %}is-oper{% endif %}">
+{% if !found %}
+<div class="up-card"><div class="ircp-empty">Utilisateur <b class="mono">{{ nick }}</b> introuvable ou déconnecté.</div></div>
+{% else %}
+<div class="up-card uprofile {% if is_oper %}is-oper{% endif %}">
   <div class="uprofile-cover"></div>
   <div class="uprofile-top">
-    <div class="uprofile-av {% if account %}has-acct{% endif %}">
-      {% if account.avatar %}<img src="{{ account.avatar }}" alt="">{% else %}<span>{{ u.name|slice:":1"|upper }}</span>{% endif %}
-      <i class="uprofile-status" title="{% trans "En ligne" %}"></i>
-    </div>
+    <span class="uprofile-av {% if registered %}has-acct{% endif %}">{{ initial }}<span class="uprofile-status"></span></span>
     <div class="uprofile-id">
-      <h1 class="uprofile-name">{{ u.name }}</h1>
+      <div class="uprofile-name">{{ nick }}</div>
       <div class="uprofile-tags">
-        {% if u.user.operlogin %}<span class="upill upill--oper">⚡ {{ u.user.operclass|default:"oper" }}</span>{% endif %}
-        {% if account %}
-          {% if account.verified %}<span class="upill upill--ok">✔ {% trans "Compte vérifié" %}</span>{% else %}<span class="upill upill--warn">⚠ {% trans "Non vérifié" %}</span>{% endif %}
-          {% if account.totp %}<span class="upill">🔐 2FA</span>{% endif %}
-          {% if account.is_staff %}<span class="upill upill--oper">staff</span>{% endif %}
-        {% else %}<span class="upill">{% trans "Invité" %}</span>{% endif %}
-        {% if u.tls %}<span class="upill upill--ok">🔒 TLS</span>{% endif %}
-        {% if u.user.away_reason %}<span class="upill upill--warn">{% trans "Absent" %}</span>{% endif %}
+        {% if is_oper %}<span class="upill upill--oper">⚡ {% if operclass.is_empty() %}oper{% else %}{{ operclass }}{% endif %}</span>{% endif %}
+        {% if registered %}<span class="upill upill--ok">✓ {{ account }}</span>{% endif %}
+        {% if secure %}<span class="upill upill--ok">🔒 TLS</span>{% endif %}
+        {% if !registered %}<span class="upill upill--warn">invité</span>{% endif %}
       </div>
-      <div class="uprofile-meta mono">{{ u.user.username }}@{{ u.user.vhost }}{% if u.user.realname %} <span class="uprofile-rn">· {{ u.user.realname }}</span>{% endif %}</div>
-      {% if account %}
-      <div class="uprofile-acct">
-        <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" fill="none"/><path d="M22 6l-10 7L2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg>
-        {{ account.email|default:"—" }} <span class="dot">·</span> {% trans "inscrit le" %} {{ account.date_joined|date:"d/m/Y" }}{% if account.last_login %} <span class="dot">·</span> {% trans "vu" %} {{ account.last_login|date:"d/m/Y H:i" }}{% endif %}
-      </div>
-      {% endif %}
+      <div class="uprofile-meta mono">{{ ident }}@{{ host }}</div>
+      {% if !gecos.is_empty() %}<div class="uprofile-rn">{{ gecos }}</div>{% endif %}
     </div>
   </div>
   <div class="uprofile-facts">
-    <div class="ufact">
-      <span class="ufact-ico"><svg viewBox="0 0 24 24"><path d="M21 10c0 6-9 12-9 12s-9-6-9-12a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>
-      <div><b>{% if geo %}{% if geo.city %}{{ geo.city }}, {% endif %}{{ geo.country }}{% else %}{% trans "Inconnue" %}{% endif %}</b><span>{% trans "Localisation" %}</span></div>
-      {% if geo %}<span class="ufact-flag">{{ geo.code|flag }}</span>{% endif %}
-    </div>
-    <div class="ufact">
-      <span class="ufact-ico"><svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg></span>
-      <div><b>{{ u.user.servername }}</b><span>{% trans "Serveur" %}</span></div>
-    </div>
-    <div class="ufact">
-      <span class="ufact-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span>
-      <div><b>{{ u.connected_since|humanago|default:"—" }}</b><span>{% trans "Connecté" %}</span></div>
-    </div>
-    <div class="ufact">
-      <span class="ufact-ico"><svg viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg></span>
-      <div><b>{{ u.user.channels|length }}</b><span>{% trans "Salons" %}</span></div>
-    </div>
-    {% if u.user.reputation is not None %}
-    <div class="ufact">
-      <span class="ufact-ico"><svg viewBox="0 0 24 24"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg></span>
-      <div><b>{{ u.user.reputation }}</b><span>{% trans "Réputation" %}</span></div>
-    </div>
-    {% endif %}
+    <div class="ufact"><span class="ufact-ico">🌐</span><span>{% if ip.is_empty() %}—{% else %}{{ ip }}{% endif %}</span></div>
+    <div class="ufact"><span class="ufact-ico">🖧</span><span>{% if server.is_empty() %}—{% else %}{{ server }}{% endif %}</span></div>
+    <div class="ufact"><span class="ufact-ico">⚙</span><span class="mono">{% if modes.is_empty() %}—{% else %}+{{ modes }}{% endif %}</span></div>
+    <div class="ufact"><span class="ufact-ico">📺</span><span>{{ channels.len() }} salon(s)</span></div>
   </div>
 </div>
 
 <div class="up-grid2">
   <div class="up-card">
-    <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg> {% trans "Identité" %}</div>
-    <div class="up-kv">
-      <div class="k">{% trans "Nick" %}</div><div class="v">{{ u.name }}</div>
-      <div class="k">UID</div><div class="v mono">{{ u.id }}</div>
-      <div class="k">Ident@Host</div><div class="v mono">{{ u.user.username }}@{{ u.user.vhost }}</div>
-      <div class="k">{% trans "Hôte réel" %}</div><div class="v mono">{{ u.hostname }}</div>
-      <div class="k">IP</div><div class="v mono">{{ u.ip }}</div>
-      <div class="k">{% trans "Localisation" %}</div><div class="v">{% if geo %}{{ geo.code|flag }} {% if geo.city %}{{ geo.city }}, {% endif %}{{ geo.country }} <span class="up-geo-code">{{ geo.code }}</span>{% else %}<span class="muted">{% trans "— (locale/inconnue)" %}</span>{% endif %}</div>
-      <div class="k">{% trans "Nom réel" %}</div><div class="v">{{ u.user.realname }}</div>
-      <div class="k">{% trans "Serveur" %}</div><div class="v">{{ u.user.servername }}</div>
-      <div class="k">{% trans "Modes" %}</div><div class="v mono">+{{ u.user.modes }}</div>
-      {% if u.user.account %}<div class="k">{% trans "Compte" %}</div><div class="v"><span class="ircp-tag ircp-tag--oper">{{ u.user.account }}</span></div>{% endif %}
-      {% if u.user.reputation is not None %}<div class="k">{% trans "Réputation" %}</div><div class="v"><b>{{ u.user.reputation }}</b></div>{% endif %}
-      <div class="k">TLS</div><div class="v">{% if u.tls %}🔒 Sécurisé{% if u.tls.fingerprint %} <span class="mono" style="font-size:.74rem">{{ u.tls.fingerprint|truncatechars:24 }}</span>{% endif %}{% else %}<span class="muted">{% trans "non chiffré" %}</span>{% endif %}</div>
-      {% if u.user.away_reason %}<div class="k">{% trans "Absent" %}</div><div class="v">{{ u.user.away_reason }}</div>{% endif %}
-      <div class="k">{% trans "Connecté depuis" %}</div><div class="v">{{ u.connected_since|humandt }} <span class="muted" style="font-size:.82rem">· {{ u.connected_since|humanago }}</span></div>
-      {% if u.user.idle_since %}<div class="k">{% trans "Inactif depuis" %}</div><div class="v">{{ u.user.idle_since|humandt }} <span class="muted" style="font-size:.82rem">· {{ u.user.idle_since|humanago }}</span></div>{% endif %}
-    </div>
-  </div>
-
-  <div>
-    {% if 'usermode' in panel_perms or 'notice' in panel_perms or 'kill' in panel_perms %}
-    <div class="up-card">
-      <div class="up-card-h"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg> {% trans "Actions" %}</div>
-      <div class="up-actions" style="flex-direction:column;align-items:stretch;gap:10px">
-        {% if 'usermode' in panel_perms %}
-        <form class="up-actform" method="post" action="{% url 'ircpanel:user_action' %}">
-          {% csrf_token %}<input type="hidden" name="nick" value="{{ u.name }}"><input type="hidden" name="action" value="vhost">
-          <input type="text" name="value" placeholder="{% trans "nouveau vHost" %}" style="flex:1;min-width:140px">
-          <button type="submit" class="ircp-btn">{% trans "Définir vHost" %}</button>
-        </form>
-        <form class="up-actform" method="post" action="{% url 'ircpanel:user_action' %}">
-          {% csrf_token %}<input type="hidden" name="nick" value="{{ u.name }}"><input type="hidden" name="action" value="nick">
-          <input type="text" name="value" placeholder="{% trans "nouveau nick" %}" style="flex:1;min-width:140px">
-          <button type="submit" class="ircp-btn">{% trans "Renommer" %}</button>
-        </form>
-        <form class="up-actform" method="post" action="{% url 'ircpanel:user_action' %}">
-          {% csrf_token %}<input type="hidden" name="nick" value="{{ u.name }}"><input type="hidden" name="action" value="umode">
-          <input type="text" name="value" placeholder="+w / -i / +s flags" style="flex:1;min-width:140px">
-          <button type="submit" class="ircp-btn">{% trans "Modes" %}</button>
-        </form>
-        <form class="up-actform" method="post" action="{% url 'ircpanel:user_action' %}">
-          {% csrf_token %}<input type="hidden" name="nick" value="{{ u.name }}"><input type="hidden" name="action" value="oper">
-          <input type="text" name="value" placeholder="{% trans "compte oper (vide = dé-oper)" %}" style="flex:1;min-width:140px">
-          <button type="submit" class="ircp-btn">{% trans "Oper" %}</button>
-        </form>
-        {% endif %}
-        {% if 'notice' in panel_perms %}
-        <form class="up-actform" method="post" action="{% url 'ircpanel:send_notice' %}">
-          {% csrf_token %}<input type="hidden" name="target" value="{{ u.name }}"><input type="hidden" name="next" value="{{ request.path }}">
-          <input type="text" name="message" placeholder="{% trans "Envoyer une notice…" %}" style="flex:1;min-width:140px">
-          <button type="submit" class="ircp-btn">{% trans "Notice" %}</button>
-        </form>
-        {% endif %}
-        {% if 'kill' in panel_perms %}
-        <form class="up-actform" method="post" action="{% url 'ircpanel:user_kill' %}" data-confirm="Déconnecter (KILL) {{ u.name }} ?">
-          {% csrf_token %}<input type="hidden" name="nick" value="{{ u.name }}">
-          <input type="text" name="reason" placeholder="{% trans "Raison du KILL" %}" style="flex:1;min-width:140px">
-          <button type="submit" class="ircp-btn ircp-btn--danger">⚡ KILL</button>
-        </form>
-        {% endif %}
-        {% if 'ban' in panel_perms %}
-        <form class="up-actform" method="post" action="{% url 'ircpanel:user_kill_gline' %}" data-confirm="KILL {{ u.name }} ET G-line *@{{ u.hostname }} ?">
-          {% csrf_token %}<input type="hidden" name="nick" value="{{ u.name }}"><input type="hidden" name="host" value="{{ u.hostname }}"><input type="hidden" name="next" value="{{ request.path }}">
-          <input type="text" name="reason" placeholder="{% trans "Raison (kill + G-line)" %}" style="flex:1;min-width:140px">
-          <button type="submit" class="ircp-btn ircp-btn--danger">⚡ KILL + G-line</button>
-        </form>
-        {% endif %}
-      </div>
-    </div>
-    {% endif %}
-
-    {% if 'ban' in panel_perms %}
-    <div class="up-card">
-      <div class="up-card-h"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg> {% trans "Bannir en un clic" %}</div>
-      <div class="up-actions" style="flex-direction:column;align-items:stretch;gap:8px">
-        <form class="up-actform" method="post" action="{% url 'ircpanel:quick_ban' %}" data-confirm="G-line *@{{ u.hostname }} ?">
-          {% csrf_token %}<input type="hidden" name="type" value="gline"><input type="hidden" name="mask" value="*@{{ u.hostname }}"><input type="hidden" name="next" value="{{ request.path }}">
-          <input type="text" name="reason" placeholder="{% trans "Raison" %}" style="flex:1;min-width:120px">
-          <button type="submit" class="ircp-btn ircp-btn--danger">{% blocktrans with host=u.hostname|truncatechars:22 %}G-line l'hôte ({{ host }}){% endblocktrans %}</button>
-        </form>
-        <form class="up-actform" method="post" action="{% url 'ircpanel:quick_ban' %}" data-confirm="Z-line {{ u.ip }} ?">
-          {% csrf_token %}<input type="hidden" name="type" value="zline"><input type="hidden" name="mask" value="{{ u.ip }}"><input type="hidden" name="next" value="{{ request.path }}">
-          <input type="text" name="reason" placeholder="{% trans "Raison" %}" style="flex:1;min-width:120px">
-          <button type="submit" class="ircp-btn ircp-btn--danger">{% blocktrans with addr=u.ip|truncatechars:22 %}Z-line l'IP ({{ addr }}){% endblocktrans %}</button>
-        </form>
-      </div>
-    </div>
-    {% endif %}
-
-    <div class="up-card">
-      <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg> {% trans "Salons" %} ({{ u.user.channels|length }})</div>
-      <div class="up-actions up-chips">
-        {% for ch in u.user.channels %}<a class="up-chip" href="{% url 'ircpanel:channel_detail' ch|chanslug %}">{{ ch }}</a>{% empty %}<span class="muted">{% trans "Aucun salon." %}</span>{% endfor %}
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="up-grid2">
-  <div class="up-card">
-    <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></svg> {% trans "Notes de modération" %}</div>
-    {% for n in notes %}
-    <div class="up-note">
-      <div class="up-note-txt">{{ n.text }}</div>
-      <div class="up-note-meta">{{ n.author_name }} · {{ n.created|date:"d/m/Y H:i" }}
-        <form method="post" action="{% url 'ircpanel:note_del' %}" style="margin-left:auto" data-confirm="{% trans "Supprimer cette note ?" %}">
-          {% csrf_token %}<input type="hidden" name="id" value="{{ n.id }}"><input type="hidden" name="next" value="{{ request.path }}">
-          <button class="ircp-btn" style="padding:1px 7px;font-size:.7rem">✕</button>
-        </form>
-      </div>
-    </div>
-    {% empty %}<div class="ircp-empty">{% trans "Aucune note." %}</div>{% endfor %}
-    <form class="up-note-form" method="post" action="{% url 'ircpanel:note_add' %}">
-      {% csrf_token %}
-      <input type="hidden" name="target" value="{{ account.username|default:u.name }}"><input type="hidden" name="next" value="{{ request.path }}">
-      <textarea name="text" placeholder="{% trans "Ajouter une note… (utilisez un préréglage ci-dessous)" %}"></textarea>
-      <button class="ircp-btn">{% trans "Ajouter" %}</button>
-    </form>
-    <div class="up-actions up-chips" style="padding:0 18px 14px">
-      {% for p in ban_presets %}<span class="up-chip up-preset" data-preset="{{ p }}">{{ p }}</span>{% endfor %}
+    <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg> Salons</div>
+    <div class="up-chips">
+      {% for ch in channels %}
+      <a class="up-chip" href="/channels/{{ ch.name }}"><b>{{ ch.prefix }}</b>{{ ch.name }}</a>
+      {% endfor %}
+      {% if channels.is_empty() %}<div class="ircp-empty">Aucun salon.</div>{% endif %}
     </div>
   </div>
 
   <div class="up-card">
-    <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 3M3.05 13a9 9 0 1 0 .5-4.5L3 8"/></svg> {% trans "Actions récentes sur ce nick" %}</div>
-    <table class="ircp-table">
-      <tbody>
-        {% for e in recent_actions %}
-        <tr>
-          <td class="muted" style="white-space:nowrap;font-size:.78rem">{{ e.created|date:"d/m H:i" }}</td>
-          <td><b>{{ e.actor_name }}</b></td>
-          <td><span class="ircp-tag {% if e.success %}ircp-tag--oper{% else %}ircp-tag--ban{% endif %}">{{ e.action }}</span></td>
-          <td class="mono muted">{{ e.detail|truncatechars:28 }}</td>
-        </tr>
-        {% empty %}<tr><td class="ircp-empty">{% trans "Aucune action enregistrée pour ce nick." %}</td></tr>{% endfor %}
-      </tbody>
-    </table>
+    <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg> Compte</div>
+    {% if registered %}
+    <div class="up-kv"><span class="k">Compte</span><span class="v">{{ account }}</span></div>
+    <div class="up-kv"><span class="k">E-mail</span><span class="v">{% if email.is_empty() %}—{% else %}{{ email }}{% endif %}</span></div>
+    <div class="up-kv"><span class="k">Vérifié</span><span class="v">{% if verified %}✓ oui{% else %}✗ non{% endif %}</span></div>
+    <div class="up-kv"><span class="k">Inscrit</span><span class="v">{{ joined }}</span></div>
+    {% else %}
+    <div class="ircp-empty">Cet utilisateur n'est pas identifié à un compte.</div>
+    {% endif %}
   </div>
 </div>
-
-<script nonce="{{ request.csp_nonce }}">
-document.querySelectorAll(".up-preset").forEach(function (c) {
-  c.addEventListener("click", function () {
-    var ta = document.querySelector(".up-note-form textarea");
-    if (ta) { ta.value = (ta.value ? ta.value + " " : "") + c.dataset.preset; ta.focus(); }
-  });
-});
-</script>
-{% else %}
-<div class="ircp-empty">{% trans "Utilisateur introuvable." %}</div>
 {% endif %}
 {% endblock %}

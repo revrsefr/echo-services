@@ -37,6 +37,49 @@ pub fn human_ago(then: u64, now: u64) -> String {
     }
 }
 
+/// Format a unix timestamp as "dd/mm HH:MM" (UTC). Self-contained civil-date
+/// conversion so templates can show absolute times without a date crate.
+pub fn fmt_dt(ts: u64) -> String {
+    if ts == 0 {
+        return "—".into();
+    }
+    let days = (ts / 86400) as i64;
+    let secs = ts % 86400;
+    let (h, mi) = (secs / 3600, (secs % 3600) / 60);
+    // days since 1970-01-01 → civil (y, m, d), Howard Hinnant's algorithm.
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let _ = y;
+    format!("{:02}/{:02} {:02}:{:02}", d, m, h, mi)
+}
+
+/// Format a unix timestamp as "dd/mm/yyyy HH:MM" (UTC).
+pub fn fmt_date(ts: u64) -> String {
+    if ts == 0 {
+        return "—".into();
+    }
+    let days = (ts / 86400) as i64;
+    let secs = ts % 86400;
+    let (h, mi) = (secs / 3600, (secs % 3600) / 60);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    format!("{:02}/{:02}/{} {:02}:{:02}", d, m, y, h, mi)
+}
+
 /// A forward relative delay in French ("dans 3 j"), for expiry display.
 pub fn human_until(now: u64, then: u64) -> String {
     let s = then.saturating_sub(now);

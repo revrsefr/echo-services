@@ -1,180 +1,51 @@
 {% extends "ircpanel/base.html" %}
-{% load i18n %}
-{% load panel_extras %}
-{% block title %}{% trans "Renseignement IP" %}{% endblock %}
-{% block heading %}{% trans "Renseignement IP" %}{% endblock %}
-{% block eyebrow %}{% trans "Investigation" %}{% endblock %}
-{% block subtitle %}{% trans "Renseignement et géolocalisation d'une adresse IP." %}{% endblock %}
+{% block title %}IP WHOIS{% endblock %}
 {% block hero_icon %}<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>{% endblock %}
-{% block topright %}
-{% if ip %}<form method="get" class="ircp-search ipw-search">
-  <input type="text" name="q" value="{{ q }}" placeholder="{% trans "IP, IPv6 ou nick…" %}">
-  <button>{% trans "Analyser" %}</button>
-</form>{% endif %}
-{% endblock %}
-
+{% block eyebrow %}Système{% endblock %}
+{% block heading %}IP WHOIS{% endblock %}
+{% block subtitle %}Qui est connecté depuis une IP, et quels bans la concernent.{% endblock %}
 {% block content %}
-{% if error %}<div class="up-alert"><b>⚠</b> {{ error }}</div>{% endif %}
+<form method="get" class="ircp-search" action="/ip-whois">
+  <input type="search" name="ip" value="{{ q }}" placeholder="Adresse IP (ex. 203.0.113.7)…" autocomplete="off" autofocus>
+</form>
 
-{% if ip %}
-<!-- ── HERO ─────────────────────────────────────────────────────────────── -->
-<div class="ipw-hero ipw-risk--{{ risk.cls }}">
-  <div class="ipw-hero-map">{{ world_svg|safe }}</div>
-  <div class="ipw-hero-body">
-    <div class="ipw-ip-line">
-      {% if geo %}<span class="ipw-flag">{{ geo.code|flag }}</span>{% endif %}
-      <span class="ipw-ip mono">{{ ip }}</span>
-      <span class="ipw-ipv">{{ ip_version }}</span>
-      <button type="button" class="ipw-copy" data-copy="{{ ip }}" title="{% trans "Copier l'IP" %}" aria-label="Copier">
-        <svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
-      </button>
-    </div>
-    <div class="ipw-sub">
-      {% if from_nick %}<a class="up-pill ipw-via" href="{% url 'ircpanel:user_detail' from_nick %}">↩ {{ from_nick }}</a>{% endif %}
-      {% if geo %}<span class="ipw-loc">{% if geo.city %}{{ geo.city }} · {% endif %}{{ geo.country }}</span>{% endif %}
-      {% if ptr %}<span class="ipw-ptr mono" title="{% trans "DNS inverse" %}">{{ ptr }}</span>{% endif %}
-    </div>
-    <div class="ipw-badge">
-      <span class="ipw-badge-ico">{{ risk.icon }}</span>
-      <b>{{ risk.label }}</b>{% if risk.desc %} <span class="ipw-badge-desc">· {{ risk.desc }}</span>{% endif %}
-    </div>
-  </div>
-</div>
-
-<!-- ── SIGNAL TILES ─────────────────────────────────────────────────────── -->
-<div class="ipw-signals">
-  <div class="ipw-sig">
-    <div class="ipw-sig-n">{{ users|length }}</div>
-    <div class="ipw-sig-l">{% trans "Connectés sur cette IP" %}</div>
-  </div>
-  <div class="ipw-sig {% if bans %}is-hot{% endif %}">
-    <div class="ipw-sig-n">{{ bans|length }}</div>
-    <div class="ipw-sig-l">{% trans "Bans actifs" %}</div>
-  </div>
-  <div class="ipw-sig ipw-sig-risk r-{{ risk.cls }}">
-    <div class="ipw-sig-n ipw-sig-ico">{{ risk.icon }}</div>
-    <div class="ipw-sig-l">{{ risk.label }}</div>
-  </div>
-  <div class="ipw-sig">
-    <div class="ipw-sig-n ipw-sig-text">{% if geo %}{{ geo.code|flag }} {{ geo.code }}{% else %}—{% endif %}</div>
-    <div class="ipw-sig-l">{% if geo.city %}{{ geo.city }}{% else %}Localisation{% endif %}</div>
-  </div>
-</div>
-
-<div class="up-grid2">
-  <!-- LEFT: network + raw -->
-  <div>
-    <div class="up-card">
-      <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M21 16V8l-9-5-9 5v8l9 5 9-5zM3 8l9 5 9-5M12 13v8"/></svg> {% trans "Réseau & localisation" %}</div>
-      <div class="up-kv">
-        <div class="k">{% trans "Adresse" %}</div><div class="v mono">{{ ip }} <span class="ipw-tag">{{ ip_version }}</span></div>
-        <div class="k">{% trans "DNS inverse" %}</div><div class="v mono">{{ ptr|default:"— aucun PTR" }}</div>
-        <div class="k">{% trans "Pays" %}</div><div class="v">{% if geo %}{{ geo.code|flag }} {{ geo.country }} <span class="up-geo-code">{{ geo.code }}</span>{% else %}<span class="muted">—</span>{% endif %}</div>
-        {% if geo.city %}<div class="k">{% trans "Ville" %}</div><div class="v">{{ geo.city }}</div>{% endif %}
-        {% for k, v in whois_fields.items %}{% if k != "Pays" and k != "Reverse DNS" %}
-        <div class="k">{{ k }}</div><div class="v {% if k == 'ASN' or k == 'AS name' %}mono{% endif %}">{{ v }}</div>
-        {% endif %}{% endfor %}
-      </div>
-    </div>
-
-    <div class="up-card up-map-card">
-      <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M21 10c0 6-9 12-9 12s-9-6-9-12a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> {% trans "Localisation" %}</div>
-      <div class="up-map" style="aspect-ratio:2/1;max-height:300px">
-        {{ world_svg|safe }}
-        <div class="up-map-dots">
-          {% for d in dots %}<span class="up-map-dot" style="left:{{ d.x }}%;top:{{ d.y }}%"><span class="up-map-halo"></span><span class="up-map-core"></span></span>
-          {% empty %}{% endfor %}
-        </div>
-      </div>
-      {% if not dots %}<div class="ircp-empty" style="padding:10px 18px">{% trans "Non géolocalisable (IP locale ou inconnue)." %}</div>{% endif %}
-    </div>
-
-    {% if whois_raw %}
-    <details class="ipw-raw">
-      <summary>{% trans "WHOIS brut (JSON)" %}</summary>
-      <pre class="mono">{{ whois_raw }}</pre>
-    </details>
-    {% endif %}
-  </div>
-
-  <!-- RIGHT: users, bans, actions -->
-  <div>
-    <div class="up-card">
-      <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg>
-        {% trans "Connectés sur cette IP" %} <span class="ircp-count">{{ users|length }}</span>
-        {% if users|length > 1 %}<span class="ipw-warnchip" title="{% trans "Plusieurs comptes partagent cette IP" %}">{% trans "⚠ multi-comptes" %}</span>{% endif %}
-      </div>
-      <table class="ircp-table">
-        <tbody>
-          {% for u in users %}
-          <tr>
-            <td><a href="{% url 'ircpanel:user_detail' u.name %}"><b>{{ u.name }}</b></a>
-              {% if u.user.operlogin %}<span class="ircp-tag ircp-tag--oper">⚡</span>{% endif %}</td>
-            <td class="mono muted">{{ u.user.username }}@{{ u.user.vhost }}</td>
-            <td class="muted">{{ u.user.servername }}</td>
-          </tr>
-          {% empty %}<tr><td class="ircp-empty">{% trans "Personne n'est connecté depuis cette IP actuellement." %}</td></tr>{% endfor %}
-        </tbody>
-      </table>
-    </div>
-
-    <div class="up-card">
-      <div class="up-card-h"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>
-        {% trans "Bans touchant cette IP" %} <span class="ircp-count {% if bans %}ircp-count--danger{% endif %}">{{ bans|length }}</span></div>
-      <table class="ircp-table">
-        <tbody>
-          {% for b in bans %}
-          <tr>
-            <td><span class="ircp-tag ircp-tag--ban">{{ b.type_string|default:b.type }}</span></td>
-            <td class="mono">{{ b.name }}</td>
-            <td class="muted">{{ b.reason|truncatechars:42 }}</td>
-          </tr>
-          {% empty %}<tr><td class="ircp-empty">{% trans "Aucun ban actif ne correspond à cette IP." %}</td></tr>{% endfor %}
-        </tbody>
-      </table>
-    </div>
-
-    {% if 'ban' in panel_perms %}
-    <div class="up-card">
-      <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg> {% trans "Action rapide" %}</div>
-      <form class="ipw-act" method="post" action="{% url 'ircpanel:quick_ban' %}" data-confirm="Z-line (bannir l'IP) {{ ip }} ?">
-        {% csrf_token %}
-        <input type="hidden" name="type" value="zline"><input type="hidden" name="mask" value="{{ ip }}">
-        <input type="hidden" name="next" value="{{ request.get_full_path }}">
-        <input type="text" name="reason" placeholder="{% trans "Raison du Z-line…" %}">
-        <button type="submit" class="ircp-btn ircp-btn--danger">{% trans "⛔ Z-line cette IP" %}</button>
-      </form>
-    </div>
-    {% endif %}
-  </div>
-</div>
-
+{% if q.is_empty() %}
+<div class="up-card"><div class="ircp-empty">Saisis une adresse IP pour voir les sessions et bans associés.</div></div>
 {% else %}
-<!-- ── EMPTY STATE ──────────────────────────────────────────────────────── -->
-<div class="ipw-intro">
-  <div class="ipw-intro-ico"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div>
-  <h2>{% trans "Renseignement IP" %}</h2>
-  <p>{% blocktrans %}Saisissez une <b>IP</b>, une <b>IPv6</b> ou un <b>nick connecté</b> pour obtenir un dossier complet : géolocalisation, DNS inverse, FAI / ASN, détection <b>proxy / VPN / datacenter</b>, comptes partageant l'IP et bans correspondants.{% endblocktrans %}</p>
-  <form method="get" class="ipw-hunt">
-    <input type="text" name="q" value="{{ q }}" placeholder="{% trans "IP, IPv6 ou nick…" %}" autofocus>
-    <button type="submit">{% trans "Analyser" %}</button>
-  </form>
-  <div class="ipw-examples">
-    <span class="ipw-ex-lbl">{% trans "Essayez" %}&nbsp;:</span>
-    <a class="up-pill" href="?q=8.8.8.8">8.8.8.8</a>
-    <a class="up-pill" href="?q=1.1.1.1">1.1.1.1</a>
-  </div>
+<div class="up-card">
+  <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg> Sessions sur <b class="mono">{{ ip }}</b> <span class="ircp-count">{{ users.len() }}</span></div>
+  <table class="ircp-table">
+    <thead><tr><th>Pseudo</th><th>Hôte</th><th>Compte</th><th>Serveur</th></tr></thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td><a href="/users/{{ u.nick }}"><b>{{ u.nick }}</b></a>{% if u.is_oper %} <span class="ircp-tag ircp-tag--oper">oper</span>{% endif %}</td>
+        <td class="mono">{{ u.ident }}@{{ u.host }}</td>
+        <td>{% if u.account.is_empty() %}<span class="muted">—</span>{% else %}{{ u.account }}{% endif %}</td>
+        <td>{% if u.server.is_empty() %}—{% else %}{{ u.server }}{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if users.is_empty() %}<div class="ircp-empty">Aucune session en ligne sur cette IP.</div>{% endif %}
+</div>
+
+<div class="up-card">
+  <div class="up-card-h"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg> Bans concernant cette IP <span class="ircp-count">{{ bans.len() }}</span></div>
+  <table class="ircp-table">
+    <thead><tr><th>Type</th><th>Masque</th><th>Motif</th><th>Expire</th></tr></thead>
+    <tbody>
+      {% for b in bans %}
+      <tr>
+        <td><span class="ircp-tag ircp-tag--ban">{{ b.kind }}</span></td>
+        <td class="mono">{{ b.mask }}</td>
+        <td>{% if b.reason.is_empty() %}<span class="muted">—</span>{% else %}{{ b.reason }}{% endif %}</td>
+        <td>{{ b.expires }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if bans.is_empty() %}<div class="ircp-empty">Aucun ban ne correspond à cette IP.</div>{% endif %}
 </div>
 {% endif %}
-
-<script nonce="{{ request.csp_nonce }}">
-document.querySelectorAll('.ipw-copy').forEach(function (b) {
-  b.addEventListener('click', function () {
-    var v = b.getAttribute('data-copy');
-    (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject()).then(function () {
-      b.classList.add('ok'); setTimeout(function () { b.classList.remove('ok'); }, 1200);
-    }).catch(function () {});
-  });
-});
-</script>
 {% endblock %}

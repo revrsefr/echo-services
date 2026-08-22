@@ -1,39 +1,20 @@
 {% extends "ircpanel/base.html" %}
-{% load i18n %}
-{% block title %}{% trans "Journaux" %}{% endblock %}
-{% block heading %}{% trans "Journaux serveur" %}{% endblock %}
-{% block eyebrow %}{% trans "Système" %}{% endblock %}
-{% block subtitle %}{% trans "Les journaux du serveur, en direct." %}{% endblock %}
+{% block title %}Journaux{% endblock %}
 {% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>{% endblock %}
+{% block eyebrow %}Système{% endblock %}
+{% block heading %}Journaux{% endblock %}
+{% block subtitle %}Flux d'événements structuré, en direct depuis echo.{% endblock %}
 {% block topright %}
-<label class="up-pill" style="display:flex;align-items:center;gap:8px;cursor:pointer">
-  <input type="checkbox" id="logAuto" checked> {% trans "Actualisation auto" %}
-</label>
+<label class="up-pill"><input type="checkbox" id="logAuto" checked> Auto-actualisation</label>
+<span class="muted" id="logStatus"></span>
 {% endblock %}
-
 {% block content %}
-<div class="up-card" style="padding:0;overflow:hidden">
-  <div class="up-card-h" style="justify-content:space-between;gap:12px;flex-wrap:wrap">
-    <span><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg> {% trans "Événements (+draft/json-log)" %}</span>
-    <span style="display:flex;align-items:center;gap:10px">
-      <input type="text" id="logFilter" placeholder="{% trans "Filtrer…" %}" class="ircp-input"
-             style="padding:5px 10px;font-size:.74rem;max-width:200px">
-      <span class="muted" id="logStatus" style="font-size:.72rem;font-weight:600">…</span>
-    </span>
-  </div>
-  <div style="max-height:62vh;overflow:auto">
-    <table class="jl-table" id="logEvents" data-url="{% url 'ircpanel:logs_events' %}">
-      <tbody></tbody>
-    </table>
-    <div id="logEmpty" class="ircp-empty" style="padding:22px">{% trans "En attente d'événements… (les snotices opérateur apparaissent ici)" %}</div>
-  </div>
+<input class="ircp-input" id="logFilter" type="search" placeholder="Filtrer les événements…" autocomplete="off">
+<div class="up-card">
+  <table class="ircp-table jl-table" id="logEvents" data-url="/logs/events">
+    <thead><tr><th>Heure</th><th>Niveau</th><th>Sous-système</th><th>Message</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="ircp-empty" id="logEmpty">En attente d'événements…</div>
 </div>
-
-<details class="up-card" style="margin-top:16px;padding:0;overflow:hidden">
-  <summary class="up-card-h" style="cursor:pointer;list-style:none">
-    <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg> {% trans "Journal brut (inspircd.log)" %}
-  </summary>
-  <pre id="logBox" data-url="{% url 'ircpanel:logs_tail' %}"
-       style="margin:0;max-height:60vh;overflow:auto;padding:14px 18px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem;line-height:1.55;background:var(--surface-3);color:var(--text);white-space:pre-wrap;word-break:break-word">{% trans "Chargement…" %}</pre>
-</details>
 {% endblock %}

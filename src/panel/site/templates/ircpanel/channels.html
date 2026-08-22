@@ -1,34 +1,45 @@
 {% extends "ircpanel/base.html" %}
 {% block title %}Salons{% endblock %}
+{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg>{% endblock %}
+{% block eyebrow %}Réseau en direct{% endblock %}
+{% block heading %}Salons <span class="ircp-count">{{ total }}</span>{% endblock %}
+{% block subtitle %}Salons actifs sur le réseau, avec leur membres et modes.{% endblock %}
 {% block content %}
-<div class="up-head">
-  <div class="up-head-main">
-    <div class="up-head-text">
-      <h1>Salons <span class="ircp-count">{{ rows.len() }}</span></h1>
-      <p class="up-head-sub">Salons actifs sur le réseau. Le badge indique un salon enregistré.</p>
-    </div>
-  </div>
-</div>
 
-<input class="ircp-search" id="cq" type="search" placeholder="Filtrer par nom, sujet ou fondateur…" autocomplete="off">
+<input class="ircp-search" id="cq" type="search" placeholder="Filtrer par nom, sujet ou mode…" autocomplete="off">
+
+<div class="ufilters" id="ufilters">
+  <button type="button" class="ufilter is-active" data-f="all"><b>{{ total }}</b><span>Salons</span></button>
+  <button type="button" class="ufilter ufilter--acct" data-f="reg"><b>{{ registered }}</b><span>Enregistrés</span></button>
+  <button type="button" class="ufilter ufilter--oper" data-f="mod"><b>{{ moderated }}</b><span>Modérés</span></button>
+  <button type="button" class="ufilter ufilter--static"><b>{{ members }}</b><span>Membres</span></button>
+</div>
 
 <div class="up-card uroster-card">
   <div class="uroster" id="croster">
     {% for c in rows %}
-    <div class="urow" data-q="{{ c.name }} {{ c.topic }} {{ c.founder }}">
-      <span class="uava {% if c.registered %}is-acct{% endif %}">
-        {% if c.registered %}<i class="uava-dot" title="Enregistré"></i>{% endif %}
-      </span>
+    <a class="urow chrow" href="/channels/{{ c.name }}"
+       data-f="{% if c.registered %}reg {% endif %}{% if c.moderated %}mod{% endif %}"
+       data-q="{{ c.name }} {{ c.topic }} {{ c.modes }}">
+      <span class="chava {% if c.keyed || c.inviteonly || c.secret %}is-locked{% endif %}">#</span>
       <span class="urow-main">
         <span class="urow-nick"><b>{{ c.name }}</b>
-          {% if c.registered %}<span class="ircp-tag ircp-tag--svc">{{ c.founder }}</span>{% endif %}
+          {% if c.registered %}<span class="ircp-tag ircp-tag--svc">enregistré</span>{% endif %}
+          {% if c.secret %}<span class="ircp-tag ircp-tag--oper">+s</span>{% endif %}
+          {% if c.private %}<span class="ircp-tag ircp-tag--oper">+p</span>{% endif %}
+          {% if c.inviteonly %}<span class="ircp-tag ircp-tag--away">+i</span>{% endif %}
+          {% if c.keyed %}<span class="ircp-tag ircp-tag--away">🔑</span>{% endif %}
+          {% if c.moderated %}<span class="ircp-tag ircp-tag--away">+m</span>{% endif %}
         </span>
         <span class="urow-host">{% if c.topic.is_empty() %}<span class="muted">Aucun sujet</span>{% else %}{{ c.topic }}{% endif %}</span>
       </span>
       <span class="urow-net">
-        <span class="urow-ip">{{ c.users }} membre{% if c.users != 1 %}s{% endif %}</span>
+        <span class="chrow-bar"><i style="width:{{ c.pct }}%"></i></span>
+        <span class="urow-modes mono">{% if c.modes.is_empty() %}—{% else %}+{{ c.modes }}{% endif %}</span>
       </span>
-    </div>
+      <span class="chrow-members">{{ c.users }}</span>
+      <svg class="urow-chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+    </a>
     {% endfor %}
     {% if rows.is_empty() %}<div class="ircp-empty">Aucun salon actif.</div>{% endif %}
   </div>
@@ -38,14 +49,26 @@
 
 {% block scripts %}
 <script>
-(function(){
-  var rows=[].slice.call(document.querySelectorAll('#croster .urow'));
-  var empty=document.getElementById('cEmpty');
-  var q=document.getElementById('cq');
-  q.addEventListener('input',function(){
-    var t=(q.value||'').toLowerCase();var n=0;
-    rows.forEach(function(r){var ok=!t||(r.dataset.q||'').toLowerCase().indexOf(t)>=0;r.hidden=!ok;if(ok)n++;});
-    if(empty)empty.hidden=n>0;
+(function () {
+  var rows = [].slice.call(document.querySelectorAll("#croster .urow"));
+  var empty = document.getElementById("cEmpty");
+  var q = document.getElementById("cq");
+  var filt = "all";
+  function apply() {
+    var term = (q.value || "").toLowerCase(); var shown = 0;
+    rows.forEach(function (r) {
+      var okf = filt === "all" || (r.dataset.f || "").indexOf(filt) >= 0;
+      var okq = !term || (r.dataset.q || "").toLowerCase().indexOf(term) >= 0;
+      var ok = okf && okq; r.hidden = !ok; if (ok) shown++;
+    });
+    if (empty) empty.hidden = shown > 0;
+  }
+  q.addEventListener("input", apply);
+  document.querySelectorAll(".ufilter[data-f]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll(".ufilter").forEach(function (x) { x.classList.remove("is-active"); });
+      b.classList.add("is-active"); filt = b.dataset.f; apply();
+    });
   });
 })();
 </script>

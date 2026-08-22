@@ -1,69 +1,72 @@
 {% extends "ircpanel/base.html" %}
 {% block title %}Utilisateurs{% endblock %}
+{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>{% endblock %}
+{% block eyebrow %}Réseau en direct{% endblock %}
+{% block heading %}Utilisateurs <span class="ircp-count">{{ total }}</span>{% endblock %}
+{% block subtitle %}Sessions connectées vues depuis echo, en temps réel.{% endblock %}
 {% block content %}
-<div class="up-head">
-  <div class="up-head-main">
-    <div class="up-head-text">
-      <h1>Utilisateurs <span class="ircp-count">{{ rows.len() }}</span></h1>
-      <p class="up-head-sub">Sessions en ligne sur le réseau, vues depuis echo.</p>
-    </div>
-  </div>
-</div>
 
-<input class="ircp-search" id="uq" type="search" placeholder="Filtrer par pseudo, hôte, IP ou compte…" autocomplete="off">
+<input class="ircp-search" id="uq" type="search" placeholder="Filtrer par pseudo, hôte, IP, compte ou serveur…" autocomplete="off">
 
 <div class="ufilters" id="ufilters">
-  <button type="button" class="ufilter is-active" data-f="all"><b>{{ rows.len() }}</b><span>En ligne</span></button>
+  <button type="button" class="ufilter is-active" data-f="all"><b>{{ total }}</b><span>En ligne</span></button>
   <button type="button" class="ufilter ufilter--acct" data-f="acct"><b>{{ accounts }}</b><span>Comptes</span></button>
   <button type="button" class="ufilter" data-f="guest"><b>{{ guests }}</b><span>Invités</span></button>
+  <button type="button" class="ufilter ufilter--oper" data-f="oper"><b>{{ opers }}</b><span>Opérateurs</span></button>
 </div>
 
 <div class="up-card uroster-card">
   <div class="uroster" id="uroster">
     {% for u in rows %}
-    <div class="urow" data-acct="{% if u.has_account %}1{% else %}0{% endif %}"
-         data-q="{{ u.nick }} {{ u.ident }} {{ u.host }} {{ u.ip }} {{ u.account }}">
-      <span class="uava {% if u.has_account %}is-acct{% endif %}">
-        {% if u.has_account %}<i class="uava-dot" title="Compte"></i>{% endif %}
+    <a class="urow" href="/users/{{ u.nick }}"
+       data-f="{% if u.is_oper %}oper {% endif %}{% if u.has_account %}acct{% else %}guest{% endif %}"
+       data-q="{{ u.nick }} {{ u.ident }} {{ u.host }} {{ u.ip }} {{ u.account }} {{ u.server }}">
+      <span class="uava {% if u.is_oper %}is-oper{% else if u.has_account %}is-acct{% endif %}">
+        {% if u.has_account %}<i class="uava-dot" title="Compte enregistré"></i>{% endif %}
       </span>
       <span class="urow-main">
         <span class="urow-nick"><b>{{ u.nick }}</b>
+          {% if u.is_oper %}<span class="ircp-tag ircp-tag--oper">⚡ {% if u.operclass.is_empty() %}oper{% else %}{{ u.operclass }}{% endif %}</span>{% endif %}
           {% if u.has_account %}<span class="ircp-tag ircp-tag--svc">{{ u.account }}</span>{% endif %}
+          {% if u.secure %}<span class="ircp-tag ircp-tag--away">🔒 TLS</span>{% endif %}
         </span>
         <span class="urow-host mono">{{ u.ident }}@{{ u.host }}</span>
       </span>
       <span class="urow-net">
         <span class="urow-ip mono">{{ u.ip }}</span>
+        <span class="urow-loc">{% if u.server.is_empty() %}—{% else %}{{ u.server }}{% endif %}</span>
       </span>
-    </div>
+      <span class="urow-modes mono">{% if u.modes.is_empty() %}—{% else %}+{{ u.modes }}{% endif %}</span>
+      <svg class="urow-chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+    </a>
     {% endfor %}
     {% if rows.is_empty() %}<div class="ircp-empty">Aucun utilisateur en ligne.</div>{% endif %}
   </div>
-  <div class="uroster-empty" id="uEmpty" hidden>Aucun utilisateur ne correspond.</div>
+  <div class="uroster-empty" id="uEmpty" hidden>Aucun utilisateur ne correspond à ce filtre.</div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-(function(){
-  var rows=[].slice.call(document.querySelectorAll('.urow'));
-  var empty=document.getElementById('uEmpty');
-  var q=document.getElementById('uq');
-  var filt='all';
-  function apply(){
-    var term=(q.value||'').toLowerCase();var shown=0;
-    rows.forEach(function(r){
-      var okf=filt==='all'||(filt==='acct'&&r.dataset.acct==='1')||(filt==='guest'&&r.dataset.acct==='0');
-      var okq=!term||(r.dataset.q||'').toLowerCase().indexOf(term)>=0;
-      var ok=okf&&okq;r.hidden=!ok;if(ok)shown++;
+(function () {
+  var rows = [].slice.call(document.querySelectorAll("#uroster .urow"));
+  var empty = document.getElementById("uEmpty");
+  var q = document.getElementById("uq");
+  var filt = "all";
+  function apply() {
+    var term = (q.value || "").toLowerCase(); var shown = 0;
+    rows.forEach(function (r) {
+      var okf = filt === "all" || (r.dataset.f || "").indexOf(filt) >= 0;
+      var okq = !term || (r.dataset.q || "").toLowerCase().indexOf(term) >= 0;
+      var ok = okf && okq; r.hidden = !ok; if (ok) shown++;
     });
-    if(empty)empty.hidden=shown>0;
+    if (empty) empty.hidden = shown > 0;
   }
-  q.addEventListener('input',apply);
-  document.querySelectorAll('.ufilter').forEach(function(b){
-    b.addEventListener('click',function(){
-      document.querySelectorAll('.ufilter').forEach(function(x){x.classList.remove('is-active');});
-      b.classList.add('is-active');filt=b.dataset.f;apply();
+  q.addEventListener("input", apply);
+  document.querySelectorAll(".ufilter").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll(".ufilter").forEach(function (x) { x.classList.remove("is-active"); });
+      b.classList.add("is-active"); filt = b.dataset.f; apply();
     });
   });
 })();

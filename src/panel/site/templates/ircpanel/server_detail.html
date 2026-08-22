@@ -1,26 +1,23 @@
 {% extends "ircpanel/base.html" %}
-{% load i18n %}
 {% block title %}{{ name }}{% endblock %}
-{% block heading %}{{ s.name|default:name }}{% endblock %}
-{% block eyebrow %}{% trans "Serveur" %}{% endblock %}
 {% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg>{% endblock %}
-
+{% block eyebrow %}Serveur{% endblock %}
+{% block heading %}{{ name }}{% endblock %}
 {% block content %}
-<a class="up-back" href="{% url 'ircpanel:servers' %}"><svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> {% trans "Tous les serveurs" %}</a>
-
-{% if s %}
-<div class="up-card" style="max-width:560px">
-  <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg> {{ s.name }}</div>
-  <div class="up-kv">
-    <div class="k">{% trans "Nom" %}</div><div class="v">{{ s.name }}</div>
-    <div class="k">{% trans "Description" %}</div><div class="v">{{ s.server.info|default:"—" }}</div>
-    <div class="k">{% trans "Uplink" %}</div><div class="v">{{ s.server.uplink|default:"— (racine)" }}</div>
-    <div class="k">{% trans "Utilisateurs" %}</div><div class="v">{{ s.server.num_users }}</div>
-    <div class="k">{% trans "Opérateurs" %}</div><div class="v">{{ s.server.num_opers }}</div>
-    <div class="k">{% trans "Latence" %}</div><div class="v">{{ s.server.latency_ms }} ms</div>
-  </div>
-</div>
+<a class="up-back" href="/servers"><svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Serveurs</a>
+{% if !found %}
+<div class="up-card"><div class="ircp-empty">Serveur <b class="mono">{{ name }}</b> introuvable.</div></div>
 {% else %}
-<div class="ircp-empty">{% trans "Serveur introuvable." %}</div>
+<div class="up-stats">
+  <div class="up-stat frost-success"><div class="up-stat-num">{{ users }}</div><div class="up-stat-lbl">Utilisateurs</div></div>
+  <div class="up-stat frost-warning"><div class="up-stat-num">{{ opers }}</div><div class="up-stat-lbl">Opérateurs</div></div>
+</div>
+<div class="up-card">
+  <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg> Détails</div>
+  <div class="up-kv"><span class="k">Nom</span><span class="v mono">{{ name }}</span></div>
+  <div class="up-kv"><span class="k">Uplink</span><span class="v">{% if hub %}— (racine / hub){% else %}{{ uplink }}{% endif %}</span></div>
+  <div class="up-kv"><span class="k">Utilisateurs</span><span class="v">{{ users }}</span></div>
+  <div class="up-kv"><span class="k">Opérateurs</span><span class="v">{{ opers }}</span></div>
+</div>
 {% endif %}
 {% endblock %}

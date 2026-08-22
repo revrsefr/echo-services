@@ -1,35 +1,13 @@
 {% extends "ircpanel/base.html" %}
-{% load i18n %}
-{% block title %}{% trans "Groupes de sécurité" %}{% endblock %}
-{% block heading %}{% trans "Groupes de sécurité" %} <span class="ircp-count">{{ groups|length }}</span>{% endblock %}
-{% block eyebrow %}{% trans "Protection" %}{% endblock %}
-{% block subtitle %}{% trans "Groupes de sécurité et leurs membres." %}{% endblock %}
+{% block title %}Groupes de sécurité{% endblock %}
 {% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.5-3 7.5-8 10-5-2.5-8-5.5-8-10V6z"/></svg>{% endblock %}
-
+{% block eyebrow %}Protection du réseau{% endblock %}
+{% block heading %}Groupes de sécurité{% endblock %}
+{% block subtitle %}Classes de connexion et groupes définis côté ircd.{% endblock %}
 {% block content %}
-<div class="up-alert" style="background:rgba(56,189,248,.12);border-color:rgba(56,189,248,.4);color:inherit">
-  <b>{% trans "ℹ Lecture seule" %}</b> {% blocktrans %}— les groupes de sécurité (module <code>securitygroups</code>) sont définis dans la configuration (<code>&lt;securitygroup&gt;</code>). Ils servent de cible à <code>m_filter</code>, aux exemptions, etc.{% endblocktrans %}
+<div class="up-alert up-alert--info">
+  <b>ℹ Information</b> — les groupes de sécurité (connect classes) sont configurés directement dans l'ircd.
+  echo n'en reçoit pas la définition via le lien serveur ; cette page les affichera dès que l'ircd les publiera.
 </div>
-
-<div class="up-card">
-  <table class="ircp-table">
-    <thead><tr><th>{% trans "Nom" %}</th><th>{% trans "Masque" %}</th><th>{% trans "Compte" %}</th><th>TLS</th><th>Non-enreg.</th><th>WebIRC</th><th>WebSocket</th><th>Public</th></tr></thead>
-    <tbody>
-      {% for g in groups %}
-      <tr>
-        <td><b>{{ g.name }}</b></td>
-        <td class="mono muted">{{ g.mask|default:"—" }}</td>
-        <td class="muted">{{ g.account|default:"—" }}</td>
-        <td class="muted">{{ g.tls|default:"—" }}</td>
-        <td class="muted">{{ g.unregistered|default:"—" }}</td>
-        <td class="muted">{{ g.webirc|default:"—" }}</td>
-        <td class="muted">{{ g.websocket|default:"—" }}</td>
-        <td>{% if g.public %}<span class="ircp-tag ircp-tag--oper">{% trans "oui" %}</span>{% else %}<span class="ircp-tag ircp-tag--away">{% trans "non" %}</span>{% endif %}</td>
-      </tr>
-      {% empty %}
-      <tr><td colspan="8" class="ircp-empty">{% trans "Aucun groupe de sécurité." %}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
+<div class="up-card"><div class="ircp-empty">Aucun groupe de sécurité publié par l'ircd.</div></div>
 {% endblock %}

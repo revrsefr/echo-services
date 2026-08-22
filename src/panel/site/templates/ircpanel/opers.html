@@ -1,29 +1,23 @@
 {% extends "ircpanel/base.html" %}
 {% block title %}Opérateurs{% endblock %}
+{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V5l-8-3z"/></svg>{% endblock %}
+{% block eyebrow %}Système{% endblock %}
+{% block heading %}Opérateurs <span class="ircp-count">{{ rows.len() }}</span>{% endblock %}
+{% block subtitle %}Comptes de services disposant de privilèges.{% endblock %}
 {% block content %}
-<div class="up-head">
-  <div class="up-head-main">
-    <div class="up-head-text">
-      <h1>Opérateurs <span class="ircp-count">{{ rows.len() }}</span></h1>
-      <p class="up-head-sub">Comptes de services disposant de privilèges, par niveau.</p>
-    </div>
-  </div>
-</div>
-
-<div class="up-card uroster-card">
-  <div class="uroster">
-    {% for o in rows %}
-    <div class="urow">
-      <span class="uava is-oper"></span>
-      <span class="urow-main">
-        <span class="urow-nick"><b>{{ o.name }}</b>
-          <span class="ircp-tag ircp-tag--oper">{{ o.tier }}</span>
-        </span>
-        <span class="urow-host">{% if o.email.is_empty() %}<span class="muted">Aucun e-mail</span>{% else %}{{ o.email }}{% endif %}</span>
-      </span>
-    </div>
-    {% endfor %}
-    {% if rows.is_empty() %}<div class="ircp-empty">Aucun opérateur.</div>{% endif %}
-  </div>
+<div class="up-card">
+  <table class="ircp-table">
+    <thead><tr><th>Compte</th><th>Niveau</th><th class="r">En ligne</th></tr></thead>
+    <tbody>
+      {% for o in rows %}
+      <tr>
+        <td><b>{{ o.name }}</b></td>
+        <td><span class="ircp-tag ircp-tag--oper">{{ o.tier }}</span></td>
+        <td class="r">{% if o.online > 0 %}<span class="ircp-tag ircp-tag--svc">{{ o.online }} session(s)</span>{% else %}<span class="muted">hors ligne</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if rows.is_empty() %}<div class="ircp-empty">Aucun opérateur.</div>{% endif %}
 </div>
 {% endblock %}

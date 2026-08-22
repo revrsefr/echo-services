@@ -1,41 +1,25 @@
 {% extends "ircpanel/base.html" %}
 {% block title %}Modules{% endblock %}
+{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M21 16V8l-9-5-9 5v8l9 5 9-5zM3 8l9 5 9-5M12 13v8"/></svg>{% endblock %}
+{% block eyebrow %}Système{% endblock %}
+{% block heading %}Modules <span class="ircp-count">{{ total }}</span>{% endblock %}
+{% block subtitle %}Modules annoncés par l'ircd dans son burst CAPAB.{% endblock %}
 {% block content %}
-<div class="up-head">
-  <div class="up-head-main">
-    <div class="up-head-text">
-      <h1>Modules <span class="ircp-count">{{ rows.len() }}</span></h1>
-      <p class="up-head-sub">Modules annoncés par l'ircd dans son burst CAPAB.</p>
+<input class="ircp-search" id="mq" type="search" placeholder="Filtrer les modules…" autocomplete="off">
+<div class="up-card">
+  <div class="mod-group">
+    <div class="mod-grid" id="modgrid">
+      {% for m in rows %}
+      <div class="mod-item" data-q="{{ m }}"><span class="mod-name mono">{{ m }}</span></div>
+      {% endfor %}
+      {% if rows.is_empty() %}<div class="ircp-empty">Aucun module annoncé (echo non lié ?).</div>{% endif %}
     </div>
   </div>
 </div>
-
-<input class="ircp-search" id="mq" type="search" placeholder="Filtrer les modules…" autocomplete="off">
-
-<div class="up-card">
-  <div class="modgrid" id="modgrid">
-    {% for m in rows %}
-    <span class="modchip mono" data-q="{{ m }}">{{ m }}</span>
-    {% endfor %}
-    {% if rows.is_empty() %}<div class="ircp-empty">Aucun module annoncé (echo non lié ?).</div>{% endif %}
-  </div>
-</div>
-
-<style>
-.modgrid{display:flex;flex-wrap:wrap;gap:.5rem}
-.modchip{display:inline-block;padding:.35rem .6rem;border-radius:8px;background:var(--up-chip,rgba(127,127,127,.12));font-size:.85rem;line-height:1}
-</style>
 {% endblock %}
-
 {% block scripts %}
 <script>
-(function(){
-  var chips=[].slice.call(document.querySelectorAll('.modchip'));
-  var q=document.getElementById('mq');
-  q.addEventListener('input',function(){
-    var t=(q.value||'').toLowerCase();
-    chips.forEach(function(c){c.hidden=t&&(c.dataset.q||'').toLowerCase().indexOf(t)<0;});
-  });
-})();
+(function(){var items=[].slice.call(document.querySelectorAll("#modgrid .mod-item"));var q=document.getElementById("mq");
+q.addEventListener("input",function(){var t=(q.value||"").toLowerCase();items.forEach(function(r){r.hidden=t&&(r.dataset.q||"").toLowerCase().indexOf(t)<0;});});})();
 </script>
 {% endblock %}

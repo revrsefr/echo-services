@@ -1,11 +1,18 @@
 {% extends "ircpanel/base.html" %}
 {% block title %}Aperçu{% endblock %}
+{% block pagehead %}{% endblock %}
 {% block content %}
+
 <div class="dash-hero">
   <div class="dash-hero-main">
     <span class="dash-hero-eyebrow"><span class="dash-hero-dot"></span>Centre de contrôle</span>
-    <h2 class="dash-hero-title">Bonjour, {{ username }}</h2>
-    <p class="dash-hero-sub">État du réseau {{ brand }} en temps réel.</p>
+    <h2 class="dash-hero-title">Bonjour, {{ chrome.username }}</h2>
+    <p class="dash-hero-sub">Voici l'état du réseau {{ net_name }} en temps réel.</p>
+    <div class="dash-hero-chips">
+      <span class="dash-chip">{{ net_name }}</span>
+      <span class="dash-chip dash-chip--soft">echo {{ version }}</span>
+      <span class="dash-chip dash-chip--ok">✓ Opérationnel</span>
+    </div>
   </div>
   <div class="dash-hero-aside">
     <div class="dash-hero-big"><b data-live="users">{{ users }}</b><span>en ligne maintenant</span></div>
@@ -18,67 +25,188 @@
 </div>
 
 <div class="up-stats">
-  <a class="up-stat frost-success" href="/users"><div class="up-stat-num" data-live="users">{{ users }}</div><div class="up-stat-lbl">Utilisateurs en ligne</div></a>
-  <a class="up-stat frost-info" href="/channels"><div class="up-stat-num" data-live="channels">{{ channels }}</div><div class="up-stat-lbl">Salons</div></a>
-  <a class="up-stat frost-warning" href="/opers"><div class="up-stat-num" data-live="opers">{{ opers }}</div><div class="up-stat-lbl">Opérateurs</div></a>
-  <a class="up-stat frost-secondary" href="/servers"><div class="up-stat-num" data-live="servers">{{ servers }}</div><div class="up-stat-lbl">Serveurs liés</div></a>
-  <a class="up-stat frost-danger" href="/bans"><div class="up-stat-num" data-live="bans">{{ bans }}</div><div class="up-stat-lbl">Bans réseau</div></a>
+  <a class="up-stat frost-success" href="/users">
+    <span class="up-stat-ico"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+    <div class="up-stat-num" data-live="users">{{ users }}</div>
+    <div class="up-stat-lbl">Utilisateurs en ligne</div>
+    <div class="up-stat-sub"><span data-live="local">{{ local }}</span> locaux</div>
+  </a>
+  <a class="up-stat frost-info" href="/channels">
+    <span class="up-stat-ico"><svg viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg></span>
+    <div class="up-stat-num" data-live="channels">{{ channels }}</div>
+    <div class="up-stat-lbl">Salons</div>
+    <div class="up-stat-sub">&nbsp;</div>
+  </a>
+  <a class="up-stat frost-warning" href="/opers">
+    <span class="up-stat-ico"><svg viewBox="0 0 24 24"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V5l-8-3z"/></svg></span>
+    <div class="up-stat-num" data-live="opers">{{ opers }}</div>
+    <div class="up-stat-lbl">Opérateurs</div>
+    <div class="up-stat-sub">en ligne ›</div>
+  </a>
+  <a class="up-stat frost-secondary" href="/servers">
+    <span class="up-stat-ico"><svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg></span>
+    <div class="up-stat-num" data-live="servers">{{ servers }}</div>
+    <div class="up-stat-lbl">Serveurs liés</div>
+    <div class="up-stat-sub">&nbsp;</div>
+  </a>
+  <a class="up-stat frost-danger" href="/bans">
+    <span class="up-stat-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg></span>
+    <div class="up-stat-num" data-live="bans">{{ bans }}</div>
+    <div class="up-stat-lbl">Bans serveur</div>
+    <div class="up-stat-sub">&nbsp;</div>
+  </a>
 </div>
 
-<div class="up-grid2">
-  <div class="up-card srvnet-card">
-    <div class="up-card-h">Réseau lié <span class="ircp-count">{{ servers }}</span>
-      <a href="/servers" class="up-cardlink up-cardlink--right">Serveurs ›</a></div>
-    <div class="srvnet">
-      {% for s in server_rows %}
-      <a class="srvnode" href="/servers">
-        <div class="srvnode-h"><b class="srvnode-name">{{ s.name }}</b></div>
-        <div class="srvnode-stats"><span><b>{{ s.users }}</b> users</span></div>
-        <div class="srvnode-share"><i style="width:{{ s.pct }}%"></i></div>
-      </a>
-      {% endfor %}
-      {% if server_rows.is_empty() %}<div class="ircp-empty">Aucun serveur.</div>{% endif %}
-    </div>
+<div class="up-card dash-tools-card">
+  <div class="up-card-h">
+    <svg viewBox="0 0 24 24"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>
+    Accès rapide
+    <span class="dash-tools-sub">Tous les outils du panel, à portée de clic</span>
   </div>
-
-  <div class="up-card">
-    <div class="up-card-h">Salons les plus actifs
-      <a href="/channels" class="up-cardlink up-cardlink--right">Voir tout ›</a></div>
-    <div class="chrank-list">
-      {% for c in chan_rows %}
-      <a class="chrank" href="/channels">
-        <span class="chrank-pos">{{ loop.index }}</span>
-        <span class="chrank-main"><span class="chrank-name">{{ c.name }}</span>
-          <span class="chrank-bar"><i style="width:{{ c.pct }}%"></i></span></span>
-        <span class="chrank-count">{{ c.users }}</span>
-      </a>
-      {% endfor %}
-      {% if chan_rows.is_empty() %}<div class="ircp-empty">Aucun salon.</div>{% endif %}
-    </div>
+  <div class="dash-tools">
+    <a class="dtool dtool--watch" href="/users"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg></span><b>Utilisateurs</b></a>
+    <a class="dtool dtool--watch" href="/channels"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg></span><b>Salons</b></a>
+    <a class="dtool dtool--watch" href="/servers"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg></span><b>Serveurs</b></a>
+    <a class="dtool dtool--watch" href="/trends"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg></span><b>Tendances</b></a>
+    <a class="dtool dtool--guard" href="/bans"><span class="dtool-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg></span><b>Bans serveur</b></a>
+    <a class="dtool dtool--guard" href="/name-bans"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2M9 20h6M12 4v16"/></svg></span><b>Bans de nom</b></a>
+    <a class="dtool dtool--guard" href="/exceptions"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M9 12l2 2 4-4M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg></span><b>Exceptions</b></a>
+    <a class="dtool dtool--guard" href="/spamfilter"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.5V19l4 2v-8.5L22 3z"/></svg></span><b>Spamfilter</b></a>
+    <a class="dtool dtool--sys" href="/ip-whois"><span class="dtool-ico"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></span><b>IP WHOIS</b></a>
+    <a class="dtool dtool--sys" href="/whowas"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M3 3v5h5M3.05 13a9 9 0 1 0 .5-4.5L3 8M12 7v5l4 2"/></svg></span><b>Historique</b></a>
+    <a class="dtool dtool--sys" href="/logs"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg></span><b>Journaux</b></a>
+    <a class="dtool dtool--sys" href="/opers"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V5l-8-3z"/></svg></span><b>Opérateurs</b></a>
+    <a class="dtool dtool--sys" href="/registrations"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM19 8v6M22 11h-6"/></svg></span><b>Inscriptions</b></a>
+    <a class="dtool dtool--sys" href="/modules"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M21 16V8l-9-5-9 5v8l9 5 9-5zM3 8l9 5 9-5M12 13v8"/></svg></span><b>Modules</b></a>
+    {% if chrome.can_audit %}<a class="dtool dtool--sys" href="/audit"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span><b>Journal d'audit</b></a>{% endif %}
+    {% if chrome.is_root %}<a class="dtool dtool--sys" href="/access"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v6H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7M9 10V4a3 3 0 0 1 6 0v3"/></svg></span><b>Accès & permissions</b></a>{% endif %}
   </div>
 </div>
 
 <div class="up-card up-feed-card">
-  <div class="up-card-h">Flux serveur en direct
-    <span class="up-feed-state" id="upFeedState"><i class="up-feed-pulse"></i>live</span></div>
-  <div class="up-feed" id="upFeed"><div class="up-feed-empty">En attente d'événements serveur…</div></div>
+  <div class="up-card-h">
+    <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+    Flux serveur en direct
+    <span class="up-feed-state" id="upFeedState"><i class="up-feed-pulse"></i>live</span>
+  </div>
+  <div class="up-feed-bar">
+    <div class="up-feed-filters">
+      <button type="button" class="ffchip is-active" data-k="all">Tout <em>0</em></button>
+      <button type="button" class="ffchip" data-k="conn"><i class="fdot fdot-green"></i>Connexions <em>0</em></button>
+      <button type="button" class="ffchip" data-k="mod"><i class="fdot fdot-red"></i>Modération <em>0</em></button>
+      <button type="button" class="ffchip" data-k="srv"><i class="fdot fdot-amber"></i>Serveur <em>0</em></button>
+      <button type="button" class="ffchip" data-k="oper"><i class="fdot fdot-blue"></i>Oper <em>0</em></button>
+    </div>
+  </div>
+  <div class="up-feed" id="upFeed">
+    <div class="up-feed-empty">En attente d'événements serveur…</div>
+  </div>
+</div>
+
+<div class="up-card srvnet-card">
+  <div class="up-card-h">
+    <svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg>
+    Réseau lié <span class="ircp-count">{{ servers }}</span>
+    <a href="/servers" class="up-cardlink up-cardlink--right">Topologie ›</a>
+  </div>
+  <div class="srvnet">
+    {% for s in server_cards %}
+    <a class="srvnode" href="/servers/{{ s.name }}">
+      <div class="srvnode-h">
+        <span class="srvnode-ico"><svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg></span>
+        <span class="srvnode-id">
+          <b class="srvnode-name">{{ s.name }}</b>
+          <span class="srvnode-up">{% if s.hub %}★ hub{% else %}↑ {{ s.uplink }}{% endif %}</span>
+        </span>
+      </div>
+      <div class="srvnode-stats">
+        <span><b>{{ s.users }}</b> users</span>
+        <span><b>{{ s.opers }}</b> opers</span>
+        <span class="srvnode-pct">{{ s.pct }}%</span>
+      </div>
+      <div class="srvnode-share"><i style="width:{{ s.pct }}%"></i></div>
+    </a>
+    {% endfor %}
+    {% if server_cards.is_empty() %}<div class="ircp-empty">Aucun serveur.</div>{% endif %}
+  </div>
+</div>
+
+<div class="up-card">
+  <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg> Salons les plus actifs
+    <a href="/channels" class="up-cardlink up-cardlink--right">Voir tout ›</a>
+  </div>
+  <div class="chrank-list">
+    {% for c in chan_ranks %}
+    <a class="chrank" href="/channels/{{ c.name }}">
+      <span class="chrank-pos">{{ loop.index }}</span>
+      <span class="chrank-main">
+        <span class="chrank-name">{{ c.name }}</span>
+        <span class="chrank-topic">{% if c.topic.is_empty() %}—{% else %}{{ c.topic }}{% endif %}</span>
+        <span class="chrank-bar"><i style="width:{{ c.pct }}%"></i></span>
+      </span>
+      <span class="chrank-count">{{ c.users }}</span>
+    </a>
+    {% endfor %}
+    {% if chan_ranks.is_empty() %}<div class="ircp-empty">Aucun salon.</div>{% endif %}
+  </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-// Poll /live for the top counters (and event feed later).
-(function(){
-  var feed=document.getElementById('upFeed');
-  function setNum(k,v){document.querySelectorAll('[data-live="'+k+'"]').forEach(function(el){el.textContent=v;});}
-  function tick(){
-    fetch('/live?counts=1').then(function(r){return r.json();}).then(function(j){
-      var c=j.counts||{};
-      setNum('users',c.users);setNum('channels',c.channels);setNum('opers',c.opers);
-      setNum('servers',c.servers);setNum('bans',c.bans);
-    }).catch(function(){});
+(function () {
+  var feed = document.getElementById("upFeed");
+  var state = document.getElementById("upFeedState");
+  if (!feed) return;
+  var since = 0, ticks = 0, MAXFEED = 80;
+  var curFilter = "all";
+  var counts = { all:0, join:0, part:0, mod:0, oper:0, srv:0, log:0 };
+  function setNum(k, v) {
+    if (v == null) return;
+    document.querySelectorAll('[data-live="'+k+'"]').forEach(function (el) {
+      if (el.textContent.trim() !== String(v)) { el.textContent = v; el.classList.remove("up-bump"); void el.offsetWidth; el.classList.add("up-bump"); }
+    });
   }
-  tick();setInterval(tick,5000);
+  function esc(s){ var d=document.createElement("div"); d.textContent=s==null?"":s; return d.innerHTML; }
+  function p2(n){ return ("0"+n).slice(-2); }
+  function hhmmss(ts){ var d=new Date((ts||0)*1000); return p2(d.getHours())+":"+p2(d.getMinutes())+":"+p2(d.getSeconds()); }
+  function groupTotal(f){ if(f==="all")return counts.all; if(f==="conn")return counts.join+counts.part; return counts[f]||0; }
+  function rowMatches(k,f){ if(f==="all")return true; if(f==="conn")return k==="join"||k==="part"; return k===f; }
+  function updateCounts(){ document.querySelectorAll(".ffchip").forEach(function(c){ var em=c.querySelector("em"); if(em) em.textContent=groupTotal(c.dataset.k); }); }
+  function applyRow(row){ row.style.display = rowMatches(row.dataset.k, curFilter) ? "" : "none"; }
+  function insertRow(e){
+    var k = e.subsystem || "log";
+    var row = document.createElement("div");
+    row.className = "up-feed-row k-"+k; row.dataset.k = k;
+    row.innerHTML = '<span class="up-feed-dot"></span><span class="up-feed-time">'+hhmmss(e.timestamp)+
+      '</span><span class="up-feed-sub">'+esc(k)+'</span><span class="up-feed-msg">'+esc(e.msg)+'</span>';
+    applyRow(row);
+    feed.insertBefore(row, feed.firstChild);
+    counts[k]=(counts[k]||0)+1; counts.all++;
+    while (feed.children.length > MAXFEED) feed.removeChild(feed.lastChild);
+  }
+  document.querySelectorAll(".ffchip").forEach(function(c){
+    c.addEventListener("click", function(){
+      document.querySelectorAll(".ffchip").forEach(function(x){x.classList.remove("is-active");});
+      c.classList.add("is-active"); curFilter=c.dataset.k;
+      feed.querySelectorAll(".up-feed-row").forEach(applyRow);
+    });
+  });
+  function tick(){
+    if (document.hidden) return;
+    var wantCounts = (ticks % 3 === 0); ticks++;
+    fetch("/live?since="+since+(wantCounts?"&counts=1":""), { headers:{ "X-Requested-With":"fetch" } })
+      .then(function(r){return r.json();})
+      .then(function(j){
+        if (state){ state.classList.remove("off"); }
+        if (j.counts){ var c=j.counts; setNum("users",c.users); setNum("local",c.local); setNum("channels",c.channels); setNum("opers",c.opers); setNum("servers",c.servers); setNum("bans",c.bans); }
+        if (j.events && j.events.length){ var em=feed.querySelector(".up-feed-empty"); if(em) em.remove(); j.events.forEach(insertRow); updateCounts(); }
+        if (typeof j.last_id === "number") since = j.last_id;
+      })
+      .catch(function(){ if(state){ state.classList.add("off"); } });
+  }
+  document.addEventListener("visibilitychange", function(){ if(!document.hidden){ ticks=0; tick(); } });
+  tick(); setInterval(tick, 4000);
 })();
 </script>
 {% endblock %}

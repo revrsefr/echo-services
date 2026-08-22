@@ -68,6 +68,9 @@ pub async fn run(engine: Shared, cfg: PanelCfg) {
         .route("/static/*path", get(static_asset))
         .route("/health", get(health))
         .route("/live", get(live))
+        .route("/search", get(search))
+        .route("/logs/events", get(logs_events))
+        .route("/logs/tail", get(logs_tail))
         .route("/", get(dashboard))
         .route("/users", get(page_users))
         .route("/users/:nick", get(page_user_detail))
@@ -243,10 +246,14 @@ async fn logout() -> Response {
 
 // ---- pages ---------------------------------------------------------------
 //
-// Every page is a compile-time askama template backed by a typed struct. All
-// formatting/derivation happens here in Rust; the templates only interpolate.
-// Data comes straight from echo's own engine (the live S2S network view plus the
-// account/channel directory) under the shared lock — never from the ircd's RPC.
+// Every page is a compile-time askama template backed by a typed struct sharing
+// a `Chrome` (topbar/nav identity). All formatting happens here in Rust; the
+// templates only interpolate. Data comes straight from echo's own engine — the
+// live S2S network view plus the account/channel/xline directory — under the
+// shared lock, never from the ircd's RPC.
+
+use axum::extract::Query;
+use std::collections::HashMap;
 
 async fn static_asset(Path(path): Path<String>) -> Response {
     match tmpl::asset(&path) {
@@ -270,19 +277,76 @@ fn html<T: askama::Template>(t: T) -> Html<String> {
     }
 }
 
-fn is_root(oper: &Oper) -> bool {
-    oper.privs.tier() == "root"
+// Identity + nav state shared by every page (referenced as `chrome.*` in base.html).
+#[derive(Clone)]
+struct Chrome {
+    brand: String,
+    active: &'static str,
+    username: String,
+    is_root: bool,
+    can_audit: bool,
+    version: &'static str,
+}
+
+fn chrome(st: &AppState, oper: &Oper, active: &'static str) -> Chrome {
+    Chrome {
+        brand: st.brand.clone(),
+        active,
+        username: oper.account.clone(),
+        is_root: oper.privs.tier() == "root",
+        can_audit: true,
+        version: crate::version::VERSION,
+    }
+}
+
+fn pct(part: usize, whole: usize) -> u64 {
+    if whole == 0 {
+        0
+    } else {
+        (part as u64 * 100 / whole as u64).min(100)
+    }
+}
+
+// (expiry text, is-permanent) for an optional absolute expiry.
+fn fmt_expiry(expires: Option<u64>, now: u64) -> (String, bool) {
+    match expires {
+        None => ("permanent".to_string(), true),
+        Some(t) if t > now => (tmpl::human_until(now, t), false),
+        Some(_) => ("expiré".to_string(), false),
+    }
+}
+
+// Classify an incident summary into a feed kind (mirrors the dashboard JS).
+fn classify(s: &str) -> &'static str {
+    let t = s.to_ascii_lowercase();
+    if t.contains("kill") || t.contains("line") || t.contains("ban") || t.contains("shun") || t.contains("filter") || t.contains("akill") {
+        "mod"
+    } else if t.contains("oper") {
+        "oper"
+    } else if t.contains("link") || t.contains("squit") || t.contains("module") || t.contains("rehash") || t.contains("netsplit") {
+        "srv"
+    } else if t.contains("connect") || t.contains("join") {
+        "join"
+    } else if t.contains("quit") || t.contains("disconnect") || t.contains("part") {
+        "part"
+    } else {
+        "log"
+    }
 }
 
 // ---- dashboard -----------------------------------------------------------
 
-struct SrvRow {
+struct SrvCard {
     name: String,
+    uplink: String,
+    hub: bool,
     users: usize,
+    opers: usize,
     pct: u64,
 }
-struct ChanRow {
+struct ChanRank {
     name: String,
+    topic: String,
     users: usize,
     pct: u64,
 }
@@ -290,18 +354,17 @@ struct ChanRow {
 #[derive(askama::Template)]
 #[template(path = "ircpanel/dashboard.html")]
 struct DashboardTpl {
-    brand: String,
-    active: &'static str,
-    username: String,
-    is_root: bool,
-    show_audit: bool,
+    chrome: Chrome,
+    net_name: String,
+    version: &'static str,
     users: usize,
+    local: usize,
     opers: usize,
     channels: usize,
     servers: usize,
     bans: usize,
-    server_rows: Vec<SrvRow>,
-    chan_rows: Vec<ChanRow>,
+    server_cards: Vec<SrvCard>,
+    chan_ranks: Vec<ChanRank>,
 }
 
 async fn dashboard(oper: Oper, State(st): State<AppState>) -> Html<String> {
@@ -310,409 +373,1010 @@ async fn dashboard(oper: Oper, State(st): State<AppState>) -> Html<String> {
     let channels = e.net_channel_count();
     let servers = e.net_server_count();
     let bans = e.akills().len();
-    let opers = e.stats_snapshot().get("opers.total").copied().unwrap_or(0) as usize;
-    let srv = e.net_servers();
-    let top = e.net_top_channels(6);
+    let opers = e.net_oper_count();
+    let srv = e.net_servers_detailed();
+    let mut chans = e.net_channels_detailed();
+    let net_name = srv.first().map(|s| s.name.clone()).unwrap_or_else(|| st.brand.clone());
     drop(e);
 
-    let max_srv = srv.iter().map(|(_, u)| *u).max().unwrap_or(0).max(1);
-    let server_rows = srv
-        .into_iter()
-        .map(|(name, u)| SrvRow { pct: (u as u64 * 100 / max_srv as u64), name, users: u })
+    let server_cards = srv
+        .iter()
+        .map(|s| SrvCard {
+            name: s.name.clone(),
+            uplink: s.uplink.clone(),
+            hub: s.uplink.is_empty(),
+            users: s.users,
+            opers: s.opers,
+            pct: pct(s.users, users),
+        })
         .collect();
-    let max_chan = top.first().map(|(_, u)| *u).unwrap_or(0).max(1);
-    let chan_rows = top
+    chans.truncate(8);
+    let top = chans.first().map(|c| c.users).unwrap_or(0);
+    let chan_ranks = chans
         .into_iter()
-        .map(|(name, u)| ChanRow { pct: (u as u64 * 100 / max_chan as u64), name, users: u })
+        .map(|c| ChanRank {
+            name: c.name,
+            topic: c.topic,
+            users: c.users,
+            pct: pct(c.users, top),
+        })
         .collect();
 
     html(DashboardTpl {
-        brand: st.brand.clone(),
-        active: "dashboard",
-        username: oper.account.clone(),
-        is_root: is_root(&oper),
-        show_audit: true,
+        chrome: chrome(&st, &oper, "dashboard"),
+        net_name,
+        version: crate::version::VERSION,
         users,
+        local: users,
         opers,
         channels,
         servers,
         bans,
-        server_rows,
-        chan_rows,
+        server_cards,
+        chan_ranks,
     })
 }
 
-// ---- placeholder pages (progressively replaced by wired templates) -------
+// ---- users ---------------------------------------------------------------
 
-#[derive(askama::Template)]
-#[template(path = "ircpanel/placeholder.html")]
-struct PlaceholderTpl {
-    brand: String,
-    active: &'static str,
-    username: String,
-    is_root: bool,
-    show_audit: bool,
-    page_title: &'static str,
-}
-
-fn placeholder(st: &AppState, oper: &Oper, active: &'static str, title: &'static str) -> Html<String> {
-    html(PlaceholderTpl {
-        brand: st.brand.clone(),
-        active,
-        username: oper.account.clone(),
-        is_root: is_root(oper),
-        show_audit: true,
-        page_title: title,
-    })
-}
-
-// A gated placeholder page: (handler name, nav key, title).
-macro_rules! simple_page {
-    ($fn:ident, $active:expr, $title:expr) => {
-        async fn $fn(oper: Oper, State(st): State<AppState>) -> Html<String> {
-            placeholder(&st, &oper, $active, $title)
-        }
-    };
-}
-simple_page!(page_trends, "dashboard", "Tendances");
-simple_page!(page_name_bans, "bans", "Bans de pseudo");
-simple_page!(page_exceptions, "bans", "Exceptions");
-simple_page!(page_spamfilter, "bans", "Filtre anti-spam");
-simple_page!(page_security_groups, "bans", "Groupes de sécurité");
-simple_page!(page_ip_whois, "users", "IP WHOIS");
-simple_page!(page_whowas, "users", "WHOWAS");
-simple_page!(page_logs, "audit", "Journaux");
-simple_page!(page_audit, "audit", "Audit");
-simple_page!(page_access, "opers", "Accès");
-
-// ---- wired data pages ----------------------------------------------------
-
-struct UserRow {
+struct URow {
     nick: String,
     ident: String,
     host: String,
     ip: String,
     account: String,
     has_account: bool,
+    is_oper: bool,
+    operclass: String,
+    modes: String,
+    server: String,
+    secure: bool,
 }
 
 #[derive(askama::Template)]
 #[template(path = "ircpanel/users.html")]
 struct UsersTpl {
-    brand: String,
-    active: &'static str,
-    username: String,
-    is_root: bool,
-    show_audit: bool,
-    rows: Vec<UserRow>,
+    chrome: Chrome,
+    rows: Vec<URow>,
+    total: usize,
     accounts: usize,
     guests: usize,
+    opers: usize,
 }
 
 async fn page_users(oper: Oper, State(st): State<AppState>) -> Html<String> {
     let e = st.engine.lock().await;
-    let raw = e.net_users();
+    let users = e.net_users_detailed();
     drop(e);
-    let rows: Vec<UserRow> = raw
+    let rows: Vec<URow> = users
         .into_iter()
-        .map(|(nick, ident, host, ip, account)| {
-            let has_account = !account.is_empty();
-            UserRow { nick, ident, host, ip, account, has_account }
+        .map(|u| URow {
+            has_account: !u.account.is_empty(),
+            is_oper: !u.oper.is_empty(),
+            operclass: u.oper,
+            nick: u.nick,
+            ident: u.ident,
+            host: u.host,
+            ip: u.ip,
+            account: u.account,
+            modes: u.modes,
+            server: u.server,
+            secure: u.secure,
         })
         .collect();
+    let total = rows.len();
     let accounts = rows.iter().filter(|r| r.has_account).count();
-    let guests = rows.len() - accounts;
+    let opers = rows.iter().filter(|r| r.is_oper).count();
     html(UsersTpl {
-        brand: st.brand.clone(),
-        active: "users",
-        username: oper.account.clone(),
-        is_root: is_root(&oper),
-        show_audit: true,
-        rows,
+        chrome: chrome(&st, &oper, "users"),
+        guests: total - accounts,
+        total,
         accounts,
-        guests,
+        opers,
+        rows,
     })
 }
 
-struct SrvFull {
+// ---- channels ------------------------------------------------------------
+
+struct CRow {
     name: String,
+    topic: String,
     users: usize,
+    modes: String,
+    secret: bool,
+    private: bool,
+    inviteonly: bool,
+    keyed: bool,
+    moderated: bool,
+    registered: bool,
+    pct: u64,
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/channels.html")]
+struct ChannelsTpl {
+    chrome: Chrome,
+    rows: Vec<CRow>,
+    total: usize,
+    registered: usize,
+    moderated: usize,
+    members: usize,
+}
+
+async fn page_channels(oper: Oper, State(st): State<AppState>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let chans = e.net_channels_detailed();
+    drop(e);
+    let max_users = chans.first().map(|c| c.users).unwrap_or(0);
+    let members: usize = chans.iter().map(|c| c.users).sum();
+    let registered = chans.iter().filter(|c| c.registered).count();
+    let moderated = chans.iter().filter(|c| c.moderated).count();
+    let total = chans.len();
+    let rows = chans
+        .into_iter()
+        .map(|c| CRow {
+            pct: pct(c.users, max_users),
+            name: c.name,
+            topic: c.topic,
+            users: c.users,
+            modes: c.modes,
+            secret: c.secret,
+            private: c.private,
+            inviteonly: c.inviteonly,
+            keyed: c.keyed,
+            moderated: c.moderated,
+            registered: c.registered,
+        })
+        .collect();
+    html(ChannelsTpl {
+        chrome: chrome(&st, &oper, "channels"),
+        rows,
+        total,
+        registered,
+        moderated,
+        members,
+    })
+}
+
+// ---- servers -------------------------------------------------------------
+
+struct SRow {
+    name: String,
+    uplink: String,
+    hub: bool,
+    users: usize,
+    opers: usize,
     pct: u64,
 }
 
 #[derive(askama::Template)]
 #[template(path = "ircpanel/servers.html")]
 struct ServersTpl {
-    brand: String,
-    active: &'static str,
-    username: String,
-    is_root: bool,
-    show_audit: bool,
-    rows: Vec<SrvFull>,
+    chrome: Chrome,
+    rows: Vec<SRow>,
+    count: usize,
+    users: usize,
+    opers: usize,
 }
 
 async fn page_servers(oper: Oper, State(st): State<AppState>) -> Html<String> {
     let e = st.engine.lock().await;
-    let srv = e.net_servers();
+    let srv = e.net_servers_detailed();
+    let total_users = e.net_user_count();
     drop(e);
-    let max = srv.iter().map(|(_, u)| *u).max().unwrap_or(0).max(1);
+    let count = srv.len();
+    let users: usize = srv.iter().map(|s| s.users).sum();
+    let opers: usize = srv.iter().map(|s| s.opers).sum();
     let rows = srv
         .into_iter()
-        .map(|(name, u)| SrvFull { pct: (u as u64 * 100 / max as u64), name, users: u })
-        .collect();
-    html(ServersTpl {
-        brand: st.brand.clone(),
-        active: "servers",
-        username: oper.account.clone(),
-        is_root: is_root(&oper),
-        show_audit: true,
-        rows,
-    })
-}
-
-struct ChanFullRow {
-    name: String,
-    users: usize,
-    founder: String,
-    topic: String,
-    registered: bool,
-}
-
-#[derive(askama::Template)]
-#[template(path = "ircpanel/channels.html")]
-struct ChannelsTpl {
-    brand: String,
-    active: &'static str,
-    username: String,
-    is_root: bool,
-    show_audit: bool,
-    rows: Vec<ChanFullRow>,
-}
-
-async fn page_channels(oper: Oper, State(st): State<AppState>) -> Html<String> {
-    let e = st.engine.lock().await;
-    let live = e.net_channels();
-    let (_accts, registered) = e.directory_snapshot();
-    drop(e);
-    // Index registered channel metadata by lowercase name to merge onto the live set.
-    let reg: std::collections::HashMap<String, (String, String)> = registered
-        .into_iter()
-        .map(|c| (c.name.to_lowercase(), (c.founder, c.topic)))
-        .collect();
-    let rows = live
-        .into_iter()
-        .map(|(name, users)| {
-            let (founder, topic, registered) = match reg.get(&name.to_lowercase()) {
-                Some((f, t)) => (f.clone(), t.clone(), true),
-                None => (String::new(), String::new(), false),
-            };
-            ChanFullRow { name, users, founder, topic, registered }
+        .map(|s| SRow {
+            hub: s.uplink.is_empty(),
+            pct: pct(s.users, total_users),
+            name: s.name,
+            uplink: s.uplink,
+            users: s.users,
+            opers: s.opers,
         })
         .collect();
-    html(ChannelsTpl {
-        brand: st.brand.clone(),
-        active: "channels",
-        username: oper.account.clone(),
-        is_root: is_root(&oper),
-        show_audit: true,
+    html(ServersTpl {
+        chrome: chrome(&st, &oper, "servers"),
         rows,
+        count,
+        users,
+        opers,
     })
 }
 
-struct BanRow {
+// ---- protection: bans / name-bans / exceptions / spamfilter --------------
+
+struct PRow {
     kind: String,
     mask: String,
-    setter: String,
     reason: String,
+    set_by: String,
     set_ago: String,
     expires: String,
+    perm: bool,
 }
 
 #[derive(askama::Template)]
 #[template(path = "ircpanel/bans.html")]
 struct BansTpl {
-    brand: String,
-    active: &'static str,
-    username: String,
-    is_root: bool,
-    show_audit: bool,
-    rows: Vec<BanRow>,
+    chrome: Chrome,
+    rows: Vec<PRow>,
+    total: usize,
+    perm: usize,
+    heading: &'static str,
+    subtitle: &'static str,
+    empty: &'static str,
 }
 
+// Server bans (user/host/realname/shun/channel), from the akill store.
 async fn page_bans(oper: Oper, State(st): State<AppState>) -> Html<String> {
     let e = st.engine.lock().await;
     let akills = e.akills();
     drop(e);
     let now = now();
-    let rows = akills
+    let rows: Vec<PRow> = akills
         .into_iter()
-        .map(|a| BanRow {
-            kind: format!("{:?}", a.kind).to_uppercase(),
-            mask: a.mask,
-            setter: a.setter,
-            reason: a.reason,
-            set_ago: tmpl::human_ago(a.ts, now),
-            expires: match a.expires {
-                None => "permanent".to_string(),
-                Some(t) if t > now => format!("expire {}", tmpl::human_until(now, t)),
-                Some(_) => "expiré".to_string(),
-            },
+        .filter(|a| !matches!(a.kind, echo_api::XlineKind::Qline))
+        .map(|a| {
+            let (expires, perm) = fmt_expiry(a.expires, now);
+            PRow {
+                kind: a.kind.wire().to_string(),
+                mask: a.mask,
+                reason: a.reason,
+                set_by: a.setter,
+                set_ago: tmpl::human_ago(a.ts, now),
+                expires,
+                perm,
+            }
         })
         .collect();
+    let total = rows.len();
+    let perm = rows.iter().filter(|r| r.perm).count();
     html(BansTpl {
-        brand: st.brand.clone(),
-        active: "bans",
-        username: oper.account.clone(),
-        is_root: is_root(&oper),
-        show_audit: true,
+        chrome: chrome(&st, &oper, "bans"),
         rows,
+        total,
+        perm,
+        heading: "Bans serveur",
+        subtitle: "Lignes X actives sur le réseau : G-lines, shuns, R-lines, C-bans.",
+        empty: "Aucun ban serveur actif.",
     })
 }
 
-struct OperRow {
+// Name bans (Q-lines: forbidden nicks).
+async fn page_name_bans(oper: Oper, State(st): State<AppState>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let akills = e.akills();
+    drop(e);
+    let now = now();
+    let rows: Vec<PRow> = akills
+        .into_iter()
+        .filter(|a| matches!(a.kind, echo_api::XlineKind::Qline))
+        .map(|a| {
+            let (expires, perm) = fmt_expiry(a.expires, now);
+            PRow {
+                kind: "Q".to_string(),
+                mask: a.mask,
+                reason: a.reason,
+                set_by: a.setter,
+                set_ago: tmpl::human_ago(a.ts, now),
+                expires,
+                perm,
+            }
+        })
+        .collect();
+    let total = rows.len();
+    let perm = rows.iter().filter(|r| r.perm).count();
+    html(BansTpl {
+        chrome: chrome(&st, &oper, "name_bans"),
+        rows,
+        total,
+        perm,
+        heading: "Bans de nom",
+        subtitle: "Pseudos interdits sur le réseau (Q-lines / SQLINE).",
+        empty: "Aucun ban de nom actif.",
+    })
+}
+
+// Exceptions (session-limit exceptions).
+async fn page_exceptions(oper: Oper, State(st): State<AppState>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let excs = e.session_exceptions();
+    drop(e);
+    let rows: Vec<PRow> = excs
+        .into_iter()
+        .map(|(mask, limit, reason)| PRow {
+            kind: format!("{limit}×"),
+            mask,
+            reason,
+            set_by: String::new(),
+            set_ago: String::new(),
+            expires: "permanent".to_string(),
+            perm: true,
+        })
+        .collect();
+    let total = rows.len();
+    html(BansTpl {
+        chrome: chrome(&st, &oper, "exceptions"),
+        rows,
+        total,
+        perm: total,
+        heading: "Exceptions de session",
+        subtitle: "Masques autorisés à dépasser la limite de sessions par IP.",
+        empty: "Aucune exception configurée.",
+    })
+}
+
+struct FRow {
+    pattern: String,
+    action: String,
+    flags: String,
+    reason: String,
+    set_ago: String,
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/spamfilter.html")]
+struct SpamTpl {
+    chrome: Chrome,
+    rows: Vec<FRow>,
+    total: usize,
+}
+
+async fn page_spamfilter(oper: Oper, State(st): State<AppState>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let filters = e.filters();
+    drop(e);
+    let now = now();
+    let rows: Vec<FRow> = filters
+        .into_iter()
+        .map(|f| FRow {
+            pattern: f.pattern,
+            action: f.action,
+            flags: f.flags,
+            reason: f.reason,
+            set_ago: tmpl::human_ago(f.ts, now),
+        })
+        .collect();
+    let total = rows.len();
+    html(SpamTpl { chrome: chrome(&st, &oper, "spamfilter"), rows, total })
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/security_groups.html")]
+struct SecGroupsTpl {
+    chrome: Chrome,
+}
+
+async fn page_security_groups(oper: Oper, State(st): State<AppState>) -> Html<String> {
+    html(SecGroupsTpl { chrome: chrome(&st, &oper, "security_groups") })
+}
+
+// ---- system: opers / registrations / modules / audit / whowas / logs -----
+
+struct ORow {
     name: String,
-    tier: &'static str,
-    email: String,
+    tier: String,
+    online: usize,
 }
 
 #[derive(askama::Template)]
 #[template(path = "ircpanel/opers.html")]
 struct OpersTpl {
-    brand: String,
-    active: &'static str,
-    username: String,
-    is_root: bool,
-    show_audit: bool,
-    rows: Vec<OperRow>,
+    chrome: Chrome,
+    rows: Vec<ORow>,
 }
 
 async fn page_opers(oper: Oper, State(st): State<AppState>) -> Html<String> {
     let e = st.engine.lock().await;
     let (accts, _chans) = e.directory_snapshot();
-    let rows: Vec<OperRow> = accts
+    let users = e.net_users_detailed();
+    let mut rows: Vec<ORow> = accts
         .into_iter()
         .filter_map(|a| {
             let privs = e.account_privs(&a.name);
-            privs.any().then(|| OperRow {
-                name: a.name,
-                tier: privs.tier(),
-                email: a.email.unwrap_or_default(),
-            })
+            if !privs.any() {
+                return None;
+            }
+            let online = users.iter().filter(|u| u.account.eq_ignore_ascii_case(&a.name)).count();
+            Some(ORow { name: a.name, tier: privs.tier().to_string(), online })
         })
         .collect();
     drop(e);
-    html(OpersTpl {
-        brand: st.brand.clone(),
-        active: "opers",
-        username: oper.account.clone(),
-        is_root: is_root(&oper),
-        show_audit: true,
-        rows,
-    })
+    rows.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    html(OpersTpl { chrome: chrome(&st, &oper, "opers"), rows })
 }
 
-struct RegRow {
-    name: String,
+struct REvt {
+    when: String,
+    user: String,
     email: String,
     verified: bool,
-    registered: String,
 }
 
 #[derive(askama::Template)]
 #[template(path = "ircpanel/registrations.html")]
-struct RegsTpl {
-    brand: String,
-    active: &'static str,
-    username: String,
-    is_root: bool,
-    show_audit: bool,
-    rows: Vec<RegRow>,
+struct RegTpl {
+    chrome: Chrome,
+    total: usize,
+    reg_24h: usize,
+    reg_7d: usize,
+    verified: usize,
+    pending: usize,
+    days: Vec<(u32, u64)>, // (count, height %)
+    recent: Vec<REvt>,
 }
 
 async fn page_registrations(oper: Oper, State(st): State<AppState>) -> Html<String> {
     let e = st.engine.lock().await;
-    let (accts, _chans) = e.directory_snapshot();
+    let (mut accts, _chans) = e.directory_snapshot();
     drop(e);
     let now = now();
-    let mut rows: Vec<RegRow> = accts
+    let total = accts.len();
+    let reg_24h = accts.iter().filter(|a| now.saturating_sub(a.ts) < 86_400).count();
+    let reg_7d = accts.iter().filter(|a| now.saturating_sub(a.ts) < 7 * 86_400).count();
+    let verified = accts.iter().filter(|a| a.verified).count();
+    let pending = total - verified;
+    // 14-day histogram, index 0 = 13 days ago … 13 = today.
+    let mut counts = vec![0u32; 14];
+    for a in &accts {
+        let age_days = now.saturating_sub(a.ts) / 86_400;
+        if age_days < 14 {
+            counts[13 - age_days as usize] += 1;
+        }
+    }
+    let days_max = counts.iter().copied().max().unwrap_or(0).max(1);
+    let days: Vec<(u32, u64)> = counts.into_iter().map(|c| (c, pct(c as usize, days_max as usize))).collect();
+    accts.sort_by(|a, b| b.ts.cmp(&a.ts));
+    let recent: Vec<REvt> = accts
         .into_iter()
-        .map(|a| RegRow {
-            registered: tmpl::human_ago(a.ts, now),
-            name: a.name,
+        .take(14)
+        .map(|a| REvt {
+            when: tmpl::fmt_dt(a.ts),
+            user: a.name,
             email: a.email.unwrap_or_default(),
             verified: a.verified,
         })
         .collect();
-    rows.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-    html(RegsTpl {
-        brand: st.brand.clone(),
-        active: "registrations",
-        username: oper.account.clone(),
-        is_root: is_root(&oper),
-        show_audit: true,
-        rows,
+    html(RegTpl {
+        chrome: chrome(&st, &oper, "registrations"),
+        total,
+        reg_24h,
+        reg_7d,
+        verified,
+        pending,
+        days,
+        recent,
     })
 }
 
 #[derive(askama::Template)]
 #[template(path = "ircpanel/modules.html")]
 struct ModulesTpl {
-    brand: String,
-    active: &'static str,
-    username: String,
-    is_root: bool,
-    show_audit: bool,
+    chrome: Chrome,
     rows: Vec<String>,
+    total: usize,
 }
 
 async fn page_modules(oper: Oper, State(st): State<AppState>) -> Html<String> {
     let e = st.engine.lock().await;
     let rows = e.net_module_names();
     drop(e);
-    html(ModulesTpl {
-        brand: st.brand.clone(),
-        active: "modules",
-        username: oper.account.clone(),
-        is_root: is_root(&oper),
-        show_audit: true,
-        rows,
-    })
+    let total = rows.len();
+    html(ModulesTpl { chrome: chrome(&st, &oper, "modules"), rows, total })
 }
 
-async fn page_user_detail(oper: Oper, State(st): State<AppState>, Path(_nick): Path<String>) -> Html<String> {
-    placeholder(&st, &oper, "users", "Utilisateur")
-}
-async fn page_channel_detail(oper: Oper, State(st): State<AppState>, Path(_slug): Path<String>) -> Html<String> {
-    placeholder(&st, &oper, "channels", "Salon")
-}
-async fn page_server_detail(oper: Oper, State(st): State<AppState>, Path(_name): Path<String>) -> Html<String> {
-    placeholder(&st, &oper, "servers", "Serveur")
+struct AuditRow {
+    when: String,
+    ago: String,
+    id: String,
+    summary: String,
+    kind: &'static str,
 }
 
-// ---- JSON endpoints for the live UI --------------------------------------
+#[derive(askama::Template)]
+#[template(path = "ircpanel/audit.html")]
+struct AuditTpl {
+    chrome: Chrome,
+    rows: Vec<AuditRow>,
+    total: usize,
+}
 
-// The health dot in the topbar: green when echo is linked to the ircd.
+async fn page_audit(oper: Oper, State(st): State<AppState>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let incs = e.recent_incidents(400);
+    drop(e);
+    let now = now();
+    let total = incs.len();
+    let rows: Vec<AuditRow> = incs
+        .into_iter()
+        .map(|i| AuditRow {
+            when: tmpl::fmt_dt(i.ts),
+            ago: tmpl::human_ago(i.ts, now),
+            kind: classify(&i.summary),
+            id: i.id,
+            summary: i.summary,
+        })
+        .collect();
+    html(AuditTpl { chrome: chrome(&st, &oper, "audit"), rows, total })
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/whowas.html")]
+struct WhowasTpl {
+    chrome: Chrome,
+    q: String,
+    rows: Vec<URow>,
+}
+
+// WHOWAS: echo has no history store; we answer live from the current network
+// view so a nick lookup still returns its present session.
+async fn page_whowas(oper: Oper, State(st): State<AppState>, Query(p): Query<HashMap<String, String>>) -> Html<String> {
+    let q = p.get("q").cloned().unwrap_or_default();
+    let mut rows = Vec::new();
+    if !q.is_empty() {
+        let e = st.engine.lock().await;
+        if let Some(u) = e.net_user_detail(&q) {
+            rows.push(URow {
+                has_account: !u.account.is_empty(),
+                is_oper: !u.oper.is_empty(),
+                operclass: u.oper,
+                nick: u.nick,
+                ident: u.ident,
+                host: u.host,
+                ip: u.ip,
+                account: u.account,
+                modes: u.modes,
+                server: u.server,
+                secure: u.secure,
+            });
+        }
+        drop(e);
+    }
+    html(WhowasTpl { chrome: chrome(&st, &oper, "whowas"), q, rows })
+}
+
+// IP WHOIS: no GeoIP, but echo knows every session's IP and every ban — so we
+// answer "who is on this IP" and "which bans match it".
+struct IpUser {
+    nick: String,
+    ident: String,
+    host: String,
+    account: String,
+    is_oper: bool,
+    server: String,
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/ip_whois.html")]
+struct IpWhoisTpl {
+    chrome: Chrome,
+    q: String,
+    ip: String,
+    users: Vec<IpUser>,
+    bans: Vec<PRow>,
+}
+
+async fn page_ip_whois(oper: Oper, State(st): State<AppState>, Query(p): Query<HashMap<String, String>>) -> Html<String> {
+    let q = p.get("ip").cloned().unwrap_or_default();
+    let (mut users, mut bans) = (Vec::new(), Vec::new());
+    if !q.is_empty() {
+        let e = st.engine.lock().await;
+        for u in e.net_users_detailed() {
+            if u.ip == q {
+                users.push(IpUser {
+                    is_oper: !u.oper.is_empty(),
+                    nick: u.nick,
+                    ident: u.ident,
+                    host: u.host,
+                    account: u.account,
+                    server: u.server,
+                });
+            }
+        }
+        let now = now();
+        for a in e.akills() {
+            if a.mask.contains(&q) || q.contains(a.mask.trim_start_matches("*@")) {
+                let (expires, perm) = fmt_expiry(a.expires, now);
+                bans.push(PRow {
+                    kind: a.kind.wire().to_string(),
+                    mask: a.mask,
+                    reason: a.reason,
+                    set_by: a.setter,
+                    set_ago: tmpl::human_ago(a.ts, now),
+                    expires,
+                    perm,
+                });
+            }
+        }
+        drop(e);
+    }
+    html(IpWhoisTpl { chrome: chrome(&st, &oper, "ip_whois"), ip: q.clone(), q, users, bans })
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/logs.html")]
+struct LogsTpl {
+    chrome: Chrome,
+}
+
+async fn page_logs(oper: Oper, State(st): State<AppState>) -> Html<String> {
+    html(LogsTpl { chrome: chrome(&st, &oper, "logs") })
+}
+
+struct GrantRow {
+    name: String,
+    tier: String,
+    perms: Vec<String>,
+    expires: String,
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/access.html")]
+struct AccessTpl {
+    chrome: Chrome,
+    grants: Vec<GrantRow>,
+    total: usize,
+}
+
+async fn page_access(oper: Oper, State(st): State<AppState>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let grants_raw = e.opers_grants();
+    let now = now();
+    let mut grants: Vec<GrantRow> = grants_raw
+        .into_iter()
+        .map(|(name, perms, expires)| {
+            let tier = e.account_privs(&name).tier().to_string();
+            GrantRow {
+                name,
+                tier,
+                perms,
+                expires: expires.map(|t| tmpl::fmt_date(t)).unwrap_or_else(|| "permanent".into()),
+            }
+        })
+        .collect();
+    let _ = now;
+    drop(e);
+    grants.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    let total = grants.len();
+    html(AccessTpl { chrome: chrome(&st, &oper, "access"), grants, total })
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/trends.html")]
+struct TrendsTpl {
+    chrome: Chrome,
+    users: usize,
+    channels: usize,
+    servers: usize,
+    opers: usize,
+}
+
+async fn page_trends(oper: Oper, State(st): State<AppState>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let (users, channels, servers, opers) = (e.net_user_count(), e.net_channel_count(), e.net_server_count(), e.net_oper_count());
+    drop(e);
+    html(TrendsTpl { chrome: chrome(&st, &oper, "trends"), users, channels, servers, opers })
+}
+
+// ---- detail pages --------------------------------------------------------
+
+struct UChan {
+    name: String,
+    prefix: &'static str,
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/user_detail.html")]
+struct UserDetailTpl {
+    chrome: Chrome,
+    found: bool,
+    initial: String,
+    nick: String,
+    ident: String,
+    host: String,
+    ip: String,
+    gecos: String,
+    account: String,
+    is_oper: bool,
+    operclass: String,
+    modes: String,
+    server: String,
+    secure: bool,
+    channels: Vec<UChan>,
+    // account facts (if registered)
+    registered: bool,
+    email: String,
+    verified: bool,
+    joined: String,
+}
+
+async fn page_user_detail(oper: Oper, State(st): State<AppState>, Path(nick): Path<String>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let u = e.net_user_detail(&nick);
+    let mut t = UserDetailTpl {
+        chrome: chrome(&st, &oper, "users"),
+        found: false,
+        initial: String::new(),
+        nick: nick.clone(),
+        ident: String::new(),
+        host: String::new(),
+        ip: String::new(),
+        gecos: String::new(),
+        account: String::new(),
+        is_oper: false,
+        operclass: String::new(),
+        modes: String::new(),
+        server: String::new(),
+        secure: false,
+        channels: Vec::new(),
+        registered: false,
+        email: String::new(),
+        verified: false,
+        joined: String::new(),
+    };
+    if let Some(u) = u {
+        let chans = e.net_user_channels(&u.uid);
+        if !u.account.is_empty() {
+            let (accts, _) = e.directory_snapshot();
+            if let Some(a) = accts.into_iter().find(|a| a.name.eq_ignore_ascii_case(&u.account)) {
+                t.registered = true;
+                t.email = a.email.unwrap_or_default();
+                t.verified = a.verified;
+                t.joined = tmpl::fmt_date(a.ts);
+            }
+        }
+        t.found = true;
+        t.nick = u.nick;
+        t.ident = u.ident;
+        t.host = u.host;
+        t.ip = u.ip;
+        t.gecos = u.gecos;
+        t.is_oper = !u.oper.is_empty();
+        t.operclass = u.oper;
+        t.modes = u.modes;
+        t.server = u.server;
+        t.secure = u.secure;
+        t.account = u.account;
+        t.channels = chans.into_iter().map(|(name, prefix)| UChan { name, prefix }).collect();
+    }
+    drop(e);
+    t.initial = t.nick.chars().next().map(|c| c.to_ascii_uppercase().to_string()).unwrap_or_else(|| "?".into());
+    html(t)
+}
+
+struct CMember {
+    nick: String,
+    prefix: &'static str,
+    account: String,
+    is_oper: bool,
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/channel_detail.html")]
+struct ChannelDetailTpl {
+    chrome: Chrome,
+    found: bool,
+    name: String,
+    topic: String,
+    topic_setter: String,
+    users: usize,
+    modes: String,
+    secret: bool,
+    private: bool,
+    inviteonly: bool,
+    keyed: bool,
+    moderated: bool,
+    registered: bool,
+    members: Vec<CMember>,
+}
+
+async fn page_channel_detail(oper: Oper, State(st): State<AppState>, Path(name): Path<String>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let c = e.net_channel_detail(&name);
+    let members = e.net_channel_members(&name);
+    drop(e);
+    let mut t = ChannelDetailTpl {
+        chrome: chrome(&st, &oper, "channels"),
+        found: false,
+        name: name.clone(),
+        topic: String::new(),
+        topic_setter: String::new(),
+        users: 0,
+        modes: String::new(),
+        secret: false,
+        private: false,
+        inviteonly: false,
+        keyed: false,
+        moderated: false,
+        registered: false,
+        members: Vec::new(),
+    };
+    if let Some(c) = c {
+        t.found = true;
+        t.name = c.name;
+        t.topic = c.topic;
+        t.topic_setter = c.topic_setter;
+        t.users = c.users;
+        t.modes = c.modes;
+        t.secret = c.secret;
+        t.private = c.private;
+        t.inviteonly = c.inviteonly;
+        t.keyed = c.keyed;
+        t.moderated = c.moderated;
+        t.registered = c.registered;
+        t.members = members
+            .into_iter()
+            .map(|m| CMember { nick: m.nick, prefix: m.prefix, account: m.account, is_oper: m.oper })
+            .collect();
+    }
+    html(t)
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/server_detail.html")]
+struct ServerDetailTpl {
+    chrome: Chrome,
+    found: bool,
+    name: String,
+    uplink: String,
+    hub: bool,
+    users: usize,
+    opers: usize,
+}
+
+async fn page_server_detail(oper: Oper, State(st): State<AppState>, Path(name): Path<String>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let srv = e.net_servers_detailed().into_iter().find(|s| s.name.eq_ignore_ascii_case(&name));
+    drop(e);
+    let mut t = ServerDetailTpl {
+        chrome: chrome(&st, &oper, "servers"),
+        found: false,
+        name,
+        uplink: String::new(),
+        hub: false,
+        users: 0,
+        opers: 0,
+    };
+    if let Some(s) = srv {
+        t.found = true;
+        t.name = s.name;
+        t.hub = s.uplink.is_empty();
+        t.uplink = s.uplink;
+        t.users = s.users;
+        t.opers = s.opers;
+    }
+    html(t)
+}
+
+// ---- JSON endpoints ------------------------------------------------------
+
 async fn health(State(st): State<AppState>) -> Response {
     let e = st.engine.lock().await;
     let ok = e.linked();
-    let name = e.net_servers().first().map(|(n, _)| n.clone()).unwrap_or_else(|| st.brand.clone());
+    let name = e.net_servers_detailed().first().map(|s| s.name.clone()).unwrap_or_else(|| st.brand.clone());
     drop(e);
     axum::Json(json!({ "ok": ok, "name": name })).into_response()
 }
 
-// Live counters polled by the dashboard.
-async fn live(oper: Oper, State(st): State<AppState>) -> Response {
-    let _ = oper; // gate to authenticated opers only
+// Live counters + event feed for the dashboard. `?since=<ts>` returns only newer
+// incidents; `?counts=1` also returns the headline gauges.
+async fn live(oper: Oper, State(st): State<AppState>, Query(p): Query<HashMap<String, String>>) -> Response {
+    let _ = oper;
+    let since: u64 = p.get("since").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let want_counts = p.get("counts").is_some();
     let e = st.engine.lock().await;
-    let counts = json!({
-        "users": e.net_user_count(),
-        "channels": e.net_channel_count(),
-        "servers": e.net_server_count(),
-        "opers": e.stats_snapshot().get("opers.total").copied().unwrap_or(0),
-        "bans": e.akills().len(),
-    });
+    let counts = if want_counts {
+        json!({
+            "users": e.net_user_count(),
+            "local": e.net_user_count(),
+            "channels": e.net_channel_count(),
+            "servers": e.net_server_count(),
+            "opers": e.net_oper_count(),
+            "bans": e.akills().len(),
+        })
+    } else {
+        serde_json::Value::Null
+    };
+    let incs = e.recent_incidents(80);
     drop(e);
-    axum::Json(json!({ "counts": counts })).into_response()
+    let mut last_id = since;
+    let mut events: Vec<serde_json::Value> = incs
+        .into_iter()
+        .filter(|i| i.ts > since)
+        .map(|i| {
+            last_id = last_id.max(i.ts);
+            json!({ "timestamp": i.ts, "subsystem": classify(&i.summary), "msg": i.summary })
+        })
+        .collect();
+    // oldest-first so the client prepends newest to the top.
+    events.reverse();
+    let mut body = json!({ "events": events, "last_id": last_id });
+    if want_counts {
+        body["counts"] = counts;
+    }
+    axum::Json(body).into_response()
+}
+
+// Global topbar search over the live network + ban store.
+async fn search(oper: Oper, State(st): State<AppState>, Query(p): Query<HashMap<String, String>>) -> Response {
+    let _ = oper;
+    let q = p.get("q").cloned().unwrap_or_default().to_lowercase();
+    if q.len() < 2 {
+        return axum::Json(json!({})).into_response();
+    }
+    let e = st.engine.lock().await;
+    let users: Vec<serde_json::Value> = e
+        .net_users_detailed()
+        .into_iter()
+        .filter(|u| u.nick.to_lowercase().contains(&q) || u.account.to_lowercase().contains(&q))
+        .take(6)
+        .map(|u| json!({ "name": u.nick, "info": if u.account.is_empty() { u.host } else { u.account } }))
+        .collect();
+    let channels: Vec<serde_json::Value> = e
+        .net_channels_detailed()
+        .into_iter()
+        .filter(|c| c.name.to_lowercase().contains(&q))
+        .take(6)
+        .map(|c| json!({ "name": c.name, "info": format!("{} membres", c.users) }))
+        .collect();
+    let servers: Vec<serde_json::Value> = e
+        .net_servers_detailed()
+        .into_iter()
+        .filter(|s| s.name.to_lowercase().contains(&q))
+        .take(6)
+        .map(|s| json!({ "name": s.name, "info": format!("{} users", s.users) }))
+        .collect();
+    let bans: Vec<serde_json::Value> = e
+        .akills()
+        .into_iter()
+        .filter(|b| b.mask.to_lowercase().contains(&q))
+        .take(6)
+        .map(|b| json!({ "name": b.mask, "info": b.reason }))
+        .collect();
+    drop(e);
+    axum::Json(json!({ "users": users, "channels": channels, "servers": servers, "bans": bans })).into_response()
+}
+
+// Structured event log for the logs page (incidents as level/subsystem rows).
+async fn logs_events(oper: Oper, State(st): State<AppState>, Query(p): Query<HashMap<String, String>>) -> Response {
+    let _ = oper;
+    let since: u64 = p.get("since").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let e = st.engine.lock().await;
+    let incs = e.recent_incidents(500);
+    drop(e);
+    let mut last_id = since;
+    let mut events: Vec<serde_json::Value> = incs
+        .into_iter()
+        .filter(|i| i.ts > since)
+        .map(|i| {
+            last_id = last_id.max(i.ts);
+            let kind = classify(&i.summary);
+            let level = if kind == "mod" { "warn" } else { "info" };
+            json!({ "timestamp": i.ts * 1000, "subsystem": kind, "event_id": i.id, "msg": i.summary, "level": level })
+        })
+        .collect();
+    events.reverse();
+    axum::Json(json!({ "events": events, "last_id": last_id })).into_response()
+}
+
+// Plain-text tail for the logs page (recent incident summaries).
+async fn logs_tail(oper: Oper, State(st): State<AppState>, Query(p): Query<HashMap<String, String>>) -> Response {
+    let _ = oper;
+    let lines: usize = p.get("lines").and_then(|s| s.parse().ok()).unwrap_or(300);
+    let e = st.engine.lock().await;
+    let incs = e.recent_incidents(lines);
+    drop(e);
+    let out: Vec<String> = incs
+        .into_iter()
+        .rev()
+        .map(|i| format!("[{}] {} {}", tmpl::fmt_dt(i.ts), i.id, i.summary))
+        .collect();
+    axum::Json(json!({ "lines": out })).into_response()
 }
 
 #[cfg(test)]
@@ -720,140 +1384,46 @@ mod tests {
     use super::*;
     use askama::Template;
 
-    // Every page struct must render to non-empty HTML that extends the shell.
+    fn ch(active: &'static str) -> Chrome {
+        Chrome { brand: "t".into(), active, username: "root".into(), is_root: true, can_audit: true, version: "0" }
+    }
+
     #[test]
-    fn pages_render() {
-        let brand = "test".to_string();
-        let who = "root".to_string();
+    fn all_pages_render() {
+        assert!(DashboardTpl {
+            chrome: ch("dashboard"), net_name: "irc.a".into(), version: "0",
+            users: 5, local: 5, opers: 1, channels: 2, servers: 1, bans: 0,
+            server_cards: vec![SrvCard { name: "irc.a".into(), uplink: String::new(), hub: true, users: 5, opers: 1, pct: 100 }],
+            chan_ranks: vec![ChanRank { name: "#a".into(), topic: "hi".into(), users: 3, pct: 100 }],
+        }.render().unwrap().contains("irc.a"));
 
-        let dash = DashboardTpl {
-            brand: brand.clone(),
-            active: "dashboard",
-            username: who.clone(),
-            is_root: true,
-            show_audit: true,
-            users: 17,
-            opers: 1,
-            channels: 6,
-            servers: 1,
-            bans: 2,
-            server_rows: vec![SrvRow { name: "irc.a".into(), users: 17, pct: 100 }],
-            chan_rows: vec![ChanRow { name: "#a".into(), users: 5, pct: 100 }],
-        }
-        .render()
-        .unwrap();
-        assert!(dash.contains("17") && dash.contains("irc.a") && dash.contains("#a"));
-
-        let users = UsersTpl {
-            brand: brand.clone(),
-            active: "users",
-            username: who.clone(),
-            is_root: true,
-            show_audit: true,
-            rows: vec![UserRow {
-                nick: "bob".into(),
-                ident: "b".into(),
-                host: "h".into(),
-                ip: "1.2.3.4".into(),
-                account: "bob".into(),
-                has_account: true,
-            }],
-            accounts: 1,
-            guests: 0,
-        }
-        .render()
-        .unwrap();
-        assert!(users.contains("bob") && users.contains("1.2.3.4"));
-
-        assert!(ServersTpl {
-            brand: brand.clone(),
-            active: "servers",
-            username: who.clone(),
-            is_root: true,
-            show_audit: true,
-            rows: vec![SrvFull { name: "irc.a".into(), users: 3, pct: 100 }],
-        }
-        .render()
-        .unwrap()
-        .contains("irc.a"));
+        assert!(UsersTpl {
+            chrome: ch("users"), total: 1, accounts: 1, guests: 0, opers: 1,
+            rows: vec![URow { nick: "bob".into(), ident: "b".into(), host: "h".into(), ip: "1.2.3.4".into(), account: "bob".into(), has_account: true, is_oper: true, operclass: "netadmin".into(), modes: "iox".into(), server: "irc.a".into(), secure: true }],
+        }.render().unwrap().contains("bob"));
 
         assert!(ChannelsTpl {
-            brand: brand.clone(),
-            active: "channels",
-            username: who.clone(),
-            is_root: true,
-            show_audit: true,
-            rows: vec![ChanFullRow {
-                name: "#a".into(),
-                users: 1,
-                founder: "bob".into(),
-                topic: "hi".into(),
-                registered: true,
-            }],
-        }
-        .render()
-        .unwrap()
-        .contains("#a"));
+            chrome: ch("channels"), total: 1, registered: 1, moderated: 0, members: 3,
+            rows: vec![CRow { name: "#a".into(), topic: "hi".into(), users: 3, modes: "nt".into(), secret: false, private: false, inviteonly: false, keyed: false, moderated: false, registered: true, pct: 100 }],
+        }.render().unwrap().contains("#a"));
 
-        assert!(BansTpl {
-            brand: brand.clone(),
-            active: "bans",
-            username: who.clone(),
-            is_root: true,
-            show_audit: true,
-            rows: vec![BanRow {
-                kind: "GLINE".into(),
-                mask: "*@bad".into(),
-                setter: "op".into(),
-                reason: "spam".into(),
-                set_ago: "il y a 1 j".into(),
-                expires: "permanent".into(),
-            }],
-        }
-        .render()
-        .unwrap()
-        .contains("*@bad"));
+        assert!(ServersTpl { chrome: ch("servers"), count: 1, users: 5, opers: 1, rows: vec![SRow { name: "irc.a".into(), uplink: String::new(), hub: true, users: 5, opers: 1, pct: 100 }] }.render().unwrap().contains("irc.a"));
 
-        assert!(OpersTpl {
-            brand: brand.clone(),
-            active: "opers",
-            username: who.clone(),
-            is_root: true,
-            show_audit: true,
-            rows: vec![OperRow { name: "root".into(), tier: "root", email: String::new() }],
-        }
-        .render()
-        .unwrap()
-        .contains("root"));
-
-        assert!(RegsTpl {
-            brand: brand.clone(),
-            active: "registrations",
-            username: who.clone(),
-            is_root: true,
-            show_audit: true,
-            rows: vec![RegRow {
-                name: "bob".into(),
-                email: "b@x".into(),
-                verified: true,
-                registered: "il y a 2 j".into(),
-            }],
-        }
-        .render()
-        .unwrap()
-        .contains("bob"));
-
-        assert!(ModulesTpl {
-            brand,
-            active: "modules",
-            username: who,
-            is_root: true,
-            show_audit: true,
-            rows: vec!["m_spamfilter".into()],
-        }
-        .render()
-        .unwrap()
-        .contains("m_spamfilter"));
+        let pr = || vec![PRow { kind: "G".into(), mask: "*@bad".into(), reason: "spam".into(), set_by: "op".into(), set_ago: "1j".into(), expires: "permanent".into(), perm: true }];
+        assert!(BansTpl { chrome: ch("bans"), rows: pr(), total: 1, perm: 1, heading: "Bans", subtitle: "s", empty: "none" }.render().unwrap().contains("*@bad"));
+        assert!(SpamTpl { chrome: ch("spamfilter"), total: 1, rows: vec![FRow { pattern: "*evil*".into(), action: "block".into(), flags: "*".into(), reason: "x".into(), set_ago: "1j".into() }] }.render().unwrap().contains("evil"));
+        assert!(SecGroupsTpl { chrome: ch("security_groups") }.render().is_ok());
+        assert!(OpersTpl { chrome: ch("opers"), rows: vec![ORow { name: "root".into(), tier: "root".into(), online: 1 }] }.render().unwrap().contains("root"));
+        assert!(RegTpl { chrome: ch("registrations"), total: 1, reg_24h: 1, reg_7d: 1, verified: 1, pending: 0, days: vec![(0u32, 0u64); 14], recent: vec![REvt { when: "01/01".into(), user: "bob".into(), email: "b@x".into(), verified: true }] }.render().unwrap().contains("bob"));
+        assert!(ModulesTpl { chrome: ch("modules"), rows: vec!["m_x".into()], total: 1 }.render().unwrap().contains("m_x"));
+        assert!(AuditTpl { chrome: ch("audit"), total: 1, rows: vec![AuditRow { when: "01/01".into(), ago: "1j".into(), id: "AB12".into(), summary: "did a thing".into(), kind: "log" }] }.render().unwrap().contains("did a thing"));
+        assert!(WhowasTpl { chrome: ch("whowas"), q: String::new(), rows: vec![] }.render().is_ok());
+        assert!(IpWhoisTpl { chrome: ch("ip_whois"), q: String::new(), ip: String::new(), users: vec![], bans: vec![] }.render().is_ok());
+        assert!(LogsTpl { chrome: ch("logs") }.render().is_ok());
+        assert!(AccessTpl { chrome: ch("access"), grants: vec![GrantRow { name: "root".into(), tier: "root".into(), perms: vec!["admin".into()], expires: "permanent".into() }], total: 1 }.render().unwrap().contains("root"));
+        assert!(TrendsTpl { chrome: ch("trends"), users: 5, channels: 2, servers: 1, opers: 1 }.render().is_ok());
+        assert!(UserDetailTpl { chrome: ch("users"), found: true, initial: "B".into(), nick: "bob".into(), ident: "b".into(), host: "h".into(), ip: "1.2.3.4".into(), gecos: "Bob".into(), account: "bob".into(), is_oper: false, operclass: String::new(), modes: "ix".into(), server: "irc.a".into(), secure: true, channels: vec![UChan { name: "#a".into(), prefix: "@" }], registered: true, email: "b@x".into(), verified: true, joined: "01/01/2026".into() }.render().unwrap().contains("bob"));
+        assert!(ChannelDetailTpl { chrome: ch("channels"), found: true, name: "#a".into(), topic: "hi".into(), topic_setter: "bob".into(), users: 1, modes: "nt".into(), secret: false, private: false, inviteonly: false, keyed: false, moderated: false, registered: true, members: vec![CMember { nick: "bob".into(), prefix: "@", account: "bob".into(), is_oper: false }] }.render().unwrap().contains("#a"));
+        assert!(ServerDetailTpl { chrome: ch("servers"), found: true, name: "irc.a".into(), uplink: String::new(), hub: true, users: 5, opers: 1 }.render().unwrap().contains("irc.a"));
     }
 }
-

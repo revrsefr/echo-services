@@ -1,52 +1,42 @@
 {% extends "ircpanel/base.html" %}
 {% block title %}Inscriptions{% endblock %}
+{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM19 8v6M22 11h-6"/></svg>{% endblock %}
+{% block eyebrow %}Système{% endblock %}
+{% block heading %}Inscriptions <span class="ircp-count">{{ total }}</span>{% endblock %}
+{% block subtitle %}Comptes enregistrés auprès des services echo.{% endblock %}
 {% block content %}
-<div class="up-head">
-  <div class="up-head-main">
-    <div class="up-head-text">
-      <h1>Inscriptions <span class="ircp-count">{{ rows.len() }}</span></h1>
-      <p class="up-head-sub">Comptes enregistrés auprès des services echo.</p>
-    </div>
-  </div>
+<div class="up-stats">
+  <div class="up-stat frost-success"><div class="up-stat-num">{{ total }}</div><div class="up-stat-lbl">Comptes</div></div>
+  <div class="up-stat frost-info"><div class="up-stat-num">{{ reg_24h }}</div><div class="up-stat-lbl">Dernières 24 h</div></div>
+  <div class="up-stat frost-secondary"><div class="up-stat-num">{{ reg_7d }}</div><div class="up-stat-lbl">7 derniers jours</div></div>
+  <div class="up-stat frost-warning"><div class="up-stat-num">{{ verified }}</div><div class="up-stat-lbl">Vérifiés</div></div>
+  <div class="up-stat frost-danger"><div class="up-stat-num">{{ pending }}</div><div class="up-stat-lbl">Non vérifiés</div></div>
 </div>
 
-<input class="ircp-search" id="rq" type="search" placeholder="Filtrer par compte ou e-mail…" autocomplete="off">
-
-<div class="up-card uroster-card">
-  <div class="uroster" id="rroster">
-    {% for a in rows %}
-    <div class="urow" data-q="{{ a.name }} {{ a.email }}">
-      <span class="uava {% if a.verified %}is-acct{% endif %}">
-        {% if a.verified %}<i class="uava-dot" title="Vérifié"></i>{% endif %}
-      </span>
-      <span class="urow-main">
-        <span class="urow-nick"><b>{{ a.name }}</b>
-          {% if !a.verified %}<span class="ircp-tag ircp-tag--away">non vérifié</span>{% endif %}
-        </span>
-        <span class="urow-host">{% if a.email.is_empty() %}<span class="muted">Aucun e-mail</span>{% else %}{{ a.email }}{% endif %}</span>
-      </span>
-      <span class="urow-net">
-        <span class="urow-loc">inscrit {{ a.registered }}</span>
-      </span>
-    </div>
+<div class="up-card">
+  <div class="up-card-title">Inscriptions sur 14 jours</div>
+  <div class="rg-spark">
+    {% for d in days %}
+    <div class="rg-bar" style="height:{{ d.1 }}%" title="{{ d.0 }}"></div>
     {% endfor %}
-    {% if rows.is_empty() %}<div class="ircp-empty">Aucun compte enregistré.</div>{% endif %}
   </div>
-  <div class="uroster-empty" id="rEmpty" hidden>Aucun compte ne correspond.</div>
 </div>
-{% endblock %}
 
-{% block scripts %}
-<script>
-(function(){
-  var rows=[].slice.call(document.querySelectorAll('#rroster .urow'));
-  var empty=document.getElementById('rEmpty');
-  var q=document.getElementById('rq');
-  q.addEventListener('input',function(){
-    var t=(q.value||'').toLowerCase();var n=0;
-    rows.forEach(function(r){var ok=!t||(r.dataset.q||'').toLowerCase().indexOf(t)>=0;r.hidden=!ok;if(ok)n++;});
-    if(empty)empty.hidden=n>0;
-  });
-})();
-</script>
+<div class="up-card">
+  <div class="up-card-title">Comptes récents</div>
+  <table class="ircp-table">
+    <thead><tr><th>Quand</th><th>Compte</th><th>E-mail</th><th class="r">État</th></tr></thead>
+    <tbody>
+      {% for e in recent %}
+      <tr>
+        <td class="mono muted">{{ e.when }}</td>
+        <td><b>{{ e.user }}</b></td>
+        <td>{% if e.email.is_empty() %}<span class="muted">—</span>{% else %}{{ e.email }}{% endif %}</td>
+        <td class="r">{% if e.verified %}<span class="ircp-tag ircp-tag--oper">vérifié</span>{% else %}<span class="ircp-tag ircp-tag--away">en attente</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if recent.is_empty() %}<div class="ircp-empty">Aucun compte enregistré.</div>{% endif %}
+</div>
 {% endblock %}

@@ -2,50 +2,201 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
+<script src="/static/js/ircpanel.js?v={{ chrome.version }}"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow">
-<title>{% block title %}Panel{% endblock %} · {{ brand }} WebPanel</title>
-<link rel="stylesheet" href="/static/css/theme.css">
-<link rel="stylesheet" href="/static/css/ircpanel.css">
+<title>{% block title %}Panel IRC{% endblock %} · {{ chrome.brand }} WebPanel</title>
+<link rel="stylesheet" href="/static/css/theme.css?v={{ chrome.version }}">
+<link rel="stylesheet" href="/static/css/ircpanel.css?v={{ chrome.version }}">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap">
 </head>
 <body class="ircp" data-panel-theme="inspircd">
-<header class="up-topbar">
-  <a class="up-brand" href="/"><span class="up-brand-txt">{{ brand }} <small>WEBPANEL</small></span></a>
+<script>try{var _pt=localStorage.getItem('ircpanel-theme');if(_pt)document.body.setAttribute('data-panel-theme',_pt);}catch(e){}</script>
+<script>
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('.js-back');
+    if (a) { e.preventDefault(); history.back(); }
+  });
+  document.addEventListener('change', function (e) {
+    var el = e.target;
+    if (el && el.classList && el.classList.contains('js-autosubmit') && el.form) { el.form.submit(); }
+  });
+</script>
+
+<!-- ── Fixed top navbar (dark) ─────────────────────────────────────────── -->
+<header class=" up-topbar">
+  <button class="up-burger" id="upBurger" aria-label="Menu">
+    <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+  </button>
+  <a class="up-brand" href="/">
+    <span class="up-flame">
+      <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M13 2c.5 3.5-1.5 4.8-3 6.5C8.4 10.3 7 11.9 7 14.5A5 5 0 0 0 17 15c0-2.2-1-3.6-1.7-5 1.4.6 2.7 1.9 2.7 4.4A6.7 6.7 0 1 1 9 6.7C10.6 5 12.6 4 13 2z"/></svg>
+    </span>
+    <span class="up-brand-txt">{{ chrome.brand }} <small>WEBPANEL</small></span>
+  </a>
   <span class="up-server" id="upHealth" data-health="/health" title="État du serveur IRC">
     <span class="up-dot" id="upHealthDot"></span><span id="upHealthTxt">IRC</span>
   </span>
+  <div class="up-search">
+    <svg class="up-search-ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+    <input type="text" id="upSearch" autocomplete="off" placeholder="Rechercher utilisateurs, salons, serveurs, bans…"
+           data-search="/search" data-users="/users"
+           data-chans="/channels" data-servers="/servers" data-bans="/bans">
+    <div class="up-search-results" id="upSearchResults" hidden></div>
+  </div>
   <div class="up-topbar-right">
-    <span class="who">{{ username }}{% if is_root %} <span class="tier">root</span>{% endif %}</span>
-    <form method="post" action="/logout"><button class="logout up-iconbtn">Déconnexion</button></form>
+    <div class="up-theme">
+      <button type="button" id="ircpTheme" class="up-iconbtn" aria-label="Thème" title="Changer de thème">
+        <svg viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2v-.5a2 2 0 0 1 2-2h1.5a4.5 4.5 0 0 0 4.5-4.5A10 10 0 0 0 12 2z"/></svg>
+      </button>
+      <div class="up-theme-pop" id="upThemePop" hidden>
+        <button type="button" class="up-theme-opt" data-pt="inspircd"><span class="sw sw-inspircd"></span>InspIRCd</button>
+        <button type="button" class="up-theme-opt" data-pt="inspircd-dark"><span class="sw sw-inspircd-dark"></span>InspIRCd Nuit</button>
+        <button type="button" class="up-theme-opt" data-pt="aurora"><span class="sw sw-aurora"></span>Aurora</button>
+      </div>
+    </div>
+    <span class="up-who" title="Connecté">{{ chrome.username }}{% if chrome.is_root %} <span class="tier">root</span>{% endif %}</span>
+    <form method="post" action="/logout" data-no-ajax><button class="up-iconbtn" title="Déconnexion" aria-label="Déconnexion"><svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button></form>
+    <a href="#" class="up-iconbtn js-back" title="Retour" aria-label="Retour">
+      <svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    </a>
   </div>
 </header>
 
+<!-- ── Primary nav (modern header bar) ─────────────────────────────────── -->
 <nav class="up-nav" id="upNav">
-  <a href="/" class="up-nav-item {% if active == "dashboard" %}is-active{% endif %}">Aperçu</a>
-  <a href="/users" class="up-nav-item {% if active == "users" %}is-active{% endif %}">Utilisateurs</a>
-  <a href="/channels" class="up-nav-item {% if active == "channels" %}is-active{% endif %}">Salons</a>
-  <a href="/servers" class="up-nav-item {% if active == "servers" %}is-active{% endif %}">Serveurs</a>
-  <a href="/bans" class="up-nav-item {% if active == "bans" %}is-active{% endif %}">Bans</a>
-  <a href="/opers" class="up-nav-item {% if active == "opers" %}is-active{% endif %}">Opérateurs</a>
-  <a href="/registrations" class="up-nav-item {% if active == "registrations" %}is-active{% endif %}">Inscriptions</a>
-  <a href="/modules" class="up-nav-item {% if active == "modules" %}is-active{% endif %}">Modules</a>
-  {% if show_audit %}<a href="/audit" class="up-nav-item {% if active == "audit" %}is-active{% endif %}">Audit</a>{% endif %}
+  <a href="/" class="up-nav-item {% if chrome.active == "dashboard" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm10 8h8V3h-8v18zM3 21h8v-6H3v6z"/></svg><span>Aperçu</span></a>
+  <a href="/trends" class="up-nav-item {% if chrome.active == "trends" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg><span>Tendances</span></a>
+  <a href="/users" class="up-nav-item {% if chrome.active == "users" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>Utilisateurs</span></a>
+  <a href="/channels" class="up-nav-item {% if chrome.active == "channels" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg><span>Salons</span></a>
+  <a href="/servers" class="up-nav-item {% if chrome.active == "servers" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg><span>Serveurs</span></a>
+  <div class="up-nav-group {% if chrome.active == "bans" || chrome.active == "name_bans" || chrome.active == "exceptions" || chrome.active == "spamfilter" || chrome.active == "security_groups" %}is-active{% endif %}">
+    <button type="button" class="up-nav-item up-nav-trigger"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.5-3 7.5-8 10-5-2.5-8-5.5-8-10V6z"/></svg><span>Protection</span><svg class="up-caret" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+    <div class="up-nav-drop">
+      <a href="/bans" class="{% if chrome.active == "bans" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>Bans serveur</a>
+      <a href="/name-bans" class="{% if chrome.active == "name_bans" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2M9 20h6M12 4v16"/></svg>Bans de nom</a>
+      <a href="/exceptions" class="{% if chrome.active == "exceptions" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M9 12l2 2 4-4M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg>Exceptions</a>
+      <a href="/spamfilter" class="{% if chrome.active == "spamfilter" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.5V19l4 2v-8.5L22 3z"/></svg>Spamfilter</a>
+      <a href="/security-groups" class="{% if chrome.active == "security_groups" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.5-3 7.5-8 10-5-2.5-8-5.5-8-10V6z"/></svg>Groupes de sécurité</a>
+    </div>
+  </div>
+  <div class="up-nav-group {% if chrome.active == "audit" || chrome.active == "whowas" || chrome.active == "ip_whois" || chrome.active == "logs" || chrome.active == "opers" || chrome.active == "registrations" || chrome.active == "modules" || chrome.active == "access" %}is-active{% endif %}">
+    <button type="button" class="up-nav-item up-nav-trigger"><svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg><span>Système</span><svg class="up-caret" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+    <div class="up-nav-drop">
+      {% if chrome.can_audit %}<a href="/audit" class="{% if chrome.active == "audit" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Journal d'audit</a>{% endif %}
+      <a href="/whowas" class="{% if chrome.active == "whowas" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M3 3v5h5M3.05 13a9 9 0 1 0 .5-4.5L3 8M12 7v5l4 2"/></svg>Historique</a>
+      <a href="/ip-whois" class="{% if chrome.active == "ip_whois" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>IP WHOIS</a>
+      <a href="/logs" class="{% if chrome.active == "logs" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Journaux</a>
+      <a href="/opers" class="{% if chrome.active == "opers" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V5l-8-3z"/></svg>Opérateurs</a>
+      <a href="/registrations" class="{% if chrome.active == "registrations" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM19 8v6M22 11h-6"/></svg>Inscriptions</a>
+      <a href="/modules" class="{% if chrome.active == "modules" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M21 16V8l-9-5-9 5v8l9 5 9-5zM3 8l9 5 9-5M12 13v8"/></svg>Modules</a>
+      {% if chrome.is_root %}<a href="/access" class="{% if chrome.active == "access" %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v6H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7M9 10V4a3 3 0 0 1 6 0v3"/></svg>Accès & permissions</a>{% endif %}
+    </div>
+  </div>
 </nav>
 
+<!-- ── Main content ────────────────────────────────────────────────────── -->
 <main class="up-main">
+  {% block pagehead %}
+  <div class="up-head">
+    <div class="up-head-main">
+      <span class="up-head-ico">{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm10 8h8V3h-8v18zM3 21h8v-6H3v6z"/></svg>{% endblock %}</span>
+      <div class="up-head-text">
+        <span class="up-head-eyebrow">{% block eyebrow %}{% endblock %}</span>
+        <h1>{% block heading %}{% endblock %}</h1>
+        <p class="up-head-sub">{% block subtitle %}{% endblock %}</p>
+      </div>
+    </div>
+    <div class="up-head-right">{% block topright %}{% endblock %}</div>
+  </div>
+  {% endblock %}
+
   <div class="up-content">{% block content %}{% endblock %}</div>
 </main>
 
+<div class="up-toasts" id="upToasts"></div>
+
+<!-- ── Custom confirmation modal (replaces native confirm()) ─────────────── -->
+<div class="up-modal" id="upModal" aria-hidden="true">
+  <div class="up-modal-back" data-modal-cancel></div>
+  <div class="up-modal-box" role="alertdialog" aria-modal="true" aria-labelledby="upModalTitle">
+    <div class="up-modal-ico"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></div>
+    <h3 class="up-modal-title" id="upModalTitle">Confirmer l'action</h3>
+    <p class="up-modal-msg" id="upModalMsg"></p>
+    <div class="up-modal-acts">
+      <button type="button" class="up-modal-btn" data-modal-cancel>Annuler</button>
+      <button type="button" class="up-modal-btn up-modal-btn--confirm" id="upModalOk">Confirmer</button>
+    </div>
+  </div>
+</div>
+
 <script>
-// Health dot: green when the ircd link is up, grey otherwise.
-(function(){
-  var el=document.getElementById('upHealth'),dot=document.getElementById('upHealthDot'),txt=document.getElementById('upHealthTxt');
-  if(!el)return;
-  function ping(){fetch(el.dataset.health).then(r=>r.json()).then(j=>{
-    if(dot)dot.style.background=j.ok?'#3fb950':'#f85149';
-    if(txt)txt.textContent=j.ok?(j.name||'IRC'):'hors-ligne';
-  }).catch(function(){if(dot)dot.style.background='#f85149';if(txt)txt.textContent='hors-ligne';});}
-  ping();setInterval(ping,5000);
+/* Themed confirm modal + button loading state. */
+(function () {
+  var modal = document.getElementById("upModal");
+  var msgEl = document.getElementById("upModalMsg");
+  var okBtn = document.getElementById("upModalOk");
+  if (!modal) return;
+  var pending = null;
+  function open(msg, onOk) {
+    msgEl.textContent = msg; pending = onOk;
+    modal.classList.add("is-open"); modal.setAttribute("aria-hidden", "false");
+    okBtn.focus();
+  }
+  function close() { modal.classList.remove("is-open"); modal.setAttribute("aria-hidden", "true"); pending = null; }
+  modal.querySelectorAll("[data-modal-cancel]").forEach(function (b) { b.addEventListener("click", close); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && modal.classList.contains("is-open")) close(); });
+  okBtn.addEventListener("click", function () { var p = pending; close(); if (p) p(); });
+  document.addEventListener("submit", function (ev) {
+    var form = ev.target;
+    if (!form.matches || !form.matches("form[data-confirm]")) return;
+    if (form.dataset.confirmed === "1") { delete form.dataset.confirmed; return; }
+    ev.preventDefault(); ev.stopPropagation();
+    open(form.getAttribute("data-confirm"), function () {
+      form.dataset.confirmed = "1";
+      if (form.requestSubmit) form.requestSubmit(); else form.submit();
+    });
+  }, true);
+})();
+</script>
+
+<script>
+(function () {
+  var el = document.getElementById("upHealth");
+  if (!el) return;
+  var dot = document.getElementById("upHealthDot"), txt = document.getElementById("upHealthTxt");
+  function ping() {
+    if (document.hidden) return;
+    fetch(el.dataset.health, { headers: { "X-Requested-With": "fetch" } })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        el.classList.toggle("down", !j.ok);
+        if (dot) dot.style.background = j.ok ? "" : "#f85149";
+        if (txt) txt.textContent = j.ok ? (j.name || "en ligne") : "IRC hors-ligne";
+      })
+      .catch(function () { el.classList.add("down"); if (txt) txt.textContent = "IRC hors-ligne"; });
+  }
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) ping(); });
+  ping();
+  setInterval(ping, 20000);
+})();
+</script>
+<script>
+/* Header-nav dropdowns: hover opens (CSS); click/tap toggles + outside-click closes. */
+(function () {
+  document.querySelectorAll('.up-nav-trigger').forEach(function (btn) {
+    btn.addEventListener('click', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      var g = btn.closest('.up-nav-group'), open = g.classList.contains('open');
+      document.querySelectorAll('.up-nav-group.open').forEach(function (x) { x.classList.remove('open'); });
+      if (!open) g.classList.add('open');
+    });
+  });
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest('.up-nav-group'))
+      document.querySelectorAll('.up-nav-group.open').forEach(function (x) { x.classList.remove('open'); });
+  });
 })();
 </script>
 {% block scripts %}{% endblock %}
