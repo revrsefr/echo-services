@@ -1,0 +1,36 @@
+{% extends "ircpanel/base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Modules" %}{% endblock %}
+{% block heading %}{% trans "Modules chargés" %} <span class="ircp-count">{{ modules|length }}</span>{% endblock %}
+{% block eyebrow %}{% trans "Système" %}{% endblock %}
+{% block subtitle %}{% trans "Les modules chargés, classés par fonction." %}{% endblock %}
+{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M21 16V8l-9-5-9 5v8l9 5 9-5zM3 8l9 5 9-5M12 13v8"/></svg>{% endblock %}
+{% block topright %}
+<form method="get" class="ircp-search"><input type="text" name="q" value="{{ q }}" placeholder="{% trans "Filtrer les modules…" %}"><button>{% trans "Filtrer" %}</button></form>
+{% endblock %}
+
+{% block content %}
+{% if groups %}
+<div class="mod-cats">
+  {% for g in groups %}
+  <a class="mod-cat-chip" href="#cat-{{ g.key }}"><span class="mod-cat-ico">{{ g.icon }}</span>{{ g.label }}<b>{{ g.mods|length }}</b></a>
+  {% endfor %}
+</div>
+
+{% for g in groups %}
+<section class="mod-group" id="cat-{{ g.key }}">
+  <div class="mod-group-h"><span class="mod-group-ico">{{ g.icon }}</span> {{ g.label }} <span class="ircp-count">{{ g.mods|length }}</span></div>
+  <div class="mod-grid">
+    {% for m in g.mods %}
+    <div class="mod-item" title="{{ m.name }} — {{ m.description }}">
+      <div class="mod-name mono">{{ m.name }}</div>
+      <div class="mod-desc">{{ m.description|default:"—" }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}
+{% else %}
+<div class="up-card"><div class="ircp-empty">Aucun module{% if q %} pour « {{ q }} »{% endif %}.</div></div>
+{% endif %}
+{% endblock %}

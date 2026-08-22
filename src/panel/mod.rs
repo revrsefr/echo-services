@@ -9,11 +9,12 @@
 //! a revoked oper loses access immediately. Reads and writes go straight to the
 //! engine under the shared lock, exactly like the gRPC and IRC paths.
 
+mod tmpl;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::{Form, FromRequestParts, Query, State};
+use axum::extract::{Form, FromRequestParts, Path, State};
 use axum::http::request::Parts;
 use axum::http::{header, HeaderValue};
 use axum::response::{Html, IntoResponse, Redirect, Response};
@@ -24,6 +25,7 @@ use base64::Engine as _;
 use hmac::{Hmac, Mac};
 use rand_core::RngCore;
 use serde::Deserialize;
+use serde_json::json;
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
@@ -63,10 +65,28 @@ pub async fn run(engine: Shared, cfg: PanelCfg) {
     let app = Router::new()
         .route("/login", get(login_form).post(login_submit))
         .route("/logout", post(logout))
+        .route("/static/*path", get(static_asset))
         .route("/", get(dashboard))
-        .route("/accounts", get(accounts))
-        .route("/channels", get(channels))
-        .route("/network", get(network))
+        .route("/users", get(page_users))
+        .route("/users/:nick", get(page_user_detail))
+        .route("/channels", get(page_channels))
+        .route("/channels/:slug", get(page_channel_detail))
+        .route("/servers", get(page_servers))
+        .route("/servers/:name", get(page_server_detail))
+        .route("/trends", get(page_trends))
+        .route("/bans", get(page_bans))
+        .route("/name-bans", get(page_name_bans))
+        .route("/exceptions", get(page_exceptions))
+        .route("/spamfilter", get(page_spamfilter))
+        .route("/security-groups", get(page_security_groups))
+        .route("/ip-whois", get(page_ip_whois))
+        .route("/whowas", get(page_whowas))
+        .route("/logs", get(page_logs))
+        .route("/opers", get(page_opers))
+        .route("/registrations", get(page_registrations))
+        .route("/modules", get(page_modules))
+        .route("/audit", get(page_audit))
+        .route("/access", get(page_access))
         .with_state(state);
 
     let listener = match tokio::net::TcpListener::bind(addr).await {
@@ -221,109 +241,117 @@ async fn logout() -> Response {
 
 // ---- pages ---------------------------------------------------------------
 
-async fn dashboard(oper: Oper, State(st): State<AppState>) -> Html<String> {
-    let e = st.engine.lock().await;
-    let (accounts, channels) = e.directory_snapshot();
-    let opers = accounts.iter().filter(|a| e.account_privs(&a.name).any()).count();
-    let akills = e.akills().len();
-    let uptime = e.uptime_secs();
-    let linked = e.linked();
-    drop(e);
-
-    let stat = |label: &str, value: String| {
-        format!("<div class=\"stat\"><div class=\"stat-v\">{}</div><div class=\"stat-l\">{}</div></div>", esc(&value), esc(label))
-    };
-    let cards = format!(
-        "<div class=\"stats\">{}{}{}{}</div>",
-        stat("Accounts", accounts.len().to_string()),
-        stat("Channels", channels.len().to_string()),
-        stat("Operators", opers.to_string()),
-        stat("Network bans", akills.to_string()),
-    );
-    let link = if linked { "<span class=\"ok\">linked</span>" } else { "<span class=\"warn\">not linked</span>" };
-    let info = format!(
-        "<div class=\"card\"><h2>Server</h2><table class=\"kv\">\
-         <tr><td>Version</td><td>{v} ({rev})</td></tr>\
-         <tr><td>Built</td><td>{built}</td></tr>\
-         <tr><td>Uplink</td><td>{link}</td></tr>\
-         <tr><td>Uptime</td><td>{up}</td></tr></table></div>",
-        v = esc(crate::version::VERSION),
-        rev = esc(&crate::version::revision()),
-        built = esc(&crate::version::built()),
-        link = link,
-        up = esc(&fmt_dur(uptime)),
-    );
-    Html(shell(&st.brand, Some(&oper), "", &format!("<h1>Dashboard</h1>{cards}{info}")))
-}
-
-#[derive(Deserialize)]
-struct AccountsQuery {
-    #[serde(default)]
-    q: String,
-}
-
-async fn accounts(oper: Oper, State(st): State<AppState>, Query(q): Query<AccountsQuery>) -> Html<String> {
-    let needle = q.q.to_lowercase();
-    let e = st.engine.lock().await;
-    let (mut accts, _) = e.directory_snapshot();
-    accts.retain(|a| needle.is_empty() || a.name.to_lowercase().contains(&needle));
-    accts.sort_by_key(|a| a.name.to_lowercase());
-    let total = accts.len();
-    let rows: String = accts
-        .iter()
-        .take(500)
-        .map(|a| {
-            let tier = e.account_privs(&a.name);
-            let badges = format!(
-                "{}{}{}",
-                if a.verified { "" } else { "<span class=\"tag warn\">unverified</span>" },
-                if a.suspension.is_some() { "<span class=\"tag bad\">suspended</span>" } else { "" },
-                if tier.any() { format!("<span class=\"tag op\">{}</span>", esc(tier.tier())) } else { String::new() },
-            );
-            format!(
-                "<tr><td><a href=\"/accounts?q={n}\">{n}</a></td><td>{email}</td><td>{seen}</td><td>{badges}</td></tr>",
-                n = esc(&a.name),
-                email = esc(a.email.as_deref().unwrap_or("")),
-                seen = esc(&echo_api::human_time(a.last_seen)),
-                badges = badges,
-            )
-        })
-        .collect();
-    drop(e);
-
-    let capped = if total > 500 { format!(" (showing 500 of {total})") } else { String::new() };
-    let body = format!(
-        "<h1>Accounts</h1>\
-         <form class=\"search\" method=\"get\" action=\"/accounts\"><input name=\"q\" value=\"{q}\" placeholder=\"Search accounts…\"><button>Search</button></form>\
-         <div class=\"card\"><table class=\"list\"><thead><tr><th>Account</th><th>Email</th><th>Last seen</th><th></th></tr></thead><tbody>{rows}</tbody></table>\
-         <p class=\"muted\">{count} accounts{capped}</p></div>",
-        q = esc(&q.q),
-        rows = rows,
-        count = total,
-        capped = capped,
-    );
-    Html(shell(&st.brand, Some(&oper), "accounts", &body))
-}
-
-async fn channels(oper: Oper, State(st): State<AppState>) -> Html<String> {
-    Html(shell(&st.brand, Some(&oper), "channels", &soon("Channels")))
-}
-
-async fn network(oper: Oper, State(st): State<AppState>) -> Html<String> {
-    Html(shell(&st.brand, Some(&oper), "network", &soon("Network")))
-}
-
-fn soon(title: &str) -> String {
-    format!("<h1>{}</h1><div class=\"card\"><p class=\"muted\">Coming soon.</p></div>", esc(title))
-}
-
-fn fmt_dur(secs: u64) -> String {
-    let (d, h, m) = (secs / 86400, (secs % 86400) / 3600, (secs % 3600) / 60);
-    if d > 0 {
-        format!("{d}d {h}h {m}m")
-    } else if h > 0 {
-        format!("{h}h {m}m")
-    } else {
-        format!("{m}m")
+async fn static_asset(Path(path): Path<String>) -> Response {
+    match tmpl::asset(&path) {
+        Some((bytes, ctype)) => (
+            [
+                (header::CONTENT_TYPE, ctype),
+                (header::CACHE_CONTROL, "public, max-age=86400"),
+            ],
+            bytes,
+        )
+            .into_response(),
+        None => (axum::http::StatusCode::NOT_FOUND, "not found").into_response(),
     }
 }
+
+// The context every panel page shares: identity, nav highlight, csrf placeholder.
+fn base_ctx(st: &AppState, oper: &Oper, active: &str) -> serde_json::Map<String, serde_json::Value> {
+    let tier = oper.privs.tier();
+    let obj = json!({
+        "brand": st.brand,
+        "active": active,
+        "asset_version": crate::version::VERSION,
+        "current_language": "fr",
+        "panel_languages": [],
+        "panel_perms": ["audit"],
+        "is_root": tier == "root",
+        "csrf_token": "",
+        "request": { "user": { "username": oper.account }, "csp_nonce": "", "get_full_path": "/" },
+    });
+    match obj {
+        serde_json::Value::Object(m) => m,
+        _ => serde_json::Map::new(),
+    }
+}
+
+// Render `template` with the base context merged with `extra`, or an error page.
+fn page(st: &AppState, oper: &Oper, active: &str, template: &str, extra: serde_json::Value) -> Html<String> {
+    let mut ctx = base_ctx(st, oper, active);
+    if let serde_json::Value::Object(m) = extra {
+        ctx.extend(m);
+    }
+    let val = minijinja::Value::from_serialize(&serde_json::Value::Object(ctx));
+    match tmpl::render(template, val) {
+        Ok(html) => Html(html),
+        Err(e) => Html(format!("<pre>panel template error in {template}:\n{e:#}</pre>")),
+    }
+}
+
+// A read-only page with no page-specific data yet (data wired in progressively).
+macro_rules! simple_page {
+    ($fn:ident, $active:expr, $tpl:expr) => {
+        async fn $fn(oper: Oper, State(st): State<AppState>) -> Html<String> {
+            page(&st, &oper, $active, $tpl, json!({}))
+        }
+    };
+}
+simple_page!(page_users, "users", "ircpanel/users.html");
+simple_page!(page_channels, "channels", "ircpanel/channels.html");
+simple_page!(page_servers, "servers", "ircpanel/servers.html");
+simple_page!(page_trends, "trends", "ircpanel/trends.html");
+simple_page!(page_bans, "bans", "ircpanel/bans.html");
+simple_page!(page_name_bans, "name_bans", "ircpanel/name_bans.html");
+simple_page!(page_exceptions, "exceptions", "ircpanel/exceptions.html");
+simple_page!(page_spamfilter, "spamfilter", "ircpanel/spamfilter.html");
+simple_page!(page_security_groups, "security_groups", "ircpanel/security_groups.html");
+simple_page!(page_ip_whois, "ip_whois", "ircpanel/ip_whois.html");
+simple_page!(page_whowas, "whowas", "ircpanel/whowas.html");
+simple_page!(page_logs, "logs", "ircpanel/logs.html");
+simple_page!(page_opers, "opers", "ircpanel/opers.html");
+simple_page!(page_registrations, "registrations", "ircpanel/registrations.html");
+simple_page!(page_modules, "modules", "ircpanel/modules.html");
+simple_page!(page_audit, "audit", "ircpanel/audit.html");
+simple_page!(page_access, "access", "ircpanel/access.html");
+
+async fn page_user_detail(oper: Oper, State(st): State<AppState>, Path(nick): Path<String>) -> Html<String> {
+    page(&st, &oper, "users", "ircpanel/user_detail.html", json!({ "nick": nick }))
+}
+async fn page_channel_detail(oper: Oper, State(st): State<AppState>, Path(slug): Path<String>) -> Html<String> {
+    page(&st, &oper, "channels", "ircpanel/channel_detail.html", json!({ "slug": slug }))
+}
+async fn page_server_detail(oper: Oper, State(st): State<AppState>, Path(name): Path<String>) -> Html<String> {
+    page(&st, &oper, "servers", "ircpanel/server_detail.html", json!({ "name": name }))
+}
+
+async fn dashboard(oper: Oper, State(st): State<AppState>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let (_accounts, channels) = e.directory_snapshot();
+    let stats = e.stats_snapshot();
+    let ban_count = e.akills().len();
+    let linked = e.linked();
+    drop(e);
+    let g = |k: &str| stats.get(k).copied().unwrap_or(0);
+    let ctx = json!({
+        "stats": {
+            "me": { "name": st.brand, "version": crate::version::VERSION },
+            "user": { "total": g("users.online"), "local": g("users.local"), "oper": g("opers.total") },
+            "channel": { "total": channels.len() },
+            "server": { "total": if linked { g("servers.online").max(1) } else { 0 } },
+        },
+        "ban_count": ban_count,
+        "servers": [],
+        "top_channels": [],
+        "recent_audit": [],
+        "geo_rows": [],
+        "geo_dots": [],
+        "geo_total": 0,
+        "geo_local": 0,
+        "geo_max": 1,
+        "sparks": {},
+        "world_svg": "",
+        "live_url": "/api/live",
+    });
+    page(&st, &oper, "dashboard", "ircpanel/dashboard.html", ctx)
+}
+

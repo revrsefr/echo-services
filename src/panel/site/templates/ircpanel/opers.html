@@ -1,0 +1,26 @@
+{% extends "ircpanel/base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Opérateurs" %}{% endblock %}
+{% block heading %}{% trans "Comptes opérateur" %} <span class="ircp-count">{{ opers|length }}</span>{% endblock %}
+{% block eyebrow %}{% trans "Système" %}{% endblock %}
+{% block subtitle %}{% trans "Les opérateurs IRC et leurs blocs oper." %}{% endblock %}
+{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V5l-8-3z"/></svg>{% endblock %}
+
+{% block content %}
+<div class="up-card">
+  <table class="ircp-table">
+    <thead><tr><th>{% trans "Compte oper" %}</th><th>{% trans "Type / classe" %}</th><th class="r">{% trans "Connectés" %}</th></tr></thead>
+    <tbody>
+      {% for o in opers %}
+      <tr>
+        <td><b>{{ o.name }}</b></td>
+        <td class="muted">{{ o.type|default:"—" }}</td>
+        <td class="r">{% if o.online %}<span class="ircp-tag ircp-tag--oper">{{ o.online }} en ligne</span>{% else %}<span class="muted">0</span>{% endif %}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="3" class="ircp-empty">{% trans "Aucun compte oper configuré." %}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

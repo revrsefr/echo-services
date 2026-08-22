@@ -1,0 +1,154 @@
+{% extends "ircpanel/base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Spamfilter" %}{% endblock %}
+{% block heading %}{% trans "Spamfilter" %} <span class="ircp-count">{{ filters|length }}</span>{% endblock %}
+{% block eyebrow %}{% trans "Protection" %}{% endblock %}
+{% block subtitle %}{% trans "Règles de filtrage anti-spam du réseau." %}{% endblock %}
+{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.5V19l4 2v-8.5L22 3z"/></svg>{% endblock %}
+{% block topright %}<div class="ircp-search"><input type="text" id="sfSearch" autocomplete="off" placeholder="{% trans "Filtrer (motif, raison)…" %}"></div>{% endblock %}
+
+{% block content %}
+{% if 'spamfilter' in panel_perms %}
+<div class="ircp-card ircp-card--form">
+  <h3 id="sfFormTitle">{% trans "Ajouter un filtre" %}</h3>
+  <form method="post" action="{% url 'ircpanel:spamfilter_add' %}" class="ircp-form" id="sfForm">
+    {% csrf_token %}
+    <input type="hidden" name="original" id="sf_original" value="">
+    <label class="ircp-form-grow">{% trans "Motif (regex)" %} <input type="text" name="pattern" id="sf_pattern" placeholder="(?i)(viagra|casino|free.?money)" required></label>
+    <label>{% trans "Action" %}
+      <select name="action" id="sf_action">{% for a in actions %}<option value="{{ a }}">{{ a }}</option>{% endfor %}</select>
+    </label>
+    <label>{% trans "Cibles (flags)" %} <input type="text" name="flags" id="sf_flags" value="*" style="width:90px"></label>
+    <label>{% trans "Durée (s)" %} <input type="number" name="duration" id="sf_duration" value="0" min="0" style="width:110px"></label>
+    <label class="ircp-form-grow">{% trans "Raison" %} <input type="text" name="reason" id="sf_reason" placeholder="{% trans "Raison" %}"></label>
+    <button type="submit" class="ircp-btn">{% trans "Enregistrer" %}</button>
+    <button type="button" class="ircp-btn ircp-btn--danger" id="sfCancel" style="display:none">{% trans "Annuler" %}</button>
+  </form>
+
+  <!-- ── Regex assistant (PCRE2 — the engine the ircd uses) ──────────────── -->
+  <div class="sf-helper">
+    <div class="sf-helper-h">
+      <svg viewBox="0 0 24 24"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+      {% trans "Assistant regex" %}
+      <span class="sf-engine">PCRE2</span>
+    </div>
+    <div class="sf-helper-body">
+      <div class="sf-col">
+        <div class="sf-lbl">{% trans "Briques (cliquer pour insérer)" %}</div>
+        <div class="sf-snippets">
+          <button type="button" class="sf-snip" data-ins="(?i)" title="{% trans "Insensible à la casse" %}">(?i)<em>{% trans "casse" %}</em></button>
+          <button type="button" class="sf-snip" data-ins="(mot1|mot2|mot3)" title="{% trans "Un parmi plusieurs mots" %}">(a|b|c)<em>{% trans "ou" %}</em></button>
+          <button type="button" class="sf-snip" data-ins="\bmot\b" title="{% trans "Mot entier" %}">\b…\b<em>{% trans "mot exact" %}</em></button>
+          <button type="button" class="sf-snip" data-ins="https?://\S+" title="{% trans "Une URL" %}">https?://\S+<em>URL</em></button>
+          <button type="button" class="sf-snip" data-ins="\d{4,}" title="{% trans "Plusieurs chiffres" %}">\d{4,}<em>{% trans "chiffres" %}</em></button>
+          <button type="button" class="sf-snip" data-ins="(.)\1{4,}" title="{% trans "Caractère répété (flood)" %}">(.)\1{4,}<em>{% trans "répétition" %}</em></button>
+          <button type="button" class="sf-snip" data-ins=".*" title="{% trans "N'importe quoi" %}">.*<em>{% trans "tout" %}</em></button>
+        </div>
+        <div class="sf-lbl" style="margin-top:12px">{% trans "Exemples prêts à l'emploi" %}</div>
+        <div class="sf-examples">
+          <button type="button" class="sf-ex" data-set="(?i)(viagra|cialis|casino|porn)">{% trans "Spam pub" %}</button>
+          <button type="button" class="sf-ex" data-set="(?i)https?://(bit\.ly|tinyurl|t\.me)/\S+">{% trans "Liens raccourcis" %}</button>
+          <button type="button" class="sf-ex" data-set="(.)\1{7,}">{% trans "Flood de caractères" %}</button>
+          <button type="button" class="sf-ex" data-set="(?i)free.{0,10}(nitro|robux|gift.?card)">{% trans "Arnaque cadeaux" %}</button>
+        </div>
+      </div>
+      <div class="sf-col">
+        <div class="sf-lbl">{% trans "Tester le motif" %}</div>
+        <input type="text" id="sfTest" class="sf-testin" placeholder="{% trans "ex : viens gagner ta Nitro gratuite ici" %}" value="viens gagner ta Nitro gratuite ici">
+        <div class="sf-result" id="sfResult">{% trans "Saisis un motif ci-dessus pour le tester." %}</div>
+        <p class="sf-note">{% blocktrans %}Le moteur du serveur est <b>PCRE2</b>. Drapeaux : <code>p</code> privé · <code>n</code> notice · <code>P</code> part · <code>q</code> quit · <code>*</code> tout. <code>gline</code>/<code>zline</code>/<code>shun</code> exigent une durée. Les filtres <b>config</b> sont verrouillés.{% endblocktrans %}</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div class="ufilters" id="sffilters">
+  <button type="button" class="ufilter is-active" data-f="all"><b>{{ sfstats.total }}</b><span>{% trans "Tous" %}</span></button>
+  <button type="button" class="ufilter" data-f="runtime"><b>{{ sfstats.runtime }}</b><span>runtime</span></button>
+  <button type="button" class="ufilter" data-f="config"><b>{{ sfstats.config }}</b><span>config</span></button>
+  <div class="ufilter ufilter--static"><b>{{ sfstats.blocking }}</b><span>{% trans "Bloquants" %}</span></div>
+</div>
+
+<div class="up-card proster">
+  <div class="prow-head sfrow"><span>{% trans "Action" %}</span><span>Motif</span><span>{% trans "Source" %}</span><span></span></div>
+  <div id="sfRoster">
+    {% for f in filters %}
+    <div class="prow sfrow" data-src="{% if f.from_config %}config{% else %}runtime{% endif %}" data-s="{{ f.name|lower }} {{ f.reason|lower }}">
+      <span class="up-chip up-act-{{ f.ban_action|default:'warn' }} sf-actchip">{{ f.ban_action|default:"warn" }}</span>
+      <span class="prow-main">
+        <span class="prow-mask mono">{{ f.name }}</span>
+        <span class="prow-reason">{{ f.reason|default:"—" }}<span class="sf-meta"> · {% trans "cibles" %} {{ f.spamfilter_targets|default:"*" }}{% if f.ban_duration_string %} · {{ f.ban_duration_string }}{% endif %}</span></span>
+      </span>
+      <span class="sf-src">{% if f.from_config %}<span class="ircp-tag ircp-tag--away">config</span>{% else %}<span class="ircp-tag ircp-tag--oper">runtime</span>{% endif %}</span>
+      <span class="prow-act" style="white-space:nowrap">
+        {% if f.from_config %}<span class="muted" style="font-size:.74rem">🔒 {% trans "verrouillé" %}</span>
+        {% elif 'spamfilter' in panel_perms %}
+          <button type="button" class="ircp-btn sf-edit" data-pattern="{{ f.name }}" data-action="{{ f.ban_action }}" data-flags="{{ f.spamfilter_targets }}" data-reason="{{ f.reason }}" style="padding:5px 11px">{% trans "Modifier" %}</button>
+          <form method="post" action="{% url 'ircpanel:spamfilter_del' %}" style="display:inline" data-confirm="{% trans "Retirer ce filtre ?" %}">
+            {% csrf_token %}<input type="hidden" name="pattern" value="{{ f.name }}">
+            <button type="submit" class="ircp-btn ircp-btn--danger">{% trans "Retirer" %}</button>
+          </form>
+        {% endif %}
+      </span>
+    </div>
+    {% empty %}<div class="prow-empty">{% trans "Aucun filtre." %}</div>{% endfor %}
+  </div>
+  <div class="prow-empty" id="sfEmpty" hidden>{% trans "Aucun filtre ne correspond." %}</div>
+</div>
+
+<script nonce="{{ request.csp_nonce }}">
+(function () {
+  /* regex assistant: insert bricks, load examples, live-test against PCRE2-ish */
+  var pat = document.getElementById("sf_pattern");
+  var test = document.getElementById("sfTest");
+  var res = document.getElementById("sfResult");
+  function insert(txt) {
+    if (!pat) return;
+    var s = pat.selectionStart || pat.value.length, e = pat.selectionEnd || pat.value.length;
+    pat.value = pat.value.slice(0, s) + txt + pat.value.slice(e);
+    pat.focus(); pat.selectionStart = pat.selectionEnd = s + txt.length; run();
+  }
+  document.querySelectorAll(".sf-snip").forEach(function (b) { b.addEventListener("click", function () { insert(b.dataset.ins); }); });
+  document.querySelectorAll(".sf-ex").forEach(function (b) { b.addEventListener("click", function () { if (pat) { pat.value = b.dataset.set; run(); pat.focus(); } }); });
+  function buildRe(p) {
+    var flags = "", m = p.match(/^\(\?([a-z]+)\)/);   // PCRE inline (?i) → JS flag
+    if (m) { flags = m[1].replace(/[^gimsuy]/g, ""); p = p.slice(m[0].length); }
+    return new RegExp(p, flags);
+  }
+  function run() {
+    if (!res) return;
+    var p = (pat && pat.value || "").trim(), t = (test && test.value) || "";
+    res.className = "sf-result";
+    if (!p) { res.textContent = "{% trans "Saisis un motif ci-dessus pour le tester." %}"; return; }
+    try {
+      var re = buildRe(p), m = re.exec(t);
+      if (m) { res.classList.add("is-hit"); res.innerHTML = "✓ {% trans "Correspond" %} — « <b>" + (m[0] || "").replace(/[<>&]/g, "") + "</b> »"; }
+      else { res.classList.add("is-miss"); res.textContent = "✗ {% trans "Ne correspond pas" %}"; }
+    } catch (err) { res.classList.add("is-bad"); res.textContent = "⚠ {% trans "Regex invalide" %} : " + err.message; }
+  }
+  if (pat) pat.addEventListener("input", run);
+  if (test) test.addEventListener("input", run);
+  run();
+
+  /* roster filter + search */
+  var rows = [].slice.call(document.querySelectorAll("#sfRoster .prow"));
+  var empty = document.getElementById("sfEmpty"), search = document.getElementById("sfSearch"), curF = "all";
+  function apply() {
+    var q = (search && search.value || "").trim().toLowerCase(), shown = 0;
+    rows.forEach(function (r) {
+      var ok = (curF === "all" || r.dataset.src === curF) && (!q || r.dataset.s.indexOf(q) > -1);
+      r.style.display = ok ? "" : "none"; if (ok) shown++;
+    });
+    if (empty) empty.hidden = shown > 0;
+  }
+  document.querySelectorAll("#sffilters .ufilter[data-f]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll("#sffilters .ufilter").forEach(function (x) { x.classList.remove("is-active"); });
+      b.classList.add("is-active"); curF = b.dataset.f; apply();
+    });
+  });
+  if (search) search.addEventListener("input", apply);
+})();
+</script>
+{% endblock %}

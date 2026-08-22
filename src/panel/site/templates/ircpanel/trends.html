@@ -1,0 +1,71 @@
+{% extends "ircpanel/base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Tendances" %}{% endblock %}
+{% block heading %}{% trans "Tendances du réseau" %}{% endblock %}
+{% block eyebrow %}{% trans "Analytique" %}{% endblock %}
+{% block subtitle %}{% trans "L'évolution du réseau au fil du temps." %}{% endblock %}
+{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg>{% endblock %}
+{% block topright %}<span class="up-pill">{{ count }} instantané{{ count|pluralize }}{% if since %} · depuis {{ since|date:"d/m H:i" }}{% endif %}</span>{% endblock %}
+
+{% block content %}
+<div class="up-range">
+  {% for r in ranges %}
+  <a class="up-range-tab {% if r == range %}is-active{% endif %}" href="?range={{ r }}">{{ r }}</a>
+  {% endfor %}
+</div>
+
+{% if count < 2 %}
+<div class="up-card"><div class="ircp-empty" style="padding:30px">
+  {% blocktrans %}Pas encore assez de données sur cette plage. Un instantané est pris toutes les 30 min (commande <code>snapshot_network</code>). Revenez bientôt — les courbes apparaîtront ici.{% endblocktrans %}
+</div></div>
+{% else %}
+{% for p in panels %}
+<div class="up-card up-trend-card" style="margin-bottom:18px">
+  <div class="up-trend-h">
+    <span class="t">{{ p.label }}</span>
+    <span class="pk">pic {{ p.peak }} · min {{ p.low }}</span>
+    <span class="n">{{ p.now }}</span>
+  </div>
+  {% if p.spark.points %}
+  <div class="up-trend-wrap" data-points='{{ p.data }}'>
+    <svg class="up-trend-svg" viewBox="0 0 {{ p.spark.w }} {{ p.spark.h }}" preserveAspectRatio="none">
+      <polygon class="area" points="{{ p.spark.area }}"/>
+      <polyline points="{{ p.spark.points }}"/>
+      <line class="cross" x1="0" y1="0" x2="0" y2="{{ p.spark.h }}" style="display:none"/>
+      <circle class="cdot" r="3" style="display:none"/>
+    </svg>
+    <div class="up-trend-tip" style="display:none"></div>
+  </div>
+  {% else %}<div class="ircp-empty">—</div>{% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+<script nonce="{{ request.csp_nonce }}">
+document.querySelectorAll(".up-trend-wrap").forEach(function (wrap) {
+  var pts; try { pts = JSON.parse(wrap.dataset.points || "[]"); } catch (e) { pts = []; }
+  if (!pts.length) return;
+  var svg = wrap.querySelector("svg"), VB = 560;
+  var cross = svg.querySelector(".cross"), dot = svg.querySelector(".cdot"), tip = wrap.querySelector(".up-trend-tip");
+  wrap.addEventListener("mousemove", function (ev) {
+    var rect = wrap.getBoundingClientRect();
+    var px = ev.clientX - rect.left;
+    var vx = px / rect.width * VB;                 // mouse x in viewBox units
+    var best = 0, bd = 1e9;
+    for (var i = 0; i < pts.length; i++) { var d = Math.abs(parseFloat(pts[i].x) - vx); if (d < bd) { bd = d; best = i; } }
+    var p = pts[best];
+    var px2 = parseFloat(p.x) / VB * rect.width;
+    cross.style.display = ""; cross.setAttribute("x1", p.x); cross.setAttribute("x2", p.x);
+    dot.style.display = ""; dot.setAttribute("cx", p.x);
+    // find the matching y from the polyline points
+    var poly = svg.querySelector("polyline").getAttribute("points").split(" ")[best];
+    if (poly) dot.setAttribute("cy", poly.split(",")[1]);
+    tip.style.display = ""; tip.innerHTML = "<b>" + p.v + "</b><span>" + p.t + "</span>";
+    tip.style.left = Math.min(Math.max(px2, 30), rect.width - 30) + "px";
+  });
+  wrap.addEventListener("mouseleave", function () {
+    cross.style.display = "none"; dot.style.display = "none"; tip.style.display = "none";
+  });
+});
+</script>
+{% endblock %}

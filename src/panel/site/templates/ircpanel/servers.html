@@ -1,0 +1,90 @@
+{% extends "ircpanel/base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Serveurs" %}{% endblock %}
+{% block heading %}{% trans "Réseau de serveurs" %} <span class="ircp-count">{{ servers|length }}</span>{% endblock %}
+{% block eyebrow %}{% trans "Réseau" %}{% endblock %}
+{% block subtitle %}{% trans "Les serveurs liés et la topologie du réseau." %}{% endblock %}
+{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg>{% endblock %}
+
+{% block content %}
+{% if servers %}
+<!-- ── HERO ─────────────────────────────────────────────────────────────── -->
+<div class="srv-hero">
+  <div class="srv-hero-ico">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6"/></svg>
+  </div>
+  <div class="srv-hero-main">
+    <div class="srv-hero-name">{{ hub_name }}</div>
+    <div class="srv-hero-sub">{% trans "Hub du réseau" %} · {{ net_stats.count }} {% trans "serveurs" %}</div>
+  </div>
+  <div class="srv-hero-stats">
+    <div class="srv-stat"><b>{{ net_stats.users }}</b><span>{% trans "utilisateurs" %}</span></div>
+    <div class="srv-stat"><b>{{ net_stats.opers }}</b><span>{% trans "opérateurs" %}</span></div>
+    <div class="srv-stat"><b>{{ net_stats.count }}</b><span>{% trans "serveurs" %}</span></div>
+    <div class="srv-stat"><b>{{ net_stats.max_lag }}</b><span>{% trans "ms (lag max)" %}</span></div>
+  </div>
+</div>
+
+<!-- ── TOPOLOGY GRAPH ───────────────────────────────────────────────────── -->
+<div class="up-card srv-topo">
+  <div class="up-card-h"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><path d="M8.5 7.5 11 15.5M15.5 7.5 13 15.5M9 6h6"/></svg> {% trans "Topologie du réseau" %}</div>
+  <div class="srv-topo-scroll">
+    <ul class="net-tree">
+      {% for r in tree %}{% include "ircpanel/_net_node.html" with node=r is_root=True %}{% endfor %}
+    </ul>
+  </div>
+</div>
+
+<!-- ── TOOLS ────────────────────────────────────────────────────────────── -->
+{% if 'notice' in panel_perms or 'server' in panel_perms %}
+<div class="up-grid2" style="margin-bottom:18px">
+  {% if 'notice' in panel_perms %}<div class="up-card ircp-card--form">
+    <h3>📢 {% trans "Diffuser une notice" %}</h3>
+    <form method="post" action="{% url 'ircpanel:send_notice' %}" class="ircp-form">
+      {% csrf_token %}<input type="hidden" name="next" value="{{ request.path }}">
+      <label>{% trans "Cible" %} <input type="text" name="target" value="*" placeholder="* / #salon / nick" style="width:140px"></label>
+      <label class="ircp-form-grow">{% trans "Message" %} <input type="text" name="message" placeholder="{% trans "Annonce au réseau…" %}" required></label>
+      <button type="submit" class="ircp-btn">{% trans "Envoyer" %}</button>
+    </form>
+    <p class="muted" style="margin:10px 2px 0;font-size:.78rem">{% blocktrans %}<b>*</b> = tous · <b>#salon</b> = membres · <b>nick</b> = un utilisateur{% endblocktrans %}</p>
+  </div>{% endif %}
+  {% if 'server' in panel_perms %}<div class="up-card ircp-card--form">
+    <h3>🔧 {% trans "Maintenance" %}</h3>
+    <form method="post" action="{% url 'ircpanel:server_rehash' %}" data-confirm="{% trans "Recharger la configuration du serveur (REHASH) ?" %}">
+      {% csrf_token %}<button type="submit" class="ircp-btn">{% trans "Recharger la config (REHASH)" %}</button>
+    </form>
+    <form method="post" action="{% url 'ircpanel:server_connect' %}" class="ircp-form" style="margin-top:12px">
+      {% csrf_token %}
+      <label class="ircp-form-grow">{% trans "Lier un serveur" %} <input type="text" name="name" placeholder="{% trans "nom du <link>" %}" required></label>
+      <button type="submit" class="ircp-btn">{% trans "Connecter" %}</button>
+    </form>
+    <p class="muted" style="margin:10px 2px 0;font-size:.78rem">{% blocktrans %}Le serveur doit être défini dans un bloc <code>&lt;link&gt;</code>.{% endblocktrans %}</p>
+  </div>{% endif %}
+</div>
+{% endif %}
+
+<!-- ── SERVER CARDS ─────────────────────────────────────────────────────── -->
+<div class="mod-group-h" style="margin-top:6px"><span class="mod-group-ico">🖥️</span> {% trans "Détail des serveurs" %}</div>
+<div class="ircp-srv-grid">
+  {% for s in servers %}
+  <div class="ircp-srv">
+    <div class="ircp-srv-name">🖧 <a href="{% url 'ircpanel:server_detail' s.name %}">{{ s.name }}</a></div>
+    <div class="ircp-srv-desc">{{ s.server.info|default:"" }}</div>
+    <div class="ircp-srv-meta">
+      <span><b>{{ s.server.num_users }}</b> users</span>
+      <span><b>{{ s.server.num_opers }}</b> opers</span>
+      <span><b>{{ s.server.latency_ms }}</b> ms</span>
+    </div>
+    {% if s.server.uplink %}<div class="ircp-srv-parent">↑ {{ s.server.uplink }}</div>{% else %}<div class="ircp-srv-parent">★ {% trans "hub du réseau" %}</div>{% endif %}
+    {% if 'server' in panel_perms and s.server.uplink %}<form method="post" action="{% url 'ircpanel:server_disconnect' %}" style="margin-top:12px"
+          data-confirm="⚠ DÉLIER {{ s.name }} ?  Tous les utilisateurs de ce serveur seront déconnectés (netsplit).">
+      {% csrf_token %}<input type="hidden" name="name" value="{{ s.name }}">
+      <button type="submit" class="ircp-btn ircp-btn--danger" style="width:100%">{% trans "Délier (SQUIT)" %}</button>
+    </form>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="up-card"><div class="ircp-empty">{% trans "Aucun serveur." %}</div></div>
+{% endif %}
+{% endblock %}

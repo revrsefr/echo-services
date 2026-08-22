@@ -1,0 +1,79 @@
+{% extends "ircpanel/base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Bans" %}{% endblock %}
+{% block heading %}{% trans "Bans serveur" %} <span class="ircp-count">{{ bans|length }}</span>{% endblock %}
+{% block eyebrow %}{% trans "Protection" %}{% endblock %}
+{% block subtitle %}{% trans "Bans serveur : G-line, K-line, Z-line et plus." %}{% endblock %}
+{% block hero_icon %}<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>{% endblock %}
+{% block topright %}<div class="ircp-search"><input type="text" id="banSearch" autocomplete="off" placeholder="{% trans "Filtrer (masque, raison, oper)…" %}"></div>{% endblock %}
+
+{% block content %}
+{% if 'ban' in panel_perms %}
+<div class="ircp-card ircp-card--form">
+  <h3>{% trans "Ajouter un ban" %}</h3>
+  <form method="post" action="{% url 'ircpanel:ban_add' %}" class="ircp-form">
+    {% csrf_token %}
+    <label>{% trans "Type" %}
+      <select name="type">{% for val, lbl in ban_types %}<option value="{{ val }}">{{ lbl }}</option>{% endfor %}</select>
+    </label>
+    <label>{% trans "Masque" %} <input type="text" name="mask" placeholder="{% trans "*@1.2.3.4 ou badnick" %}" required></label>
+    <label>{% trans "Durée (s, 0 = permanent)" %} <input type="number" name="duration" value="0" min="0"></label>
+    <label class="ircp-form-grow">{% trans "Raison" %} <input type="text" name="reason" placeholder="{% trans "Raison" %}"></label>
+    <button type="submit" class="ircp-btn">{% trans "Ajouter" %}</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="ufilters" id="banfilters">
+  <button type="button" class="ufilter is-active" data-f="all"><b>{{ bstats.total }}</b><span>{% trans "Tous" %}</span></button>
+  <button type="button" class="ufilter" data-f="gline"><b>{{ bstats.gline }}</b><span>G-Line</span></button>
+  <button type="button" class="ufilter" data-f="kline"><b>{{ bstats.kline }}</b><span>K-Line</span></button>
+  <button type="button" class="ufilter" data-f="zline"><b>{{ bstats.zline }}</b><span>Z-Line</span></button>
+  <button type="button" class="ufilter" data-f="shun"><b>{{ bstats.shun }}</b><span>Shun</span></button>
+  <div class="ufilter ufilter--static"><b>{{ bstats.perm }}</b><span>{% trans "Permanents" %}</span></div>
+</div>
+
+<div class="up-card proster is-typed">
+  <div class="prow-head"><span>{% trans "Type" %}</span><span>{% trans "Masque" %}</span><span>{% trans "Par" %}</span><span>{% trans "Expire" %}</span><span></span></div>
+  <div id="banRoster">
+    {% for b in bans %}
+    <div class="prow" data-type="{{ b.type }}" data-s="{{ b.name|lower }} {{ b.reason|lower }} {{ b.set_by|lower }}">
+      <span class="ptag ptag--{{ b.type }}">{{ b.type_string|default:b.type }}</span>
+      <span class="prow-main"><span class="prow-mask mono">{{ b.name }}</span><span class="prow-reason">{{ b.reason|default:"—" }}</span></span>
+      <span class="prow-by">{{ b.set_by }}</span>
+      <span class="prow-exp {% if not b.expire_dt %}is-perm{% endif %}">{% if b.expire_dt %}{{ b.expire_dt|date:"d/m/Y H:i" }}{% else %}{% trans "permanent" %}{% endif %}</span>
+      <span class="prow-act">{% if 'ban' in panel_perms %}<form method="post" action="{% url 'ircpanel:ban_del' %}" data-confirm="{% trans "Retirer ce ban ?" %}">
+        {% csrf_token %}<input type="hidden" name="type" value="{{ b.type }}"><input type="hidden" name="mask" value="{{ b.name }}">
+        <button type="submit" class="ircp-btn ircp-btn--danger">{% trans "Retirer" %}</button>
+      </form>{% endif %}</span>
+    </div>
+    {% empty %}<div class="prow-empty">{% trans "Aucun ban actif." %}</div>{% endfor %}
+  </div>
+  <div class="prow-empty" id="banEmpty" hidden>{% trans "Aucun ban ne correspond à ce filtre." %}</div>
+</div>
+
+<script nonce="{{ request.csp_nonce }}">
+(function () {
+  var rows = [].slice.call(document.querySelectorAll("#banRoster .prow"));
+  var empty = document.getElementById("banEmpty");
+  var search = document.getElementById("banSearch");
+  if (!rows.length) return;
+  var curF = "all";
+  function apply() {
+    var q = (search && search.value || "").trim().toLowerCase(), shown = 0;
+    rows.forEach(function (r) {
+      var ok = (curF === "all" || r.dataset.type === curF) && (!q || r.dataset.s.indexOf(q) > -1);
+      r.style.display = ok ? "" : "none"; if (ok) shown++;
+    });
+    if (empty) empty.hidden = shown > 0;
+  }
+  document.querySelectorAll("#banfilters .ufilter[data-f]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll("#banfilters .ufilter").forEach(function (x) { x.classList.remove("is-active"); });
+      b.classList.add("is-active"); curF = b.dataset.f; apply();
+    });
+  });
+  if (search) search.addEventListener("input", apply);
+})();
+</script>
+{% endblock %}

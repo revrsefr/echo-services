@@ -1,0 +1,422 @@
+{% extends "ircpanel/base.html" %}
+{% load i18n panel_extras %}
+{% block title %}{% trans "Aperçu" %}{% endblock %}
+{# Dashboard has its own rich "Control center" hero below, so suppress the shared page-head band. #}
+{% block pagehead %}{% endblock %}
+
+{% block content %}
+{% if stats.me %}
+
+<!-- ── Welcome hero ──────────────────────────────────────────────────────── -->
+<div class="dash-hero">
+  <div class="dash-hero-main">
+    <span class="dash-hero-eyebrow"><span class="dash-hero-dot"></span>{% trans "Centre de contrôle" %}</span>
+    <h2 class="dash-hero-title">{% trans "Bonjour" %}, {{ request.user.username }}</h2>
+    <p class="dash-hero-sub">{% blocktrans with net=stats.me.name %}Voici l'état du réseau {{ net }} en temps réel.{% endblocktrans %}</p>
+    <div class="dash-hero-chips">
+      <span class="dash-chip">{{ stats.me.name }}</span>
+      <span class="dash-chip dash-chip--soft">{{ stats.me.version }}</span>
+      <span class="dash-chip dash-chip--ok">✓ {% trans "Opérationnel" %}</span>
+    </div>
+  </div>
+  <div class="dash-hero-aside">
+    <div class="dash-hero-big"><b data-live="users">{{ stats.user.total }}</b><span>{% trans "en ligne maintenant" %}</span></div>
+    <div class="dash-hero-mini">
+      <span><b data-live="opers">{{ stats.user.oper }}</b> {% trans "opers" %}</span>
+      <span><b data-live="servers">{{ stats.server.total }}</b> {% trans "serveurs" %}</span>
+      <span><b data-live="channels">{{ stats.channel.total }}</b> {% trans "salons" %}</span>
+    </div>
+  </div>
+</div>
+
+{% spaceless %}
+<div class="up-stats">
+  <a class="up-stat frost-success" href="{% url 'ircpanel:users' %}">
+    <span class="up-stat-ico"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+    <div class="up-stat-num" data-live="users">{{ stats.user.total }}</div>
+    <div class="up-stat-lbl">{% trans "Utilisateurs en ligne" %}</div>
+    <div class="up-stat-sub"><span data-live="local">{{ stats.user.local }}</span> {% trans "locaux" %}</div>
+    {% if sparks.users.points %}<svg class="up-spark" viewBox="0 0 {{ sparks.users.w }} {{ sparks.users.h }}" preserveAspectRatio="none"><polyline points="{{ sparks.users.points }}"/></svg>{% endif %}
+  </a>
+  <a class="up-stat frost-info" href="{% url 'ircpanel:channels' %}">
+    <span class="up-stat-ico"><svg viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg></span>
+    <div class="up-stat-num" data-live="channels">{{ stats.channel.total }}</div>
+    <div class="up-stat-lbl">{% trans "Salons" %}</div>
+    <div class="up-stat-sub">&nbsp;</div>
+    {% if sparks.channels.points %}<svg class="up-spark" viewBox="0 0 {{ sparks.channels.w }} {{ sparks.channels.h }}" preserveAspectRatio="none"><polyline points="{{ sparks.channels.points }}"/></svg>{% endif %}
+  </a>
+  <a class="up-stat frost-warning" href="{% url 'ircpanel:users' %}">
+    <span class="up-stat-ico"><svg viewBox="0 0 24 24"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V5l-8-3z"/></svg></span>
+    <div class="up-stat-num" data-live="opers">{{ stats.user.oper }}</div>
+    <div class="up-stat-lbl">{% trans "Opérateurs" %}</div>
+    <div class="up-stat-sub">{% trans "voir dans Utilisateurs ›" %}</div>
+    {% if sparks.opers.points %}<svg class="up-spark" viewBox="0 0 {{ sparks.opers.w }} {{ sparks.opers.h }}" preserveAspectRatio="none"><polyline points="{{ sparks.opers.points }}"/></svg>{% endif %}
+  </a>
+  <a class="up-stat frost-secondary" href="{% url 'ircpanel:servers' %}">
+    <span class="up-stat-ico"><svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg></span>
+    <div class="up-stat-num" data-live="servers">{{ stats.server.total }}</div>
+    <div class="up-stat-lbl">{% trans "Serveurs liés" %}</div>
+    <div class="up-stat-sub">&nbsp;</div>
+  </a>
+  <a class="up-stat frost-danger" href="{% url 'ircpanel:bans' %}">
+    <span class="up-stat-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg></span>
+    <div class="up-stat-num" data-live="bans">{{ ban_count }}</div>
+    <div class="up-stat-lbl">{% trans "Bans serveur" %}</div>
+    <div class="up-stat-sub">&nbsp;</div>
+    {% if sparks.bans.points %}<svg class="up-spark" viewBox="0 0 {{ sparks.bans.w }} {{ sparks.bans.h }}" preserveAspectRatio="none"><polyline points="{{ sparks.bans.points }}"/></svg>{% endif %}
+  </a>
+</div>
+{% endspaceless %}
+
+<!-- ── Quick access — every panel tool, one click away ───────────────────── -->
+<div class="up-card dash-tools-card">
+  <div class="up-card-h">
+    <svg viewBox="0 0 24 24"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>
+    {% trans "Accès rapide" %}
+    <span class="dash-tools-sub">{% trans "Tous les outils du panel, à portée de clic" %}</span>
+  </div>
+  <div class="dash-tools">
+    <a class="dtool dtool--watch" href="{% url 'ircpanel:users' %}"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg></span><b>{% trans "Utilisateurs" %}</b></a>
+    <a class="dtool dtool--watch" href="{% url 'ircpanel:channels' %}"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg></span><b>{% trans "Salons" %}</b></a>
+    <a class="dtool dtool--watch" href="{% url 'ircpanel:servers' %}"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg></span><b>{% trans "Serveurs" %}</b></a>
+    <a class="dtool dtool--watch" href="{% url 'ircpanel:trends' %}"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg></span><b>{% trans "Tendances" %}</b></a>
+    <a class="dtool dtool--guard" href="{% url 'ircpanel:bans' %}"><span class="dtool-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg></span><b>{% trans "Bans serveur" %}</b></a>
+    <a class="dtool dtool--guard" href="{% url 'ircpanel:name_bans' %}"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2M9 20h6M12 4v16"/></svg></span><b>{% trans "Bans de nom" %}</b></a>
+    <a class="dtool dtool--guard" href="{% url 'ircpanel:exceptions' %}"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M9 12l2 2 4-4M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg></span><b>{% trans "Exceptions" %}</b></a>
+    <a class="dtool dtool--guard" href="{% url 'ircpanel:spamfilter' %}"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.5V19l4 2v-8.5L22 3z"/></svg></span><b>{% trans "Spamfilter" %}</b></a>
+    <a class="dtool dtool--guard" href="{% url 'ircpanel:security_groups' %}"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.5-3 7.5-8 10-5-2.5-8-5.5-8-10V6z"/></svg></span><b>{% trans "Groupes de sécurité" %}</b></a>
+    <a class="dtool dtool--sys" href="{% url 'ircpanel:ip_whois' %}"><span class="dtool-ico"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></span><b>{% trans "IP WHOIS" %}</b></a>
+    <a class="dtool dtool--sys" href="{% url 'ircpanel:whowas' %}"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M3 3v5h5M3.05 13a9 9 0 1 0 .5-4.5L3 8M12 7v5l4 2"/></svg></span><b>{% trans "Historique" %}</b></a>
+    <a class="dtool dtool--sys" href="{% url 'ircpanel:logs' %}"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg></span><b>{% trans "Journaux" %}</b></a>
+    <a class="dtool dtool--sys" href="{% url 'ircpanel:opers' %}"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V5l-8-3z"/></svg></span><b>{% trans "Opérateurs" %}</b></a>
+    <a class="dtool dtool--sys" href="{% url 'ircpanel:registrations' %}"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM19 8v6M22 11h-6"/></svg></span><b>{% trans "Inscriptions" %}</b></a>
+    <a class="dtool dtool--sys" href="{% url 'ircpanel:modules' %}"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M21 16V8l-9-5-9 5v8l9 5 9-5zM3 8l9 5 9-5M12 13v8"/></svg></span><b>{% trans "Modules" %}</b></a>
+    {% if 'audit' in panel_perms %}<a class="dtool dtool--sys" href="{% url 'ircpanel:audit' %}"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span><b>{% trans "Journal d'audit" %}</b></a>{% endif %}
+    {% if is_root %}<a class="dtool dtool--sys" href="{% url 'ircpanel:access' %}"><span class="dtool-ico"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v6H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7M9 10V4a3 3 0 0 1 6 0v3"/></svg></span><b>{% trans "Accès & permissions" %}</b></a>{% endif %}
+  </div>
+</div>
+
+<div class="up-card geo-card">
+  <div class="up-card-h">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+    {% trans "Présence du réseau" %}
+    <span class="up-map-stat">
+      <b>{{ geo_total }}</b> {% trans "géolocalisés" %} <span class="up-dotsep">·</span> <b>{{ geo_local }}</b> {% trans "local" %}
+    </span>
+  </div>
+  <div class="geo-grid">
+    <div class="geo-map-pane">
+      <div class="up-map">
+        {{ world_svg|safe }}
+        <div class="up-map-dots" id="upMapDots">
+          {% for d in geo_dots %}
+          <span class="up-map-dot" style="left:{{ d.x }}%;top:{{ d.y }}%"
+                title="{{ d.flag }} {{ d.city|default:d.country }} — {{ d.count }}">
+            <span class="up-map-halo"></span>
+            <span class="up-map-core"></span>
+          </span>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <div class="geo-board">
+      <div class="geo-board-h">{% trans "Top pays" %}</div>
+      <ul class="geo-list">
+        {% for r in geo_rows|slice:":8" %}
+        <li class="geo-item">
+          <span class="geo-flag">{{ r.code|flag }}</span>
+          <span class="geo-main">
+            <span class="geo-name">{{ r.name }}<span class="geo-code">{{ r.code }}</span></span>
+            <span class="geo-bar"><i style="width:{% widthratio r.count geo_max 100 %}%"></i></span>
+          </span>
+          <span class="geo-count">{{ r.count }}</span>
+        </li>
+        {% empty %}
+        <li class="geo-empty">{% trans "Aucun utilisateur géolocalisé." %}</li>
+        {% endfor %}
+      </ul>
+      <div class="geo-foot">
+        <span><b>{{ geo_rows|length }}</b> {% trans "pays" %}</span>
+        <span><b>{{ geo_total }}</b> {% trans "géolocalisés" %}</span>
+        <span><b>{{ geo_local }}</b> {% trans "local" %}</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="up-card up-feed-card">
+  <div class="up-card-h">
+    <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+    {% trans "Flux serveur en direct" %}
+    <span class="up-feed-state" id="upFeedState"><i class="up-feed-pulse"></i>{% trans "live" %}</span>
+  </div>
+  <div class="up-feed-bar">
+    <div class="up-feed-filters">
+      <button type="button" class="ffchip is-active" data-k="all">{% trans "Tout" %} <em>0</em></button>
+      <button type="button" class="ffchip" data-k="conn"><i class="fdot fdot-green"></i>{% trans "Connexions" %} <em>0</em></button>
+      <button type="button" class="ffchip" data-k="mod"><i class="fdot fdot-red"></i>{% trans "Modération" %} <em>0</em></button>
+      <button type="button" class="ffchip" data-k="srv"><i class="fdot fdot-amber"></i>{% trans "Serveur" %} <em>0</em></button>
+      <button type="button" class="ffchip" data-k="oper"><i class="fdot fdot-blue"></i>{% trans "Oper" %} <em>0</em></button>
+    </div>
+  </div>
+  <button type="button" class="up-feed-new" id="upFeedNew" hidden></button>
+  <div class="up-feed" id="upFeed">
+    <div class="up-feed-empty">{% trans "En attente d'événements serveur…" %}</div>
+  </div>
+</div>
+
+<!-- ── Linked network — live server health cards ───────────────────────── -->
+<div class="up-card srvnet-card">
+  <div class="up-card-h">
+    <svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg>
+    {% trans "Réseau lié" %} <span class="ircp-count">{{ servers|length }}</span>
+    <a href="{% url 'ircpanel:servers' %}" class="up-cardlink up-cardlink--right">{% trans "Topologie ›" %}</a>
+  </div>
+  <div class="srvnet">
+    {% for s in servers %}
+    <a class="srvnode" href="{% url 'ircpanel:server_detail' s.name %}">
+      <div class="srvnode-h">
+        <span class="srvnode-ico"><svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg></span>
+        <span class="srvnode-id">
+          <b class="srvnode-name">{{ s.name }}</b>
+          <span class="srvnode-up">{% if s.server.uplink %}↑ {{ s.server.uplink }}{% else %}★ {% trans "hub" %}{% endif %}</span>
+        </span>
+        <span class="srvnode-lag" data-ms="{{ s.server.latency_ms }}"><i class="lagdot"></i>{{ s.server.latency_ms }} ms</span>
+      </div>
+      <div class="srvnode-stats">
+        <span><b>{{ s.server.num_users }}</b> {% trans "users" %}</span>
+        <span><b>{{ s.server.num_opers }}</b> {% trans "opers" %}</span>
+        <span class="srvnode-pct">{% widthratio s.server.num_users stats.user.total 100 %}%</span>
+      </div>
+      <div class="srvnode-share"><i style="width:{% widthratio s.server.num_users stats.user.total 100 %}%"></i></div>
+    </a>
+    {% empty %}<div class="ircp-empty">{% trans "Aucun serveur." %}</div>{% endfor %}
+  </div>
+</div>
+
+<div class="up-grid2">
+  <!-- ── Most active channels — ranked leaderboard ─────────────────────── -->
+  <div class="up-card">
+    <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg> {% trans "Salons les plus actifs" %}
+      <a href="{% url 'ircpanel:channels' %}" class="up-cardlink up-cardlink--right">{% trans "Voir tout ›" %}</a>
+    </div>
+    <div class="chrank-list">
+      {% for c in top_channels %}
+      <a class="chrank" href="{% url 'ircpanel:channel_detail' c.name|chanslug %}">
+        <span class="chrank-pos">{{ forloop.counter }}</span>
+        <span class="chrank-main">
+          <span class="chrank-name">{{ c.name }}</span>
+          <span class="chrank-topic">{{ c.topic|default:"—"|truncatechars:48 }}</span>
+          <span class="chrank-bar"><i style="width:{% widthratio c.num_users top_channels.0.num_users 100 %}%"></i></span>
+        </span>
+        <span class="chrank-count">{{ c.num_users }}</span>
+      </a>
+      {% empty %}<div class="ircp-empty">{% trans "Aucun salon." %}</div>{% endfor %}
+    </div>
+  </div>
+
+  <!-- ── Recent activity — filterable timeline ─────────────────────────── -->
+  <div class="up-card">
+    <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 3M3.05 13a9 9 0 1 0 .5-4.5L3 8"/></svg> {% trans "Activité récente" %}
+      <div class="actfilter">
+        <button type="button" class="actchip is-active" data-f="all">{% trans "Tout" %}</button>
+        <button type="button" class="actchip" data-f="ok">{% trans "Réussies" %}</button>
+        <button type="button" class="actchip" data-f="fail">{% trans "Échouées" %}</button>
+      </div>
+      <a href="{% url 'ircpanel:audit' %}" class="up-cardlink">{% trans "tout voir ›" %}</a>
+    </div>
+    <ul class="actfeed" id="actFeed">
+      {% for e in recent_audit %}
+      <li class="actrow {% if e.success %}is-ok{% else %}is-fail{% endif %}" data-ok="{% if e.success %}1{% else %}0{% endif %}">
+        <span class="actrow-node"></span>
+        <span class="actrow-body">
+          <span class="actrow-line"><b>{{ e.actor_name }}</b><span class="actrow-act">{{ e.action }}</span><span class="actrow-tgt mono">{{ e.target|truncatechars:28 }}</span></span>
+          <span class="actrow-time" title="{{ e.created|humandt }}">{{ e.created|humanago }}</span>
+        </span>
+      </li>
+      {% empty %}<li class="ircp-empty">{% trans "Aucune action enregistrée." %}</li>{% endfor %}
+    </ul>
+  </div>
+</div>
+{% endif %}
+
+<script nonce="{{ request.csp_nonce }}">
+(function () {
+  var LIVE = "{{ live_url }}";
+  var feed = document.getElementById("upFeed");
+  var dotsBox = document.getElementById("upMapDots");
+  var state = document.getElementById("upFeedState");
+  if (!feed) return;
+  var since = 0, ticks = 0, MAXFEED = 80, COUNTS_EVERY = 3; // events ~4s, counts ~12s
+
+  function setNum(key, val) {
+    if (val == null) return;
+    document.querySelectorAll('[data-live="' + key + '"]').forEach(function (el) {
+      if (el.textContent.trim() !== String(val)) {
+        el.textContent = val;
+        el.classList.remove("up-bump"); void el.offsetWidth; el.classList.add("up-bump");
+      }
+    });
+  }
+  function esc(s) { var d = document.createElement("div"); d.textContent = s == null ? "" : s; return d.innerHTML; }
+  function p2(n) { return ("0" + n).slice(-2); }
+  function hhmmss(ts) { var d = new Date((ts || 0) * 1000); return p2(d.getHours()) + ":" + p2(d.getMinutes()) + ":" + p2(d.getSeconds()); }
+
+  // Classify an event. Trust the ircd's own subsystem label first (authoritative),
+  // fall back to the snomask/message text only when the subsystem is unknown.
+  // Kinds: join (connect) · part (disconnect) · mod (enforcement) · oper · srv · log.
+  function kindOf(e) {
+    var sub = (e.subsystem || "").toUpperCase().replace(/[^A-Z]/g, "");
+    if (sub) {
+      if (/^(KILL|XLINE|GLINE|ZLINE|KLINE|DLINE|ELINE|QLINE|RLINE|SHUN|SPAMFILTER|FILTER|DNSBL|BLACKLIST)/.test(sub)) return "mod";
+      if (/^OPER/.test(sub)) return "oper";
+      if (/^(LINK|SQUIT|NETSPLIT|NETJOIN|REHASH|ANNOUNCEMENT|MODULE|SERVER|STATS|SNOTICE|DEBUG)/.test(sub)) return "srv";
+      if (/^(CONNECT|JOIN|ACCEPT|CLIENT)/.test(sub)) return "join";
+      if (/^(QUIT|EXIT|PART|DISCONNECT)/.test(sub)) return "part";
+    }
+    var t = ((e.snomask || "") + " " + (e.msg || "")).toLowerCase();
+    if (/\bkilled\b|g-?line|z-?line|k-?line|spamfilter|dronebl|\bshun\b|\bbanned\b/.test(t)) return "mod";
+    if (/irc operator|opered up|de-?oper/.test(t)) return "oper";
+    if (/netsplit|rehash|new module|module (un)?loaded|squit|linked to|delink/.test(t)) return "srv";
+    if (/connecting|new connection|nouvelle connexion/.test(t)) return "join";
+    if (/exiting|disconnect|\bquit\b|déconnex/.test(t)) return "part";
+    return "log";
+  }
+
+  // ── interactive console: filter chips · live tallies · smart auto-follow ──
+  var newBtn = document.getElementById("upFeedNew");
+  var curFilter = "all", buffer = [], following = true;
+  var counts = { all: 0, join: 0, part: 0, mod: 0, oper: 0, srv: 0, log: 0 };
+
+  // A filter chip maps to one or more event kinds (Connexions = connect + disconnect).
+  function groupTotal(f) {
+    if (f === "all") return counts.all;
+    if (f === "conn") return counts.join + counts.part;
+    return counts[f] || 0;
+  }
+  function rowMatches(k, f) {
+    if (f === "all") return true;
+    if (f === "conn") return k === "join" || k === "part";
+    return k === f;
+  }
+  function updateCounts() {
+    document.querySelectorAll(".ffchip").forEach(function (c) {
+      var em = c.querySelector("em"); if (em) em.textContent = groupTotal(c.dataset.k);
+    });
+  }
+  function applyFilterRow(row) {
+    row.style.display = rowMatches(row.dataset.k, curFilter) ? "" : "none";
+  }
+  function insertRow(e) {
+    var k = kindOf(e);
+    var row = document.createElement("div");
+    row.className = "up-feed-row k-" + k;
+    row.dataset.k = k;
+    row.innerHTML = '<span class="up-feed-dot"></span>' +
+      '<span class="up-feed-time">' + hhmmss(e.timestamp) + '</span>' +
+      '<span class="up-feed-sub">' + esc(e.subsystem || e.snomask || "log") + '</span>' +
+      '<span class="up-feed-msg">' + esc(e.msg) + '</span>';
+    applyFilterRow(row);
+    feed.insertBefore(row, feed.firstChild);
+    counts[k] = (counts[k] || 0) + 1; counts.all++;
+    while (feed.children.length > MAXFEED) feed.removeChild(feed.lastChild);
+  }
+  function flushBuffer() {
+    var b = buffer; buffer = [];
+    if (newBtn) { newBtn.hidden = true; }
+    b.forEach(insertRow);
+    updateCounts();
+    feed.scrollTop = 0; following = true;
+  }
+  function pushEvents(evs) {
+    if (!evs || !evs.length) return;
+    var empty = feed.querySelector(".up-feed-empty"); if (empty) empty.remove();
+    if (!following) {                          // user is reading history → don't yank
+      buffer = evs.concat(buffer);
+      if (newBtn) {
+        newBtn.hidden = false;
+        newBtn.textContent = "↑ " + buffer.length + " nouvel" + (buffer.length > 1 ? "s événements" : " événement");
+      }
+      return;
+    }
+    evs.forEach(insertRow);
+    updateCounts();
+    feed.scrollTop = 0;
+  }
+
+  // chips filter the stream; new rows respect the active filter on arrival
+  document.querySelectorAll(".ffchip").forEach(function (c) {
+    c.addEventListener("click", function () {
+      document.querySelectorAll(".ffchip").forEach(function (x) { x.classList.remove("is-active"); });
+      c.classList.add("is-active");
+      curFilter = c.dataset.k;
+      feed.querySelectorAll(".up-feed-row").forEach(applyFilterRow);
+    });
+  });
+  // follow the live top; if scrolled away, buffer + show the "new events" pill
+  feed.addEventListener("scroll", function () {
+    following = feed.scrollTop <= 6;
+    if (following && buffer.length) flushBuffer();
+  });
+  if (newBtn) newBtn.addEventListener("click", flushBuffer);
+
+  function rebuildDots(dots) {
+    if (!dotsBox || !dots) return;
+    dotsBox.innerHTML = dots.map(function (d) {
+      return '<span class="up-map-dot" style="left:' + d.x + '%;top:' + d.y + '%" title="' +
+        esc((d.flag || "") + " " + (d.city || d.country || "") + " — " + d.count) +
+        '"><span class="up-map-halo"></span><span class="up-map-core"></span></span>';
+    }).join("");
+  }
+
+  function tick() {
+    if (document.hidden) return;             // don't poll a background tab
+    var wantCounts = (ticks % COUNTS_EVERY === 0);
+    ticks++;
+    fetch(LIVE + "?since=" + since + (wantCounts ? "&counts=1" : ""), { headers: { "X-Requested-With": "fetch" } })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (state) { state.textContent = "● live"; state.classList.remove("off"); }
+        if (j.counts) {
+          var c = j.counts;
+          setNum("users", c.users); setNum("local", c.local); setNum("channels", c.channels);
+          setNum("opers", c.opers); setNum("servers", c.servers); setNum("bans", c.bans);
+          rebuildDots(j.geo_dots);
+        }
+        pushEvents(j.events); // first call returns recent history, then only new events
+        if (typeof j.last_id === "number") since = j.last_id;
+      })
+      .catch(function () { if (state) { state.textContent = "● hors-ligne"; state.classList.add("off"); } });
+  }
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) { ticks = 0; tick(); } });
+  tick();
+  setInterval(tick, 4000);
+})();
+</script>
+
+<script nonce="{{ request.csp_nonce }}">
+/* Linked-network: colour each server's lag dot by latency (green/amber/red). */
+(function () {
+  document.querySelectorAll(".srvnode-lag[data-ms]").forEach(function (el) {
+    var ms = parseFloat(el.getAttribute("data-ms")) || 0;
+    el.classList.add(ms <= 30 ? "lag-good" : ms <= 120 ? "lag-warn" : "lag-bad");
+  });
+})();
+/* Recent-activity: filter chips (Tout / Réussies / Échouées). */
+(function () {
+  var feed = document.getElementById("actFeed");
+  if (!feed) return;
+  document.querySelectorAll(".actchip").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll(".actchip").forEach(function (x) { x.classList.remove("is-active"); });
+      b.classList.add("is-active");
+      var f = b.dataset.f;
+      feed.querySelectorAll(".actrow").forEach(function (r) {
+        var ok = r.dataset.ok === "1";
+        r.style.display = (f === "all" || (f === "ok" && ok) || (f === "fail" && !ok)) ? "" : "none";
+      });
+    });
+  });
+})();
+</script>
+{% endblock %}

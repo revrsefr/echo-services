@@ -1,0 +1,41 @@
+{% extends "ircpanel/base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Journal d'audit" %}{% endblock %}
+{% block heading %}{% trans "Journal d'audit" %} <span class="ircp-count">{{ page.paginator.count }}</span>{% endblock %}
+{% block eyebrow %}{% trans "Système" %}{% endblock %}
+{% block subtitle %}{% trans "Toutes les actions effectuées depuis le panel." %}{% endblock %}
+{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>{% endblock %}
+{% block topright %}
+<form method="get" class="ircp-search"><input type="text" name="q" value="{{ q }}" placeholder="{% trans "Acteur / action / cible…" %}"><button>{% trans "Filtrer" %}</button></form>
+{% endblock %}
+
+{% block content %}
+<div class="up-card">
+  <table class="ircp-table">
+    <thead><tr><th>{% trans "Date" %}</th><th>{% trans "Acteur" %}</th><th>{% trans "Action" %}</th><th>{% trans "Cible" %}</th><th>{% trans "Détail" %}</th><th>IP</th><th></th></tr></thead>
+    <tbody>
+      {% for e in page %}
+      <tr>
+        <td class="muted" style="white-space:nowrap">{{ e.created|date:"d/m/Y H:i:s" }}</td>
+        <td><b>{{ e.actor_name }}</b></td>
+        <td><span class="ircp-tag {% if e.success %}ircp-tag--oper{% else %}ircp-tag--ban{% endif %}">{{ e.action }}</span></td>
+        <td class="mono">{{ e.target|truncatechars:42 }}</td>
+        <td class="muted">{{ e.detail|truncatechars:54 }}</td>
+        <td class="mono muted">{{ e.ip|default:"—" }}</td>
+        <td class="r">{% if not e.success %}<span class="ircp-tag ircp-tag--ban">{% trans "échec" %}</span>{% endif %}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7" class="ircp-empty">{% trans "Aucune action enregistrée." %}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if page.has_other_pages %}
+<div class="up-actions" style="justify-content:center;gap:8px">
+  {% if page.has_previous %}<a class="ircp-btn" href="?q={{ q }}&page={{ page.previous_page_number }}">{% trans "← Précédent" %}</a>{% endif %}
+  <span class="up-pill">Page {{ page.number }} / {{ page.paginator.num_pages }}</span>
+  {% if page.has_next %}<a class="ircp-btn" href="?q={{ q }}&page={{ page.next_page_number }}">{% trans "Suivant →" %}</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,22 @@
+{% load i18n %}
+<li>
+  <div class="net-node {% if is_root %}is-hub{% endif %}">
+    <span class="net-node-ico">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/></svg>
+    </span>
+    <span class="net-node-body">
+      <a class="net-node-name" href="{% url 'ircpanel:server_detail' node.name %}">{{ node.name }}</a>
+      <span class="net-node-meta">
+        <span title="utilisateurs">👤 {{ node.server.num_users }}</span>
+        <span title="opérateurs">⚡ {{ node.server.num_opers }}</span>
+        <span class="net-lag {% if node.server.latency_ms > 100 %}is-high{% endif %}" title="{% trans "latence" %}">{{ node.server.latency_ms }} ms</span>
+      </span>
+    </span>
+    {% if is_root %}<span class="net-hub-badge">HUB</span>{% endif %}
+  </div>
+  {% if node.kids %}
+  <ul>
+    {% for c in node.kids %}{% include "ircpanel/_net_node.html" with node=c is_root=False %}{% endfor %}
+  </ul>
+  {% endif %}
+</li>

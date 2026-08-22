@@ -1,0 +1,168 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Swaygo THEME TOKENS — single source of truth for colour.
+ * :root = LIGHT (default).  [data-theme="dark"] = DARK.
+ * --ink-* = foreground "ink" at an alpha: black-on-light / white-on-dark, so the
+ * thousands of former rgba(255,255,255,a) values flip correctly in both modes.
+ * Brand orange + status colours stay identical in both themes.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+:root {
+  color-scheme: light;
+  --bg: #f4f4f6;
+  --bg-2: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f0eff2;
+  --surface-3: #e7e6ea;
+  --surface-rgb: 255, 255, 255;   /* for translucent glass panels: rgba(var(--surface-rgb), a) */
+  --contrast: #101013;            /* intentional dark blocks (marquee/selections/partners) — always light text on it */
+  --text: #16161a;
+  --text-muted: #50505a;
+  --text-subtle: #8a8a94;
+  --accent: #ff6b00;
+  --accent-2: #ff8c1a;
+  --accent-3: #ff9f45;
+  /* Semantic palette (status / accent-rgb / scrim) — tokenised, theme-shared */
+  --accent-rgb: 255, 107, 0;
+  --accent2-rgb: 255, 140, 26;
+  --on-accent: #ffffff;
+  --green: #22c55e; --green-2: #4ade80; --green-rgb: 74, 222, 128;
+  --red: #ef4444; --red-2: #f87171; --red-rgb: 248, 113, 113;
+  --yellow: #fbbf24; --gold: #fcd34d; --yellow-rgb: 251, 191, 36; --gold-rgb: 212, 175, 55;
+  --blue: #6366f1; --blue-2: #93c5fd; --blue-rgb: 99, 179, 237;
+  --purple: #6d28d9; --special-1: #1a0d2e; --special-2: #0f0a1e;
+  --scrim-rgb: 0, 0, 0;
+  --ink-014: rgba(0,0,0,.014);
+  --ink-015: rgba(0,0,0,.015);
+  --ink-018: rgba(0,0,0,.018);
+  --ink-02: rgba(0,0,0,.02);
+  --ink-022: rgba(0,0,0,.022);
+  --ink-025: rgba(0,0,0,.025);
+  --ink-028: rgba(0,0,0,.028);
+  --ink-03: rgba(0,0,0,.03);
+  --ink-035: rgba(0,0,0,.035);
+  --ink-04: rgba(0,0,0,.04);
+  --ink-045: rgba(0,0,0,.045);
+  --ink-05: rgba(0,0,0,.05);
+  --ink-055: rgba(0,0,0,.055);
+  --ink-06: rgba(0,0,0,.06);
+  --ink-07: rgba(0,0,0,.07);
+  --ink-075: rgba(0,0,0,.075);
+  --ink-08: rgba(0,0,0,.08);
+  --ink-09: rgba(0,0,0,.09);
+  --ink-1: rgba(0,0,0,.1);
+  --ink-10: rgba(0,0,0,.10);
+  --ink-11: rgba(0,0,0,.11);
+  --ink-12: rgba(0,0,0,.12);
+  --ink-13: rgba(0,0,0,.13);
+  --ink-14: rgba(0,0,0,.14);
+  --ink-15: rgba(0,0,0,.15);
+  --ink-16: rgba(0,0,0,.16);
+  --ink-18: rgba(0,0,0,.18);
+  --ink-2: rgba(0,0,0,.2);
+  --ink-22: rgba(0,0,0,.22);
+  --ink-24: rgba(0,0,0,.24);
+  --ink-25: rgba(0,0,0,.25);
+  --ink-28: rgba(0,0,0,.28);
+  --ink-3: rgba(0,0,0,.3);
+  --ink-32: rgba(0,0,0,.32);
+  --ink-34: rgba(0,0,0,.34);
+  --ink-35: rgba(0,0,0,.35);
+  --ink-36: rgba(0,0,0,.36);
+  --ink-38: rgba(0,0,0,.38);
+  --ink-4: rgba(0,0,0,.4);
+  --ink-42: rgba(0,0,0,.42);
+  --ink-45: rgba(0,0,0,.45);
+  --ink-48: rgba(0,0,0,.48);
+  --ink-5: rgba(0,0,0,.5);
+  --ink-52: rgba(0,0,0,.52);
+  --ink-55: rgba(0,0,0,.55);
+  --ink-58: rgba(0,0,0,.58);
+  --ink-6: rgba(0,0,0,.6);
+  --ink-62: rgba(0,0,0,.62);
+  --ink-65: rgba(0,0,0,.65);
+  --ink-7: rgba(0,0,0,.7);
+  --ink-72: rgba(0,0,0,.72);
+  --ink-75: rgba(0,0,0,.75);
+  --ink-78: rgba(0,0,0,.78);
+  --ink-8: rgba(0,0,0,.8);
+  --ink-82: rgba(0,0,0,.82);
+  --ink-85: rgba(0,0,0,.85);
+  --ink-88: rgba(0,0,0,.88);
+  --ink-9: rgba(0,0,0,.9);
+  --ink-92: rgba(0,0,0,.92);
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #080809;
+  --bg-2: #0e0e10;
+  --surface: #161618;
+  --surface-2: #202022;
+  --surface-3: #2a2a2c;
+  --surface-rgb: 22, 22, 24;
+  --contrast: #18181d;            /* dark mode → a raised dark panel (distinguishable from --bg) */
+  --text: #ffffff;
+  --text-muted: #eaeaea;
+  --text-subtle: #999999;
+  --accent: #ff6b00;
+  --accent-2: #ff8c1a;
+  --accent-3: #ff9f45;
+  --ink-014: rgba(255,255,255,.014);
+  --ink-015: rgba(255,255,255,.015);
+  --ink-018: rgba(255,255,255,.018);
+  --ink-02: rgba(255,255,255,.02);
+  --ink-022: rgba(255,255,255,.022);
+  --ink-025: rgba(255,255,255,.025);
+  --ink-028: rgba(255,255,255,.028);
+  --ink-03: rgba(255,255,255,.03);
+  --ink-035: rgba(255,255,255,.035);
+  --ink-04: rgba(255,255,255,.04);
+  --ink-045: rgba(255,255,255,.045);
+  --ink-05: rgba(255,255,255,.05);
+  --ink-055: rgba(255,255,255,.055);
+  --ink-06: rgba(255,255,255,.06);
+  --ink-07: rgba(255,255,255,.07);
+  --ink-075: rgba(255,255,255,.075);
+  --ink-08: rgba(255,255,255,.08);
+  --ink-09: rgba(255,255,255,.09);
+  --ink-1: rgba(255,255,255,.1);
+  --ink-10: rgba(255,255,255,.10);
+  --ink-11: rgba(255,255,255,.11);
+  --ink-12: rgba(255,255,255,.12);
+  --ink-13: rgba(255,255,255,.13);
+  --ink-14: rgba(255,255,255,.14);
+  --ink-15: rgba(255,255,255,.15);
+  --ink-16: rgba(255,255,255,.16);
+  --ink-18: rgba(255,255,255,.18);
+  --ink-2: rgba(255,255,255,.2);
+  --ink-22: rgba(255,255,255,.22);
+  --ink-24: rgba(255,255,255,.24);
+  --ink-25: rgba(255,255,255,.25);
+  --ink-28: rgba(255,255,255,.28);
+  --ink-3: rgba(255,255,255,.3);
+  --ink-32: rgba(255,255,255,.32);
+  --ink-34: rgba(255,255,255,.34);
+  --ink-35: rgba(255,255,255,.35);
+  --ink-36: rgba(255,255,255,.36);
+  --ink-38: rgba(255,255,255,.38);
+  --ink-4: rgba(255,255,255,.4);
+  --ink-42: rgba(255,255,255,.42);
+  --ink-45: rgba(255,255,255,.45);
+  --ink-48: rgba(255,255,255,.48);
+  --ink-5: rgba(255,255,255,.5);
+  --ink-52: rgba(255,255,255,.52);
+  --ink-55: rgba(255,255,255,.55);
+  --ink-58: rgba(255,255,255,.58);
+  --ink-6: rgba(255,255,255,.6);
+  --ink-62: rgba(255,255,255,.62);
+  --ink-65: rgba(255,255,255,.65);
+  --ink-7: rgba(255,255,255,.7);
+  --ink-72: rgba(255,255,255,.72);
+  --ink-75: rgba(255,255,255,.75);
+  --ink-78: rgba(255,255,255,.78);
+  --ink-8: rgba(255,255,255,.8);
+  --ink-82: rgba(255,255,255,.82);
+  --ink-85: rgba(255,255,255,.85);
+  --ink-88: rgba(255,255,255,.88);
+  --ink-9: rgba(255,255,255,.9);
+  --ink-92: rgba(255,255,255,.92);
+}
+html, body { background: var(--bg); color: var(--text); }
