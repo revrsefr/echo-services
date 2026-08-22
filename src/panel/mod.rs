@@ -793,7 +793,7 @@ async fn page_opers(oper: Oper, State(st): State<AppState>) -> Html<String> {
         })
         .collect();
     drop(e);
-    rows.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    rows.sort_by_key(|a| a.name.to_lowercase());
     html(OpersTpl { chrome: chrome(&st, &oper, "opers"), rows })
 }
 
@@ -837,7 +837,7 @@ async fn page_registrations(oper: Oper, State(st): State<AppState>) -> Html<Stri
     }
     let days_max = counts.iter().copied().max().unwrap_or(0).max(1);
     let days: Vec<(u32, u64)> = counts.into_iter().map(|c| (c, pct(c as usize, days_max as usize))).collect();
-    accts.sort_by(|a, b| b.ts.cmp(&a.ts));
+    accts.sort_by_key(|a| std::cmp::Reverse(a.ts));
     let recent: Vec<REvt> = accts
         .into_iter()
         .take(14)
@@ -1044,13 +1044,13 @@ async fn page_access(oper: Oper, State(st): State<AppState>) -> Html<String> {
                 name,
                 tier,
                 perms,
-                expires: expires.map(|t| tmpl::fmt_date(t)).unwrap_or_else(|| "permanent".into()),
+                expires: expires.map(tmpl::fmt_date).unwrap_or_else(|| "permanent".into()),
             }
         })
         .collect();
     let _ = now;
     drop(e);
-    grants.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    grants.sort_by_key(|a| a.name.to_lowercase());
     let total = grants.len();
     html(AccessTpl { chrome: chrome(&st, &oper, "access"), grants, total })
 }
@@ -1279,7 +1279,7 @@ async fn health(State(st): State<AppState>) -> Response {
 async fn live(oper: Oper, State(st): State<AppState>, Query(p): Query<HashMap<String, String>>) -> Response {
     let _ = oper;
     let since: u64 = p.get("since").and_then(|s| s.parse().ok()).unwrap_or(0);
-    let want_counts = p.get("counts").is_some();
+    let want_counts = p.contains_key("counts");
     let e = st.engine.lock().await;
     let counts = if want_counts {
         json!({

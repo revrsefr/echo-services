@@ -439,7 +439,7 @@ impl Network {
     /// Every online user, full detail, sorted by nick.
     pub fn users_detailed(&self) -> Vec<NetUser> {
         let mut v: Vec<NetUser> = self.users.values().map(|u| self.to_netuser(u)).collect();
-        v.sort_by(|a, b| a.nick.to_lowercase().cmp(&b.nick.to_lowercase()));
+        v.sort_by_key(|a| a.nick.to_lowercase());
         v
     }
 
