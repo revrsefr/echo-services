@@ -14,9 +14,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::{Form, FromRequestParts, Path, State};
+use axum::extract::{Form, FromRequestParts, Path, Request, State};
 use axum::http::request::Parts;
-use axum::http::{header, HeaderValue};
+use axum::http::{header, HeaderName, HeaderValue};
+use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::Router;
@@ -92,6 +93,7 @@ pub async fn run(engine: Shared, cfg: PanelCfg) {
         .route("/modules", get(page_modules))
         .route("/audit", get(page_audit))
         .route("/access", get(page_access))
+        .layer(middleware::from_fn(security_headers))
         .with_state(state);
 
     let listener = match tokio::net::TcpListener::bind(addr).await {
@@ -102,6 +104,28 @@ pub async fn run(engine: Shared, cfg: PanelCfg) {
     if let Err(e) = axum::serve(listener, app).await {
         tracing::error!(%e, "panel server exited");
     }
+}
+
+// Hardening headers on every response: deny framing (clickjacking), stop MIME
+// sniffing, drop referrers, and a CSP locking sources to self + the font CDN.
+// (Inline scripts/styles are still allowed — the templates carry inline JS/CSS.)
+async fn security_headers(req: Request, next: Next) -> Response {
+    const CSP: &str = "default-src 'self'; img-src 'self' data:; \
+        style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; \
+        font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; \
+        connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; \
+        form-action 'self'; object-src 'none'";
+    let mut resp = next.run(req).await;
+    let h = resp.headers_mut();
+    for (k, v) in [
+        ("x-frame-options", "DENY"),
+        ("x-content-type-options", "nosniff"),
+        ("referrer-policy", "no-referrer"),
+        ("content-security-policy", CSP),
+    ] {
+        h.insert(HeaderName::from_static(k), HeaderValue::from_static(v));
+    }
+    resp
 }
 
 // ---- sessions ------------------------------------------------------------
@@ -148,7 +172,7 @@ fn cookie_value<'a>(header: &'a str, name: &str) -> Option<&'a str> {
 }
 
 fn set_cookie(token: &str) -> String {
-    format!("panel={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_TTL}")
+    format!("panel={token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age={SESSION_TTL}")
 }
 
 // The authenticated operator, extracted (and re-authorised) on every gated page.
@@ -239,7 +263,7 @@ async fn login_submit(State(st): State<AppState>, Form(f): Form<LoginForm>) -> R
 
 async fn logout() -> Response {
     let mut resp = Redirect::to("/login").into_response();
-    let clear = "panel=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
+    let clear = "panel=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0";
     resp.headers_mut().insert(header::SET_COOKIE, HeaderValue::from_static(clear));
     resp
 }
@@ -1072,7 +1096,11 @@ struct AccessTpl {
     total: usize,
 }
 
-async fn page_access(oper: Oper, State(st): State<AppState>) -> Html<String> {
+async fn page_access(oper: Oper, State(st): State<AppState>) -> Response {
+    // Access & permissions is root-only — gate server-side, not just in the nav.
+    if oper.privs.tier() != "root" {
+        return Redirect::to("/").into_response();
+    }
     let e = st.engine.lock().await;
     let grants_raw = e.opers_grants();
     let now = now();
@@ -1092,7 +1120,7 @@ async fn page_access(oper: Oper, State(st): State<AppState>) -> Html<String> {
     drop(e);
     grants.sort_by_key(|a| a.name.to_lowercase());
     let total = grants.len();
-    html(AccessTpl { chrome: chrome(&st, &oper, "access"), grants, total })
+    html(AccessTpl { chrome: chrome(&st, &oper, "access"), grants, total }).into_response()
 }
 
 #[derive(askama::Template)]
