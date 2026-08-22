@@ -1,285 +1,53 @@
-{% load static i18n panel_extras %}<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<script src="{% static 'js/ircpanel.js' %}?v={{ asset_version }}"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow">
-<title>{% block title %}{% trans "Panel IRC" %}{% endblock %} · Tchatou WebPanel</title>
-<link rel="stylesheet" href="{% static 'css/theme.css' %}?v={{ asset_version }}">
-<link rel="stylesheet" href="{% static 'css/ircpanel.css' %}?v={{ asset_version }}">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap">
+<title>{% block title %}Panel{% endblock %} · {{ brand }} WebPanel</title>
+<link rel="stylesheet" href="/static/css/theme.css">
+<link rel="stylesheet" href="/static/css/ircpanel.css">
 </head>
 <body class="ircp" data-panel-theme="inspircd">
-<script nonce="{{ request.csp_nonce }}">try{var _pt=localStorage.getItem('ircpanel-theme');if(_pt)document.body.setAttribute('data-panel-theme',_pt);}catch(e){}</script>
-<script nonce="{{ request.csp_nonce }}">
-  // CSP-safe replacements for former inline handlers (no 'unsafe-inline' needed).
-  document.addEventListener('click', function (e) {
-    var a = e.target.closest && e.target.closest('.js-back');
-    if (a) { e.preventDefault(); history.back(); }
-  });
-  document.addEventListener('change', function (e) {
-    var el = e.target;
-    if (el && el.classList && el.classList.contains('js-autosubmit') && el.form) { el.form.submit(); }
-  });
-</script>
-
-<!-- ── Fixed top navbar (dark) ─────────────────────────────────────────── -->
-<header class=" up-topbar">
-  <button class="up-burger" id="upBurger" aria-label="Menu">
-    <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
-  </button>
-  <a class="up-brand" href="{% url 'ircpanel:dashboard' %}">
-    <span class="up-flame">
-      <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M13 2c.5 3.5-1.5 4.8-3 6.5C8.4 10.3 7 11.9 7 14.5A5 5 0 0 0 17 15c0-2.2-1-3.6-1.7-5 1.4.6 2.7 1.9 2.7 4.4A6.7 6.7 0 1 1 9 6.7C10.6 5 12.6 4 13 2z"/></svg>
-    </span>
-    <span class="up-brand-txt">Tchatou <small>WEBPANEL</small></span>
-  </a>
-  <span class="up-server" id="upHealth" data-health="{% url 'ircpanel:health' %}" title="{% trans "État du serveur IRC" %}">
-    <span class="up-dot" id="upHealthDot"></span><span id="upHealthTxt">swaygo.fr</span>
+<header class="up-topbar">
+  <a class="up-brand" href="/"><span class="up-brand-txt">{{ brand }} <small>WEBPANEL</small></span></a>
+  <span class="up-server" id="upHealth" data-health="/health" title="État du serveur IRC">
+    <span class="up-dot" id="upHealthDot"></span><span id="upHealthTxt">IRC</span>
   </span>
-  <div class="up-search">
-    <svg class="up-search-ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-    <input type="text" id="upSearch" autocomplete="off" placeholder="{% trans 'Rechercher utilisateurs, salons, serveurs, bans…' %}"
-           data-search="{% url 'ircpanel:search' %}" data-users="{% url 'ircpanel:users' %}"
-           data-chans="{% url 'ircpanel:channels' %}" data-servers="{% url 'ircpanel:servers' %}"
-           data-bans="{% url 'ircpanel:bans' %}">
-    <div class="up-search-results" id="upSearchResults" hidden></div>
-  </div>
   <div class="up-topbar-right">
-    <div class="up-lang">
-      <button type="button" id="ircpLang" class="up-iconbtn up-lang-btn" aria-label="Langue" title="{% trans 'Langue' %}">
-        {% for L in panel_languages %}{% if L.code == current_language %}{{ L.cc|flag }}{% endif %}{% endfor %}
-      </button>
-      <div class="up-lang-pop" id="upLangPop" hidden>
-        {% for L in panel_languages %}
-        <form action="{% url 'set_language' %}" method="post">
-          {% csrf_token %}<input type="hidden" name="language" value="{{ L.code }}"><input type="hidden" name="next" value="{{ request.get_full_path }}">
-          <button type="submit" class="up-lang-opt {% if L.code == current_language %}is-active{% endif %}">{{ L.cc|flag }} <span>{{ L.name }}</span></button>
-        </form>
-        {% endfor %}
-      </div>
-    </div>
-    <div class="up-theme">
-      <button type="button" id="ircpTheme" class="up-iconbtn" aria-label="Thème" title="{% trans 'Changer de thème' %}">
-        <svg viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2v-.5a2 2 0 0 1 2-2h1.5a4.5 4.5 0 0 0 4.5-4.5A10 10 0 0 0 12 2z"/></svg>
-      </button>
-      <div class="up-theme-pop" id="upThemePop" hidden>
-        <button type="button" class="up-theme-opt" data-pt="inspircd"><span class="sw sw-inspircd"></span>InspIRCd</button>
-        <button type="button" class="up-theme-opt" data-pt="inspircd-dark"><span class="sw sw-inspircd-dark"></span>InspIRCd Nuit</button>
-        <button type="button" class="up-theme-opt" data-pt="aurora"><span class="sw sw-aurora"></span>Aurora</button>
-      </div>
-    </div>
-    <a href="#" class="up-iconbtn js-back" title="{% trans "Retour" %}" aria-label="Retour">
-      <svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-    </a>
+    <span class="who">{{ username }}{% if is_root %} <span class="tier">root</span>{% endif %}</span>
+    <form method="post" action="/logout"><button class="logout up-iconbtn">Déconnexion</button></form>
   </div>
 </header>
 
-<!-- ── Primary nav (modern header bar) ─────────────────────────────────── -->
 <nav class="up-nav" id="upNav">
-  <a href="{% url 'ircpanel:dashboard' %}" class="up-nav-item {% if active == 'dashboard' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm10 8h8V3h-8v18zM3 21h8v-6H3v6z"/></svg><span>{% trans "Aperçu" %}</span></a>
-  <a href="{% url 'ircpanel:trends' %}" class="up-nav-item {% if active == 'trends' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg><span>{% trans "Tendances" %}</span></a>
-  <a href="{% url 'ircpanel:users' %}" class="up-nav-item {% if active == 'users' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>{% trans "Utilisateurs" %}</span></a>
-  <a href="{% url 'ircpanel:channels' %}" class="up-nav-item {% if active == 'channels' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg><span>{% trans "Salons" %}</span></a>
-  <a href="{% url 'ircpanel:servers' %}" class="up-nav-item {% if active == 'servers' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg><span>{% trans "Serveurs" %}</span></a>
-  <div class="up-nav-group {% if active == 'bans' or active == 'name_bans' or active == 'exceptions' or active == 'spamfilter' or active == 'security_groups' %}is-active{% endif %}">
-    <button type="button" class="up-nav-item up-nav-trigger"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.5-3 7.5-8 10-5-2.5-8-5.5-8-10V6z"/></svg><span>{% trans "Protection" %}</span><svg class="up-caret" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
-    <div class="up-nav-drop">
-      <a href="{% url 'ircpanel:bans' %}" class="{% if active == 'bans' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>{% trans "Bans serveur" %}</a>
-      <a href="{% url 'ircpanel:name_bans' %}" class="{% if active == 'name_bans' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2M9 20h6M12 4v16"/></svg>{% trans "Bans de nom" %}</a>
-      <a href="{% url 'ircpanel:exceptions' %}" class="{% if active == 'exceptions' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M9 12l2 2 4-4M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg>{% trans "Exceptions" %}</a>
-      <a href="{% url 'ircpanel:spamfilter' %}" class="{% if active == 'spamfilter' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.5V19l4 2v-8.5L22 3z"/></svg>{% trans "Spamfilter" %}</a>
-      <a href="{% url 'ircpanel:security_groups' %}" class="{% if active == 'security_groups' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.5-3 7.5-8 10-5-2.5-8-5.5-8-10V6z"/></svg>{% trans "Groupes de sécurité" %}</a>
-    </div>
-  </div>
-  <div class="up-nav-group {% if active == 'audit' or active == 'whowas' or active == 'ip_whois' or active == 'logs' or active == 'opers' or active == 'registrations' or active == 'modules' or active == 'access' %}is-active{% endif %}">
-    <button type="button" class="up-nav-item up-nav-trigger"><svg viewBox="0 0 24 24"><path d="M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01"/></svg><span>{% trans "Système" %}</span><svg class="up-caret" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
-    <div class="up-nav-drop">
-      {% if 'audit' in panel_perms %}<a href="{% url 'ircpanel:audit' %}" class="{% if active == 'audit' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>{% trans "Journal d'audit" %}</a>{% endif %}
-      <a href="{% url 'ircpanel:whowas' %}" class="{% if active == 'whowas' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M3 3v5h5M3.05 13a9 9 0 1 0 .5-4.5L3 8M12 7v5l4 2"/></svg>{% trans "Historique" %}</a>
-      <a href="{% url 'ircpanel:ip_whois' %}" class="{% if active == 'ip_whois' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>{% trans "IP WHOIS" %}</a>
-      <a href="{% url 'ircpanel:logs' %}" class="{% if active == 'logs' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>{% trans "Journaux" %}</a>
-      <a href="{% url 'ircpanel:opers' %}" class="{% if active == 'opers' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M12 2 4 5v6c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V5l-8-3z"/></svg>{% trans "Opérateurs" %}</a>
-      <a href="{% url 'ircpanel:registrations' %}" class="{% if active == 'registrations' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM19 8v6M22 11h-6"/></svg>{% trans "Inscriptions" %}</a>
-      <a href="{% url 'ircpanel:modules' %}" class="{% if active == 'modules' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M21 16V8l-9-5-9 5v8l9 5 9-5zM3 8l9 5 9-5M12 13v8"/></svg>{% trans "Modules" %}</a>
-      {% if is_root %}<a href="{% url 'ircpanel:access' %}" class="{% if active == 'access' %}is-active{% endif %}"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v6H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7M9 10V4a3 3 0 0 1 6 0v3"/></svg>{% trans "Accès & permissions" %}</a>{% endif %}
-    </div>
-  </div>
+  <a href="/" class="up-nav-item {% if active == "dashboard" %}is-active{% endif %}">Aperçu</a>
+  <a href="/users" class="up-nav-item {% if active == "users" %}is-active{% endif %}">Utilisateurs</a>
+  <a href="/channels" class="up-nav-item {% if active == "channels" %}is-active{% endif %}">Salons</a>
+  <a href="/servers" class="up-nav-item {% if active == "servers" %}is-active{% endif %}">Serveurs</a>
+  <a href="/bans" class="up-nav-item {% if active == "bans" %}is-active{% endif %}">Bans</a>
+  <a href="/opers" class="up-nav-item {% if active == "opers" %}is-active{% endif %}">Opérateurs</a>
+  <a href="/registrations" class="up-nav-item {% if active == "registrations" %}is-active{% endif %}">Inscriptions</a>
+  <a href="/modules" class="up-nav-item {% if active == "modules" %}is-active{% endif %}">Modules</a>
+  {% if show_audit %}<a href="/audit" class="up-nav-item {% if active == "audit" %}is-active{% endif %}">Audit</a>{% endif %}
 </nav>
 
-<!-- ── Main content ────────────────────────────────────────────────────── -->
 <main class="up-main">
-  {% block pagehead %}
-  <div class="up-head">
-    <div class="up-head-main">
-      <span class="up-head-ico">{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm10 8h8V3h-8v18zM3 21h8v-6H3v6z"/></svg>{% endblock %}</span>
-      <div class="up-head-text">
-        <span class="up-head-eyebrow">{% block eyebrow %}{% endblock %}</span>
-        <h1>{% block heading %}{% endblock %}</h1>
-        <p class="up-head-sub">{% block subtitle %}{% endblock %}</p>
-      </div>
-    </div>
-    <div class="up-head-right">{% block topright %}{% endblock %}</div>
-  </div>
-  {% endblock %}
-
-  {% if messages %}
-  <div class="up-msgs">
-    {% for m in messages %}<div class="up-msg up-msg--{{ m.tags }}">{{ m }}</div>{% endfor %}
-  </div>
-  {% endif %}
-
-  {% if err %}<div class="up-alert"><b>⚠ RPC</b> — {{ err }}</div>{% endif %}
-
   <div class="up-content">{% block content %}{% endblock %}</div>
 </main>
 
-<div class="up-toasts" id="upToasts"></div>
-
-<!-- ── Custom confirmation modal (replaces native confirm()) ─────────────── -->
-<div class="up-modal" id="upModal" aria-hidden="true">
-  <div class="up-modal-back" data-modal-cancel></div>
-  <div class="up-modal-box" role="alertdialog" aria-modal="true" aria-labelledby="upModalTitle">
-    <div class="up-modal-ico"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></div>
-    <h3 class="up-modal-title" id="upModalTitle">{% trans "Confirmer l'action" %}</h3>
-    <p class="up-modal-msg" id="upModalMsg"></p>
-    <div class="up-modal-acts">
-      <button type="button" class="up-modal-btn" data-modal-cancel>{% trans "Annuler" %}</button>
-      <button type="button" class="up-modal-btn up-modal-btn--confirm" id="upModalOk">{% trans "Confirmer" %}</button>
-    </div>
-  </div>
-</div>
-
-<script nonce="{{ request.csp_nonce }}">
-/* Themed confirm modal + button loading state (replaces window.confirm). */
-(function () {
-  var modal = document.getElementById("upModal");
-  var msgEl = document.getElementById("upModalMsg");
-  var okBtn = document.getElementById("upModalOk");
-  if (!modal) return;
-  var pending = null;
-  function open(msg, onOk) {
-    msgEl.textContent = msg; pending = onOk;
-    modal.classList.add("is-open"); modal.setAttribute("aria-hidden", "false");
-    okBtn.focus();
-  }
-  function close() { modal.classList.remove("is-open"); modal.setAttribute("aria-hidden", "true"); pending = null; }
-  modal.querySelectorAll("[data-modal-cancel]").forEach(function (b) { b.addEventListener("click", close); });
-  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && modal.classList.contains("is-open")) close(); });
-  okBtn.addEventListener("click", function () { var p = pending; close(); if (p) p(); });
-
-  // Capture phase: catch data-confirm forms before PJAX/native submit.
-  document.addEventListener("submit", function (ev) {
-    var form = ev.target;
-    if (!form.matches || !form.matches("form[data-confirm]")) return;
-    if (form.dataset.confirmed === "1") { delete form.dataset.confirmed; return; }
-    ev.preventDefault(); ev.stopPropagation();
-    open(form.getAttribute("data-confirm"), function () {
-      form.dataset.confirmed = "1";
-      if (form.requestSubmit) form.requestSubmit(); else form.submit();
-    });
-  }, true);
-
-  // Bubble phase: spinner on the submit button for plain (full-reload) submits.
-  document.addEventListener("submit", function (ev) {
-    if (ev.defaultPrevented) return;          // PJAX already handles its own
-    var b = ev.target.querySelector && ev.target.querySelector('[type="submit"]');
-    if (b) b.classList.add("is-loading");
-  }, false);
+<script>
+// Health dot: green when the ircd link is up, grey otherwise.
+(function(){
+  var el=document.getElementById('upHealth'),dot=document.getElementById('upHealthDot'),txt=document.getElementById('upHealthTxt');
+  if(!el)return;
+  function ping(){fetch(el.dataset.health).then(r=>r.json()).then(j=>{
+    if(dot)dot.style.background=j.ok?'#3fb950':'#f85149';
+    if(txt)txt.textContent=j.ok?(j.name||'IRC'):'hors-ligne';
+  }).catch(function(){if(dot)dot.style.background='#f85149';if(txt)txt.textContent='hors-ligne';});}
+  ping();setInterval(ping,5000);
 })();
 </script>
-
-<script nonce="{{ request.csp_nonce }}">
-/* PJAX-lite: submit panel action forms without a full page reload. */
-(function () {
-  function toast(text, kind) {
-    if (!text) return;
-    var box = document.getElementById("upToasts");
-    var t = document.createElement("div");
-    t.className = "up-toast up-toast--" + (kind || "info");
-    t.textContent = text;
-    box.appendChild(t);
-    requestAnimationFrame(function () { t.classList.add("show"); });
-    setTimeout(function () { t.classList.remove("show"); setTimeout(function () { t.remove(); }, 300); }, 4500);
-  }
-  function runScripts(container) {
-    container.querySelectorAll("script").forEach(function (old) {
-      var s = document.createElement("script");
-      for (var i = 0; i < old.attributes.length; i++) s.setAttribute(old.attributes[i].name, old.attributes[i].value);
-      s.textContent = old.textContent;
-      old.replaceWith(s);
-    });
-  }
-  function swap(html, url) {
-    var doc = new DOMParser().parseFromString(html, "text/html");
-    var f = doc.querySelector(".up-content"), c = document.querySelector(".up-content");
-    if (f && c) { c.innerHTML = f.innerHTML; runScripts(c); }
-    var fh = doc.querySelector(".up-head"), ch = document.querySelector(".up-head");
-    if (fh && ch) ch.innerHTML = fh.innerHTML;
-    doc.querySelectorAll(".up-msg").forEach(function (m) {
-      var cl = m.className;
-      toast(m.textContent.trim(), cl.indexOf("error") > -1 ? "error" : (cl.indexOf("success") > -1 ? "success" : "info"));
-    });
-    if (url) try { history.replaceState(null, "", url); } catch (e) {}
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-  document.addEventListener("submit", function (ev) {
-    var form = ev.target;
-    if (ev.defaultPrevented) return;                          // respect confirm()=cancel
-    if ((form.method || "").toLowerCase() !== "post") return; // GET filters reload normally
-    if (!form.closest(".up-content") || form.hasAttribute("data-no-ajax")) return;
-    ev.preventDefault();
-    var btn = form.querySelector('[type="submit"]'); if (btn) { btn.disabled = true; btn.classList.add("is-loading"); }
-    fetch(form.action || location.href, {
-      method: "POST", body: new FormData(form),
-      headers: { "X-Requested-With": "fetch" }, redirect: "follow"
-    })
-      .then(function (r) { return r.text().then(function (t) { return { url: r.url, text: t }; }); })
-      .then(function (res) { swap(res.text, res.url); })
-      .catch(function () { toast("Échec de l'action (réseau).", "error"); })
-      .finally(function () { if (btn) { btn.disabled = false; btn.classList.remove("is-loading"); } });
-  });
-})();
-</script>
-
-<script nonce="{{ request.csp_nonce }}">
-(function () {
-  var el = document.getElementById("upHealth");
-  if (!el) return;
-  var dot = document.getElementById("upHealthDot"), txt = document.getElementById("upHealthTxt");
-  function ping() {
-    if (document.hidden) return;
-    fetch(el.dataset.health, { headers: { "X-Requested-With": "fetch" } })
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        el.classList.toggle("down", !j.ok);
-        if (txt) txt.textContent = j.ok ? (j.name || "en ligne") : "IRC hors-ligne";
-      })
-      .catch(function () { el.classList.add("down"); if (txt) txt.textContent = "IRC hors-ligne"; });
-  }
-  document.addEventListener("visibilitychange", function () { if (!document.hidden) ping(); });
-  ping();
-  setInterval(ping, 20000);
-})();
-</script>
-<script nonce="{{ request.csp_nonce }}">
-/* Header-nav dropdowns: hover opens (CSS); click/tap toggles + outside-click closes. */
-(function () {
-  document.querySelectorAll('.up-nav-trigger').forEach(function (btn) {
-    btn.addEventListener('click', function (e) {
-      e.preventDefault(); e.stopPropagation();
-      var g = btn.closest('.up-nav-group'), open = g.classList.contains('open');
-      document.querySelectorAll('.up-nav-group.open').forEach(function (x) { x.classList.remove('open'); });
-      if (!open) g.classList.add('open');
-    });
-  });
-  document.addEventListener('click', function (e) {
-    if (!e.target.closest('.up-nav-group'))
-      document.querySelectorAll('.up-nav-group.open').forEach(function (x) { x.classList.remove('open'); });
-  });
-})();
-</script>
+{% block scripts %}{% endblock %}
 </body>
 </html>

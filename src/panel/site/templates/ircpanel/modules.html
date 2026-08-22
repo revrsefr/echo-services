@@ -1,36 +1,41 @@
 {% extends "ircpanel/base.html" %}
-{% load i18n %}
-{% block title %}{% trans "Modules" %}{% endblock %}
-{% block heading %}{% trans "Modules chargés" %} <span class="ircp-count">{{ modules|length }}</span>{% endblock %}
-{% block eyebrow %}{% trans "Système" %}{% endblock %}
-{% block subtitle %}{% trans "Les modules chargés, classés par fonction." %}{% endblock %}
-{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M21 16V8l-9-5-9 5v8l9 5 9-5zM3 8l9 5 9-5M12 13v8"/></svg>{% endblock %}
-{% block topright %}
-<form method="get" class="ircp-search"><input type="text" name="q" value="{{ q }}" placeholder="{% trans "Filtrer les modules…" %}"><button>{% trans "Filtrer" %}</button></form>
-{% endblock %}
-
+{% block title %}Modules{% endblock %}
 {% block content %}
-{% if groups %}
-<div class="mod-cats">
-  {% for g in groups %}
-  <a class="mod-cat-chip" href="#cat-{{ g.key }}"><span class="mod-cat-ico">{{ g.icon }}</span>{{ g.label }}<b>{{ g.mods|length }}</b></a>
-  {% endfor %}
+<div class="up-head">
+  <div class="up-head-main">
+    <div class="up-head-text">
+      <h1>Modules <span class="ircp-count">{{ rows.len() }}</span></h1>
+      <p class="up-head-sub">Modules annoncés par l'ircd dans son burst CAPAB.</p>
+    </div>
+  </div>
 </div>
 
-{% for g in groups %}
-<section class="mod-group" id="cat-{{ g.key }}">
-  <div class="mod-group-h"><span class="mod-group-ico">{{ g.icon }}</span> {{ g.label }} <span class="ircp-count">{{ g.mods|length }}</span></div>
-  <div class="mod-grid">
-    {% for m in g.mods %}
-    <div class="mod-item" title="{{ m.name }} — {{ m.description }}">
-      <div class="mod-name mono">{{ m.name }}</div>
-      <div class="mod-desc">{{ m.description|default:"—" }}</div>
-    </div>
+<input class="ircp-search" id="mq" type="search" placeholder="Filtrer les modules…" autocomplete="off">
+
+<div class="up-card">
+  <div class="modgrid" id="modgrid">
+    {% for m in rows %}
+    <span class="modchip mono" data-q="{{ m }}">{{ m }}</span>
     {% endfor %}
+    {% if rows.is_empty() %}<div class="ircp-empty">Aucun module annoncé (echo non lié ?).</div>{% endif %}
   </div>
-</section>
-{% endfor %}
-{% else %}
-<div class="up-card"><div class="ircp-empty">Aucun module{% if q %} pour « {{ q }} »{% endif %}.</div></div>
-{% endif %}
+</div>
+
+<style>
+.modgrid{display:flex;flex-wrap:wrap;gap:.5rem}
+.modchip{display:inline-block;padding:.35rem .6rem;border-radius:8px;background:var(--up-chip,rgba(127,127,127,.12));font-size:.85rem;line-height:1}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  var chips=[].slice.call(document.querySelectorAll('.modchip'));
+  var q=document.getElementById('mq');
+  q.addEventListener('input',function(){
+    var t=(q.value||'').toLowerCase();
+    chips.forEach(function(c){c.hidden=t&&(c.dataset.q||'').toLowerCase().indexOf(t)<0;});
+  });
+})();
+</script>
 {% endblock %}

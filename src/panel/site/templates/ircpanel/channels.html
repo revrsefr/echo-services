@@ -1,93 +1,52 @@
 {% extends "ircpanel/base.html" %}
-{% load i18n panel_extras %}
-{% block title %}{% trans "Salons" %}{% endblock %}
-{% block heading %}{% trans "Salons" %} <span class="ircp-count">{{ channels|length }}</span>{% endblock %}
-{% block eyebrow %}{% trans "Réseau" %}{% endblock %}
-{% block subtitle %}{% trans "Les salons actifs et leur fréquentation." %}{% endblock %}
-{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg>{% endblock %}
-{% block topright %}
-<div class="ircp-search ch-search">
-  <input type="text" id="chSearch" autocomplete="off" placeholder="{% trans "Filtrer les salons…" %}">
+{% block title %}Salons{% endblock %}
+{% block content %}
+<div class="up-head">
+  <div class="up-head-main">
+    <div class="up-head-text">
+      <h1>Salons <span class="ircp-count">{{ rows.len() }}</span></h1>
+      <p class="up-head-sub">Salons actifs sur le réseau. Le badge indique un salon enregistré.</p>
+    </div>
+  </div>
+</div>
+
+<input class="ircp-search" id="cq" type="search" placeholder="Filtrer par nom, sujet ou fondateur…" autocomplete="off">
+
+<div class="up-card uroster-card">
+  <div class="uroster" id="croster">
+    {% for c in rows %}
+    <div class="urow" data-q="{{ c.name }} {{ c.topic }} {{ c.founder }}">
+      <span class="uava {% if c.registered %}is-acct{% endif %}">
+        {% if c.registered %}<i class="uava-dot" title="Enregistré"></i>{% endif %}
+      </span>
+      <span class="urow-main">
+        <span class="urow-nick"><b>{{ c.name }}</b>
+          {% if c.registered %}<span class="ircp-tag ircp-tag--svc">{{ c.founder }}</span>{% endif %}
+        </span>
+        <span class="urow-host">{% if c.topic.is_empty() %}<span class="muted">Aucun sujet</span>{% else %}{{ c.topic }}{% endif %}</span>
+      </span>
+      <span class="urow-net">
+        <span class="urow-ip">{{ c.users }} membre{% if c.users != 1 %}s{% endif %}</span>
+      </span>
+    </div>
+    {% endfor %}
+    {% if rows.is_empty() %}<div class="ircp-empty">Aucun salon actif.</div>{% endif %}
+  </div>
+  <div class="uroster-empty" id="cEmpty" hidden>Aucun salon ne correspond.</div>
 </div>
 {% endblock %}
 
-{% block content %}
-<!-- summary cards double as live filters -->
-<div class="ufilters" id="chfilters">
-  <button type="button" class="ufilter is-active" data-f="all"><b>{{ chstats.total }}</b><span>{% trans "Salons" %}</span></button>
-  <button type="button" class="ufilter" data-f="active"><b>{{ chstats.active }}</b><span>{% trans "Actifs" %}</span></button>
-  <button type="button" class="ufilter" data-f="restr"><b>{{ chstats.restricted }}</b><span>{% trans "Restreints" %}</span></button>
-  <button type="button" class="ufilter" data-f="mod"><b>{{ chstats.moderated }}</b><span>{% trans "Modérés" %}</span></button>
-  <button type="button" class="ufilter" data-f="reg"><b>{{ chstats.registered }}</b><span>{% trans "Enregistrés" %}</span></button>
-  <div class="ufilter ufilter--static"><b>{{ chstats.members }}</b><span>{% trans "Membres" %}</span></div>
-</div>
-
-<div class="up-card uroster-card">
-  <div class="uroster-head chrow-head">
-    <span></span><span>{% trans "Salon" %}</span><span>{% trans "Fréquentation" %}</span><span>{% trans "Membres" %}</span><span>{% trans "Modes" %}</span><span></span>
-  </div>
-  <div class="uroster" id="chroster">
-    {% for c in channels %}
-    <a class="urow chrow" href="{% url 'ircpanel:channel_detail' c.name|chanslug %}"
-       data-name="{{ c.name|lower }} {{ c.topic|lower }}"
-       data-active="{% if c.active %}1{% else %}0{% endif %}"
-       data-restr="{% if c.restricted %}1{% else %}0{% endif %}"
-       data-mod="{% if c.moderated %}1{% else %}0{% endif %}"
-       data-reg="{% if c.registered %}1{% else %}0{% endif %}">
-      <span class="chava {% if c.restricted %}is-locked{% endif %}">{% if c.restricted %}🔒{% else %}#{% endif %}</span>
-      <span class="urow-main">
-        <span class="urow-nick"><b>{{ c.name }}</b>
-          {% if c.secret %}<span class="ircp-tag ircp-tag--svc">{% trans "secret" %}</span>{% endif %}
-          {% if c.private %}<span class="ircp-tag ircp-tag--svc">{% trans "privé" %}</span>{% endif %}
-          {% if c.inviteonly %}<span class="ircp-tag ircp-tag--svc">{% trans "sur invitation" %}</span>{% endif %}
-          {% if c.keyed %}<span class="ircp-tag ircp-tag--svc">{% trans "clé" %}</span>{% endif %}
-          {% if c.moderated %}<span class="ircp-tag ircp-tag--away">{% trans "modéré" %}</span>{% endif %}
-          {% if c.registered %}<span class="ircp-tag ircp-tag--oper">{% trans "enregistré" %}</span>{% endif %}
-        </span>
-        <span class="urow-host">{{ c.topic|default:"—"|truncatechars:74 }}</span>
-      </span>
-      <span class="chrow-bar"><i style="width:{% widthratio c.num_users chstats.max_users 100 %}%"></i></span>
-      <span class="chrow-members"><b>{{ c.num_users }}</b></span>
-      <span class="urow-modes mono">{% if c.modes %}+{{ c.modes }}{% else %}—{% endif %}</span>
-      <svg class="urow-chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
-    </a>
-    {% empty %}
-    <div class="ircp-empty">{% trans "Aucun salon." %}</div>
-    {% endfor %}
-  </div>
-  <div class="uroster-empty" id="chrosterEmpty" hidden>{% trans "Aucun salon ne correspond à ce filtre." %}</div>
-</div>
-
-<script nonce="{{ request.csp_nonce }}">
-(function () {
-  var rows = [].slice.call(document.querySelectorAll(".chrow"));
-  var empty = document.getElementById("chrosterEmpty");
-  var search = document.getElementById("chSearch");
-  if (!rows.length) return;
-  var curF = "all";
-  function catOk(r, f) {
-    if (f === "all") return true;
-    if (f === "active") return r.dataset.active === "1";
-    if (f === "restr") return r.dataset.restr === "1";
-    if (f === "mod") return r.dataset.mod === "1";
-    if (f === "reg") return r.dataset.reg === "1";
-    return true;
-  }
-  function apply() {
-    var q = (search && search.value || "").trim().toLowerCase(), shown = 0;
-    rows.forEach(function (r) {
-      var ok = catOk(r, curF) && (!q || r.dataset.name.indexOf(q) > -1);
-      r.style.display = ok ? "" : "none"; if (ok) shown++;
-    });
-    if (empty) empty.hidden = shown > 0;
-  }
-  document.querySelectorAll("#chfilters .ufilter[data-f]").forEach(function (b) {
-    b.addEventListener("click", function () {
-      document.querySelectorAll("#chfilters .ufilter").forEach(function (x) { x.classList.remove("is-active"); });
-      b.classList.add("is-active"); curF = b.dataset.f; apply();
-    });
+{% block scripts %}
+<script>
+(function(){
+  var rows=[].slice.call(document.querySelectorAll('#croster .urow'));
+  var empty=document.getElementById('cEmpty');
+  var q=document.getElementById('cq');
+  q.addEventListener('input',function(){
+    var t=(q.value||'').toLowerCase();var n=0;
+    rows.forEach(function(r){var ok=!t||(r.dataset.q||'').toLowerCase().indexOf(t)>=0;r.hidden=!ok;if(ok)n++;});
+    if(empty)empty.hidden=n>0;
   });
-  if (search) search.addEventListener("input", apply);
 })();
 </script>
 {% endblock %}

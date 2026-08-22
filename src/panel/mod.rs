@@ -66,6 +66,8 @@ pub async fn run(engine: Shared, cfg: PanelCfg) {
         .route("/login", get(login_form).post(login_submit))
         .route("/logout", post(logout))
         .route("/static/*path", get(static_asset))
+        .route("/health", get(health))
+        .route("/live", get(live))
         .route("/", get(dashboard))
         .route("/users", get(page_users))
         .route("/users/:nick", get(page_user_detail))
@@ -240,6 +242,11 @@ async fn logout() -> Response {
 }
 
 // ---- pages ---------------------------------------------------------------
+//
+// Every page is a compile-time askama template backed by a typed struct. All
+// formatting/derivation happens here in Rust; the templates only interpolate.
+// Data comes straight from echo's own engine (the live S2S network view plus the
+// account/channel directory) under the shared lock — never from the ircd's RPC.
 
 async fn static_asset(Path(path): Path<String>) -> Response {
     match tmpl::asset(&path) {
@@ -255,103 +262,456 @@ async fn static_asset(Path(path): Path<String>) -> Response {
     }
 }
 
-// The context every panel page shares: identity, nav highlight, csrf placeholder.
-fn base_ctx(st: &AppState, oper: &Oper, active: &str) -> serde_json::Map<String, serde_json::Value> {
-    let tier = oper.privs.tier();
-    let obj = json!({
-        "brand": st.brand,
-        "active": active,
-        "asset_version": crate::version::VERSION,
-        "current_language": "fr",
-        "panel_languages": [],
-        "panel_perms": ["audit"],
-        "is_root": tier == "root",
-        "csrf_token": "",
-        "request": { "user": { "username": oper.account }, "csp_nonce": "", "get_full_path": "/" },
-    });
-    match obj {
-        serde_json::Value::Object(m) => m,
-        _ => serde_json::Map::new(),
+// Render any askama template into an HTML response, or a readable error page.
+fn html<T: askama::Template>(t: T) -> Html<String> {
+    match t.render() {
+        Ok(s) => Html(s),
+        Err(e) => Html(format!("<pre>panel template error:\n{e}</pre>")),
     }
 }
 
-// Render `template` with the base context merged with `extra`, or an error page.
-fn page(st: &AppState, oper: &Oper, active: &str, template: &str, extra: serde_json::Value) -> Html<String> {
-    let mut ctx = base_ctx(st, oper, active);
-    if let serde_json::Value::Object(m) = extra {
-        ctx.extend(m);
-    }
-    let val = minijinja::Value::from_serialize(&serde_json::Value::Object(ctx));
-    match tmpl::render(template, val) {
-        Ok(html) => Html(html),
-        Err(e) => Html(format!("<pre>panel template error in {template}:\n{e:#}</pre>")),
-    }
+fn is_root(oper: &Oper) -> bool {
+    oper.privs.tier() == "root"
 }
 
-// A read-only page with no page-specific data yet (data wired in progressively).
-macro_rules! simple_page {
-    ($fn:ident, $active:expr, $tpl:expr) => {
-        async fn $fn(oper: Oper, State(st): State<AppState>) -> Html<String> {
-            page(&st, &oper, $active, $tpl, json!({}))
-        }
-    };
-}
-simple_page!(page_users, "users", "ircpanel/users.html");
-simple_page!(page_channels, "channels", "ircpanel/channels.html");
-simple_page!(page_servers, "servers", "ircpanel/servers.html");
-simple_page!(page_trends, "trends", "ircpanel/trends.html");
-simple_page!(page_bans, "bans", "ircpanel/bans.html");
-simple_page!(page_name_bans, "name_bans", "ircpanel/name_bans.html");
-simple_page!(page_exceptions, "exceptions", "ircpanel/exceptions.html");
-simple_page!(page_spamfilter, "spamfilter", "ircpanel/spamfilter.html");
-simple_page!(page_security_groups, "security_groups", "ircpanel/security_groups.html");
-simple_page!(page_ip_whois, "ip_whois", "ircpanel/ip_whois.html");
-simple_page!(page_whowas, "whowas", "ircpanel/whowas.html");
-simple_page!(page_logs, "logs", "ircpanel/logs.html");
-simple_page!(page_opers, "opers", "ircpanel/opers.html");
-simple_page!(page_registrations, "registrations", "ircpanel/registrations.html");
-simple_page!(page_modules, "modules", "ircpanel/modules.html");
-simple_page!(page_audit, "audit", "ircpanel/audit.html");
-simple_page!(page_access, "access", "ircpanel/access.html");
+// ---- dashboard -----------------------------------------------------------
 
-async fn page_user_detail(oper: Oper, State(st): State<AppState>, Path(nick): Path<String>) -> Html<String> {
-    page(&st, &oper, "users", "ircpanel/user_detail.html", json!({ "nick": nick }))
+struct SrvRow {
+    name: String,
+    users: usize,
+    pct: u64,
 }
-async fn page_channel_detail(oper: Oper, State(st): State<AppState>, Path(slug): Path<String>) -> Html<String> {
-    page(&st, &oper, "channels", "ircpanel/channel_detail.html", json!({ "slug": slug }))
+struct ChanRow {
+    name: String,
+    users: usize,
+    pct: u64,
 }
-async fn page_server_detail(oper: Oper, State(st): State<AppState>, Path(name): Path<String>) -> Html<String> {
-    page(&st, &oper, "servers", "ircpanel/server_detail.html", json!({ "name": name }))
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/dashboard.html")]
+struct DashboardTpl {
+    brand: String,
+    active: &'static str,
+    username: String,
+    is_root: bool,
+    show_audit: bool,
+    users: usize,
+    opers: usize,
+    channels: usize,
+    servers: usize,
+    bans: usize,
+    server_rows: Vec<SrvRow>,
+    chan_rows: Vec<ChanRow>,
 }
 
 async fn dashboard(oper: Oper, State(st): State<AppState>) -> Html<String> {
     let e = st.engine.lock().await;
-    let (_accounts, channels) = e.directory_snapshot();
-    let stats = e.stats_snapshot();
-    let ban_count = e.akills().len();
-    let linked = e.linked();
+    let users = e.net_user_count();
+    let channels = e.net_channel_count();
+    let servers = e.net_server_count();
+    let bans = e.akills().len();
+    let opers = e.stats_snapshot().get("opers.total").copied().unwrap_or(0) as usize;
+    let srv = e.net_servers();
+    let top = e.net_top_channels(6);
     drop(e);
-    let g = |k: &str| stats.get(k).copied().unwrap_or(0);
-    let ctx = json!({
-        "stats": {
-            "me": { "name": st.brand, "version": crate::version::VERSION },
-            "user": { "total": g("users.online"), "local": g("users.local"), "oper": g("opers.total") },
-            "channel": { "total": channels.len() },
-            "server": { "total": if linked { g("servers.online").max(1) } else { 0 } },
-        },
-        "ban_count": ban_count,
-        "servers": [],
-        "top_channels": [],
-        "recent_audit": [],
-        "geo_rows": [],
-        "geo_dots": [],
-        "geo_total": 0,
-        "geo_local": 0,
-        "geo_max": 1,
-        "sparks": {},
-        "world_svg": "",
-        "live_url": "/api/live",
+
+    let max_srv = srv.iter().map(|(_, u)| *u).max().unwrap_or(0).max(1);
+    let server_rows = srv
+        .into_iter()
+        .map(|(name, u)| SrvRow { pct: (u as u64 * 100 / max_srv as u64), name, users: u })
+        .collect();
+    let max_chan = top.first().map(|(_, u)| *u).unwrap_or(0).max(1);
+    let chan_rows = top
+        .into_iter()
+        .map(|(name, u)| ChanRow { pct: (u as u64 * 100 / max_chan as u64), name, users: u })
+        .collect();
+
+    html(DashboardTpl {
+        brand: st.brand.clone(),
+        active: "dashboard",
+        username: oper.account.clone(),
+        is_root: is_root(&oper),
+        show_audit: true,
+        users,
+        opers,
+        channels,
+        servers,
+        bans,
+        server_rows,
+        chan_rows,
+    })
+}
+
+// ---- placeholder pages (progressively replaced by wired templates) -------
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/placeholder.html")]
+struct PlaceholderTpl {
+    brand: String,
+    active: &'static str,
+    username: String,
+    is_root: bool,
+    show_audit: bool,
+    page_title: &'static str,
+}
+
+fn placeholder(st: &AppState, oper: &Oper, active: &'static str, title: &'static str) -> Html<String> {
+    html(PlaceholderTpl {
+        brand: st.brand.clone(),
+        active,
+        username: oper.account.clone(),
+        is_root: is_root(oper),
+        show_audit: true,
+        page_title: title,
+    })
+}
+
+// A gated placeholder page: (handler name, nav key, title).
+macro_rules! simple_page {
+    ($fn:ident, $active:expr, $title:expr) => {
+        async fn $fn(oper: Oper, State(st): State<AppState>) -> Html<String> {
+            placeholder(&st, &oper, $active, $title)
+        }
+    };
+}
+simple_page!(page_trends, "dashboard", "Tendances");
+simple_page!(page_name_bans, "bans", "Bans de pseudo");
+simple_page!(page_exceptions, "bans", "Exceptions");
+simple_page!(page_spamfilter, "bans", "Filtre anti-spam");
+simple_page!(page_security_groups, "bans", "Groupes de sécurité");
+simple_page!(page_ip_whois, "users", "IP WHOIS");
+simple_page!(page_whowas, "users", "WHOWAS");
+simple_page!(page_logs, "audit", "Journaux");
+simple_page!(page_audit, "audit", "Audit");
+simple_page!(page_access, "opers", "Accès");
+
+// ---- wired data pages ----------------------------------------------------
+
+struct UserRow {
+    nick: String,
+    ident: String,
+    host: String,
+    ip: String,
+    account: String,
+    has_account: bool,
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/users.html")]
+struct UsersTpl {
+    brand: String,
+    active: &'static str,
+    username: String,
+    is_root: bool,
+    show_audit: bool,
+    rows: Vec<UserRow>,
+    accounts: usize,
+    guests: usize,
+}
+
+async fn page_users(oper: Oper, State(st): State<AppState>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let raw = e.net_users();
+    drop(e);
+    let rows: Vec<UserRow> = raw
+        .into_iter()
+        .map(|(nick, ident, host, ip, account)| {
+            let has_account = !account.is_empty();
+            UserRow { nick, ident, host, ip, account, has_account }
+        })
+        .collect();
+    let accounts = rows.iter().filter(|r| r.has_account).count();
+    let guests = rows.len() - accounts;
+    html(UsersTpl {
+        brand: st.brand.clone(),
+        active: "users",
+        username: oper.account.clone(),
+        is_root: is_root(&oper),
+        show_audit: true,
+        rows,
+        accounts,
+        guests,
+    })
+}
+
+struct SrvFull {
+    name: String,
+    users: usize,
+    pct: u64,
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/servers.html")]
+struct ServersTpl {
+    brand: String,
+    active: &'static str,
+    username: String,
+    is_root: bool,
+    show_audit: bool,
+    rows: Vec<SrvFull>,
+}
+
+async fn page_servers(oper: Oper, State(st): State<AppState>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let srv = e.net_servers();
+    drop(e);
+    let max = srv.iter().map(|(_, u)| *u).max().unwrap_or(0).max(1);
+    let rows = srv
+        .into_iter()
+        .map(|(name, u)| SrvFull { pct: (u as u64 * 100 / max as u64), name, users: u })
+        .collect();
+    html(ServersTpl {
+        brand: st.brand.clone(),
+        active: "servers",
+        username: oper.account.clone(),
+        is_root: is_root(&oper),
+        show_audit: true,
+        rows,
+    })
+}
+
+struct ChanFullRow {
+    name: String,
+    users: usize,
+    founder: String,
+    topic: String,
+    registered: bool,
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/channels.html")]
+struct ChannelsTpl {
+    brand: String,
+    active: &'static str,
+    username: String,
+    is_root: bool,
+    show_audit: bool,
+    rows: Vec<ChanFullRow>,
+}
+
+async fn page_channels(oper: Oper, State(st): State<AppState>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let live = e.net_channels();
+    let (_accts, registered) = e.directory_snapshot();
+    drop(e);
+    // Index registered channel metadata by lowercase name to merge onto the live set.
+    let reg: std::collections::HashMap<String, (String, String)> = registered
+        .into_iter()
+        .map(|c| (c.name.to_lowercase(), (c.founder, c.topic)))
+        .collect();
+    let rows = live
+        .into_iter()
+        .map(|(name, users)| {
+            let (founder, topic, registered) = match reg.get(&name.to_lowercase()) {
+                Some((f, t)) => (f.clone(), t.clone(), true),
+                None => (String::new(), String::new(), false),
+            };
+            ChanFullRow { name, users, founder, topic, registered }
+        })
+        .collect();
+    html(ChannelsTpl {
+        brand: st.brand.clone(),
+        active: "channels",
+        username: oper.account.clone(),
+        is_root: is_root(&oper),
+        show_audit: true,
+        rows,
+    })
+}
+
+struct BanRow {
+    kind: String,
+    mask: String,
+    setter: String,
+    reason: String,
+    set_ago: String,
+    expires: String,
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/bans.html")]
+struct BansTpl {
+    brand: String,
+    active: &'static str,
+    username: String,
+    is_root: bool,
+    show_audit: bool,
+    rows: Vec<BanRow>,
+}
+
+async fn page_bans(oper: Oper, State(st): State<AppState>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let akills = e.akills();
+    drop(e);
+    let now = now();
+    let rows = akills
+        .into_iter()
+        .map(|a| BanRow {
+            kind: format!("{:?}", a.kind).to_uppercase(),
+            mask: a.mask,
+            setter: a.setter,
+            reason: a.reason,
+            set_ago: tmpl::human_ago(a.ts, now),
+            expires: match a.expires {
+                None => "permanent".to_string(),
+                Some(t) if t > now => format!("expire {}", tmpl::human_until(now, t)),
+                Some(_) => "expiré".to_string(),
+            },
+        })
+        .collect();
+    html(BansTpl {
+        brand: st.brand.clone(),
+        active: "bans",
+        username: oper.account.clone(),
+        is_root: is_root(&oper),
+        show_audit: true,
+        rows,
+    })
+}
+
+struct OperRow {
+    name: String,
+    tier: &'static str,
+    email: String,
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/opers.html")]
+struct OpersTpl {
+    brand: String,
+    active: &'static str,
+    username: String,
+    is_root: bool,
+    show_audit: bool,
+    rows: Vec<OperRow>,
+}
+
+async fn page_opers(oper: Oper, State(st): State<AppState>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let (accts, _chans) = e.directory_snapshot();
+    let rows: Vec<OperRow> = accts
+        .into_iter()
+        .filter_map(|a| {
+            let privs = e.account_privs(&a.name);
+            privs.any().then(|| OperRow {
+                name: a.name,
+                tier: privs.tier(),
+                email: a.email.unwrap_or_default(),
+            })
+        })
+        .collect();
+    drop(e);
+    html(OpersTpl {
+        brand: st.brand.clone(),
+        active: "opers",
+        username: oper.account.clone(),
+        is_root: is_root(&oper),
+        show_audit: true,
+        rows,
+    })
+}
+
+struct RegRow {
+    name: String,
+    email: String,
+    verified: bool,
+    registered: String,
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/registrations.html")]
+struct RegsTpl {
+    brand: String,
+    active: &'static str,
+    username: String,
+    is_root: bool,
+    show_audit: bool,
+    rows: Vec<RegRow>,
+}
+
+async fn page_registrations(oper: Oper, State(st): State<AppState>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let (accts, _chans) = e.directory_snapshot();
+    drop(e);
+    let now = now();
+    let mut rows: Vec<RegRow> = accts
+        .into_iter()
+        .map(|a| RegRow {
+            registered: tmpl::human_ago(a.ts, now),
+            name: a.name,
+            email: a.email.unwrap_or_default(),
+            verified: a.verified,
+        })
+        .collect();
+    rows.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    html(RegsTpl {
+        brand: st.brand.clone(),
+        active: "registrations",
+        username: oper.account.clone(),
+        is_root: is_root(&oper),
+        show_audit: true,
+        rows,
+    })
+}
+
+#[derive(askama::Template)]
+#[template(path = "ircpanel/modules.html")]
+struct ModulesTpl {
+    brand: String,
+    active: &'static str,
+    username: String,
+    is_root: bool,
+    show_audit: bool,
+    rows: Vec<String>,
+}
+
+async fn page_modules(oper: Oper, State(st): State<AppState>) -> Html<String> {
+    let e = st.engine.lock().await;
+    let rows = e.net_module_names();
+    drop(e);
+    html(ModulesTpl {
+        brand: st.brand.clone(),
+        active: "modules",
+        username: oper.account.clone(),
+        is_root: is_root(&oper),
+        show_audit: true,
+        rows,
+    })
+}
+
+async fn page_user_detail(oper: Oper, State(st): State<AppState>, Path(_nick): Path<String>) -> Html<String> {
+    placeholder(&st, &oper, "users", "Utilisateur")
+}
+async fn page_channel_detail(oper: Oper, State(st): State<AppState>, Path(_slug): Path<String>) -> Html<String> {
+    placeholder(&st, &oper, "channels", "Salon")
+}
+async fn page_server_detail(oper: Oper, State(st): State<AppState>, Path(_name): Path<String>) -> Html<String> {
+    placeholder(&st, &oper, "servers", "Serveur")
+}
+
+// ---- JSON endpoints for the live UI --------------------------------------
+
+// The health dot in the topbar: green when echo is linked to the ircd.
+async fn health(State(st): State<AppState>) -> Response {
+    let e = st.engine.lock().await;
+    let ok = e.linked();
+    let name = e.net_servers().first().map(|(n, _)| n.clone()).unwrap_or_else(|| st.brand.clone());
+    drop(e);
+    axum::Json(json!({ "ok": ok, "name": name })).into_response()
+}
+
+// Live counters polled by the dashboard.
+async fn live(oper: Oper, State(st): State<AppState>) -> Response {
+    let _ = oper; // gate to authenticated opers only
+    let e = st.engine.lock().await;
+    let counts = json!({
+        "users": e.net_user_count(),
+        "channels": e.net_channel_count(),
+        "servers": e.net_server_count(),
+        "opers": e.stats_snapshot().get("opers.total").copied().unwrap_or(0),
+        "bans": e.akills().len(),
     });
-    page(&st, &oper, "dashboard", "ircpanel/dashboard.html", ctx)
+    drop(e);
+    axum::Json(json!({ "counts": counts })).into_response()
 }
 

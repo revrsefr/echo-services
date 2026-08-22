@@ -683,6 +683,31 @@ impl Engine {
     pub fn akills(&self) -> Vec<echo_api::AkillView> {
         self.db.akills()
     }
+    // Live network view (from the uplink burst) for the panel.
+    pub fn net_user_count(&self) -> usize {
+        self.network.user_count()
+    }
+    pub fn net_channel_count(&self) -> usize {
+        self.network.channel_count()
+    }
+    pub fn net_server_count(&self) -> usize {
+        self.network.server_count()
+    }
+    pub fn net_top_channels(&self, n: usize) -> Vec<(String, usize)> {
+        self.network.top_channels(n)
+    }
+    pub fn net_servers(&self) -> Vec<(String, usize)> {
+        self.network.server_summaries()
+    }
+    pub fn net_users(&self) -> Vec<(String, String, String, String, String)> {
+        self.network.user_rows()
+    }
+    pub fn net_channels(&self) -> Vec<(String, usize)> {
+        self.network.all_channels()
+    }
+    pub fn net_module_names(&self) -> Vec<String> {
+        self.network.module_names()
+    }
 
     pub fn gossip_ingest(&mut self, entry: LogEntry) -> std::io::Result<()> {
         // If ingesting a peer's entry removed an account a local session or channel

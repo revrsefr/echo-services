@@ -1,106 +1,52 @@
 {% extends "ircpanel/base.html" %}
-{% load i18n %}
-{% block title %}{% trans "Inscriptions" %}{% endblock %}
-{% block heading %}{% trans "Inscriptions de comptes" %} <span class="ircp-count">{{ cards.active }}</span>{% endblock %}
-{% block eyebrow %}{% trans "Système" %}{% endblock %}
-{% block subtitle %}{% trans "Les comptes récemment enregistrés." %}{% endblock %}
-{% block hero_icon %}<svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM19 8v6M22 11h-6"/></svg>{% endblock %}
-{% block topright %}<span class="up-pill">{{ total_events }} évènements suivis</span>{% endblock %}
-
+{% block title %}Inscriptions{% endblock %}
 {% block content %}
-<style>
-  .rg-spark { display:flex; align-items:flex-end; gap:6px; height:120px; padding:8px 2px 0; }
-  .rg-spark .rg-bar { flex:1; min-height:2px; border-radius:4px 4px 0 0;
-                      background:var(--up-accent); opacity:.85; transition:height .3s; }
-  .rg-spark .rg-bar:hover { opacity:1; }
-  .rg-axis { display:flex; gap:6px; margin-top:6px; }
-  .rg-axis span { flex:1; text-align:center; font-size:11px; color:var(--text-subtle); }
-  .rg-grid { display:grid; grid-template-columns:2fr 1fr; gap:16px; }
-  @media (max-width:900px){ .rg-grid{ grid-template-columns:1fr; } }
-</style>
-
-<div class="up-stats">
-  <div class="up-stat frost-success">
-    <div class="up-stat-num">{{ cards.reg_24h }}</div>
-    <div class="up-stat-lbl">{% trans "Inscriptions (24 h)" %}</div>
-    <div class="up-stat-sub">{{ cards.reg_7d }} sur 7 jours</div>
-  </div>
-  <div class="up-stat frost-info">
-    <div class="up-stat-num">{{ cards.verify_24h }}</div>
-    <div class="up-stat-lbl">{% trans "Vérifications (24 h)" %}</div>
-    <div class="up-stat-sub">{{ cards.verify_7d }} sur 7 jours</div>
-  </div>
-  <div class="up-stat frost-warning">
-    <div class="up-stat-num">{{ cards.pending }}</div>
-    <div class="up-stat-lbl">{% trans "En attente de vérif." %}</div>
-    <div class="up-stat-sub">{% trans "comptes inactifs" %}</div>
-  </div>
-  <div class="up-stat frost-secondary">
-    <div class="up-stat-num">{{ cards.turnstile_24h }}</div>
-    <div class="up-stat-lbl">{% trans "Défis anti-robot (24 h)" %}</div>
-    <div class="up-stat-sub">{% trans "REGISTER bloqués" %}</div>
-  </div>
-  <div class="up-stat frost-danger">
-    <div class="up-stat-num">{{ cards.failverify_24h }}</div>
-    <div class="up-stat-lbl">{% trans "Codes erronés (24 h)" %}</div>
-    <div class="up-stat-sub">{% trans "tentatives VERIFY" %}</div>
-  </div>
-</div>
-
-<div class="rg-grid">
-  <div class="up-card">
-    <h3 class="up-card-title">{% trans "Inscriptions — 14 derniers jours" %}</h3>
-    <div class="rg-spark">
-      {% for d in days %}
-      <div class="rg-bar" title="{{ d }}"
-           style="height:{% if days_max %}{% widthratio d days_max 100 %}{% else %}0{% endif %}%"></div>
-      {% endfor %}
+<div class="up-head">
+  <div class="up-head-main">
+    <div class="up-head-text">
+      <h1>Inscriptions <span class="ircp-count">{{ rows.len() }}</span></h1>
+      <p class="up-head-sub">Comptes enregistrés auprès des services echo.</p>
     </div>
-    <div class="rg-axis"><span>-14j</span><span>&nbsp;</span><span>&nbsp;</span><span>&nbsp;</span><span>&nbsp;</span><span>&nbsp;</span><span>auj.</span></div>
-  </div>
-
-  <div class="up-card">
-    <h3 class="up-card-title">{% trans "Adresses IP les plus actives" %}</h3>
-    <table class="ircp-table">
-      <thead><tr><th>IP</th><th class="r">{% trans "Demandes" %}</th></tr></thead>
-      <tbody>
-        {% for row in top_ips %}
-        <tr>
-          <td><a href="{% url 'ircpanel:ip_whois' %}?ip={{ row.ip }}"><code>{{ row.ip }}</code></a></td>
-          <td class="r"><span class="ircp-tag ircp-tag--oper">{{ row.count }}</span></td>
-        </tr>
-        {% empty %}
-        <tr><td colspan="2" class="ircp-empty">{% trans "Aucune donnée." %}</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
   </div>
 </div>
 
-<div class="up-card">
-  <h3 class="up-card-title">{% trans "Évènements récents" %}</h3>
-  <table class="ircp-table">
-    <thead><tr><th>{% trans "Quand" %}</th><th>{% trans "Évènement" %}</th><th>{% trans "Compte" %}</th><th>IP</th><th>{% trans "Détail" %}</th></tr></thead>
-    <tbody>
-      {% for e in recent %}
-      <tr>
-        <td class="muted">{{ e.when|date:"d/m H:i:s" }}</td>
-        <td>
-          {% if e.event == "register" %}<span class="ircp-tag ircp-tag--oper">REGISTER</span>
-          {% elif e.event == "verify" %}<span class="ircp-tag">VERIFY</span>
-          {% elif e.event == "resend" %}<span class="ircp-tag">RESEND</span>
-          {% elif e.event == "turnstile" %}<span class="ircp-tag ircp-tag--away">TURNSTILE</span>
-          {% elif e.event == "verify_fail" %}<span class="ircp-tag ircp-tag--ban">VERIFY ✗</span>
-          {% else %}<span class="ircp-tag">{{ e.event }}</span>{% endif %}
-        </td>
-        <td><b>{{ e.user|default:"—" }}</b></td>
-        <td>{% if e.ip %}<code>{{ e.ip }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td class="muted">{{ e.detail|default:"" }}</td>
-      </tr>
-      {% empty %}
-      <tr><td colspan="5" class="ircp-empty">{% trans "Aucun évènement enregistré pour l'instant." %}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<input class="ircp-search" id="rq" type="search" placeholder="Filtrer par compte ou e-mail…" autocomplete="off">
+
+<div class="up-card uroster-card">
+  <div class="uroster" id="rroster">
+    {% for a in rows %}
+    <div class="urow" data-q="{{ a.name }} {{ a.email }}">
+      <span class="uava {% if a.verified %}is-acct{% endif %}">
+        {% if a.verified %}<i class="uava-dot" title="Vérifié"></i>{% endif %}
+      </span>
+      <span class="urow-main">
+        <span class="urow-nick"><b>{{ a.name }}</b>
+          {% if !a.verified %}<span class="ircp-tag ircp-tag--away">non vérifié</span>{% endif %}
+        </span>
+        <span class="urow-host">{% if a.email.is_empty() %}<span class="muted">Aucun e-mail</span>{% else %}{{ a.email }}{% endif %}</span>
+      </span>
+      <span class="urow-net">
+        <span class="urow-loc">inscrit {{ a.registered }}</span>
+      </span>
+    </div>
+    {% endfor %}
+    {% if rows.is_empty() %}<div class="ircp-empty">Aucun compte enregistré.</div>{% endif %}
+  </div>
+  <div class="uroster-empty" id="rEmpty" hidden>Aucun compte ne correspond.</div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  var rows=[].slice.call(document.querySelectorAll('#rroster .urow'));
+  var empty=document.getElementById('rEmpty');
+  var q=document.getElementById('rq');
+  q.addEventListener('input',function(){
+    var t=(q.value||'').toLowerCase();var n=0;
+    rows.forEach(function(r){var ok=!t||(r.dataset.q||'').toLowerCase().indexOf(t)>=0;r.hidden=!ok;if(ok)n++;});
+    if(empty)empty.hidden=n>0;
+  });
+})();
+</script>
 {% endblock %}

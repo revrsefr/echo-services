@@ -17,6 +17,7 @@ fedserv.db.jsonl
 
 # Runtime data/logs
 echo.db.jsonl
+echo.db.jsonl*
 cutover-echo.log
 test-net/echo.db.jsonl
 test-net/*.log

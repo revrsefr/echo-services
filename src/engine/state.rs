@@ -292,6 +292,66 @@ impl Network {
         self.users.keys().filter(|u| u.starts_with(sid)).cloned().collect()
     }
 
+    // --- read-only overview accessors for the web panel ---
+    pub fn user_count(&self) -> usize {
+        self.users.len()
+    }
+    pub fn channel_count(&self) -> usize {
+        self.channels.len()
+    }
+    pub fn server_count(&self) -> usize {
+        self.server_names.len()
+    }
+    /// Live channels, largest membership first: (name, member count).
+    pub fn top_channels(&self, n: usize) -> Vec<(String, usize)> {
+        let mut v: Vec<(String, usize)> =
+            self.channels.iter().map(|(name, c)| (name.clone(), c.members.len())).collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        v.truncate(n);
+        v
+    }
+    /// Every live channel, largest membership first: (name, member count).
+    pub fn all_channels(&self) -> Vec<(String, usize)> {
+        let mut v: Vec<(String, usize)> =
+            self.channels.iter().map(|(name, c)| (name.clone(), c.members.len())).collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        v
+    }
+    /// Sorted names of the modules the ircd advertised in its CAPAB burst.
+    pub fn module_names(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.ircd_modules.iter().cloned().collect();
+        v.sort();
+        v
+    }
+    /// Linked servers: (name, live user count on it).
+    pub fn server_summaries(&self) -> Vec<(String, usize)> {
+        let mut v: Vec<(String, usize)> = self
+            .server_names
+            .iter()
+            .map(|(sid, name)| (name.clone(), self.uids_on_server(sid).len()))
+            .collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        v
+    }
+    /// Online users for the users page: (nick, ident, host, ip, account-or-empty).
+    pub fn user_rows(&self) -> Vec<(String, String, String, String, String)> {
+        let mut v: Vec<_> = self
+            .users
+            .iter()
+            .map(|(uid, u)| {
+                (
+                    u.nick.clone(),
+                    u.ident.clone(),
+                    u.host.clone(),
+                    u.ip.clone(),
+                    self.accounts.get(uid).cloned().unwrap_or_default(),
+                )
+            })
+            .collect();
+        v.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+        v
+    }
+
     // Record a downstream server and the SID that introduced it (its parent).
     pub fn server_link(&mut self, sid: &str, parent: &str) {
         self.servers.insert(sid.to_string(), parent.to_string());
