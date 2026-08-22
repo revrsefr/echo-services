@@ -715,3 +715,145 @@ async fn live(oper: Oper, State(st): State<AppState>) -> Response {
     axum::Json(json!({ "counts": counts })).into_response()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use askama::Template;
+
+    // Every page struct must render to non-empty HTML that extends the shell.
+    #[test]
+    fn pages_render() {
+        let brand = "test".to_string();
+        let who = "root".to_string();
+
+        let dash = DashboardTpl {
+            brand: brand.clone(),
+            active: "dashboard",
+            username: who.clone(),
+            is_root: true,
+            show_audit: true,
+            users: 17,
+            opers: 1,
+            channels: 6,
+            servers: 1,
+            bans: 2,
+            server_rows: vec![SrvRow { name: "irc.a".into(), users: 17, pct: 100 }],
+            chan_rows: vec![ChanRow { name: "#a".into(), users: 5, pct: 100 }],
+        }
+        .render()
+        .unwrap();
+        assert!(dash.contains("17") && dash.contains("irc.a") && dash.contains("#a"));
+
+        let users = UsersTpl {
+            brand: brand.clone(),
+            active: "users",
+            username: who.clone(),
+            is_root: true,
+            show_audit: true,
+            rows: vec![UserRow {
+                nick: "bob".into(),
+                ident: "b".into(),
+                host: "h".into(),
+                ip: "1.2.3.4".into(),
+                account: "bob".into(),
+                has_account: true,
+            }],
+            accounts: 1,
+            guests: 0,
+        }
+        .render()
+        .unwrap();
+        assert!(users.contains("bob") && users.contains("1.2.3.4"));
+
+        assert!(ServersTpl {
+            brand: brand.clone(),
+            active: "servers",
+            username: who.clone(),
+            is_root: true,
+            show_audit: true,
+            rows: vec![SrvFull { name: "irc.a".into(), users: 3, pct: 100 }],
+        }
+        .render()
+        .unwrap()
+        .contains("irc.a"));
+
+        assert!(ChannelsTpl {
+            brand: brand.clone(),
+            active: "channels",
+            username: who.clone(),
+            is_root: true,
+            show_audit: true,
+            rows: vec![ChanFullRow {
+                name: "#a".into(),
+                users: 1,
+                founder: "bob".into(),
+                topic: "hi".into(),
+                registered: true,
+            }],
+        }
+        .render()
+        .unwrap()
+        .contains("#a"));
+
+        assert!(BansTpl {
+            brand: brand.clone(),
+            active: "bans",
+            username: who.clone(),
+            is_root: true,
+            show_audit: true,
+            rows: vec![BanRow {
+                kind: "GLINE".into(),
+                mask: "*@bad".into(),
+                setter: "op".into(),
+                reason: "spam".into(),
+                set_ago: "il y a 1 j".into(),
+                expires: "permanent".into(),
+            }],
+        }
+        .render()
+        .unwrap()
+        .contains("*@bad"));
+
+        assert!(OpersTpl {
+            brand: brand.clone(),
+            active: "opers",
+            username: who.clone(),
+            is_root: true,
+            show_audit: true,
+            rows: vec![OperRow { name: "root".into(), tier: "root", email: String::new() }],
+        }
+        .render()
+        .unwrap()
+        .contains("root"));
+
+        assert!(RegsTpl {
+            brand: brand.clone(),
+            active: "registrations",
+            username: who.clone(),
+            is_root: true,
+            show_audit: true,
+            rows: vec![RegRow {
+                name: "bob".into(),
+                email: "b@x".into(),
+                verified: true,
+                registered: "il y a 2 j".into(),
+            }],
+        }
+        .render()
+        .unwrap()
+        .contains("bob"));
+
+        assert!(ModulesTpl {
+            brand,
+            active: "modules",
+            username: who,
+            is_root: true,
+            show_audit: true,
+            rows: vec!["m_spamfilter".into()],
+        }
+        .render()
+        .unwrap()
+        .contains("m_spamfilter"));
+    }
+}
+
