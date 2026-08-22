@@ -18,7 +18,7 @@
 <div class="up-card uroster-card">
   <div class="uroster" id="croster">
     {% for c in rows %}
-    <a class="urow chrow" href="/channels/{{ c.name }}"
+    <a class="urow chrow" href="/channels/{{ c.slug }}"
        data-f="{% if c.registered %}reg {% endif %}{% if c.moderated %}mod{% endif %}"
        data-q="{{ c.name }} {{ c.topic }} {{ c.modes }}">
       <span class="chava {% if c.keyed || c.inviteonly || c.secret %}is-locked{% endif %}">#</span>

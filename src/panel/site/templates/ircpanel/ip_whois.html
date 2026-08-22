@@ -19,7 +19,7 @@
     <tbody>
       {% for u in users %}
       <tr>
-        <td><a href="/users/{{ u.nick }}"><b>{{ u.nick }}</b></a>{% if u.is_oper %} <span class="ircp-tag ircp-tag--oper">oper</span>{% endif %}</td>
+        <td><a href="/users/{{ u.slug }}"><b>{{ u.nick }}</b></a>{% if u.is_oper %} <span class="ircp-tag ircp-tag--oper">oper</span>{% endif %}</td>
         <td class="mono">{{ u.ident }}@{{ u.host }}</td>
         <td>{% if u.account.is_empty() %}<span class="muted">—</span>{% else %}{{ u.account }}{% endif %}</td>
         <td>{% if u.server.is_empty() %}—{% else %}{{ u.server }}{% endif %}</td>

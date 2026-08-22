@@ -346,6 +346,7 @@ struct SrvCard {
 }
 struct ChanRank {
     name: String,
+    slug: String,
     topic: String,
     users: usize,
     pct: u64,
@@ -395,6 +396,7 @@ async fn dashboard(oper: Oper, State(st): State<AppState>) -> Html<String> {
     let chan_ranks = chans
         .into_iter()
         .map(|c| ChanRank {
+            slug: tmpl::url_seg(&c.name),
             name: c.name,
             topic: c.topic,
             users: c.users,
@@ -421,6 +423,7 @@ async fn dashboard(oper: Oper, State(st): State<AppState>) -> Html<String> {
 
 struct URow {
     nick: String,
+    slug: String,
     ident: String,
     host: String,
     ip: String,
@@ -454,6 +457,7 @@ async fn page_users(oper: Oper, State(st): State<AppState>) -> Html<String> {
             has_account: !u.account.is_empty(),
             is_oper: !u.oper.is_empty(),
             operclass: u.oper,
+            slug: tmpl::url_seg(&u.nick),
             nick: u.nick,
             ident: u.ident,
             host: u.host,
@@ -481,6 +485,7 @@ async fn page_users(oper: Oper, State(st): State<AppState>) -> Html<String> {
 
 struct CRow {
     name: String,
+    slug: String,
     topic: String,
     users: usize,
     modes: String,
@@ -517,6 +522,7 @@ async fn page_channels(oper: Oper, State(st): State<AppState>) -> Html<String> {
         .into_iter()
         .map(|c| CRow {
             pct: pct(c.users, max_users),
+            slug: tmpl::url_seg(&c.name),
             name: c.name,
             topic: c.topic,
             users: c.users,
@@ -925,6 +931,7 @@ async fn page_whowas(oper: Oper, State(st): State<AppState>, Query(p): Query<Has
                 has_account: !u.account.is_empty(),
                 is_oper: !u.oper.is_empty(),
                 operclass: u.oper,
+                slug: tmpl::url_seg(&u.nick),
                 nick: u.nick,
                 ident: u.ident,
                 host: u.host,
@@ -944,6 +951,7 @@ async fn page_whowas(oper: Oper, State(st): State<AppState>, Query(p): Query<Has
 // answer "who is on this IP" and "which bans match it".
 struct IpUser {
     nick: String,
+    slug: String,
     ident: String,
     host: String,
     account: String,
@@ -970,6 +978,7 @@ async fn page_ip_whois(oper: Oper, State(st): State<AppState>, Query(p): Query<H
             if u.ip == q {
                 users.push(IpUser {
                     is_oper: !u.oper.is_empty(),
+                    slug: tmpl::url_seg(&u.nick),
                     nick: u.nick,
                     ident: u.ident,
                     host: u.host,
@@ -1067,6 +1076,7 @@ async fn page_trends(oper: Oper, State(st): State<AppState>) -> Html<String> {
 
 struct UChan {
     name: String,
+    slug: String,
     prefix: &'static str,
 }
 
@@ -1142,7 +1152,7 @@ async fn page_user_detail(oper: Oper, State(st): State<AppState>, Path(nick): Pa
         t.server = u.server;
         t.secure = u.secure;
         t.account = u.account;
-        t.channels = chans.into_iter().map(|(name, prefix)| UChan { name, prefix }).collect();
+        t.channels = chans.into_iter().map(|(name, prefix)| UChan { slug: tmpl::url_seg(&name), name, prefix }).collect();
     }
     drop(e);
     t.initial = t.nick.chars().next().map(|c| c.to_ascii_uppercase().to_string()).unwrap_or_else(|| "?".into());
@@ -1151,6 +1161,7 @@ async fn page_user_detail(oper: Oper, State(st): State<AppState>, Path(nick): Pa
 
 struct CMember {
     nick: String,
+    slug: String,
     prefix: &'static str,
     account: String,
     is_oper: bool,
@@ -1211,7 +1222,7 @@ async fn page_channel_detail(oper: Oper, State(st): State<AppState>, Path(name):
         t.registered = c.registered;
         t.members = members
             .into_iter()
-            .map(|m| CMember { nick: m.nick, prefix: m.prefix, account: m.account, is_oper: m.oper })
+            .map(|m| CMember { slug: tmpl::url_seg(&m.nick), nick: m.nick, prefix: m.prefix, account: m.account, is_oper: m.oper })
             .collect();
     }
     html(t)
@@ -1394,17 +1405,17 @@ mod tests {
             chrome: ch("dashboard"), net_name: "irc.a".into(), version: "0",
             users: 5, local: 5, opers: 1, channels: 2, servers: 1, bans: 0,
             server_cards: vec![SrvCard { name: "irc.a".into(), uplink: String::new(), hub: true, users: 5, opers: 1, pct: 100 }],
-            chan_ranks: vec![ChanRank { name: "#a".into(), topic: "hi".into(), users: 3, pct: 100 }],
+            chan_ranks: vec![ChanRank { name: "#a".into(), slug: "%23a".into(), topic: "hi".into(), users: 3, pct: 100 }],
         }.render().unwrap().contains("irc.a"));
 
         assert!(UsersTpl {
             chrome: ch("users"), total: 1, accounts: 1, guests: 0, opers: 1,
-            rows: vec![URow { nick: "bob".into(), ident: "b".into(), host: "h".into(), ip: "1.2.3.4".into(), account: "bob".into(), has_account: true, is_oper: true, operclass: "netadmin".into(), modes: "iox".into(), server: "irc.a".into(), secure: true }],
+            rows: vec![URow { nick: "bob".into(), slug: "bob".into(), ident: "b".into(), host: "h".into(), ip: "1.2.3.4".into(), account: "bob".into(), has_account: true, is_oper: true, operclass: "netadmin".into(), modes: "iox".into(), server: "irc.a".into(), secure: true }],
         }.render().unwrap().contains("bob"));
 
         assert!(ChannelsTpl {
             chrome: ch("channels"), total: 1, registered: 1, moderated: 0, members: 3,
-            rows: vec![CRow { name: "#a".into(), topic: "hi".into(), users: 3, modes: "nt".into(), secret: false, private: false, inviteonly: false, keyed: false, moderated: false, registered: true, pct: 100 }],
+            rows: vec![CRow { name: "#a".into(), slug: "%23a".into(), topic: "hi".into(), users: 3, modes: "nt".into(), secret: false, private: false, inviteonly: false, keyed: false, moderated: false, registered: true, pct: 100 }],
         }.render().unwrap().contains("#a"));
 
         assert!(ServersTpl { chrome: ch("servers"), count: 1, users: 5, opers: 1, rows: vec![SRow { name: "irc.a".into(), uplink: String::new(), hub: true, users: 5, opers: 1, pct: 100 }] }.render().unwrap().contains("irc.a"));
@@ -1422,8 +1433,8 @@ mod tests {
         assert!(LogsTpl { chrome: ch("logs") }.render().is_ok());
         assert!(AccessTpl { chrome: ch("access"), grants: vec![GrantRow { name: "root".into(), tier: "root".into(), perms: vec!["admin".into()], expires: "permanent".into() }], total: 1 }.render().unwrap().contains("root"));
         assert!(TrendsTpl { chrome: ch("trends"), users: 5, channels: 2, servers: 1, opers: 1 }.render().is_ok());
-        assert!(UserDetailTpl { chrome: ch("users"), found: true, initial: "B".into(), nick: "bob".into(), ident: "b".into(), host: "h".into(), ip: "1.2.3.4".into(), gecos: "Bob".into(), account: "bob".into(), is_oper: false, operclass: String::new(), modes: "ix".into(), server: "irc.a".into(), secure: true, channels: vec![UChan { name: "#a".into(), prefix: "@" }], registered: true, email: "b@x".into(), verified: true, joined: "01/01/2026".into() }.render().unwrap().contains("bob"));
-        assert!(ChannelDetailTpl { chrome: ch("channels"), found: true, name: "#a".into(), topic: "hi".into(), topic_setter: "bob".into(), users: 1, modes: "nt".into(), secret: false, private: false, inviteonly: false, keyed: false, moderated: false, registered: true, members: vec![CMember { nick: "bob".into(), prefix: "@", account: "bob".into(), is_oper: false }] }.render().unwrap().contains("#a"));
+        assert!(UserDetailTpl { chrome: ch("users"), found: true, initial: "B".into(), nick: "bob".into(), ident: "b".into(), host: "h".into(), ip: "1.2.3.4".into(), gecos: "Bob".into(), account: "bob".into(), is_oper: false, operclass: String::new(), modes: "ix".into(), server: "irc.a".into(), secure: true, channels: vec![UChan { name: "#a".into(), slug: "%23a".into(), prefix: "@" }], registered: true, email: "b@x".into(), verified: true, joined: "01/01/2026".into() }.render().unwrap().contains("bob"));
+        assert!(ChannelDetailTpl { chrome: ch("channels"), found: true, name: "#a".into(), topic: "hi".into(), topic_setter: "bob".into(), users: 1, modes: "nt".into(), secret: false, private: false, inviteonly: false, keyed: false, moderated: false, registered: true, members: vec![CMember { nick: "bob".into(), slug: "bob".into(), prefix: "@", account: "bob".into(), is_oper: false }] }.render().unwrap().contains("#a"));
         assert!(ServerDetailTpl { chrome: ch("servers"), found: true, name: "irc.a".into(), uplink: String::new(), hub: true, users: 5, opers: 1 }.render().unwrap().contains("irc.a"));
     }
 }

@@ -36,7 +36,7 @@
     <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg> Salons</div>
     <div class="up-chips">
       {% for ch in channels %}
-      <a class="up-chip" href="/channels/{{ ch.name }}"><b>{{ ch.prefix }}</b>{{ ch.name }}</a>
+      <a class="up-chip" href="/channels/{{ ch.slug }}"><b>{{ ch.prefix }}</b>{{ ch.name }}</a>
       {% endfor %}
       {% if channels.is_empty() %}<div class="ircp-empty">Aucun salon.</div>{% endif %}
     </div>

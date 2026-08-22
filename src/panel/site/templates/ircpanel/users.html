@@ -18,7 +18,7 @@
 <div class="up-card uroster-card">
   <div class="uroster" id="uroster">
     {% for u in rows %}
-    <a class="urow" href="/users/{{ u.nick }}"
+    <a class="urow" href="/users/{{ u.slug }}"
        data-f="{% if u.is_oper %}oper {% endif %}{% if u.has_account %}acct{% else %}guest{% endif %}"
        data-q="{{ u.nick }} {{ u.ident }} {{ u.host }} {{ u.ip }} {{ u.account }} {{ u.server }}">
       <span class="uava {% if u.is_oper %}is-oper{% else if u.has_account %}is-acct{% endif %}">

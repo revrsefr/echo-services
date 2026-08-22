@@ -35,7 +35,7 @@
   <div class="up-card-h"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg> Membres <span class="ircp-count">{{ users }}</span></div>
   <div class="chmembers">
     {% for m in members %}
-    <a class="chmember" href="/users/{{ m.nick }}">
+    <a class="chmember" href="/users/{{ m.slug }}">
       <span class="uava {% if m.is_oper %}is-oper{% else if !m.account.is_empty() %}is-acct{% endif %}"></span>
       <span class="chmember-main">
         <span class="chmember-id"><span class="chmember-lvl mono">{{ m.prefix }}</span><b>{{ m.nick }}</b></span>

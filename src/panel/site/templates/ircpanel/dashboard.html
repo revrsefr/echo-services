@@ -137,7 +137,7 @@
   </div>
   <div class="chrank-list">
     {% for c in chan_ranks %}
-    <a class="chrank" href="/channels/{{ c.name }}">
+    <a class="chrank" href="/channels/{{ c.slug }}">
       <span class="chrank-pos">{{ loop.index }}</span>
       <span class="chrank-main">
         <span class="chrank-name">{{ c.name }}</span>

@@ -20,6 +20,21 @@ pub fn asset(path: &str) -> Option<(&'static [u8], &'static str)> {
     Some((f.contents(), ctype))
 }
 
+/// Percent-encode a string for use as a single URL path segment (RFC 3986
+/// unreserved set kept verbatim, everything else encoded). Lets channel names
+/// like `#devs` or `##dev` and nicks with reserved chars appear in a link
+/// without the `#` being swallowed as a fragment.
+pub fn url_seg(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 /// A relative timestamp in French ("il y a 3 min"), for panel display. Computed in
 /// Rust so templates stay pure interpolation.
 pub fn human_ago(then: u64, now: u64) -> String {
