@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 // The read-only network view a module sees; re-exported so the engine keeps
 // naming it locally.
-pub use echo_api::{ChanSeenView, HelpEntry, IncidentView, NetView, SeenView};
+pub use echo_api::{ChanSeenView, HelpEntry, IncidentView, NetView, Privs, SeenView};
 
 // The most recent moderation/action incidents kept for LOGSEARCH.
 const INCIDENT_CAP: usize = 10_000;
@@ -52,10 +52,11 @@ pub struct Network {
     // Network-wide help index (service nick, blurb, per-command topics), built by
     // the engine at startup from every service so HelpServ can front it.
     pub help_catalog: Vec<(String, &'static str, &'static [HelpEntry])>,
-    // Account names of the declarative config operators, mirrored from the engine
-    // so services can enumerate staff (MemoServ STAFF). Runtime OPER grants live
-    // in the store; a caller unions the two.
-    config_opers: Vec<String>,
+    // The declarative config operators and the privilege tier each holds, mirrored
+    // from the engine so services can enumerate staff (MemoServ STAFF) and show a
+    // role (NickServ INFO). Runtime OPER grants live in the store; a caller unions
+    // the two.
+    config_opers: HashMap<String, Privs>,
 }
 
 // ChanFix scoring caps and rates.
@@ -296,8 +297,8 @@ impl Network {
 
     // Mirror the engine's declarative config operators, so services can enumerate
     // staff. Called whenever the config oper set changes.
-    pub fn set_config_opers(&mut self, accounts: Vec<String>) {
-        self.config_opers = accounts;
+    pub fn set_config_opers(&mut self, opers: HashMap<String, Privs>) {
+        self.config_opers = opers;
     }
 
     // Live sessions from `ip`.
@@ -849,7 +850,14 @@ impl Network {
 // with the seen record projected into a plain view.
 impl NetView for Network {
     fn oper_accounts(&self) -> Vec<String> {
-        self.config_opers.clone()
+        self.config_opers.keys().cloned().collect()
+    }
+    fn config_oper_privs(&self, account: &str) -> Privs {
+        self.config_opers
+            .iter()
+            .find(|(a, _)| a.eq_ignore_ascii_case(account))
+            .map(|(_, p)| *p)
+            .unwrap_or_default()
     }
     fn uid_by_nick(&self, nick: &str) -> Option<&str> {
         Network::uid_by_nick(self, nick)

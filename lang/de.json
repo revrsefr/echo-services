@@ -1,4 +1,6 @@
 {
+ "  Services role : {role}": "  Dienste-Rolle : {role}",
+ "  Groups     : {list} (from GroupServ)": "  Gruppen    : {list} (von GroupServ)",
  "{count} year": "{count} Jahr",
  "{count} years": "{count} Jahre",
  "{count} month": "{count} Monat",

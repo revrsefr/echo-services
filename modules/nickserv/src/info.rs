@@ -1,4 +1,4 @@
-use echo_api::{human_ago, human_time, NetView, Priv, ProfileField, Store};
+use echo_api::{human_ago, human_time, NetView, Priv, Privs, ProfileField, Store};
 use echo_api::{Sender, ServiceCtx};
 use echo_api::t;
 
@@ -16,6 +16,21 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
     ctx.notice(me, from.uid, t!(ctx, "Information for \x02{name}\x02:", name = acct.name));
     let age = human_ago(ctx.lang(), now_unix().saturating_sub(acct.ts));
     ctx.notice(me, from.uid, t!(ctx, "  Registered : {when} ({age} ago)", when = human_time(acct.ts), age = age));
+    // Services-operator role: the config-oper tier unioned with any live runtime OPER
+    // grant. Public (WHOIS already reveals oper status); shown only when there is one.
+    let now = now_unix();
+    let mut privs = net.config_oper_privs(&acct.name);
+    if let Some((_, names, _)) = db.opers_list().into_iter().find(|(a, _, exp)| a.eq_ignore_ascii_case(&acct.name) && exp.is_none_or(|e| e > now)) {
+        privs = privs.union(Privs::from_names(&names));
+    }
+    if privs.any() {
+        ctx.notice(me, from.uid, t!(ctx, "  Services role : {role}", role = privs.names().join(", ")));
+    }
+    // GroupServ groups the account belongs to — public account identity.
+    let groups = db.groups_of(&acct.name);
+    if !groups.is_empty() {
+        ctx.notice(me, from.uid, t!(ctx, "  Groups     : {list} (from GroupServ)", list = groups.join(" ")));
+    }
     // Last-seen is public by default; SET HIDE STATUS keeps it to owner and opers.
     if privileged || !acct.hide_status {
         let last_seen = if net.uids_logged_into(&acct.name).is_empty() {

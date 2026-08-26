@@ -2478,6 +2478,12 @@ pub trait NetView {
     fn oper_accounts(&self) -> Vec<String> {
         Vec::new()
     }
+    // The services-operator privileges this account holds from the `[[oper]]` config
+    // (NickServ INFO shows the tier). Empty when it isn't a config operator; runtime
+    // OPER grants (Store::opers_list) are unioned in by the caller.
+    fn config_oper_privs(&self, _account: &str) -> Privs {
+        Privs::default()
+    }
     fn uid_by_nick(&self, nick: &str) -> Option<&str>;
     fn nick_of(&self, uid: &str) -> Option<&str>;
     fn host_of(&self, uid: &str) -> Option<&str>;
