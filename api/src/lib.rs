@@ -2889,9 +2889,50 @@ pub fn human_time(ts: u64) -> String {
     format!("{year:04}-{month:02}-{day:02} {hh:02}:{mm:02}:{ss:02} UTC")
 }
 
+/// A coarse "how long ago" for `secs` of elapsed time, in the single largest unit
+/// that fits, localized for `lang` (e.g. "3 months" / "3 mois" / "hace 3 meses").
+/// NickServ INFO shows it next to an account's registration date.
+pub fn human_ago(lang: &str, secs: u64) -> String {
+    const MINUTE: u64 = 60;
+    const HOUR: u64 = 60 * MINUTE;
+    const DAY: u64 = 24 * HOUR;
+    const WEEK: u64 = 7 * DAY;
+    const MONTH: u64 = 2_629_746; // mean Gregorian month (365.2425 / 12 days)
+    const YEAR: u64 = 31_556_952; // mean Gregorian year (365.2425 days)
+    let (n, one, other) = if secs >= YEAR {
+        (secs / YEAR, "{count} year", "{count} years")
+    } else if secs >= MONTH {
+        (secs / MONTH, "{count} month", "{count} months")
+    } else if secs >= WEEK {
+        (secs / WEEK, "{count} week", "{count} weeks")
+    } else if secs >= DAY {
+        (secs / DAY, "{count} day", "{count} days")
+    } else if secs >= HOUR {
+        (secs / HOUR, "{count} hour", "{count} hours")
+    } else if secs >= MINUTE {
+        (secs / MINUTE, "{count} minute", "{count} minutes")
+    } else {
+        (secs, "{count} second", "{count} seconds")
+    };
+    render_plural(lang, n, one, other, &[("count", n.to_string())])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn human_ago_picks_largest_unit() {
+        // No catalog is loaded in unit tests, so every language falls back to the
+        // English source template — this exercises unit selection + pluralization.
+        assert_eq!(human_ago("en", 0), "0 seconds");
+        assert_eq!(human_ago("en", 1), "1 second");
+        assert_eq!(human_ago("en", 90), "1 minute");
+        assert_eq!(human_ago("en", 3 * 86400), "3 days");
+        assert_eq!(human_ago("en", 10 * 86400), "1 week");
+        assert_eq!(human_ago("en", 100 * 86400), "3 months");
+        assert_eq!(human_ago("en", 400 * 86400), "1 year");
+    }
 
     #[test]
     fn confusable_names_rejected_but_french_passes() {

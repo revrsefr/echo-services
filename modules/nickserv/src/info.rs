@@ -1,4 +1,4 @@
-use echo_api::{human_time, NetView, Priv, ProfileField, Store};
+use echo_api::{human_ago, human_time, NetView, Priv, ProfileField, Store};
 use echo_api::{Sender, ServiceCtx};
 use echo_api::t;
 
@@ -14,7 +14,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
     let is_owner = from.account == Some(acct.name.as_str());
     let privileged = is_owner || from.privs.has(Priv::Auspex);
     ctx.notice(me, from.uid, t!(ctx, "Information for \x02{name}\x02:", name = acct.name));
-    ctx.notice(me, from.uid, t!(ctx, "  Registered : {when}", when = human_time(acct.ts)));
+    let age = human_ago(ctx.lang(), now_unix().saturating_sub(acct.ts));
+    ctx.notice(me, from.uid, t!(ctx, "  Registered : {when} ({age} ago)", when = human_time(acct.ts), age = age));
     // Last-seen is public by default; SET HIDE STATUS keeps it to owner and opers.
     if privileged || !acct.hide_status {
         let last_seen = if net.uids_logged_into(&acct.name).is_empty() {
@@ -56,4 +57,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
             ctx.notice(me, from.uid, t!(ctx, "  Staff note : {note}", note = note));
         }
     }
+}
+
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
