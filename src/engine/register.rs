@@ -331,6 +331,12 @@ impl Engine {
         let addr = email.clone();
         let outcome = match self.db.register_prepared(account, creds, email) {
             Ok(()) if self.db.is_verified(account) => RegOutcome::Ok,
+            // An operator-created account (SAREGISTER) is active at once — no email
+            // confirmation or vouch wait.
+            Ok(()) if matches!(reply, RegReply::Admin { .. }) => {
+                let _ = self.db.verify_account(account);
+                RegOutcome::Ok
+            }
             Ok(()) => RegOutcome::VerifyRequired,
             Err(RegError::Exists) => RegOutcome::Exists,
             Err(RegError::Internal) => RegOutcome::Internal,

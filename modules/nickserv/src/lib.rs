@@ -20,6 +20,7 @@ mod alist;
 mod set;
 #[path = "saset.rs"]
 mod saset;
+mod saregister;
 #[path = "drop.rs"]
 mod drop;
 #[path = "group.rs"]
@@ -60,6 +61,7 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "ALIST", summary: "list channels you have access on", detail: "Syntax: \x02ALIST\x02\nLists the channels you hold access on." },
     HelpEntry { cmd: "SET", summary: "change password, email, or preferences", detail: "Syntax: \x02SET PASSWORD <new>\x02, \x02SET EMAIL <address>\x02, \x02SET GREET [message]\x02, \x02SET AVATAR|BIO|PRONOUNS|TIMEZONE|URL [value]\x02, \x02SET AUTOOP {ON|OFF}\x02, \x02SET KILL {ON|OFF}\x02, or \x02SET HIDE STATUS {ON|OFF}\x02\nChanges your password, email, greet, public profile, auto-op, nick-protection, or last-seen privacy. A profile field is shown in \x02INFO\x02 and published to clients as IRCv3 metadata; clear one by giving no value." },
     HelpEntry { cmd: "SASET", summary: "change another account's settings (operator)", detail: "Syntax: \x02SASET <account> PASSWORD <new>\x02, \x02EMAIL [address]\x02, or \x02GREET [message]\x02\nEdits another account's settings. Operators only." },
+    HelpEntry { cmd: "SAREGISTER", summary: "create an account (operator)", detail: "Syntax: \x02SAREGISTER <account> <password> [email]\x02\nCreates an account directly, active immediately with no email confirmation or vouch. The account owner is not logged in. Operators only." },
     HelpEntry { cmd: "GROUP", summary: "link this nick to an account", detail: "Syntax: \x02GROUP <account> <password>\x02\nLinks your current nick to an account as an alias, so identifying under it logs into that account." },
     HelpEntry { cmd: "GLIST", summary: "list your grouped nicks", detail: "Syntax: \x02GLIST\x02\nLists the nicks grouped to your account." },
     HelpEntry { cmd: "UNGROUP", summary: "remove a grouped nick", detail: "Syntax: \x02UNGROUP [nick]\x02\nRemoves a grouped nick (your current one by default)." },
@@ -123,6 +125,7 @@ impl Service for NickServ {
             Some("ALIST") => alist::handle(me, from, ctx, db),
             Some("SET") => set::handle(me, from, args, ctx, net, db),
             Some("SASET") => saset::handle(me, from, args, ctx, db),
+            Some("SAREGISTER") => saregister::handle(me, from, args, ctx, db),
             Some("DROP") => drop::handle(me, from, args, ctx, net, db),
             Some("GROUP") => group::handle(me, from, args, ctx, db),
             Some("GLIST") => glist::handle(me, from, ctx, db),

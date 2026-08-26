@@ -260,6 +260,9 @@ pub enum RegReply {
     Relay { reqid: String, kind: String, origin: String },
     // NickServ REGISTER: NOTICE the requesting user, logging them in on success.
     NickServ { agent: String, uid: String, nick: String },
+    // NickServ SAREGISTER: an operator created the account for someone else — just
+    // NOTICE the operator (`uid`) from `agent`; no login and no confirmation email.
+    Admin { agent: String, uid: String },
 }
 
 /// What to do once a deferred password verify (see [`NetAction::DeferAuthenticate`])

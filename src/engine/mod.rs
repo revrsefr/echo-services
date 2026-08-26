@@ -2458,6 +2458,21 @@ fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAct
                 RegOutcome::Internal => vec![notice("Sorry, that didn't work. Please try again in a moment.".to_string())],
             }
         }
+        RegReply::Admin { agent, uid } => {
+            let notice = |text: String| NetAction::Notice { from: agent.clone(), to: uid.clone(), text };
+            match outcome {
+                RegOutcome::Ok | RegOutcome::VerifyRequired => {
+                    vec![notice(format!("Account \x02{account}\x02 has been created and is active."))]
+                }
+                RegOutcome::Forbidden => vec![notice(format!("\x02{account}\x02 is a forbidden account name."))],
+                RegOutcome::ForbiddenEmail => vec![notice("That email address is forbidden by network policy.".to_string())],
+                RegOutcome::Exists => vec![notice(format!("\x02{account}\x02 is already registered."))],
+                RegOutcome::RateLimited => vec![notice("Registrations are busy right now; try again in a moment.".to_string())],
+                RegOutcome::Frozen => vec![notice("Registrations are temporarily frozen by network staff.".to_string())],
+                RegOutcome::External => vec![notice("Accounts are managed on the website — create it there.".to_string())],
+                RegOutcome::Internal => vec![notice("Sorry, that didn't work. Please try again in a moment.".to_string())],
+            }
+        }
     }
 }
 

@@ -5634,6 +5634,28 @@
         assert!(e.db.is_verified("bob"), "bob is now active after the vouch");
     }
 
+    // SAREGISTER (operator-created account) via the Admin register reply is active at
+    // once — the force-verify overrides even vouch/email confirmation — and the
+    // operator (not the new account) is the one noticed.
+    #[test]
+    fn saregister_creates_active_account_despite_vouch() {
+        let path = std::env::temp_dir().join("echo-saregister.jsonl");
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path, "42S");
+        db.scram_iterations = 4096;
+        db.set_registration_vouch(true); // a normal REGISTER would start pending
+        let ns = NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 };
+        let mut e = Engine::new(vec![Box::new(ns)], db);
+        let reply = crate::proto::RegReply::Admin { agent: "42SAAAAAA".into(), uid: "000AAAAAO".into() };
+        assert!(e.pre_register_check("madebyop", &reply).is_none(), "clean name allowed");
+        let out = e.complete_register("madebyop", Db::derive_credentials("s3cretpass", 4096), None, reply);
+        assert!(e.db.is_verified("madebyop"), "operator-created account is active immediately, even under vouch mode");
+        assert!(
+            out.iter().any(|a| matches!(a, NetAction::Notice { to, text, .. } if to == "000AAAAAO" && text.contains("created"))),
+            "the operator gets a success notice: {out:?}"
+        );
+    }
+
     // FORBID NICK also Q-lines the nick so it can't be used, and the Q-line is
     // removed on unforbid and re-asserted on a relink.
     #[test]
