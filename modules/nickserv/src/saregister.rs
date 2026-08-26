@@ -36,7 +36,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, db: 
             return;
         }
     }
-    ctx.alert("SAREGISTER", &format!("created account {account}"));
+    ctx.alert("SAREGISTER", format!("created account {account}"));
     // The engine derives the password off-thread, commits the account as verified,
     // and NOTICEs the operator via the Admin reply (see engine::reg_reply).
     ctx.defer_register(
