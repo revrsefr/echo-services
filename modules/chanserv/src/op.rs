@@ -33,5 +33,6 @@ pub fn handle(me: &str, from: &Sender, mode: &str, args: &[&str], ctx: &mut Serv
     if mode.starts_with('-') && super::peace_blocks(me, from, chan, &target, ctx, net, db) {
         return;
     }
-    ctx.channel_mode(me, chan, &format!("{mode} {target}"));
+    let src = super::mode_source(me, chan, net, db);
+    ctx.channel_mode(&src, chan, &format!("{mode} {target}"));
 }

@@ -19,8 +19,9 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
     if super::peace_blocks(me, from, chan, &target, ctx, net, db) {
         return;
     }
+    let src = super::mode_source(me, chan, net, db);
     let host = net.host_of(&target).unwrap_or("*");
-    ctx.channel_mode(me, chan, &format!("+b *!*@{host}"));
+    ctx.channel_mode(&src, chan, &format!("+b *!*@{host}"));
     let reason = if args.len() > 3 { args[3..].join(" ") } else { "Banned".to_string() };
-    ctx.kick(me, chan, &target, &reason);
+    ctx.kick(&src, chan, &target, &reason);
 }

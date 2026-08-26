@@ -20,17 +20,18 @@ pub fn handle(me: &str, from: &Sender, up: bool, args: &[&str], ctx: &mut Servic
         ctx.notice(me, from.uid, t!(ctx, "You're not in \x02{chan}\x02.", chan = chan));
         return;
     }
+    let src = super::mode_source(me, chan, net, db);
     if up {
         match info.join_mode(account) {
             Some(mode) => {
-                ctx.channel_mode(me, chan, &status_mode(mode, from.uid));
+                ctx.channel_mode(&src, chan, &status_mode(mode, from.uid));
                 ctx.notice(me, from.uid, t!(ctx, "Your status in \x02{chan}\x02 has been applied.", chan = chan));
             }
             None => ctx.notice(me, from.uid, t!(ctx, "You have no status access in \x02{chan}\x02.", chan = chan)),
         }
     } else {
         // Strip owner, admin, op, halfop and voice; the ircd ignores any you don't hold.
-        ctx.channel_mode(me, chan, &status_mode("-qaohv", from.uid));
+        ctx.channel_mode(&src, chan, &status_mode("-qaohv", from.uid));
         ctx.notice(me, from.uid, t!(ctx, "Your status in \x02{chan}\x02 has been removed.", chan = chan));
     }
 }

@@ -16,22 +16,23 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
     let Some(info) = db.channel(chan) else {
         return;
     };
-    ctx.channel_mode(me, chan, &info.lock_modes());
+    let src = super::mode_source(me, chan, net, db);
+    ctx.channel_mode(&src, chan, &info.lock_modes());
     // Re-assert the bans for extbans the ircd enforces (echo can't match them itself).
     for k in &info.akick {
         if echo_api::ircd_enforced(&k.mask) {
-            ctx.channel_mode(me, chan, &format!("+b {}", k.mask));
+            ctx.channel_mode(&src, chan, &format!("+b {}", k.mask));
         }
     }
     let members: Vec<String> = net.channel_members(chan);
     for uid in members {
         match net.account_of(&uid).and_then(|a| info.join_mode(a)) {
-            Some(m) => ctx.channel_mode(me, chan, &status_mode(m, &uid)),
+            Some(m) => ctx.channel_mode(&src, chan, &status_mode(m, &uid)),
             None => {
                 if let Some(k) = net.ban_target(&uid).and_then(|t| info.akick_match(&t)) {
-                    ctx.channel_mode(me, chan, &format!("+b {}", k.mask));
+                    ctx.channel_mode(&src, chan, &format!("+b {}", k.mask));
                     let reason = if k.reason.is_empty() { "You are banned from this channel." } else { &k.reason };
-                    ctx.kick(me, chan, &uid, reason);
+                    ctx.kick(&src, chan, &uid, reason);
                 }
             }
         }

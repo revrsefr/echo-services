@@ -17,7 +17,8 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         .and_then(|&n| net.uid_by_nick(n))
         .map(str::to_string)
         .unwrap_or_else(|| from.uid.to_string());
+    let src = super::mode_source(me, chan, net, db);
     let host = net.host_of(&target).unwrap_or("*");
-    ctx.channel_mode(me, chan, &format!("-b *!*@{host}"));
+    ctx.channel_mode(&src, chan, &format!("-b *!*@{host}"));
     ctx.notice(me, from.uid, t!(ctx, "Cleared the *!*@{host} ban on \x02{chan}\x02.", host = host, chan = chan));
 }

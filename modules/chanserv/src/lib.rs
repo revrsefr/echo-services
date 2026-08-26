@@ -419,6 +419,19 @@ fn peace_blocks(me: &str, from: &Sender, chan: &str, target_uid: &str, ctx: &mut
     false
 }
 
+// The source for a ChanServ channel change: the channel's assigned BotServ bot when
+// that bot is on the network, otherwise ChanServ itself. Ops, voices and bans then
+// appear to come from the bot that runs the channel — the same re-sourcing the
+// fantasy router does (see engine::dispatch::fantasy). The ircd applies a bot's
+// FMODE whether or not it is a channel member (as it does for ChanServ), so an
+// assigned-and-online bot is all that's needed.
+fn mode_source(me: &str, chan: &str, net: &dyn NetView, db: &dyn Store) -> String {
+    db.channel(chan)
+        .and_then(|c| c.assigned_bot)
+        .and_then(|bot| net.uid_by_nick(&bot).map(str::to_string))
+        .unwrap_or_else(|| me.to_string())
+}
+
 // Parse a mode spec like "+nt-s" into (locked-on, locked-off) mode chars. `r` is
 // implicit for a registered channel and is ignored here.
 // Locked add-modes that carry a param (+f flood, +j joinflood): a param is
