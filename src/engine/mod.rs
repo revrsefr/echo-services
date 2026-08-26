@@ -150,6 +150,9 @@ pub struct Engine {
     expire_warn: Option<u64>,
     // Default connections allowed per IP. None = session limiting is off.
     session_limit: Option<u32>,
+    // Native anti-abuse subsystem (connection/flood/pattern screening). Inert
+    // until [security] enabled; holds its own ephemeral rate counters.
+    security: security::Security,
 }
 
 struct VoteState {
@@ -213,6 +216,7 @@ mod dispatch;
 mod kicker;
 mod register;
 mod sasl;
+mod security;
 
 impl Engine {
     pub fn new(services: Vec<Box<dyn Service>>, db: Db) -> Self {
@@ -272,6 +276,7 @@ impl Engine {
             channel_ttl: None,
             expire_warn: None,
             session_limit: None,
+            security: security::Security::default(),
         }
     }
 
@@ -470,6 +475,12 @@ impl Engine {
     // The default per-IP connection limit (None = session limiting off).
     pub fn set_session_limit(&mut self, limit: Option<u32>) {
         self.session_limit = limit;
+    }
+
+    // (Re)apply the [security] anti-abuse config. Called at startup and on REHASH;
+    // the subsystem keeps its live rate counters across a reload.
+    pub fn set_security(&mut self, cfg: Option<crate::config::Security>) {
+        self.security.configure(cfg);
     }
 
     // The effective session limit for `ip`: a matching exception's allowance, else
@@ -1111,6 +1122,7 @@ impl Engine {
         if let Some(session) = &cfg.session {
             self.set_session_limit(session.limit());
         }
+        self.set_security(cfg.security.clone());
         let sr = if self.standard_replies { "on" } else { "off" };
         let chan = if self.services_channel.is_empty() { "(none)" } else { &self.services_channel };
         let opers_word = if oper_count == 1 { "oper" } else { "opers" };
@@ -1409,7 +1421,9 @@ impl Engine {
                 // Full identity (ident/host/gecos) is known now, so this is where a
                 // connect watch can match the whole nick!user@host#gecos.
                 self.network.set_user_attrs(&uid, ident, realhost, gecos);
-                self.notify_line('c', &uid, None, "connected").into_iter().collect()
+                let mut out: Vec<NetAction> = self.notify_line('c', &uid, None, "connected").into_iter().collect();
+                out.extend(self.security_screen_connect(&uid));
+                out
             }
             NetEvent::UserCert { uid, fp } => {
                 self.network.set_user_cert(&uid, fp.clone());

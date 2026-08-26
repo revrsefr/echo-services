@@ -315,6 +315,7 @@ async fn main() -> Result<()> {
     if let Some(session) = &cfg.session {
         engine.lock().await.set_session_limit(session.limit());
     }
+    engine.lock().await.set_security(cfg.security.clone());
 
     if let Some(gossip) = cfg.gossip.clone() {
         tracing::info!(peers = cfg.peer.len(), "starting gossip");

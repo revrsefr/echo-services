@@ -71,6 +71,80 @@ pub struct Config {
     // ones your ircd doesn't provide.
     #[serde(default)]
     pub extban: Option<Extban>,
+    // Native anti-abuse engine (connection/flood/pattern screening). Absent, or
+    // enabled=false, = the subsystem is inert; report_only=true (the default when
+    // enabled) reports detections to the log channel without enforcing. Every
+    // threshold is a config key with a literal default.
+    #[serde(default)]
+    pub security: Option<Security>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Security {
+    // Master switch. false (default) = the anti-abuse engine does nothing at all.
+    #[serde(default)]
+    pub enabled: bool,
+    // When true (the default), detections are only announced to the log channel,
+    // never enforced. Run this way until the thresholds are trusted, then set it
+    // false to arm kills/bans.
+    #[serde(default = "sec_true")]
+    pub report_only: bool,
+    // Connection screening (per-IP / per-range connection floods).
+    #[serde(default)]
+    pub connect: ConnectRules,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ConnectRules {
+    #[serde(default = "sec_true")]
+    pub enabled: bool,
+    // More than `flood_permit` connections from one IP within `flood_life`
+    // seconds trips a connection-flood.
+    #[serde(default = "sec_conn_permit")]
+    pub flood_permit: u32,
+    #[serde(default = "sec_conn_life")]
+    pub flood_life: u64,
+    // The same, aggregated over the IP's /24 (v4) or /64 (v6) — catches clone
+    // floods spread across a subnet.
+    #[serde(default = "sec_range_permit")]
+    pub range_permit: u32,
+    #[serde(default = "sec_range_life")]
+    pub range_life: u64,
+    // Seconds the auto network-ban lasts when armed; 0 = kill the connection only.
+    #[serde(default = "sec_conn_ban")]
+    pub ban_duration: u64,
+}
+
+impl Default for ConnectRules {
+    fn default() -> Self {
+        Self {
+            enabled: sec_true(),
+            flood_permit: sec_conn_permit(),
+            flood_life: sec_conn_life(),
+            range_permit: sec_range_permit(),
+            range_life: sec_range_life(),
+            ban_duration: sec_conn_ban(),
+        }
+    }
+}
+
+fn sec_true() -> bool {
+    true
+}
+fn sec_conn_permit() -> u32 {
+    6
+}
+fn sec_conn_life() -> u64 {
+    10
+}
+fn sec_range_permit() -> u32 {
+    12
+}
+fn sec_range_life() -> u64 {
+    20
+}
+fn sec_conn_ban() -> u64 {
+    3600
 }
 
 #[derive(Debug, Deserialize, Clone)]
