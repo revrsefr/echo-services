@@ -388,6 +388,14 @@ impl Network {
         })
     }
 
+    // A minimal identity snapshot for the anti-abuse detectors — (ip, nick!ident@host)
+    // in a single lookup, skipping ban_target's channel-list allocation (these run on
+    // every join/part/quit/nick, not just on connect).
+    pub fn abuse_ident(&self, uid: &str) -> Option<(String, String)> {
+        let u = self.users.get(uid)?;
+        Some((u.ip.clone(), format!("{}!{}@{}", u.nick, u.ident, u.host)))
+    }
+
     /// The channels `uid` is currently in (for the `channel` extban).
     pub fn channels_of(&self, uid: &str) -> Vec<String> {
         self.channels.iter().filter(|(_, c)| c.members.contains(uid)).map(|(k, _)| k.clone()).collect()

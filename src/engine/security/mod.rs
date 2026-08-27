@@ -169,6 +169,13 @@ fn ip_in_cidr(ip: &str, cidr: &str) -> bool {
     }
 }
 
+// A quit reason is a "broken client" signal when it contains any configured marker
+// (case-insensitive substring), e.g. "Excess Flood" / "Max SendQ exceeded".
+fn quit_matches(reason: &str, markers: &[String]) -> bool {
+    let r = reason.to_ascii_lowercase();
+    markers.iter().any(|m| !m.is_empty() && r.contains(&m.to_ascii_lowercase()))
+}
+
 // The coarse aggregation key for an address — the /24 for IPv4, the /64 for IPv6
 // — used to catch clone floods spread across a subnet.
 fn cidr_of(ip: &str) -> String {
@@ -272,6 +279,97 @@ impl super::Engine {
         }
         out
     }
+
+    // The behavioural rules, if the subsystem and the behaviour detectors are on.
+    fn behavior_rules(&self) -> Option<config::BehaviorRules> {
+        let c = self.security.cfg.as_ref()?;
+        (c.enabled && c.behavior.enabled).then(|| c.behavior.clone())
+    }
+
+    // (ip, nick!ident@host) for a uid, or None when it can't be resolved or its IP is
+    // exempt — the shared gate for every behavioural detector.
+    fn security_identity(&self, uid: &str) -> Option<(String, String)> {
+        let (ip, who) = self.network.abuse_ident(uid)?;
+        if ip.is_empty() || self.security.is_exempt(&ip) {
+            return None;
+        }
+        Some((ip, who))
+    }
+
+    // Nick-change flood.
+    pub(crate) fn security_screen_nick(&mut self, uid: &str) -> Vec<NetAction> {
+        let Some(rules) = self.behavior_rules() else {
+            return Vec::new();
+        };
+        let Some((ip, who)) = self.security_identity(uid) else {
+            return Vec::new();
+        };
+        let now = self.now_secs();
+        if self.security.counters.hit(&format!("nf|{uid}"), now, rules.nick_life) > rules.nick_permit {
+            self.bump("security.nick.trips");
+            return self.security_act(&who, uid, &format!("*@{ip}"), "nick-change flood", &format!("more than {} nick changes in {}s", rules.nick_permit, rules.nick_life), rules.ban_duration);
+        }
+        Vec::new()
+    }
+
+    // On join: note it briefly (for join-spam-part) and check mass-join per /24 or /64.
+    pub(crate) fn security_screen_join(&mut self, uid: &str, channel: &str) -> Vec<NetAction> {
+        let Some(rules) = self.behavior_rules() else {
+            return Vec::new();
+        };
+        let Some((ip, who)) = self.security_identity(uid) else {
+            return Vec::new();
+        };
+        let now = self.now_secs();
+        self.security.counters.hit(&format!("jj|{uid}|{channel}"), now, rules.joinpart_grace);
+        let range = cidr_of(&ip);
+        let n = self.security.counters.hit(&format!("mj|{channel}|{range}"), now, rules.massjoin_life);
+        if n > rules.massjoin_permit {
+            self.bump("security.massjoin.trips");
+            return self.security_act(&who, uid, &format!("*@{range}"), "mass-join flood", &format!("{n} joins to {channel} from range {range} in {}s", rules.massjoin_life), rules.ban_duration);
+        }
+        Vec::new()
+    }
+
+    // On part: raw cycle rate, then quick join-then-part (join-spam-part).
+    pub(crate) fn security_screen_part(&mut self, uid: &str, channel: &str) -> Vec<NetAction> {
+        let Some(rules) = self.behavior_rules() else {
+            return Vec::new();
+        };
+        let Some((ip, who)) = self.security_identity(uid) else {
+            return Vec::new();
+        };
+        let now = self.now_secs();
+        if self.security.counters.hit(&format!("cy|{uid}"), now, rules.cycle_life) > rules.cycle_permit {
+            self.bump("security.cycle.trips");
+            return self.security_act(&who, uid, &format!("*@{ip}"), "join/part cycle", &format!("more than {} parts in {}s", rules.cycle_permit, rules.cycle_life), rules.ban_duration);
+        }
+        let quick = self.security.counters.count(&format!("jj|{uid}|{channel}"), now, rules.joinpart_grace) > 0;
+        if quick && self.security.counters.hit(&format!("jsp|{uid}"), now, rules.joinpart_life) > rules.joinpart_permit {
+            self.bump("security.joinspampart.trips");
+            return self.security_act(&who, uid, &format!("*@{ip}"), "join-spam-part", &format!("repeated quick join/part (last: {channel})"), rules.ban_duration);
+        }
+        Vec::new()
+    }
+
+    // On quit: broken-client quit flood — repeated flood/sendq kills from one IP.
+    pub(crate) fn security_screen_quit(&mut self, uid: &str, reason: &str) -> Vec<NetAction> {
+        let Some(rules) = self.behavior_rules() else {
+            return Vec::new();
+        };
+        if !quit_matches(reason, &rules.quit_reasons) {
+            return Vec::new();
+        }
+        let Some((ip, who)) = self.security_identity(uid) else {
+            return Vec::new();
+        };
+        let now = self.now_secs();
+        if self.security.counters.hit(&format!("qf|{ip}"), now, rules.quit_life) > rules.quit_permit {
+            self.bump("security.quitflood.trips");
+            return self.security_act(&who, uid, &format!("*@{ip}"), "broken-client quit flood", &format!("repeated \"{reason}\" from {ip}"), rules.ban_duration);
+        }
+        Vec::new()
+    }
 }
 
 #[cfg(test)]
@@ -315,5 +413,15 @@ mod tests {
         assert!(sec.match_pattern("evil", "x", "node.spamhost", "g").is_some()); // glob on mask
         assert!(sec.match_pattern("BOT42", "x", "clean.host", "g").is_some()); // case-insensitive regex on nick
         assert!(sec.match_pattern("alice", "x", "clean.host", "hello").is_none());
+    }
+
+    #[test]
+    fn quit_reason_matching() {
+        let m = vec!["Excess Flood".to_string(), "Max SendQ exceeded".to_string()];
+        assert!(quit_matches("Excess Flood", &m));
+        assert!(quit_matches("Closing Link: nick[1.2.3.4] (Excess Flood)", &m)); // case-insensitive substring
+        assert!(!quit_matches("Ping timeout: 240 seconds", &m));
+        assert!(!quit_matches("Quit: brb", &m));
+        assert!(!quit_matches("Excess Flood", &[])); // no markers => never
     }
 }

@@ -37,7 +37,6 @@ impl Counters {
     }
 
     // Peek a key's current count without recording an event.
-    #[allow(dead_code)]
     pub fn count(&mut self, key: &str, now: u64, life: u64) -> u32 {
         let cutoff = now.saturating_sub(life);
         match self.windows.get_mut(key) {

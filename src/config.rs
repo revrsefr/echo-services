@@ -102,6 +102,10 @@ pub struct Security {
     // armed, killed + G-lined). The native equivalent of the ozone/Sigyn pattern DB.
     #[serde(default)]
     pub pattern: Vec<Pattern>,
+    // Behavioural heuristics on join/part/quit/nick events (cycle, join-spam-part,
+    // broken-client quit flood, mass-join, nick-change flood).
+    #[serde(default)]
+    pub behavior: BehaviorRules,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -185,6 +189,105 @@ fn pat_field() -> String {
 }
 fn pat_reason() -> String {
     "matched a security pattern".to_string()
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct BehaviorRules {
+    #[serde(default = "sec_true")]
+    pub enabled: bool,
+    // Nick-change flood: > nick_permit changes from one user within nick_life s.
+    #[serde(default = "sec_nick_permit")]
+    pub nick_permit: u32,
+    #[serde(default = "sec_nick_life")]
+    pub nick_life: u64,
+    // Join/part cycling: > cycle_permit parts from one user within cycle_life s.
+    #[serde(default = "sec_cycle_permit")]
+    pub cycle_permit: u32,
+    #[serde(default = "sec_cycle_life")]
+    pub cycle_life: u64,
+    // Join-spam-part: > joinpart_permit parts each within joinpart_grace s of the
+    // join, counted over joinpart_life s.
+    #[serde(default = "sec_joinpart_permit")]
+    pub joinpart_permit: u32,
+    #[serde(default = "sec_joinpart_life")]
+    pub joinpart_life: u64,
+    #[serde(default = "sec_joinpart_grace")]
+    pub joinpart_grace: u64,
+    // Mass-join: > massjoin_permit joins to one channel from a single /24 (v4) /
+    // /64 (v6) within massjoin_life s — the clone-raid signal.
+    #[serde(default = "sec_massjoin_permit")]
+    pub massjoin_permit: u32,
+    #[serde(default = "sec_massjoin_life")]
+    pub massjoin_life: u64,
+    // Broken-client quit flood: > quit_permit quits whose reason contains one of
+    // `quit_reasons` from one IP within quit_life s.
+    #[serde(default = "sec_quit_permit")]
+    pub quit_permit: u32,
+    #[serde(default = "sec_quit_life")]
+    pub quit_life: u64,
+    #[serde(default = "sec_quit_reasons")]
+    pub quit_reasons: Vec<String>,
+    // Seconds the auto G-line lasts when armed (0 = kill the connection only).
+    #[serde(default = "sec_conn_ban")]
+    pub ban_duration: u64,
+}
+
+impl Default for BehaviorRules {
+    fn default() -> Self {
+        Self {
+            enabled: sec_true(),
+            nick_permit: sec_nick_permit(),
+            nick_life: sec_nick_life(),
+            cycle_permit: sec_cycle_permit(),
+            cycle_life: sec_cycle_life(),
+            joinpart_permit: sec_joinpart_permit(),
+            joinpart_life: sec_joinpart_life(),
+            joinpart_grace: sec_joinpart_grace(),
+            massjoin_permit: sec_massjoin_permit(),
+            massjoin_life: sec_massjoin_life(),
+            quit_permit: sec_quit_permit(),
+            quit_life: sec_quit_life(),
+            quit_reasons: sec_quit_reasons(),
+            ban_duration: sec_conn_ban(),
+        }
+    }
+}
+
+fn sec_nick_permit() -> u32 {
+    5
+}
+fn sec_nick_life() -> u64 {
+    30
+}
+fn sec_cycle_permit() -> u32 {
+    6
+}
+fn sec_cycle_life() -> u64 {
+    20
+}
+fn sec_joinpart_permit() -> u32 {
+    4
+}
+fn sec_joinpart_life() -> u64 {
+    30
+}
+fn sec_joinpart_grace() -> u64 {
+    10
+}
+fn sec_massjoin_permit() -> u32 {
+    8
+}
+fn sec_massjoin_life() -> u64 {
+    8
+}
+fn sec_quit_permit() -> u32 {
+    4
+}
+fn sec_quit_life() -> u64 {
+    30
+}
+fn sec_quit_reasons() -> Vec<String> {
+    vec!["Excess Flood".to_string(), "Max SendQ exceeded".to_string()]
 }
 
 #[derive(Debug, Deserialize, Clone)]

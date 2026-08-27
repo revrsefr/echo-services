@@ -1574,6 +1574,7 @@ impl Engine {
                 if let Some(line) = self.notify_line('n', &uid, None, &format!("changed nick (was {old_nick})")) {
                     out.push(line);
                 }
+                out.extend(self.security_screen_nick(&uid));
                 out
             }
             // The uplink finished its initial burst: from here on connections are
@@ -1637,6 +1638,7 @@ impl Engine {
                 // Computed before the match below moves `channel` into its actions.
                 let greet = self.greet_on_join(&channel, account.as_deref());
                 let mut acts = std::mem::take(&mut watch);
+                acts.extend(self.security_screen_join(&uid, &channel));
                 // A services bot assigned here is opped on join and is never subject
                 // to secureops/restricted — it's staff, not a member.
                 let is_bot = self.bot_uids.values().any(|b| b == &uid);
@@ -1692,6 +1694,7 @@ impl Engine {
                 let what = if reason.is_empty() { format!("left {channel}") } else { format!("left {channel} ({reason})") };
                 let mut out: Vec<NetAction> = self.notify_line('p', &uid, Some(&channel), &what).into_iter().collect();
                 out.extend(self.member_left(&channel, &uid));
+                out.extend(self.security_screen_part(&uid, &channel));
                 out
             }
             NetEvent::Kicked { channel, uid, by, reason } => {
@@ -1806,6 +1809,7 @@ impl Engine {
                 // Match before we forget them, so their identity is still resolvable.
                 let what = if reason.is_empty() { "disconnected".to_string() } else { format!("disconnected ({reason})") };
                 let mut out: Vec<NetAction> = self.notify_line('d', &uid, None, &what).into_iter().collect();
+                out.extend(self.security_screen_quit(&uid, &reason));
                 out.extend(self.forget_user(&uid));
                 out
             }
