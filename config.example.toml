@@ -43,7 +43,8 @@ protocol = 1206                # InspIRCd link protocol (1206 = insp4, 1205 = in
 # suspend, admin, root). Repeat the block per operator. Omit for a network with no opers.
 # [[oper]]
 # account = "yournick"
-# type = "root"
+# type = "root"                # a tier shortcut: operator | administrator | root
+# privs = ["oper", "suspend"]  # ...or list fine-grained privs instead of a tier: auspex, oper, suspend, admin, root
 
 # Staff audit feed: notable service actions (registrations, drops, vhosts, suspensions,
 # akicks, access and bot changes) are announced here so operators see who did what. Memo
@@ -83,6 +84,83 @@ protocol = 1206                # InspIRCd link protocol (1206 = insp4, 1205 = in
 # connect. OperServ EXCEPTION raises or lowers it per IP-mask. 0 or omitted = off.
 # [session]
 # default_limit = 3
+
+# Native anti-abuse — full guide in anti-abuse.md. Watches connect/nick/join/part/quit/message
+# events and, when armed, bans server-side. Ships off; enabled=true defaults to report_only
+# (alert to [log].channel, never enforce) so thresholds can be trusted before arming. Reloadable
+# with OperServ REHASH. Omit to disable.
+# [security]
+# enabled = true
+# report_only = true            # true (default) = detect + alert only; false = arm KILL + G-line
+# exempt_ips = ["127.0.0.0/8", "::1"]   # never screened — add ALL trusted infra IPs before arming
+# exempt_opers = true           # never screen network operators
+# exempt_accounts = false       # screen logged-in accounts too (a compromised account still spams)
+# exempt_voice = true           # content checks: skip voiced/opped channel members
+# announce_permit = 8           # cap [SECURITY] alerts to the log channel...
+# announce_life = 10            # ...per this many seconds (enforcement still runs on every trigger)
+# cascade_permit = 15           # > N total triggers within cascade_life...
+# cascade_life = 30             # ...raises a one-shot "consider raising DEFCON" alert
+#
+# Connection screening: floods per IP and per /24 (v4) / /64 (v6).
+# [security.connect]
+# enabled = true
+# flood_permit = 6              # > N connections from one IP within flood_life seconds
+# flood_life = 10
+# range_permit = 12             # ...or > N across its /24 / /64 within range_life seconds
+# range_life = 20
+# ban_duration = 3600           # G-line seconds when armed (0 = kill the connection only)
+#
+# Connection pattern DB: match nick!ident@host(#gecos) on connect. Repeat the block per rule.
+# [[security.pattern]]
+# mask = "*!*@*.knownbad.example"
+# field = "mask"                # mask (default) | full (…#gecos) | nick | ident | host | gecos
+# regex = false                 # true = a case-insensitive regex instead of a glob
+# reason = "known spam host"
+# ban = 86400                   # G-line seconds when armed (0 = kill only)
+#
+# Behavioural heuristics on nick / join / part / quit.
+# [security.behavior]
+# enabled = true
+# nick_permit = 5               # nick-change flood: > N changes...
+# nick_life = 30                # ...within this many seconds
+# cycle_permit = 6              # join/part cycling
+# cycle_life = 20
+# joinpart_permit = 4           # join-spam-part (a quick part after joining)
+# joinpart_life = 30
+# joinpart_grace = 10           # "quick" = parted within this many seconds of joining
+# massjoin_permit = 8           # per channel × /24-//64 (clone raid)
+# massjoin_life = 8
+# quit_permit = 4               # broken-client quit flood, from one IP
+# quit_life = 30
+# quit_reasons = ["Excess Flood", "Max SendQ exceeded"]   # markers, case-insensitive substring
+# ban_duration = 3600
+#
+# Content heuristics on channel messages echo sees (a bot present) — the additive ones the
+# kickers lack. Network-wide content filtering is OperServ SPAMFILTER (the ircd's m_filter).
+# [security.content]
+# enabled = true
+# highlight_nicks = 6           # a line pinging >= N distinct members...
+# highlight_min_len = 3         # ...each nick at least this many chars
+# highlight_permit = 1          # more than N such lines from one user...
+# highlight_life = 15           # ...within this window
+# badunicode_score = 0.30       # combining-mark/zalgo + zero-width fraction that flags a line
+# badunicode_min = 8            # minimum length to consider
+# badunicode_permit = 1
+# badunicode_life = 20
+# repeat_min = 10               # min length of a line to track for repeat-wave
+# repeat_permit = 5             # same line > N times in a channel...
+# repeat_life = 20              # ...within this window
+# ban_duration = 3600
+
+# Registration MX-blacklist: reject signups whose email domain's mail servers (MX → A/AAAA)
+# match a hostname glob or IP CIDR — the stable way to stop disposable-email abuse. Native
+# async DNS, off the engine lock; the account is never created. Omit to disable.
+# [mxbl]
+# enabled = true
+# resolver = ""                 # "ip[:port]"; empty = the first nameserver in /etc/resolv.conf
+# mx_globs = ["*.disposable-mail.example"]   # MX hostname globs to block
+# ip_cidrs = ["203.0.113.0/24"]              # MX-server IP CIDRs (costs an extra A/AAAA lookup)
+# timeout_ms = 2000
 
 # Reply language. echo ships en, fr, de, es, es-ar, pt, pt-br.
 # [language]
