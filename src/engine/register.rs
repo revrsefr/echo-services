@@ -314,6 +314,14 @@ impl Engine {
         if !self.reg_limiter.allow() {
             return Some(reg_reply(reply, RegOutcome::RateLimited, account));
         }
+        // Per-IP registration flood (anti-abuse), for NickServ (IRC) registrations.
+        if let RegReply::NickServ { uid, .. } = reply {
+            if let Some(alert) = self.security_register_flood(uid) {
+                let mut out = reg_reply(reply, RegOutcome::RateLimited, account);
+                out.extend(alert);
+                return Some(out);
+            }
+        }
         None
     }
 
@@ -393,7 +401,17 @@ impl Engine {
     /// ctx helpers the inline path did, so its login side-effects (login, notice,
     /// AJOIN, vhost, memo notice) stay identical.
     pub fn complete_authenticate(&mut self, ok: bool, then: AuthThen) -> Vec<NetAction> {
-        let actions = match then {
+        // A failed password attempt feeds the anti-abuse brute-force detector.
+        let brute: Option<(String, String)> = if ok {
+            None
+        } else {
+            match &then {
+                AuthThen::Identify { uid, account, .. } | AuthThen::Login { uid, account, .. } => Some((uid.clone(), account.clone())),
+                AuthThen::Sasl { client, account, password, .. } if *password => Some((client.clone(), account.clone())),
+                _ => None,
+            }
+        };
+        let mut actions = match then {
             AuthThen::Identify { uid, agent, name, account } => self.finish_identify(ok, uid, agent, name, account),
             AuthThen::Login { uid, agent, name, account, nick } => {
                 let mut out = self.finish_identify(ok, uid.clone(), agent, name, account);
@@ -423,6 +441,9 @@ impl Engine {
         // an already-logged-in user after a services relink, leaving the user unable
         // to use their access despite a successful login.
         self.track_accounts(&actions);
+        if let Some((uid, account)) = brute {
+            actions.extend(self.security_screen_auth(&uid, &account));
+        }
         actions
     }
 

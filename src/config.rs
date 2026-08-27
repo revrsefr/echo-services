@@ -138,6 +138,14 @@ pub struct Security {
     pub cascade_permit: u32,
     #[serde(default = "sec_casc_life")]
     pub cascade_life: u64,
+    // Suppress the behavioural/content detectors for this many seconds after a server
+    // split or link — a netsplit rejoin re-joins/re-nicks everyone at once and would
+    // otherwise trip mass-join/quit-flood/nick-flood in a false-positive storm.
+    #[serde(default = "sec_netsplit_grace")]
+    pub netsplit_grace: u64,
+    // Login/registration abuse: brute-force, registration flood, ban evasion.
+    #[serde(default)]
+    pub auth: AuthRules,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -259,6 +267,12 @@ pub struct BehaviorRules {
     pub quit_life: u64,
     #[serde(default = "sec_quit_reasons")]
     pub quit_reasons: Vec<String>,
+    // Channel-crawl: > crawl_permit joins from one user within crawl_life s (a spam
+    // spider harvesting channels/nicks — the per-user dual of mass-join).
+    #[serde(default = "sec_crawl_permit")]
+    pub crawl_permit: u32,
+    #[serde(default = "sec_crawl_life")]
+    pub crawl_life: u64,
     // Seconds the auto G-line lasts when armed (0 = kill the connection only).
     #[serde(default = "sec_conn_ban")]
     pub ban_duration: u64,
@@ -280,6 +294,8 @@ impl Default for BehaviorRules {
             quit_permit: sec_quit_permit(),
             quit_life: sec_quit_life(),
             quit_reasons: sec_quit_reasons(),
+            crawl_permit: sec_crawl_permit(),
+            crawl_life: sec_crawl_life(),
             ban_duration: sec_conn_ban(),
         }
     }
@@ -452,6 +468,68 @@ pub struct MxBlocklist {
 
 fn mxbl_timeout() -> u64 {
     2000
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct AuthRules {
+    #[serde(default = "sec_true")]
+    pub enabled: bool,
+    // Brute-force: > fail_permit failed password logins from one IP within fail_life s.
+    #[serde(default = "sec_authfail_permit")]
+    pub fail_permit: u32,
+    #[serde(default = "sec_authfail_life")]
+    pub fail_life: u64,
+    // Registration flood: > register_permit REGISTERs from one IP within register_life s.
+    #[serde(default = "sec_reg_permit")]
+    pub register_permit: u32,
+    #[serde(default = "sec_reg_life")]
+    pub register_life: u64,
+    // Account-evasion: remember a security-banned account this many seconds and
+    // re-enforce (re-kill) if it logs in again from a new nick/IP.
+    #[serde(default = "sec_evade_ttl")]
+    pub evade_ttl: u64,
+    // Seconds the auto G-line lasts when armed (0 = kill the connection only).
+    #[serde(default = "sec_conn_ban")]
+    pub ban_duration: u64,
+}
+
+impl Default for AuthRules {
+    fn default() -> Self {
+        Self {
+            enabled: sec_true(),
+            fail_permit: sec_authfail_permit(),
+            fail_life: sec_authfail_life(),
+            register_permit: sec_reg_permit(),
+            register_life: sec_reg_life(),
+            evade_ttl: sec_evade_ttl(),
+            ban_duration: sec_conn_ban(),
+        }
+    }
+}
+
+fn sec_netsplit_grace() -> u64 {
+    60
+}
+fn sec_crawl_permit() -> u32 {
+    12
+}
+fn sec_crawl_life() -> u64 {
+    15
+}
+fn sec_authfail_permit() -> u32 {
+    8
+}
+fn sec_authfail_life() -> u64 {
+    60
+}
+fn sec_reg_permit() -> u32 {
+    3
+}
+fn sec_reg_life() -> u64 {
+    300
+}
+fn sec_evade_ttl() -> u64 {
+    172800
 }
 
 #[derive(Debug, Deserialize, Clone)]

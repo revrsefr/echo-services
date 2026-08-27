@@ -1542,11 +1542,13 @@ impl Engine {
                 // no side-effects — the burst already put them in their channels.
                 if account.is_empty() {
                     self.network.clear_account(&uid);
+                    Vec::new()
                 } else {
                     self.network.set_account(&uid, &account);
                     self.pending_enforce.retain(|p| p.uid != uid);
+                    // A banned account logging back in (new nick/IP) is re-enforced.
+                    self.security_screen_login(&uid, &account)
                 }
-                Vec::new()
             }
             NetEvent::SignoreSet { uid, list } => {
                 // A logged-in user edited their SIGNORE list on the ircd; persist it to
@@ -1869,9 +1871,14 @@ impl Engine {
             }
             NetEvent::ServerLink { sid, parent } => {
                 self.network.server_link(&sid, &parent);
+                // A (re)linking server bursts its users — suppress the detectors briefly.
+                self.security.mark_netsplit(self.now_secs());
                 Vec::new()
             }
             NetEvent::ServerSplit { server } => {
+                // A split — and the reconnect burst that follows — is mass churn;
+                // suppress the detectors so the rejoin doesn't trip them.
+                self.security.mark_netsplit(self.now_secs());
                 // A hub's SQUIT arrives once but takes its whole subtree with it;
                 // forget every user behind the departed server and its descendants.
                 for sid in self.network.server_split(&server) {

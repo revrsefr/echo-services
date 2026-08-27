@@ -20,6 +20,7 @@ use counter::Counters;
 use crate::config;
 use crate::proto::NetAction;
 use regex::Regex;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::net::IpAddr;
 
@@ -32,6 +33,13 @@ pub(crate) struct Security {
     // Operator connection-pattern matchers, compiled from `cfg.pattern` on every
     // (re)configure. Empty when none are set.
     patterns: Vec<CompiledPattern>,
+    // Detectors are suppressed until this unix time — set after a server split/link so
+    // a netsplit rejoin doesn't trip them. 0 = not in a suppression window.
+    quiet_until: u64,
+    // Accounts recently banned by the subsystem, mapped to when to forget them; a
+    // re-login is re-enforced until then (ban evasion). Not the counter engine because
+    // its multi-day window far outlives the counters' 1-hour GC.
+    evaded: HashMap<String, u64>,
 }
 
 impl Security {
@@ -51,6 +59,25 @@ impl Security {
     // Armed: run detectors AND enforce (kill/ban), rather than only reporting.
     fn enforcing(&self) -> bool {
         self.cfg.as_ref().is_some_and(|c| c.enabled && !c.report_only)
+    }
+
+    // Enter a post-split quiet period so a netsplit rejoin doesn't storm the detectors.
+    pub(crate) fn mark_netsplit(&mut self, now: u64) {
+        if let Some(grace) = self.cfg.as_ref().map(|c| c.netsplit_grace) {
+            self.quiet_until = self.quiet_until.max(now.saturating_add(grace));
+        }
+    }
+    fn in_netsplit(&self, now: u64) -> bool {
+        now < self.quiet_until
+    }
+
+    // Remember a just-banned account (ban evasion), pruning expired entries as we go.
+    fn remember_ban(&mut self, account: String, now: u64, ttl: u64) {
+        self.evaded.retain(|_, exp| *exp > now);
+        self.evaded.insert(account, now.saturating_add(ttl));
+    }
+    fn is_evader(&self, account: &str, now: u64) -> bool {
+        self.evaded.get(account).is_some_and(|&exp| now < exp)
     }
 
     // Trusted infrastructure that must never be screened or banned (loopback, the
@@ -247,7 +274,7 @@ impl super::Engine {
     // full nick!ident@host#gecos identity is known. Returns any report/enforce
     // actions; a no-op (empty) when the subsystem is off or nothing tripped.
     pub(crate) fn security_screen_connect(&mut self, uid: &str) -> Vec<NetAction> {
-        if !self.security.on() {
+        if !self.security.on() || self.security.in_netsplit(self.now_secs()) {
             return Vec::new();
         }
         // Snapshot identity, then drop the network borrow before touching counters.
@@ -351,6 +378,13 @@ impl super::Engine {
                     reason,
                 });
             }
+            // Ban evasion: remember a logged-in offender's account so a later re-login
+            // from a new nick/IP is re-enforced (security_screen_login).
+            if let (Some(ttl), Some(account)) =
+                (self.security.cfg.as_ref().map(|c| c.auth.evade_ttl), self.network.account_of(uid).map(str::to_string))
+            {
+                self.security.remember_ban(account, now, ttl);
+            }
         }
         out
     }
@@ -386,6 +420,9 @@ impl super::Engine {
     // exempt, or its identity is trusted — the shared gate for the behavioural and
     // content detectors. `channel` enables the voiced/opped exemption for content.
     fn security_identity(&self, uid: &str, channel: Option<&str>) -> Option<(String, String)> {
+        if self.security.in_netsplit(self.now_secs()) {
+            return None;
+        }
         let (ip, who) = self.network.abuse_ident(uid)?;
         if ip.is_empty() || self.security.is_exempt(&ip) || self.trusted_identity(uid, channel) {
             return None;
@@ -424,6 +461,11 @@ impl super::Engine {
         if n > rules.massjoin_permit {
             self.bump("security.massjoin.trips");
             return self.security_act(&who, uid, &format!("*@{range}"), "mass-join flood", &format!("{n} joins to {channel} from range {range} in {}s", rules.massjoin_life), rules.ban_duration);
+        }
+        // Channel-crawl: one user joining many channels fast (a spam spider).
+        if self.security.counters.hit(&format!("cw|{uid}"), now, rules.crawl_life) > rules.crawl_permit {
+            self.bump("security.crawl.trips");
+            return self.security_act(&who, uid, &format!("*@{ip}"), "channel crawl", &format!("joined too many channels in {}s", rules.crawl_life), rules.ban_duration);
         }
         Vec::new()
     }
@@ -527,6 +569,63 @@ impl super::Engine {
         }
         Vec::new()
     }
+
+    // The login/registration abuse rules, if the subsystem and they are enabled.
+    fn auth_rules(&self) -> Option<config::AuthRules> {
+        let c = self.security.cfg.as_ref()?;
+        (c.enabled && c.auth.enabled).then(|| c.auth.clone())
+    }
+
+    // A failed password login → brute-force detector, keyed by the client IP.
+    pub(crate) fn security_screen_auth(&mut self, uid: &str, _account: &str) -> Vec<NetAction> {
+        let Some(rules) = self.auth_rules() else {
+            return Vec::new();
+        };
+        let Some((ip, who)) = self.security_identity(uid, None) else {
+            return Vec::new();
+        };
+        let now = self.now_secs();
+        if self.security.counters.hit(&format!("af|{ip}"), now, rules.fail_life) > rules.fail_permit {
+            self.bump("security.authfail.trips");
+            return self.security_act(&who, uid, &format!("*@{ip}"), "auth brute-force", &format!("repeated failed logins from {ip}"), rules.ban_duration);
+        }
+        Vec::new()
+    }
+
+    // A REGISTER from `uid`: Some(staff-alert actions) when its IP is over the
+    // registration-flood limit (the caller then rejects the registration), else None.
+    pub(crate) fn security_register_flood(&mut self, uid: &str) -> Option<Vec<NetAction>> {
+        let rules = self.auth_rules()?;
+        let (ip, who) = self.security_identity(uid, None)?;
+        let now = self.now_secs();
+        if self.security.counters.hit(&format!("rf|{ip}"), now, rules.register_life) > rules.register_permit {
+            self.bump("security.regflood.trips");
+            let mut out = Vec::new();
+            if let Some(line) = self.feed("SECURITY", format!("registration flood: \x02{who}\x02 · too many from {ip} in {}s — rejected", rules.register_life)) {
+                out.push(line);
+            }
+            return Some(out);
+        }
+        None
+    }
+
+    // A user logged into `account`: re-enforce if that account was recently
+    // security-banned (ban evasion), refreshing the memory so it stays banned.
+    pub(crate) fn security_screen_login(&mut self, uid: &str, account: &str) -> Vec<NetAction> {
+        let now = self.now_secs();
+        if !self.security.enforcing() || !self.security.is_evader(account, now) {
+            return Vec::new();
+        }
+        let Some((ip, who)) = self.security_identity(uid, None) else {
+            return Vec::new();
+        };
+        if let Some(ttl) = self.security.cfg.as_ref().map(|c| c.auth.evade_ttl) {
+            self.security.remember_ban(account.to_string(), now, ttl);
+        }
+        self.bump("security.evasion.trips");
+        let ban = self.security.cfg.as_ref().map(|c| c.auth.ban_duration).unwrap_or(0);
+        self.security_act(&who, uid, &format!("*@{ip}"), "ban evasion", &format!("banned account {account} logged back in"), ban)
+    }
 }
 
 #[cfg(test)]
@@ -566,7 +665,7 @@ mod tests {
             pat("(unclosed", "gecos", true), // bad regex — must be skipped, not panic
         ]);
         assert_eq!(compiled.len(), 2); // the un-compilable regex was dropped
-        let sec = Security { cfg: None, counters: Counters::default(), patterns: compiled };
+        let sec = Security { cfg: None, counters: Counters::default(), patterns: compiled, quiet_until: 0, evaded: Default::default() };
         assert!(sec.match_pattern("evil", "x", "node.spamhost", "g").is_some()); // glob on mask
         assert!(sec.match_pattern("BOT42", "x", "clean.host", "g").is_some()); // case-insensitive regex on nick
         assert!(sec.match_pattern("alice", "x", "clean.host", "hello").is_none());

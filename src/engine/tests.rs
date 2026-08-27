@@ -6426,6 +6426,8 @@ fn armed_security() -> crate::config::Security {
         announce_life: 10,
         cascade_permit: 10_000,
         cascade_life: 10,
+        netsplit_grace: 0,
+        auth: Default::default(),
     }
 }
 
@@ -6488,4 +6490,53 @@ fn security_mass_join_bans_range() {
         last = e.handle(NetEvent::Join { uid, channel: "#raid".into(), op: false });
     }
     assert!(killed_for(&last, "mass-join"), "the 3rd join from the /24 trips mass-join: {last:?}");
+}
+
+#[test]
+fn security_auth_bruteforce_enforces() {
+    let mut e = security_engine();
+    let mut sec = armed_security();
+    sec.auth.fail_permit = 2;
+    e.set_security(Some(sec));
+    sec_connect(&mut e, "000AAAAAB", "bob", "7.7.7.7");
+    let attempt = |e: &mut Engine| {
+        e.complete_authenticate(false, crate::proto::AuthThen::Identify { uid: "000AAAAAB".into(), agent: "42SAAAAAA".into(), name: "bob".into(), account: "bob".into() })
+    };
+    let a = attempt(&mut e);
+    let b = attempt(&mut e);
+    assert!(!killed_for(&a, "brute-force") && !killed_for(&b, "brute-force"), "under the permit");
+    let c = attempt(&mut e);
+    assert!(killed_for(&c, "brute-force"), "the failed login past permit 2 trips: {c:?}");
+}
+
+#[test]
+fn security_netsplit_suppresses_behavioural() {
+    let mut e = security_engine();
+    let mut sec = armed_security();
+    sec.behavior.nick_permit = 2;
+    sec.netsplit_grace = 300;
+    e.set_security(Some(sec));
+    sec_connect(&mut e, "000AAAAAB", "n0", "8.8.8.8");
+    // A (re)linking server opens a suppression window...
+    e.handle(NetEvent::ServerLink { sid: "099".into(), parent: "42S".into() });
+    // ...during which a nick-flood well over the permit does NOT trip.
+    for i in 1..6 {
+        let out = e.handle(NetEvent::NickChange { uid: "000AAAAAB".into(), nick: format!("n{i}") });
+        assert!(!killed_for(&out, "nick-change flood"), "detectors are suppressed during a netsplit window");
+    }
+}
+
+#[test]
+fn security_channel_crawl_enforces() {
+    let mut e = security_engine();
+    let mut sec = armed_security();
+    sec.behavior.crawl_permit = 2;
+    sec.behavior.massjoin_permit = 100; // isolate crawl from mass-join
+    e.set_security(Some(sec));
+    sec_connect(&mut e, "000AAAAAB", "spider", "9.9.9.9");
+    let mut last = Vec::new();
+    for i in 0..3 {
+        last = e.handle(NetEvent::Join { uid: "000AAAAAB".into(), channel: format!("#c{i}"), op: false });
+    }
+    assert!(killed_for(&last, "channel crawl"), "the 3rd distinct channel join trips crawl: {last:?}");
 }
