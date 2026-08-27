@@ -110,6 +110,29 @@ pub struct Security {
     // additive ones the kickers don't do: highlight-spam (mass-ping).
     #[serde(default)]
     pub content: ContentRules,
+    // Never screen network operators (staff). Default on.
+    #[serde(default = "sec_true")]
+    pub exempt_opers: bool,
+    // Never screen users logged into an account. Default OFF — a compromised
+    // account can still spam.
+    #[serde(default)]
+    pub exempt_accounts: bool,
+    // For content checks, never screen a voiced/opped channel member. Default on.
+    #[serde(default = "sec_true")]
+    pub exempt_voice: bool,
+    // Staff-feed alert rate-limit: at most announce_permit SECURITY alerts to the
+    // log channel per announce_life s, so a sustained flood can't spam it. (Only the
+    // announcement is throttled — enforcement still runs on every trigger.)
+    #[serde(default = "sec_ann_permit")]
+    pub announce_permit: u32,
+    #[serde(default = "sec_ann_life")]
+    pub announce_life: u64,
+    // Abuse cascade: > cascade_permit total triggers within cascade_life s raises a
+    // one-shot "consider raising DEFCON" alert.
+    #[serde(default = "sec_casc_permit")]
+    pub cascade_permit: u32,
+    #[serde(default = "sec_casc_life")]
+    pub cascade_life: u64,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -387,6 +410,18 @@ fn sec_rpt_permit() -> u32 {
 }
 fn sec_rpt_life() -> u64 {
     20
+}
+fn sec_ann_permit() -> u32 {
+    8
+}
+fn sec_ann_life() -> u64 {
+    10
+}
+fn sec_casc_permit() -> u32 {
+    15
+}
+fn sec_casc_life() -> u64 {
+    30
 }
 
 #[derive(Debug, Deserialize, Clone)]

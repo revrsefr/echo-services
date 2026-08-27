@@ -701,6 +701,11 @@ impl Network {
         self.channels.get(&lc(channel)).is_some_and(|c| c.voices.contains(uid))
     }
 
+    // Whether `uid` is a network operator.
+    pub fn is_oper(&self, uid: &str) -> bool {
+        self.users.get(uid).is_some_and(|u| !u.oper.is_empty())
+    }
+
     // Record a line spoken in `channel` by `nick`, for BOTSTATS. The per-nick map
     // is capped so a busy channel can't grow it without bound.
     pub fn record_line(&mut self, channel: &str, nick: &str, msg: &str) {

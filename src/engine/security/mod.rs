@@ -265,8 +265,9 @@ impl super::Engine {
             return Vec::new();
         }
         // Trusted infrastructure is never screened or banned — the safety valve that
-        // makes arming possible (loopback is exempt by default).
-        if self.security.is_exempt(&ip) {
+        // makes arming possible (loopback is exempt by default), and neither are
+        // trusted identities (operators, and optionally accounts).
+        if self.security.is_exempt(&ip) || self.trusted_identity(uid, None) {
             return Vec::new();
         }
         let who = format!("{nick}!{ident}@{host}");
@@ -308,15 +309,39 @@ impl super::Engine {
     fn security_act(&mut self, who: &str, uid: &str, mask: &str, kind: &str, why: &str, ban_secs: u64) -> Vec<NetAction> {
         let mut out = Vec::new();
         let armed = self.security.enforcing();
+        let now = self.now_secs();
+        let (ann_permit, ann_life, casc_permit, casc_life) = self
+            .security
+            .cfg
+            .as_ref()
+            .map(|c| (c.announce_permit, c.announce_life, c.cascade_permit, c.cascade_life))
+            .unwrap_or((0, 1, u32::MAX, 1));
+        // Rate-limit staff-feed announcements so a sustained flood can't spam the log
+        // channel; enforcement below still runs on every trigger.
+        let shown = self.security.counters.hit("sec|announce", now, ann_life);
         let verb = if armed { "\x02acting on\x02" } else { "would act on (report-only)" };
-        if let Some(line) = self.feed("SECURITY", format!("{kind}: {verb} \x02{who}\x02 · {why}")) {
-            out.push(line);
+        if shown <= ann_permit {
+            if let Some(line) = self.feed("SECURITY", format!("{kind}: {verb} \x02{who}\x02 · {why}")) {
+                out.push(line);
+            }
+        } else if shown == ann_permit + 1 {
+            if let Some(line) = self.feed("SECURITY", format!("further \x02SECURITY\x02 alerts muted for {ann_life}s (over {ann_permit} in the window)")) {
+                out.push(line);
+            }
+        }
+        // Abuse-cascade signal: many triggers network-wide in the window → recommend
+        // DEFCON, once as it crosses the threshold.
+        let trips = self.security.counters.hit("sec|cascade", now, casc_life);
+        if trips == casc_permit.saturating_add(1) {
+            if let Some(line) = self.feed("SECURITY", format!("\x02ABUSE CASCADE\x02: {trips} triggers in {casc_life}s — consider raising DEFCON")) {
+                out.push(line);
+            }
         }
         if armed && !self.sid.is_empty() {
             let reason = format!("Security: {kind} ({why})");
             out.push(NetAction::KillUser { from: self.sid.clone(), uid: uid.to_string(), reason: reason.clone() });
             if ban_secs > 0 {
-                let expires = self.now_secs() + ban_secs;
+                let expires = now + ban_secs;
                 let _ = self.db.akill_add(echo_api::XlineKind::Gline, mask, "Security", &reason, Some(expires));
                 out.push(NetAction::AddLine {
                     kind: "G".to_string(),
@@ -336,11 +361,33 @@ impl super::Engine {
         (c.enabled && c.behavior.enabled).then(|| c.behavior.clone())
     }
 
-    // (ip, nick!ident@host) for a uid, or None when it can't be resolved or its IP is
-    // exempt — the shared gate for every behavioural detector.
-    fn security_identity(&self, uid: &str) -> Option<(String, String)> {
+    // Beyond the IP exemption: network operators (staff) are always trusted
+    // (config-gated), logged-in accounts optionally, and — with a channel — voiced
+    // or opped members for content checks.
+    fn trusted_identity(&self, uid: &str, channel: Option<&str>) -> bool {
+        let Some(c) = self.security.cfg.as_ref() else {
+            return false;
+        };
+        if c.exempt_opers && self.network.is_oper(uid) {
+            return true;
+        }
+        if c.exempt_accounts && self.network.account_of(uid).is_some() {
+            return true;
+        }
+        if let (true, Some(ch)) = (c.exempt_voice, channel) {
+            if self.network.is_op(ch, uid) || self.network.is_voiced(ch, uid) {
+                return true;
+            }
+        }
+        false
+    }
+
+    // (ip, nick!ident@host) for a uid, or None when it can't be resolved, its IP is
+    // exempt, or its identity is trusted — the shared gate for the behavioural and
+    // content detectors. `channel` enables the voiced/opped exemption for content.
+    fn security_identity(&self, uid: &str, channel: Option<&str>) -> Option<(String, String)> {
         let (ip, who) = self.network.abuse_ident(uid)?;
-        if ip.is_empty() || self.security.is_exempt(&ip) {
+        if ip.is_empty() || self.security.is_exempt(&ip) || self.trusted_identity(uid, channel) {
             return None;
         }
         Some((ip, who))
@@ -351,7 +398,7 @@ impl super::Engine {
         let Some(rules) = self.behavior_rules() else {
             return Vec::new();
         };
-        let Some((ip, who)) = self.security_identity(uid) else {
+        let Some((ip, who)) = self.security_identity(uid, None) else {
             return Vec::new();
         };
         let now = self.now_secs();
@@ -367,7 +414,7 @@ impl super::Engine {
         let Some(rules) = self.behavior_rules() else {
             return Vec::new();
         };
-        let Some((ip, who)) = self.security_identity(uid) else {
+        let Some((ip, who)) = self.security_identity(uid, None) else {
             return Vec::new();
         };
         let now = self.now_secs();
@@ -386,7 +433,7 @@ impl super::Engine {
         let Some(rules) = self.behavior_rules() else {
             return Vec::new();
         };
-        let Some((ip, who)) = self.security_identity(uid) else {
+        let Some((ip, who)) = self.security_identity(uid, None) else {
             return Vec::new();
         };
         let now = self.now_secs();
@@ -410,7 +457,7 @@ impl super::Engine {
         if !quit_matches(reason, &rules.quit_reasons) {
             return Vec::new();
         }
-        let Some((ip, who)) = self.security_identity(uid) else {
+        let Some((ip, who)) = self.security_identity(uid, None) else {
             return Vec::new();
         };
         let now = self.now_secs();
@@ -445,7 +492,7 @@ impl super::Engine {
         let Some(rules) = self.content_rules() else {
             return Vec::new();
         };
-        let Some((ip, who)) = self.security_identity(from) else {
+        let Some((ip, who)) = self.security_identity(from, Some(channel)) else {
             return Vec::new();
         };
         let ban = format!("*@{ip}");
