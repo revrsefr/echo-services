@@ -106,6 +106,10 @@ pub struct Security {
     // broken-client quit flood, mass-join, nick-change flood).
     #[serde(default)]
     pub behavior: BehaviorRules,
+    // Content heuristics on channel messages echo sees (a bot is present) — the
+    // additive ones the kickers don't do: highlight-spam (mass-ping).
+    #[serde(default)]
+    pub content: ContentRules,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -288,6 +292,53 @@ fn sec_quit_life() -> u64 {
 }
 fn sec_quit_reasons() -> Vec<String> {
     vec!["Excess Flood".to_string(), "Max SendQ exceeded".to_string()]
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ContentRules {
+    #[serde(default = "sec_true")]
+    pub enabled: bool,
+    // A single message that mentions >= highlight_nicks distinct channel members
+    // (each nick at least highlight_min_len chars, to skip trivial nicks) is a
+    // highlight-spam (mass-ping) message.
+    #[serde(default = "sec_hl_nicks")]
+    pub highlight_nicks: u32,
+    #[serde(default = "sec_hl_min_len")]
+    pub highlight_min_len: u32,
+    // > highlight_permit such messages from one user within highlight_life s trips.
+    #[serde(default = "sec_hl_permit")]
+    pub highlight_permit: u32,
+    #[serde(default = "sec_hl_life")]
+    pub highlight_life: u64,
+    // Seconds the auto G-line lasts when armed (0 = kill the connection only).
+    #[serde(default = "sec_conn_ban")]
+    pub ban_duration: u64,
+}
+
+impl Default for ContentRules {
+    fn default() -> Self {
+        Self {
+            enabled: sec_true(),
+            highlight_nicks: sec_hl_nicks(),
+            highlight_min_len: sec_hl_min_len(),
+            highlight_permit: sec_hl_permit(),
+            highlight_life: sec_hl_life(),
+            ban_duration: sec_conn_ban(),
+        }
+    }
+}
+
+fn sec_hl_nicks() -> u32 {
+    6
+}
+fn sec_hl_min_len() -> u32 {
+    3
+}
+fn sec_hl_permit() -> u32 {
+    1
+}
+fn sec_hl_life() -> u64 {
+    15
 }
 
 #[derive(Debug, Deserialize, Clone)]

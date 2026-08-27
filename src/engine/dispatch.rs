@@ -64,6 +64,9 @@ impl Engine {
                     }
                 }
             }
+            // Native anti-abuse content screening (highlight-spam) on channel lines
+            // echo can see — the additive heuristics the kickers lack.
+            ctx.actions.extend(self.security_screen_message(from, to, text));
             // Record activity in bot channels (surfaced by StatServ).
             if self.db.channel(to).is_some_and(|c| c.assigned_bot.is_some()) {
                 self.network.record_line(to, &nick, text);

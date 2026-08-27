@@ -176,6 +176,26 @@ fn quit_matches(reason: &str, markers: &[String]) -> bool {
     markers.iter().any(|m| !m.is_empty() && r.contains(&m.to_ascii_lowercase()))
 }
 
+// How many distinct member nicks (already lowercased + length-filtered) `text`
+// mentions as whole words — the mass-ping / highlight-spam signal. Tokenises on
+// non-nick characters so a nick that is merely a substring of a word doesn't count.
+fn count_highlights(text: &str, member_nicks_lc: &std::collections::HashSet<String>) -> usize {
+    if member_nicks_lc.is_empty() {
+        return 0;
+    }
+    let mut hit = std::collections::HashSet::new();
+    for tok in text.split(|c: char| !(c.is_alphanumeric() || "[]{}\\`|^_-".contains(c))) {
+        if tok.is_empty() {
+            continue;
+        }
+        let low = tok.to_ascii_lowercase();
+        if member_nicks_lc.contains(&low) {
+            hit.insert(low);
+        }
+    }
+    hit.len()
+}
+
 // The coarse aggregation key for an address — the /24 for IPv4, the /64 for IPv6
 // — used to catch clone floods spread across a subnet.
 fn cidr_of(ip: &str) -> String {
@@ -370,6 +390,44 @@ impl super::Engine {
         }
         Vec::new()
     }
+
+    // Content rules, if the subsystem and the content detectors are both on.
+    fn content_rules(&self) -> Option<config::ContentRules> {
+        let c = self.security.cfg.as_ref()?;
+        (c.enabled && c.content.enabled).then(|| c.content.clone())
+    }
+
+    // Distinct channel members (nick at least `min_len` chars) this line pings.
+    fn channel_highlights(&self, channel: &str, text: &str, min_len: usize) -> usize {
+        let uids: Vec<String> = self.network.channel_members(channel).map(|u| u.to_string()).collect();
+        let nicks: std::collections::HashSet<String> = uids
+            .iter()
+            .filter_map(|u| self.network.nick_of(u))
+            .filter(|n| n.chars().count() >= min_len)
+            .map(|n| n.to_ascii_lowercase())
+            .collect();
+        count_highlights(text, &nicks)
+    }
+
+    // Screen a channel message echo can see (a bot is present). The additive
+    // heuristic the kickers lack: highlight-spam (mass-ping).
+    pub(crate) fn security_screen_message(&mut self, from: &str, channel: &str, text: &str) -> Vec<NetAction> {
+        let Some(rules) = self.content_rules() else {
+            return Vec::new();
+        };
+        let Some((ip, who)) = self.security_identity(from) else {
+            return Vec::new();
+        };
+        let n = self.channel_highlights(channel, text, rules.highlight_min_len as usize);
+        if n >= rules.highlight_nicks as usize {
+            let now = self.now_secs();
+            if self.security.counters.hit(&format!("hl|{from}"), now, rules.highlight_life) > rules.highlight_permit {
+                self.bump("security.highlight.trips");
+                return self.security_act(&who, from, &format!("*@{ip}"), "highlight spam", &format!("pinged {n} users in {channel}"), rules.ban_duration);
+            }
+        }
+        Vec::new()
+    }
 }
 
 #[cfg(test)]
@@ -423,5 +481,18 @@ mod tests {
         assert!(!quit_matches("Ping timeout: 240 seconds", &m));
         assert!(!quit_matches("Quit: brb", &m));
         assert!(!quit_matches("Excess Flood", &[])); // no markers => never
+    }
+
+    #[test]
+    fn highlight_counting() {
+        use std::collections::HashSet;
+        let members: HashSet<String> = ["alice", "bob", "carol", "dave"].iter().map(|s| s.to_string()).collect();
+        // Distinct member nicks as whole words are counted once each.
+        assert_eq!(count_highlights("hey ALICE bob carol!! bob", &members), 3);
+        // A nick that's only a substring of a longer word does not count.
+        assert_eq!(count_highlights("aliceish bobcat", &members), 0);
+        // Non-members are ignored.
+        assert_eq!(count_highlights("alice eve mallory", &members), 1);
+        assert_eq!(count_highlights("anything at all", &HashSet::new()), 0);
     }
 }
