@@ -54,6 +54,14 @@ action when `ban_duration = 0`).
 | Content¹ | highlight-spam | channel message | uid (distinct members pinged) |
 | Content¹ | bad-unicode | channel message | uid (zalgo / zero-width fraction) |
 | Content¹ | repeat-wave | channel message | channel × line-hash (copy-paste spam) |
+| Behavioural | channel-crawl | JOIN | uid (join rate across many channels) |
+| Auth | login brute-force | failed IDENTIFY/SASL | IP |
+| Auth | registration flood | REGISTER | IP |
+| Auth | ban-evasion | account login | account (re-kill if recently security-banned) |
+
+The behavioural/content detectors are **suppressed for `netsplit_grace` seconds after any
+server split or link** — a netsplit rejoin re-joins/re-nicks everyone at once and would
+otherwise trip mass-join/nick/quit in a false-positive storm. This is what makes arming safe.
 
 ¹ Content detectors only see channels where an echo bot is present (the same limit
 as the kickers). For *network-wide* content filtering use OperServ SPAMFILTER
@@ -148,6 +156,25 @@ repeat_permit     = 5     # same line > N times in a channel...
 repeat_life       = 20    # ...within this window
 ban_duration      = 3600
 ```
+
+### `[security.auth]` — login/registration abuse
+
+echo is NickServ and a linked server, so it sees failed logins, registrations, and
+account logins first-class — no oper-snote scraping.
+
+```toml
+[security.auth]
+enabled         = true
+fail_permit     = 8       # > N failed password logins from one IP within fail_life s → ban
+fail_life       = 60
+register_permit = 3       # > N REGISTERs from one IP within register_life s → reject
+register_life   = 300
+evade_ttl       = 172800  # remember a security-banned account this long; re-kill on re-login
+ban_duration    = 3600
+```
+
+Also on `[security]`: `netsplit_grace = 60` (suppression window after a split/link), and on
+`[security.behavior]`: `crawl_permit = 12` / `crawl_life = 15` (the channel-crawl detector).
 
 ### `[mxbl]` — registration MX-blacklist
 
