@@ -92,6 +92,16 @@ pub struct Security {
     // Connection screening (per-IP / per-range connection floods).
     #[serde(default)]
     pub connect: ConnectRules,
+    // IPs/CIDRs never screened or banned — trusted infrastructure (loopback, the
+    // services host, gateways). Defaults to loopback so arming can't cut off the
+    // local bots/services link. Bare IP = exact match; "a.b.c.0/24" / "2001:db8::/32".
+    #[serde(default = "sec_exempt_ips")]
+    pub exempt_ips: Vec<String>,
+    // Connection pattern rules: each connecting nick!ident@host(#gecos) is matched
+    // against these (globs by default, regex opt-in). A hit is reported (or, when
+    // armed, killed + G-lined). The native equivalent of the ozone/Sigyn pattern DB.
+    #[serde(default)]
+    pub pattern: Vec<Pattern>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -145,6 +155,36 @@ fn sec_range_life() -> u64 {
 }
 fn sec_conn_ban() -> u64 {
     3600
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Pattern {
+    // The glob (default) or regex to match. Globs use `*`/`?`; matching is
+    // case-insensitive either way.
+    pub mask: String,
+    // Which part of the connecting identity to test: "mask" (nick!ident@host,
+    // default), "full" (nick!ident@host#gecos), "nick", "ident", "host", "gecos".
+    #[serde(default = "pat_field")]
+    pub field: String,
+    // Treat `mask` as a regular expression instead of a glob.
+    #[serde(default)]
+    pub regex: bool,
+    // Shown in the alert and used as the ban reason.
+    #[serde(default = "pat_reason")]
+    pub reason: String,
+    // Seconds the G-line lasts when armed (0 = kill the connection only).
+    #[serde(default = "sec_conn_ban")]
+    pub ban: u64,
+}
+
+fn sec_exempt_ips() -> Vec<String> {
+    vec!["127.0.0.0/8".to_string(), "::1".to_string()]
+}
+fn pat_field() -> String {
+    "mask".to_string()
+}
+fn pat_reason() -> String {
+    "matched a security pattern".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone)]

@@ -1659,7 +1659,7 @@ impl Db {
 
 }
 
-fn glob_match(pattern: &str, text: &str) -> bool {
+pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
     let (p, t): (Vec<char>, Vec<char>) = (
         pattern.chars().flat_map(char::to_lowercase).collect(),
         text.chars().flat_map(char::to_lowercase).collect(),
