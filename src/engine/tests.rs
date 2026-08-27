@@ -6391,3 +6391,101 @@ fn bench_engine_throughput() {
         el.as_micros() as f64 / msgs as f64,
     );
 }
+
+// ---- Security subsystem integration: drive real events through the engine with an
+// armed config and assert the detectors fire (the wiring the unit tests can't cover). ----
+
+fn security_engine() -> Engine {
+    let path = {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("echo-sec-{}-{n}.jsonl", std::process::id()))
+    };
+    let _ = std::fs::remove_file(&path);
+    let db = Db::open(&path, "test");
+    let mut e = Engine::new(vec![Box::new(NickServ { uid: "42SAAAAAA".into(), guest_nick: "Guest".into(), guest_seq: 0 })], db);
+    e.set_sid("42S".into()); // enforcement sources kills/bans from the services SID
+    e
+}
+
+// An armed (enforcing) security config, so a trigger yields a KillUser to assert on.
+fn armed_security() -> crate::config::Security {
+    crate::config::Security {
+        enabled: true,
+        report_only: false,
+        exempt_ips: Vec::new(),
+        pattern: Vec::new(),
+        connect: Default::default(),
+        behavior: Default::default(),
+        content: Default::default(),
+        exempt_opers: true,
+        exempt_accounts: false,
+        exempt_voice: false,
+        announce_permit: 10_000,
+        announce_life: 10,
+        cascade_permit: 10_000,
+        cascade_life: 10,
+    }
+}
+
+fn killed_for(out: &[NetAction], kind: &str) -> bool {
+    out.iter().any(|a| matches!(a, NetAction::KillUser { reason, .. } if reason.contains(kind)))
+}
+
+fn sec_connect(e: &mut Engine, uid: &str, nick: &str, ip: &str) {
+    e.handle(NetEvent::UserConnect { uid: uid.into(), nick: nick.into(), host: "h".into(), ip: ip.into() });
+}
+
+#[test]
+fn security_nick_flood_enforces() {
+    let mut e = security_engine();
+    let mut sec = armed_security();
+    sec.behavior.nick_permit = 2;
+    e.set_security(Some(sec));
+    sec_connect(&mut e, "000AAAAAB", "n0", "5.5.5.5");
+    let a = e.handle(NetEvent::NickChange { uid: "000AAAAAB".into(), nick: "n1".into() });
+    let b = e.handle(NetEvent::NickChange { uid: "000AAAAAB".into(), nick: "n2".into() });
+    assert!(!killed_for(&a, "nick-change flood") && !killed_for(&b, "nick-change flood"), "under the permit, no kill");
+    let c = e.handle(NetEvent::NickChange { uid: "000AAAAAB".into(), nick: "n3".into() });
+    assert!(killed_for(&c, "nick-change flood"), "the change past permit 2 trips: {c:?}");
+}
+
+#[test]
+fn security_connect_flood_and_loopback_exempt() {
+    let mut e = security_engine();
+    let mut sec = armed_security();
+    sec.connect.flood_permit = 2;
+    sec.exempt_ips = vec!["127.0.0.0/8".into()];
+    e.set_security(Some(sec));
+    // Three connects from one non-exempt IP — the 3rd (once attrs arrive) trips.
+    let mut last = Vec::new();
+    for i in 0..3 {
+        let uid = format!("000AAAA0{i}");
+        sec_connect(&mut e, &uid, &format!("u{i}"), "9.9.9.9");
+        last = e.handle(NetEvent::UserAttrs { uid, ident: "id".into(), realhost: "rh".into(), gecos: "g".into() });
+    }
+    assert!(killed_for(&last, "connection flood"), "connect flood trips over permit 2: {last:?}");
+    // The same burst from loopback is exempt and never trips.
+    for i in 0..4 {
+        let uid = format!("000AAAA1{i}");
+        sec_connect(&mut e, &uid, &format!("l{i}"), "127.0.0.1");
+        let out = e.handle(NetEvent::UserAttrs { uid, ident: "id".into(), realhost: "rh".into(), gecos: "g".into() });
+        assert!(!killed_for(&out, "connection flood"), "loopback is exempt from screening");
+    }
+}
+
+#[test]
+fn security_mass_join_bans_range() {
+    let mut e = security_engine();
+    let mut sec = armed_security();
+    sec.behavior.massjoin_permit = 2;
+    e.set_security(Some(sec));
+    let mut last = Vec::new();
+    for i in 0..3 {
+        let uid = format!("000AAAA2{i}");
+        sec_connect(&mut e, &uid, &format!("j{i}"), &format!("6.6.6.{i}")); // one /24
+        last = e.handle(NetEvent::Join { uid, channel: "#raid".into(), op: false });
+    }
+    assert!(killed_for(&last, "mass-join"), "the 3rd join from the /24 trips mass-join: {last:?}");
+}
