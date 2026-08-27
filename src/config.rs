@@ -77,6 +77,11 @@ pub struct Config {
     // threshold is a config key with a literal default.
     #[serde(default)]
     pub security: Option<Security>,
+    // Registration MX-blacklist: reject signups whose email domain's mail servers
+    // (MX → A/AAAA) match a hostname glob or IP CIDR — the stable way to stop
+    // disposable-email abuse. Absent = off. Native DNS, no external service.
+    #[serde(default)]
+    pub mxbl: Option<MxBlocklist>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -422,6 +427,31 @@ fn sec_casc_permit() -> u32 {
 }
 fn sec_casc_life() -> u64 {
     30
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct MxBlocklist {
+    // Master switch (default off — opt-in).
+    #[serde(default)]
+    pub enabled: bool,
+    // Recursive DNS resolver "ip[:port]". Empty = the first nameserver in
+    // /etc/resolv.conf (falling back to systemd-resolved's 127.0.0.53).
+    #[serde(default)]
+    pub resolver: String,
+    // MX hostname globs to block (e.g. "*.disposable-mail.example").
+    #[serde(default)]
+    pub mx_globs: Vec<String>,
+    // MX-server IP CIDRs to block (e.g. "203.0.113.0/24"). Only consulted when set,
+    // since matching them costs an extra A/AAAA lookup per mail server.
+    #[serde(default)]
+    pub ip_cidrs: Vec<String>,
+    // Per-DNS-query timeout, milliseconds.
+    #[serde(default = "mxbl_timeout")]
+    pub timeout_ms: u64,
+}
+
+fn mxbl_timeout() -> u64 {
+    2000
 }
 
 #[derive(Debug, Deserialize, Clone)]

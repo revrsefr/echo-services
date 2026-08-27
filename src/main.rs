@@ -4,6 +4,7 @@
 mod config;
 mod control;
 mod dict;
+mod dns;
 mod engine;
 mod gossip;
 mod grpc;
@@ -14,6 +15,7 @@ mod panel;
 mod link;
 mod uplink_tls;
 mod migrate;
+mod mxbl;
 mod proto;
 mod version;
 mod wiktionary;
@@ -397,7 +399,7 @@ async fn main() -> Result<()> {
     // just lets systemd stop us without waiting out the kill timeout.
     let shutdown_engine = engine.clone();
     tokio::select! {
-        res = link::run(proto, engine, &addr, uplink_tls, irc_rx, irc_tx, cfg.email.clone(), cfg.keycard.clone(), cfg.dictserv.as_ref().map(|d| d.server.clone())) => res,
+        res = link::run(proto, engine, &addr, uplink_tls, irc_rx, irc_tx, cfg.email.clone(), cfg.keycard.clone(), cfg.dictserv.as_ref().map(|d| d.server.clone()), cfg.mxbl.clone()) => res,
         _ = shutdown_signal() => {
             // Flush stat counters + the incident ring so a clean stop/restart keeps
             // StatServ history and OperServ LOGSEARCH.

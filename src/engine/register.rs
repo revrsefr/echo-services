@@ -317,6 +317,18 @@ impl Engine {
         None
     }
 
+    // A registration blocked by the MX-blacklist (the email domain's mail servers
+    // are on the blocklist) — same outcome as an operator email-forbid, plus a
+    // staff-feed note. Called from the link layer after the async MX lookup, before
+    // the account row is ever created.
+    pub fn reject_register_email(&mut self, account: &str, email: &str, reason: &str, reply: RegReply) -> Vec<NetAction> {
+        let mut out = reg_reply(&reply, RegOutcome::ForbiddenEmail, account);
+        if let Some(line) = self.feed("SECURITY", format!("registration of \x02{account}\x02 blocked — email {email} on the MX blocklist ({reason})")) {
+            out.push(line);
+        }
+        out
+    }
+
     // Commit credentials the link layer derived off-thread, then answer `reply`.
     pub fn complete_register(&mut self, account: &str, creds: Option<db::Credentials>, email: Option<String>, reply: RegReply) -> Vec<NetAction> {
         let Some(creds) = creds else {

@@ -142,7 +142,7 @@ fn redact(line: &str) -> Cow<'_, str> {
 // The engine is shared with the gossip layer, so it is locked per operation and
 // never held across the registration key-stretching await.
 #[allow(clippy::too_many_arguments)] // the link driver legitimately wires up many collaborators
-pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr: &str, tls: Option<(TlsConnector, ServerName<'static>)>, mut irc_rx: mpsc::UnboundedReceiver<NetAction>, irc_tx: mpsc::UnboundedSender<NetAction>, email: Option<crate::config::Email>, keycard: Option<crate::config::Keycard>, dict_server: Option<String>) -> Result<()> {
+pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr: &str, tls: Option<(TlsConnector, ServerName<'static>)>, mut irc_rx: mpsc::UnboundedReceiver<NetAction>, irc_tx: mpsc::UnboundedSender<NetAction>, email: Option<crate::config::Email>, keycard: Option<crate::config::Keycard>, dict_server: Option<String>, mxbl_cfg: Option<crate::config::MxBlocklist>) -> Result<()> {
     let tcp = TcpStream::connect(addr).await?;
     // Disable Nagle: service replies are small multi-line bursts, and without this
     // the last segment of a reply is held ~40ms waiting on a delayed ACK, so a
@@ -185,12 +185,32 @@ pub async fn run(mut proto: Box<dyn Protocol>, engine: Arc<Mutex<Engine>>, addr:
                                 match pre {
                                     Some(rejection) => rejection,
                                     None => {
-                                        let iterations = engine.lock().await.scram_iterations();
-                                        let creds = tokio::task::spawn_blocking(move || {
-                                            Db::derive_credentials(&password, iterations)
-                                        })
-                                        .await?;
-                                        engine.lock().await.complete_register(&account, creds, email, reply)
+                                        // MX-blacklist: reject before creating the account when the
+                                        // email domain's mail servers are blocklisted. The DNS lookup
+                                        // runs async here, off the engine lock.
+                                        let mx_reject = if let (Some(cfg), Some(addr)) = (mxbl_cfg.as_ref(), email.as_deref()) {
+                                            if cfg.enabled {
+                                                crate::mxbl::check(cfg, addr).await
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        };
+                                        match mx_reject {
+                                            Some(reason) => {
+                                                let addr = email.unwrap_or_default();
+                                                engine.lock().await.reject_register_email(&account, &addr, &reason, reply)
+                                            }
+                                            None => {
+                                                let iterations = engine.lock().await.scram_iterations();
+                                                let creds = tokio::task::spawn_blocking(move || {
+                                                    Db::derive_credentials(&password, iterations)
+                                                })
+                                                .await?;
+                                                engine.lock().await.complete_register(&account, creds, email, reply)
+                                            }
+                                        }
                                     }
                                 }
                             }
