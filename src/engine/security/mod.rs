@@ -20,6 +20,7 @@ use counter::Counters;
 use crate::config;
 use crate::proto::NetAction;
 use regex::Regex;
+use std::hash::{Hash, Hasher};
 use std::net::IpAddr;
 
 #[derive(Default)]
@@ -194,6 +195,35 @@ fn count_highlights(text: &str, member_nicks_lc: &std::collections::HashSet<Stri
         }
     }
     hit.len()
+}
+
+// A crude "bad unicode" fraction in [0,1]: the share of characters that are
+// combining marks (zalgo) or invisible/zero-width formatting (injection). IRC
+// formatting codes are ignored, and precomposed accents aren't combining marks, so
+// ordinary and accented text score ~0. No Unicode database needed.
+fn bad_unicode_score(text: &str) -> f64 {
+    let mut total = 0usize;
+    let mut bad = 0usize;
+    for c in text.chars() {
+        let u = c as u32;
+        // IRC formatting (bold/colour/italic/…) is legitimate — don't count it.
+        if matches!(u, 0x02 | 0x03 | 0x04 | 0x0F | 0x11 | 0x16 | 0x1D | 0x1E | 0x1F) {
+            continue;
+        }
+        total += 1;
+        let combining = matches!(u,
+            0x0300..=0x036F | 0x0483..=0x0489 | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF | 0xFE20..=0xFE2F);
+        let invisible = matches!(u,
+            0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0xFEFF | 0x00AD | 0x180E | 0x3164 | 0xFFA0);
+        if combining || invisible {
+            bad += 1;
+        }
+    }
+    if total == 0 {
+        0.0
+    } else {
+        bad as f64 / total as f64
+    }
 }
 
 // The coarse aggregation key for an address — the /24 for IPv4, the /64 for IPv6
@@ -418,12 +448,34 @@ impl super::Engine {
         let Some((ip, who)) = self.security_identity(from) else {
             return Vec::new();
         };
+        let ban = format!("*@{ip}");
+        // Highlight-spam (mass-ping).
         let n = self.channel_highlights(channel, text, rules.highlight_min_len as usize);
         if n >= rules.highlight_nicks as usize {
             let now = self.now_secs();
             if self.security.counters.hit(&format!("hl|{from}"), now, rules.highlight_life) > rules.highlight_permit {
                 self.bump("security.highlight.trips");
-                return self.security_act(&who, from, &format!("*@{ip}"), "highlight spam", &format!("pinged {n} users in {channel}"), rules.ban_duration);
+                return self.security_act(&who, from, &ban, "highlight spam", &format!("pinged {n} users in {channel}"), rules.ban_duration);
+            }
+        }
+        // Bad-unicode (zalgo / zero-width injection).
+        if text.chars().count() >= rules.badunicode_min as usize && bad_unicode_score(text) >= rules.badunicode_score {
+            let now = self.now_secs();
+            if self.security.counters.hit(&format!("bu|{from}"), now, rules.badunicode_life) > rules.badunicode_permit {
+                self.bump("security.badunicode.trips");
+                return self.security_act(&who, from, &ban, "bad-unicode spam", &format!("zalgo/zero-width text in {channel}"), rules.ban_duration);
+            }
+        }
+        // Repeat-wave (copy-paste spam); the offending line is surfaced as a pattern.
+        let norm = text.trim().to_ascii_lowercase();
+        if norm.chars().count() >= rules.repeat_min as usize {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            norm.hash(&mut h);
+            let now = self.now_secs();
+            if self.security.counters.hit(&format!("rp|{channel}|{:x}", h.finish()), now, rules.repeat_life) > rules.repeat_permit {
+                self.bump("security.repeat.trips");
+                let sample: String = norm.chars().take(50).collect();
+                return self.security_act(&who, from, &ban, "repeat-spam wave", &format!("line repeated in {channel}: \"{sample}\""), rules.ban_duration);
             }
         }
         Vec::new()
@@ -494,5 +546,19 @@ mod tests {
         // Non-members are ignored.
         assert_eq!(count_highlights("alice eve mallory", &members), 1);
         assert_eq!(count_highlights("anything at all", &HashSet::new()), 0);
+    }
+
+    #[test]
+    fn bad_unicode_scoring() {
+        assert!(bad_unicode_score("hello world, how are you") < 0.01);
+        assert!(bad_unicode_score("caf\u{00E9} r\u{00E9}sum\u{00E9} na\u{00EF}ve") < 0.05); // precomposed accents fine
+        // Zalgo: each base char stacked with several combining diacriticals.
+        let zalgo = "a\u{0300}\u{0301}\u{0302}b\u{0300}\u{0301}\u{0302}c\u{0300}\u{0301}\u{0302}";
+        assert!(bad_unicode_score(zalgo) > 0.5);
+        // Zero-width chars injected between letters.
+        let zw = "s\u{200B}p\u{200B}a\u{200B}m\u{200B}m\u{200B}y";
+        assert!(bad_unicode_score(zw) > 0.3);
+        // IRC colour codes must not count as bad unicode.
+        assert!(bad_unicode_score("\u{03}04,01 red on blue \u{03}") < 0.01);
     }
 }

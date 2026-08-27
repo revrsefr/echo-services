@@ -310,6 +310,26 @@ pub struct ContentRules {
     pub highlight_permit: u32,
     #[serde(default = "sec_hl_life")]
     pub highlight_life: u64,
+    // Bad-unicode: a message of at least badunicode_min chars whose combining-mark /
+    // invisible-char fraction reaches badunicode_score (zalgo, zero-width injection),
+    // more than badunicode_permit times within badunicode_life s.
+    #[serde(default = "sec_bu_score")]
+    pub badunicode_score: f64,
+    #[serde(default = "sec_bu_min")]
+    pub badunicode_min: u32,
+    #[serde(default = "sec_bu_permit")]
+    pub badunicode_permit: u32,
+    #[serde(default = "sec_bu_life")]
+    pub badunicode_life: u64,
+    // Repeat-wave: the same normalised line of at least repeat_min chars posted more
+    // than repeat_permit times in a channel within repeat_life s (copy-paste spam);
+    // the offending line is surfaced in the alert as a suggested filter pattern.
+    #[serde(default = "sec_rpt_min")]
+    pub repeat_min: u32,
+    #[serde(default = "sec_rpt_permit")]
+    pub repeat_permit: u32,
+    #[serde(default = "sec_rpt_life")]
+    pub repeat_life: u64,
     // Seconds the auto G-line lasts when armed (0 = kill the connection only).
     #[serde(default = "sec_conn_ban")]
     pub ban_duration: u64,
@@ -323,6 +343,13 @@ impl Default for ContentRules {
             highlight_min_len: sec_hl_min_len(),
             highlight_permit: sec_hl_permit(),
             highlight_life: sec_hl_life(),
+            badunicode_score: sec_bu_score(),
+            badunicode_min: sec_bu_min(),
+            badunicode_permit: sec_bu_permit(),
+            badunicode_life: sec_bu_life(),
+            repeat_min: sec_rpt_min(),
+            repeat_permit: sec_rpt_permit(),
+            repeat_life: sec_rpt_life(),
             ban_duration: sec_conn_ban(),
         }
     }
@@ -339,6 +366,27 @@ fn sec_hl_permit() -> u32 {
 }
 fn sec_hl_life() -> u64 {
     15
+}
+fn sec_bu_score() -> f64 {
+    0.30
+}
+fn sec_bu_min() -> u32 {
+    8
+}
+fn sec_bu_permit() -> u32 {
+    1
+}
+fn sec_bu_life() -> u64 {
+    20
+}
+fn sec_rpt_min() -> u32 {
+    10
+}
+fn sec_rpt_permit() -> u32 {
+    5
+}
+fn sec_rpt_life() -> u64 {
+    20
 }
 
 #[derive(Debug, Deserialize, Clone)]
