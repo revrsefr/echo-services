@@ -45,8 +45,6 @@ fn with_port(addr: &str) -> String {
     if addr.contains(':') && !addr.contains('.') && !addr.ends_with(']') {
         // bare IPv6 without a port — bracket it
         format!("[{addr}]:53")
-    } else if addr.rsplit(':').next().and_then(|p| p.parse::<u16>().ok()).is_some() && addr.matches(':').count() == 1 {
-        addr.to_string()
     } else if addr.contains(':') {
         addr.to_string() // assume it already carries a port (or is bracketed v6)
     } else {
