@@ -32,7 +32,7 @@
         // which of the two competing registrations we're looking at.
         let alice = |tag: &str, ts: u64, home: &str| Account {
             name: "alice".into(), email: Some(tag.into()),
-            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None, profile: Default::default(), vhost: None, vhost_request: None, last_seen: ts, noexpire: false, expiry_warned: false, oper_note: None, swhois: None, signore: vec![],
+            ts, home: home.into(), scram256: None, scram512: None, certfps: vec![], pubkey: None, verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None, profile: Default::default(), vhost: None, vhost_request: None, last_seen: ts, noexpire: false, expiry_warned: false, oper_note: None, swhois: None, signore: vec![],
         };
         let converge = |first: &Account, second: &Account| {
             let (mut acc, mut ch, mut gr, mut bo, mut hc, mut nd) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HostConfig::default(), NetData::default());
@@ -78,7 +78,7 @@
     fn rehome_keeping_the_verifier_is_not_a_takeover() {
         let acct = |home: &str, ts: u64, verifier: &str| Account {
             name: "reverse".into(), email: None, ts, home: home.into(),
-            scram256: Some(verifier.into()), scram512: None, certfps: vec![], verified: true,
+            scram256: Some(verifier.into()), scram512: None, certfps: vec![], pubkey: None, verified: true,
             ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true,
             memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false,
             hide_status: false, snotice: false, language: None, profile: Default::default(), vhost: None, vhost_request: None, last_seen: ts, noexpire: false,
@@ -463,7 +463,7 @@
         db.register("alice", "pw", None).unwrap();
         let bob = Account {
             name: "bob".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None, profile: Default::default(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None, swhois: None, signore: vec![],
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], pubkey: None, verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None, profile: Default::default(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None, swhois: None, signore: vec![],
         };
         let entry = LogEntry { origin: "peer".into(), seq: 0, lamport: 1, epoch: 0, sig: None, event: Event::AccountRegistered(Box::new(bob)) };
         db.ingest(entry).unwrap();
@@ -571,7 +571,7 @@
             let mut db = Db::open(&p, "N1");
             db.migrate_append(Event::AccountRegistered(Box::new(Account {
                 name: "mig".into(), email: Some("m@x".into()), ts: 1, home: "N1".into(),
-                scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![],
+                scram256: None, scram512: None, certfps: vec![], pubkey: None, verified: true, ajoin: vec![],
                 suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true,
                 memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false,
                 hide_status: false, snotice: false, language: None, profile: Default::default(), vhost: None, vhost_request: None, last_seen: 1,

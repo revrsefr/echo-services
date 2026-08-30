@@ -190,6 +190,7 @@ pub fn import_anope(anope_path: &str, out_path: &str, node: &str) -> std::io::Re
             scram256: None,
             scram512: None,
             certfps: Vec::new(),
+            pubkey: None,
             verified: true,
             ajoin: Vec::new(),
             suspension: None,

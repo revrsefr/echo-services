@@ -1013,7 +1013,7 @@
         // An earlier claim from another node wins and takes the name over.
         let winner = db::Account {
             name: "alice".into(), email: None,
-            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None, profile: Default::default(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None, swhois: None, signore: vec![],
+            ts: 0, home: "peer".into(), scram256: None, scram512: None, certfps: vec![], pubkey: None, verified: true, ajoin: vec![], suspension: None, memos: vec![], memo_ignore: vec![], memo_notify: true, memo_limit: None, greet: String::new(), no_autoop: false, no_protect: false, hide_status: false, snotice: false, language: None, profile: Default::default(), vhost: None, vhost_request: None, last_seen: 0, noexpire: false, expiry_warned: false, oper_note: None, swhois: None, signore: vec![],
         };
         let entry = LogEntry::for_test("peer", 0, 1, db::Event::AccountRegistered(Box::new(winner)));
         e.gossip_ingest(entry).unwrap();

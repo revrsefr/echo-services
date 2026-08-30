@@ -102,6 +102,9 @@ impl Store for Db {
     fn set_email(&mut self, account: &str, email: Option<String>) -> Result<(), RegError> {
         Db::set_email(self, account, email)
     }
+    fn set_pubkey(&mut self, account: &str, pubkey: Option<String>) -> Result<(), RegError> {
+        Db::set_pubkey(self, account, pubkey)
+    }
     fn set_greet(&mut self, account: &str, greet: &str) -> Result<(), RegError> {
         Db::set_greet(self, account, greet)
     }

@@ -1,4 +1,5 @@
 pub mod db;
+pub mod ecdsa;
 pub mod scram;
 pub mod service;
 pub mod state;
@@ -41,6 +42,8 @@ enum SaslSession {
     Scram { hash: scram::Hash, step: ScramStep },
     // EXTERNAL: the TLS cert fingerprints the ircd relayed for this client.
     External { fingerprints: Vec<String> },
+    // ECDSA-NIST256P-CHALLENGE: where we are in the challenge/response.
+    Ecdsa { step: EcdsaStep },
 }
 
 // An in-progress exchange with its last-activity stamp, so abandoned sessions
@@ -72,6 +75,16 @@ enum ScramStep {
     },
     Ack {
         account: String,
+    },
+}
+
+// ECDSA-NIST256P-CHALLENGE advances account-name -> signature.
+enum EcdsaStep {
+    AccountName,
+    Signature {
+        account: String,
+        pubkey: String,
+        challenge: Vec<u8>,
     },
 }
 
@@ -2220,6 +2233,10 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         AccountEmailSet { account, email } => match email {
             Some(_) => format!("set the email on \x02{account}\x02"),
             None => format!("cleared the email on \x02{account}\x02"),
+        },
+        AccountPubkeySet { account, pubkey } => match pubkey {
+            Some(_) => format!("set the SASL public key on \x02{account}\x02"),
+            None => format!("cleared the SASL public key on \x02{account}\x02"),
         },
         AccountSwhoisSet { account, text } => match text {
             Some(t) => format!("set the SWHOIS on \x02{account}\x02 to \x02{t}\x02"),

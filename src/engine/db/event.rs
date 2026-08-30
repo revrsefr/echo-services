@@ -18,6 +18,7 @@ pub enum Event {
     AccountLanguageSet { account: String, language: Option<String> },
     AccountSwhoisSet { account: String, text: Option<String> },
     AccountSignoreSet { account: String, list: Vec<String> },
+    AccountPubkeySet { account: String, pubkey: Option<String> },
     AccountProfileSet { account: String, field: String, value: Option<String> },
     AccountAutoOpSet { account: String, on: bool },
     AccountKillSet { account: String, on: bool },
@@ -194,6 +195,7 @@ impl Event {
             | Event::AccountLanguageSet { .. }
             | Event::AccountSwhoisSet { .. }
             | Event::AccountSignoreSet { .. }
+            | Event::AccountPubkeySet { .. }
             | Event::AccountProfileSet { .. }
             | Event::AccountAutoOpSet { .. }
             | Event::AccountKillSet { .. }
@@ -361,6 +363,11 @@ pub(crate) fn apply(accounts: &mut HashMap<String, Account>, channels: &mut Hash
         Event::AccountEmailSet { account, email } => {
             if let Some(a) = accounts.get_mut(&key(&account)) {
                 a.email = email;
+            }
+        }
+        Event::AccountPubkeySet { account, pubkey } => {
+            if let Some(a) = accounts.get_mut(&key(&account)) {
+                a.pubkey = pubkey;
             }
         }
         Event::AccountGreetSet { account, greet } => {

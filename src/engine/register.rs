@@ -90,7 +90,7 @@ impl Engine {
         let status = match self.db.register_prepared(name, creds, email) {
             Ok(()) => AuthorityStatus::Ok,
             Err(RegError::Exists) => AuthorityStatus::AlreadyExists,
-            Err(RegError::Internal) => AuthorityStatus::Internal,
+            Err(_) => AuthorityStatus::Internal,
         };
         if status == AuthorityStatus::Ok && !self.db.is_verified(name) {
             if let Some(addr) = addr {
@@ -359,7 +359,7 @@ impl Engine {
             }
             Ok(()) => RegOutcome::VerifyRequired,
             Err(RegError::Exists) => RegOutcome::Exists,
-            Err(RegError::Internal) => RegOutcome::Internal,
+            Err(_) => RegOutcome::Internal,
         };
         let needs_verify = matches!(outcome, RegOutcome::VerifyRequired);
         let mut out = reg_reply(&reply, outcome, account);

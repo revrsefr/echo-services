@@ -2131,6 +2131,7 @@ pub struct ChanSeenView {
 pub enum RegError {
     Exists,
     Internal,
+    Invalid,
 }
 
 #[derive(Debug)]
@@ -2225,6 +2226,9 @@ pub trait Store {
     fn note_auth(&mut self, account: &str, success: bool);
     fn verify_account(&mut self, account: &str) -> Result<(), RegError>;
     fn set_email(&mut self, account: &str, email: Option<String>) -> Result<(), RegError>;
+    // SASL ECDSA-NIST256P-CHALLENGE public key (base64 SEC1 P-256); None clears it.
+    // `RegError::Invalid` means the value is not a valid P-256 public key.
+    fn set_pubkey(&mut self, account: &str, pubkey: Option<String>) -> Result<(), RegError>;
     fn set_greet(&mut self, account: &str, greet: &str) -> Result<(), RegError>;
     fn set_language(&mut self, account: &str, language: Option<String>) -> Result<(), RegError>;
     fn language_of(&self, account: &str) -> Option<String>;

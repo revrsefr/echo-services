@@ -46,6 +46,18 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
+        Some("PUBKEY") => {
+            // A NIST P-256 public key (base64 SEC1 point) for the SASL
+            // ECDSA-NIST256P-CHALLENGE mechanism; no value clears it.
+            let pubkey = args.get(2).map(|s| s.to_string());
+            let cleared = pubkey.is_none();
+            match db.set_pubkey(account, pubkey) {
+                Ok(()) if cleared => ctx.notice(me, from.uid, "Your SASL public key has been cleared."),
+                Ok(()) => ctx.notice(me, from.uid, "Your SASL public key is set. Authenticate with \x02ECDSA-NIST256P-CHALLENGE\x02."),
+                Err(echo_api::RegError::Invalid) => ctx.notice(me, from.uid, "That isn't a valid NIST P-256 public key. Give the base64 SEC1 point (e.g. from \x02ecdsatool\x02)."),
+                Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
+            }
+        }
         Some("LANGUAGE") | Some("LANG") => {
             let available = db.available_languages();
             match args.get(2) {
@@ -167,7 +179,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }
-        _ => ctx.notice(me, from.uid, "Syntax: SET PASSWORD <newpassword> | SET EMAIL [address] | SET GREET [message] | SET AVATAR [url] | SET BIO [text] | SET PRONOUNS [text] | SET TIMEZONE [tz] | SET URL [url] | SET AUTOOP {ON|OFF} | SET KILL {ON|OFF} | SET HIDE STATUS {ON|OFF} | SET SNOTICE {ON|OFF}"),
+        _ => ctx.notice(me, from.uid, "Syntax: SET PASSWORD <newpassword> | SET EMAIL [address] | SET PUBKEY [key] | SET GREET [message] | SET AVATAR [url] | SET BIO [text] | SET PRONOUNS [text] | SET TIMEZONE [tz] | SET URL [url] | SET AUTOOP {ON|OFF} | SET KILL {ON|OFF} | SET HIDE STATUS {ON|OFF} | SET SNOTICE {ON|OFF}"),
     }
 }
 

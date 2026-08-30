@@ -66,6 +66,9 @@ pub struct Account {
     // this account via SASL EXTERNAL. Each fingerprint maps to one account.
     #[serde(default)]
     pub certfps: Vec<String>,
+    // NIST P-256 public key (base64 SEC1) for SASL ECDSA-NIST256P-CHALLENGE.
+    #[serde(default)]
+    pub pubkey: Option<String>,
     // Whether the email on file has been confirmed. Defaults true so accounts
     // predating email confirmation (and those registered without email) count
     // as verified.

@@ -133,6 +133,7 @@ fn to_wire(entry: &LogEntry) -> Option<ReplicationEvent> {
         Event::CertAdded { .. }
         | Event::CertRemoved { .. }
         | Event::AccountPasswordSet { .. }
+        | Event::AccountPubkeySet { .. }
         | Event::AccountGreetSet { .. }
         | Event::AccountLanguageSet { .. }
         | Event::AccountAutoOpSet { .. }
@@ -530,6 +531,7 @@ mod tests {
             scram256: Some("verifier".into()),
             scram512: None,
             certfps: vec!["deadbeef".into()],
+            pubkey: None,
             verified: true,
             ajoin: vec![],
             suspension: None,

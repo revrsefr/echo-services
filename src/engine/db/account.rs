@@ -19,6 +19,7 @@ impl Db {
             scram256: Some(creds.scram256),
             scram512: Some(creds.scram512),
             certfps: Vec::new(),
+            pubkey: None,
             verified,
             ajoin: Vec::new(),
             suspension: None,
@@ -78,6 +79,7 @@ impl Db {
             scram256: Some(scram256.to_string()),
             scram512: (!scram512.is_empty()).then(|| scram512.to_string()),
             certfps: Vec::new(),
+            pubkey: None,
             verified: true, // the external authority vouches for it
             ajoin: Vec::new(),
             suspension: None,
@@ -131,6 +133,30 @@ impl Db {
             _ => None,
         }?;
         Some((account.name.as_str(), verifier))
+    }
+
+    /// The base64 P-256 public key registered to `name` for SASL ECDSA challenge, if any.
+    pub fn pubkey_lookup(&self, name: &str) -> Option<(&str, &str)> {
+        let account = self.accounts.get(&self.resolved_key(name)?)?;
+        Some((account.name.as_str(), account.pubkey.as_deref()?))
+    }
+
+    /// Set or clear `account`'s SASL public key. A non-empty value must be a valid
+    /// base64 SEC1 P-256 point; it is stored in normalized form.
+    pub fn set_pubkey(&mut self, account: &str, pubkey: Option<String>) -> Result<(), RegError> {
+        let k = key(account);
+        if !self.accounts.contains_key(&k) {
+            return Err(RegError::Internal);
+        }
+        let pubkey = match pubkey {
+            Some(raw) => Some(crate::engine::ecdsa::validate_pubkey(&raw).ok_or(RegError::Invalid)?),
+            None => None,
+        };
+        self.log
+            .append(Event::AccountPubkeySet { account: account.to_string(), pubkey: pubkey.clone() })
+            .map_err(|_| RegError::Internal)?;
+        self.accounts.get_mut(&k).unwrap().pubkey = pubkey;
+        Ok(())
     }
 
     /// The canonical name of the account owning `fp`, if any. Fingerprints are

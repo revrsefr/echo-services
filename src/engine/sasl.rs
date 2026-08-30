@@ -1,4 +1,5 @@
 use super::*;
+use rand_core::{OsRng, RngCore};
 
 impl Engine {
     // SASL agent side of the exchange the ircd relays to us (modes H/S/C/D), per
@@ -40,6 +41,10 @@ impl Engine {
                         let hash = scram::Hash::from_mech(mech).unwrap();
                         self.stash_sasl(client.clone(), SaslSession::Scram { hash, step: ScramStep::ClientFirst });
                         mk("C", vec!["+".to_string()]) // client sends client-first next
+                    }
+                    Some("ECDSA-NIST256P-CHALLENGE") => {
+                        self.stash_sasl(client.clone(), SaslSession::Ecdsa { step: EcdsaStep::AccountName });
+                        mk("C", vec!["+".to_string()]) // client sends its account name next
                     }
                     _ => mk("D", vec!["F".to_string()]), // unsupported mechanism
                 }
@@ -101,6 +106,7 @@ impl Engine {
                     }
                     Some(SaslSession::Scram { hash, step }) => self.sasl_scram(&agent, &client, hash, step, chunk),
                     Some(SaslSession::External { fingerprints }) => self.sasl_external(&agent, &client, fingerprints, chunk),
+                    Some(SaslSession::Ecdsa { step }) => self.sasl_ecdsa(&agent, &client, step, chunk),
                 }
             }
             "D" => {
@@ -173,6 +179,44 @@ impl Engine {
             }
             // Client acknowledged our server-final ("+"); apply the login.
             ScramStep::Ack { account } => self.sasl_login(&format!("SASL {}", hash.mech()), agent, client, account),
+        }
+    }
+
+    // One ECDSA-NIST256P-CHALLENGE step: the account name -> we issue a random 32-byte
+    // challenge; the returned DER signature is verified against the account's stored key.
+    fn sasl_ecdsa(&mut self, agent: &str, client: &str, step: EcdsaStep, chunk: &str) -> Vec<NetAction> {
+        let fail = || vec![NetAction::Sasl {
+            agent: agent.to_string(), client: client.to_string(), mode: "D".to_string(), data: vec!["F".to_string()],
+        }];
+        match step {
+            EcdsaStep::AccountName => {
+                let Some(raw) = STANDARD.decode(chunk).ok() else { return fail() };
+                let Ok(text) = String::from_utf8(raw) else { return fail() };
+                // accept `authzid\0authcid` or a bare account name
+                let name = text.rsplit('\0').next().unwrap_or(&text).to_string();
+                let Some((account, pubkey)) = self.db.pubkey_lookup(&name) else { return fail() };
+                let (account, pubkey) = (account.to_string(), pubkey.to_string());
+                let mut challenge = vec![0u8; crate::engine::ecdsa::CHALLENGE_LEN];
+                OsRng.fill_bytes(&mut challenge);
+                let out = vec![NetAction::Sasl {
+                    agent: agent.to_string(),
+                    client: client.to_string(),
+                    mode: "C".to_string(),
+                    data: vec![STANDARD.encode(&challenge)],
+                }];
+                self.stash_sasl(
+                    client.to_string(),
+                    SaslSession::Ecdsa { step: EcdsaStep::Signature { account, pubkey, challenge } },
+                );
+                out
+            }
+            EcdsaStep::Signature { account, pubkey, challenge } => {
+                if crate::engine::ecdsa::verify(&pubkey, &challenge, chunk) {
+                    self.sasl_login("SASL ECDSA-NIST256P-CHALLENGE", agent, client, account)
+                } else {
+                    fail()
+                }
+            }
         }
     }
 
