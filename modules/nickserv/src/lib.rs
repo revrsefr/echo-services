@@ -80,6 +80,12 @@ const TOPICS: &[HelpEntry] = &[
     HelpEntry { cmd: "NOEXPIRE", summary: "pin against expiry (operator)", detail: "Syntax: \x02NOEXPIRE <account> {ON|OFF}\x02\nPins an account so inactivity expiry never drops it. Operators only." },
 ];
 
+// Focused help for the ECDSA public-key login, reached via HELP PUBKEY or
+// HELP SET PUBKEY (a SET option, so it is not a top-level command list entry).
+const PUBKEY_HELP: &str = "Syntax: \x02SET PUBKEY <key>\x02  (give no key to clear it)\n\
+Stores a NIST P-256 public key on your account so you can log in with the \x02ECDSA-NIST256P-CHALLENGE\x02 SASL mechanism instead of a password. At login the server sends a random challenge, your client signs it with the matching private key, and the signature is verified against the stored key — so the private key never leaves your client and this is safe even without TLS.\n\
+The key is the base64 SEC1 point (compressed or uncompressed). Generate one with \x02ecdsatool\x02: \x02ecdsatool keygen ~/.ecdsa.pem\x02 then \x02ecdsatool pubkey ~/.ecdsa.pem\x02, and give the printed value to \x02SET PUBKEY\x02. Configure the same key file in your client's SASL settings. \x02SET PUBKEY\x02 with no argument removes it.";
+
 pub struct NickServ {
     pub uid: String,
     // Nick prefix assigned on LOGOUT (default "Guest"); a per-session sequence is
@@ -142,7 +148,21 @@ impl Service for NickServ {
             Some("UPDATE") => update::handle(me, from, ctx, db),
             Some("LIST") => list::handle(me, from, args, ctx, db),
             Some("GETEMAIL") => getemail::handle(me, from, args, ctx, db),
-            Some("HELP") => echo_api::help(me, from, ctx, BLURB, TOPICS, args.get(1).copied()),
+            Some("HELP") => {
+                let (t1, t2) = (args.get(1).copied(), args.get(2).copied());
+                // PUBKEY is a SET option, so surface its help under both the
+                // Libera-style HELP SET PUBKEY and the bare HELP PUBKEY.
+                let want_pubkey = t1.is_some_and(|t| t.eq_ignore_ascii_case("PUBKEY"))
+                    || (t1.is_some_and(|t| t.eq_ignore_ascii_case("SET")) && t2.is_some_and(|t| t.eq_ignore_ascii_case("PUBKEY")));
+                if want_pubkey {
+                    let text = echo_api::render(ctx.lang(), PUBKEY_HELP, &[]);
+                    for line in text.lines() {
+                        ctx.notice(me, from.uid, line.to_string());
+                    }
+                } else {
+                    echo_api::help(me, from, ctx, BLURB, TOPICS, t1);
+                }
+            }
             Some(other) => ctx.notice(me, from.uid, echo_api::t!(ctx, "I don't know the command \x02{other}\x02. Try \x02HELP\x02.", other = other)),
             None => {}
         }
