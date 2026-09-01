@@ -54,7 +54,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
             match db.set_pubkey(account, pubkey) {
                 Ok(()) if cleared => ctx.notice(me, from.uid, "Your SASL public key has been cleared."),
                 Ok(()) => ctx.notice(me, from.uid, "Your SASL public key is set. Authenticate with \x02ECDSA-NIST256P-CHALLENGE\x02."),
-                Err(echo_api::RegError::Invalid) => ctx.notice(me, from.uid, "That isn't a valid NIST P-256 public key. Give the base64 SEC1 point (e.g. from \x02ecdsatool\x02)."),
+                Err(echo_api::RegError::Invalid) => ctx.notice(me, from.uid, "That isn't a valid NIST P-256 public key. Give the base64 SEC1 point (see \x02/msg NickServ HELP PUBKEY\x02)."),
                 Err(_) => ctx.notice(me, from.uid, "Sorry, that didn't work. Please try again in a moment."),
             }
         }

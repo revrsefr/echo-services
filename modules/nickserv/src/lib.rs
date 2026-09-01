@@ -84,7 +84,7 @@ const TOPICS: &[HelpEntry] = &[
 // HELP SET PUBKEY (a SET option, so it is not a top-level command list entry).
 const PUBKEY_HELP: &str = "Syntax: \x02SET PUBKEY <key>\x02  (give no key to clear it)\n\
 Stores a NIST P-256 public key on your account so you can log in with the \x02ECDSA-NIST256P-CHALLENGE\x02 SASL mechanism instead of a password. At login the server sends a random challenge, your client signs it with the matching private key, and the signature is verified against the stored key — so the private key never leaves your client and this is safe even without TLS.\n\
-The key is the base64 SEC1 point (compressed or uncompressed). Generate one with \x02ecdsatool\x02: \x02ecdsatool keygen ~/.ecdsa.pem\x02 then \x02ecdsatool pubkey ~/.ecdsa.pem\x02, and give the printed value to \x02SET PUBKEY\x02. Configure the same key file in your client's SASL settings. \x02SET PUBKEY\x02 with no argument removes it.";
+The key is the base64 SEC1 point. Generate one with \x02openssl\x02: \x02openssl ecparam -name prime256v1 -genkey -noout -out ~/.ecdsa.pem\x02, then \x02openssl ec -in ~/.ecdsa.pem -pubout -conv_form compressed -outform DER 2>/dev/null | tail -c 33 | base64\x02 — give that printed value to \x02SET PUBKEY\x02 and point your client's SASL key setting at ~/.ecdsa.pem. \x02SET PUBKEY\x02 with no argument removes it.";
 
 pub struct NickServ {
     pub uid: String,
