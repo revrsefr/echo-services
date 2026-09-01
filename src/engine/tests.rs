@@ -3282,8 +3282,9 @@
         e.handle(NetEvent::UserConnect { uid: "000AAAAAV".into(), nick: "alice".into(), host: "realhost".into() , ip: "0.0.0.0".into() });
 
         let out = ns(&mut e, "000AAAAAV", "IDENTIFY password1");
-        assert!(out.iter().any(|a| matches!(a, NetAction::SetIdent { uid, ident } if uid == "000AAAAAV" && ident == "web")), "ident set: {out:?}");
-        assert!(out.iter().any(|a| matches!(a, NetAction::SetHost { uid, host } if uid == "000AAAAAV" && host == "cloak.example")), "host set");
+        // an ident@host vhost is ONE SetHost now (the ircd splits it into a single CHGHOST)
+        assert!(out.iter().any(|a| matches!(a, NetAction::SetHost { uid, host } if uid == "000AAAAAV" && host == "web@cloak.example")), "ident@host vhost sent as one action: {out:?}");
+        assert!(!out.iter().any(|a| matches!(a, NetAction::SetIdent { .. })), "no separate SetIdent for a vhost: {out:?}");
     }
 
     // HostServ REQUEST -> WAITING -> ACTIVATE assigns and applies the vhost; a

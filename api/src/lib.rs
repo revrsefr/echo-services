@@ -896,13 +896,10 @@ impl ServiceCtx {
     // Apply a vhost spec to a user: `ident@host` sets both the ident and host,
     // a bare `host` just the host.
     pub fn apply_vhost(&mut self, uid: &str, spec: &str) {
-        match spec.split_once('@') {
-            Some((ident, host)) => {
-                self.actions.push(NetAction::SetIdent { uid: uid.to_string(), ident: ident.to_string() });
-                self.set_host(uid, host);
-            }
-            None => self.set_host(uid, spec),
-        }
+        // One SetHost carries the whole `ident@host` spec (wire: CHGHOST <uid>
+        // ident@host); the ircd splits it and applies ident+host as a single
+        // CHGHOST — not a CHGIDENT + CHGHOST pair (two "changed host" notices).
+        self.set_host(uid, spec);
     }
 
     // Force a user into a channel (SVSJOIN), e.g. an account's auto-join list.
@@ -2642,13 +2639,13 @@ pub fn vhost_restore_actions(net: &dyn NetView, store: &dyn Store, uid: &str, ac
         return Vec::new();
     };
     let mut out = Vec::new();
-    if vhost.contains('@') {
-        if let Some(ident) = net.ident_of(uid).filter(|i| !i.is_empty()) {
-            out.push(NetAction::SetIdent { uid: uid.to_string(), ident: ident.to_string() });
-        }
-    }
     if let Some(host) = net.host_of(uid).filter(|h| !h.is_empty()) {
-        out.push(NetAction::SetHost { uid: uid.to_string(), host: host.to_string() });
+        // combine ident@host into ONE SetHost so the ircd emits a single CHGHOST
+        let spec = match net.ident_of(uid).filter(|i| !i.is_empty()) {
+            Some(ident) if vhost.contains('@') => format!("{ident}@{host}"),
+            _ => host.to_string(),
+        };
+        out.push(NetAction::SetHost { uid: uid.to_string(), host: spec });
     }
     out
 }

@@ -636,14 +636,9 @@ impl Engine {
             out.push(NetAction::ForceJoin { uid: uid.to_string(), channel: entry.channel.clone(), key: entry.key.clone() });
         }
         if let Some(vhost) = self.db.active_vhost(account) {
-            // apply_vhost semantics: an ident@host spec sets the ident as well.
-            match vhost.split_once('@') {
-                Some((ident, host)) => {
-                    out.push(NetAction::SetIdent { uid: uid.to_string(), ident: ident.to_string() });
-                    out.push(NetAction::SetHost { uid: uid.to_string(), host: host.to_string() });
-                }
-                None => out.push(NetAction::SetHost { uid: uid.to_string(), host: vhost }),
-            }
+            // Send the whole vhost as one SetHost; the ircd splits an `ident@host`
+            // spec and applies it as a single CHGHOST (no double host-change notice).
+            out.push(NetAction::SetHost { uid: uid.to_string(), host: vhost });
         }
         // Publish the account's public profile as IRCv3 metadata on this session,
         // so clients (Orbit) show avatar/bio/etc. Metadata lives on the connection,
@@ -1325,13 +1320,9 @@ impl Engine {
         let Some(host) = vhost.or_else(|| self.network.host_of(uid).map(str::to_string)) else {
             return Vec::new();
         };
-        match host.split_once('@') {
-            Some((ident, h)) => vec![
-                NetAction::SetIdent { uid: uid.to_string(), ident: ident.to_string() },
-                NetAction::SetHost { uid: uid.to_string(), host: h.to_string() },
-            ],
-            None => vec![NetAction::SetHost { uid: uid.to_string(), host }],
-        }
+        // One SetHost carries the whole `ident@host`; the ircd splits it into a
+        // single CHGHOST (no double host-change notice).
+        vec![NetAction::SetHost { uid: uid.to_string(), host }]
     }
 
     pub fn startup_actions(&mut self) -> Vec<NetAction> {
