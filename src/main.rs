@@ -47,6 +47,35 @@ use echo_inspircd::InspIrcd;
 use echo_nickserv::NickServ;
 use echo_debugserv::DebugServ;
 
+/// Export every loaded service's built-in English help (blurb + each command's
+/// summary and detail) to `<dir>/en.json` as an editable identity map, keeping any
+/// existing overrides. Because HELP renders every string through the i18n catalog,
+/// editing a value here changes that help — no recompile (restart to reload).
+fn dump_help(services: &[Box<dyn engine::service::Service>], dir: &str) -> Result<()> {
+    use std::collections::BTreeMap;
+    let path = format!("{dir}/en.json");
+    let mut map: BTreeMap<String, String> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|d| serde_json::from_str(&d).ok())
+        .unwrap_or_default();
+    let before = map.len();
+    for svc in services {
+        let (blurb, topics) = svc.help_topics();
+        for text in std::iter::once(blurb).chain(topics.iter().flat_map(|e| [e.summary, e.detail])) {
+            if !text.is_empty() {
+                map.entry(text.to_string()).or_insert_with(|| text.to_string());
+            }
+        }
+    }
+    std::fs::write(&path, serde_json::to_string_pretty(&map)?)?;
+    println!(
+        "dump-help: wrote {path} — {} entries ({} new). Edit the values to change help, then restart.",
+        map.len(),
+        map.len() - before
+    );
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -226,6 +255,16 @@ async fn main() -> Result<()> {
             uid: format!("{}AAAAAC", cfg.server.sid),
         }));
     }
+
+    // `echo <config> dump-help`: export every loaded service's built-in English help
+    // to lang/en.json (editable without recompiling), preserving existing overrides,
+    // then exit. Run this after changing help in code to re-sync the file.
+    if std::env::args().any(|a| a == "dump-help") {
+        let dir = cfg.language.as_ref().map(|l| l.dir.clone()).unwrap_or_else(|| "lang".into());
+        dump_help(&services, &dir)?;
+        return Ok(());
+    }
+
     let (gossip_tx, _) = tokio::sync::broadcast::channel::<engine::db::LogEntry>(1024);
     let mut db = engine::db::Db::open("echo.db.jsonl", &cfg.server.sid);
     db.scram_iterations = cfg.server.scram_iterations;
@@ -251,10 +290,10 @@ async fn main() -> Result<()> {
         db.set_available_languages(lang.available.clone());
         // Load a JSON catalog (english msgid -> translation) per non-English code.
         let mut catalog = std::collections::HashMap::new();
+        // `en.json` is an OPTIONAL override: the msgid is the built-in English text,
+        // but any entry here replaces it — so all help + replies are editable from a
+        // file without recompiling. Every other code's file is the translation catalog.
         for code in db.available_languages().to_vec() {
-            if code == "en" {
-                continue; // English needs no catalog: the msgid is the English text
-            }
             let path = format!("{}/{}.json", lang.dir, code);
             match std::fs::read_to_string(&path) {
                 Ok(data) => match serde_json::from_str::<std::collections::HashMap<String, String>>(&data) {
@@ -264,6 +303,7 @@ async fn main() -> Result<()> {
                     }
                     Err(e) => tracing::error!(%e, %path, "invalid translation catalog JSON"),
                 },
+                Err(_) if code == "en" => {} // no en.json = fall back to the built-in msgids
                 Err(e) => tracing::warn!(%e, %path, "translation catalog not found"),
             }
         }
