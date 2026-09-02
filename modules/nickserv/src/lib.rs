@@ -112,6 +112,12 @@ impl Service for NickServ {
         (BLURB, TOPICS)
     }
 
+    // HELP PUBKEY isn't a top-level command, so expose its body here for `dump-help`.
+    fn extra_help(&self) -> &'static [&'static str] {
+        const EXTRA: &[&str] = &[PUBKEY_HELP];
+        EXTRA
+    }
+
     fn on_command(&mut self, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net: &dyn NetView, db: &mut dyn Store) {
         let me = self.uid.as_str();
         let cmd = args.first().map(|s| s.to_ascii_uppercase());

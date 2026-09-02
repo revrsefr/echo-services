@@ -61,7 +61,10 @@ fn dump_help(services: &[Box<dyn engine::service::Service>], dir: &str) -> Resul
     let before = map.len();
     for svc in services {
         let (blurb, topics) = svc.help_topics();
-        for text in std::iter::once(blurb).chain(topics.iter().flat_map(|e| [e.summary, e.detail])) {
+        let texts = std::iter::once(blurb)
+            .chain(topics.iter().flat_map(|e| [e.summary, e.detail]))
+            .chain(svc.extra_help().iter().copied());
+        for text in texts {
             if !text.is_empty() {
                 map.entry(text.to_string()).or_insert_with(|| text.to_string());
             }

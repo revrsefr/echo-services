@@ -2563,6 +2563,12 @@ pub trait Service: Send {
     fn help_topics(&self) -> (&'static str, &'static [HelpEntry]) {
         ("", &[])
     }
+    // Extra `HELP <topic>` bodies not in the command list above (e.g. NickServ's
+    // HELP PUBKEY). Collected by `dump-help` so they're editable from the language
+    // file too, not just the built-in default. Default: none.
+    fn extra_help(&self) -> &'static [&'static str] {
+        &[]
+    }
     // A user left the network (QUIT / KILL / netsplit). Lets a service drop any
     // per-connection state it keyed on that departing uid before the uid is recycled
     // to a new connection, and return any notices to emit as a result (e.g. telling
