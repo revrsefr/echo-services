@@ -67,14 +67,25 @@ fn placeholder_parity() {
     assert!(bad.is_empty(), "placeholder mismatches:\n{}", bad.join("\n"));
 }
 
-/// All catalogs must cover the exact same set of message ids, so no language
-/// quietly lags behind another.
+/// All translation catalogs must cover the exact same set of message ids, so no
+/// language quietly lags behind another. `en.json` is exempt: it's an optional
+/// English OVERRIDE catalog (English otherwise defaults to the msgid itself), so it
+/// legitimately holds only the subset of strings an operator chooses to change.
 #[test]
 fn catalogs_share_one_keyset() {
     let cats = load_catalogs();
-    let reference: HashSet<&String> = cats.values().next().unwrap().keys().collect();
+    let reference: HashSet<&String> = cats
+        .iter()
+        .find(|(code, _)| code.as_str() != "en")
+        .expect("a non-en catalog")
+        .1
+        .keys()
+        .collect();
     let mut problems = Vec::new();
     for (code, map) in &cats {
+        if code == "en" {
+            continue; // override catalog: any subset is allowed
+        }
         let keys: HashSet<&String> = map.keys().collect();
         let missing = reference.difference(&keys).count();
         let extra = keys.difference(&reference).count();
