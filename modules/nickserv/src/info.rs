@@ -79,6 +79,15 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         if !certs.is_empty() {
             ctx.notice(me, from.uid, echo_api::plural!(ctx, certs.len(), one = "  CertFP     : {count} fingerprint — see \x02CERT LIST\x02", other = "  CertFP     : {count} fingerprints — see \x02CERT LIST\x02", count = certs.len()));
         }
+        // Personal account options (NickServ SET), shown to the owner and to opers.
+        let mut opts: Vec<&str> = Vec::new();
+        if db.account_wants_protect(&acct.name) { opts.push("KILL"); }
+        if db.account_wants_autoop(&acct.name) { opts.push("AUTOOP"); }
+        if db.account_hides_status(&acct.name) { opts.push("HIDESTATUS"); }
+        if db.account_wants_snotice(&acct.name) { opts.push("SNOTICE"); }
+        if !opts.is_empty() {
+            ctx.notice(me, from.uid, t!(ctx, "  Options    : {opts}", opts = opts.join(", ")));
+        }
     }
     // A staff note is for operators' eyes only, never the account's owner.
     if from.privs.has(Priv::Auspex) {
