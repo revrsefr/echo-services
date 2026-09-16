@@ -2804,7 +2804,7 @@ pub fn parse_duration(s: &str) -> Option<u64> {
 }
 
 // Case-insensitive hostmask glob: `*` (any run) and `?` (one char).
-fn glob_match(pattern: &str, text: &str) -> bool {
+pub fn glob_match(pattern: &str, text: &str) -> bool {
     let (p, t): (Vec<char>, Vec<char>) = (
         pattern.chars().flat_map(char::to_lowercase).collect(),
         text.chars().flat_map(char::to_lowercase).collect(),

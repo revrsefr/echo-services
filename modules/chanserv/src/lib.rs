@@ -370,7 +370,7 @@ impl Service for ChanServ {
             Some("SUSPEND") => suspend::handle(me, from, args, ctx, net, db, true),
             Some("UNSUSPEND") => suspend::handle(me, from, args, ctx, net, db, false),
             Some("NOEXPIRE") => noexpire::handle(me, from, args, ctx, db),
-            Some("LIST") => list::handle(me, from, args, ctx, db),
+            Some("LIST") => list::handle(me, from, args, ctx, net, db),
             Some("SET") => set::handle(me, from, args, ctx, net, db),
             Some("ENTRYMSG") => entrymsg::handle(me, from, args, ctx, db),
             Some("GETKEY") => getkey::handle(me, from, args, ctx, net, db),
