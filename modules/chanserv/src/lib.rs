@@ -196,10 +196,47 @@ impl Service for ChanServ {
                             ctx.notice(me, from.uid, t!(ctx, "  Email      : {email}", email = info.email));
                         }
                         ctx.notice(me, from.uid, t!(ctx, "  Registered : {when}", when = echo_api::human_time(info.ts)));
+                        if !info.topic.is_empty() {
+                            ctx.notice(me, from.uid, t!(ctx, "  Topic      : {topic}", topic = info.topic));
+                        }
                         // Only a real nick/mask, never a bare uid (nicks never start with a digit).
                         if !info.topic_setter.is_empty() && !info.topic_setter.starts_with(|c: char| c.is_ascii_digit()) {
                             ctx.notice(me, from.uid, t!(ctx, "  Topic by   : \x02{who}\x02", who = info.topic_setter));
                         }
+                        // Mode lock (MLOCK): modes services keep set/unset on the channel.
+                        let mlock = {
+                            let params: String = info
+                                .lock_params
+                                .iter()
+                                .map(|(_, v)| v.as_str())
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            let on = if info.lock_on.is_empty() {
+                                String::new()
+                            } else {
+                                format!("+{}", info.lock_on)
+                            };
+                            let off = if info.lock_off.is_empty() {
+                                String::new()
+                            } else {
+                                format!("-{}", info.lock_off)
+                            };
+                            [on, params, off]
+                                .into_iter()
+                                .filter(|p| !p.is_empty())
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        };
+                        if !mlock.is_empty() {
+                            ctx.notice(me, from.uid, t!(ctx, "  Mode lock  : {mlock}", mlock = mlock));
+                        }
+                        if !info.entrymsg.is_empty() {
+                            ctx.notice(me, from.uid, t!(ctx, "  Entry msg  : {msg}", msg = info.entrymsg));
+                        }
+                        if let Some(bot) = &info.assigned_bot {
+                            ctx.notice(me, from.uid, t!(ctx, "  Bot        : \x02{bot}\x02", bot = bot));
+                        }
+                        ctx.notice(me, from.uid, t!(ctx, "  Access     : \x02{acc}\x02 entries · Akick: \x02{akick}\x02", acc = info.access.len(), akick = info.akick.len()));
                         if let Some(s) = db.channel_suspension(chan) {
                             ctx.notice(me, from.uid, t!(ctx, "  Suspended  : by \x02{by}\x02 — {reason}", by = s.by, reason = s.reason));
                         }
@@ -211,6 +248,8 @@ impl Service for ChanServ {
                         if info.securevoices { opts.push("SECUREVOICES"); }
                         if info.keeptopic { opts.push("KEEPTOPIC"); }
                         if info.topiclock { opts.push("TOPICLOCK"); }
+                        if info.bot_greet { opts.push("GREET"); }
+                        if info.nobot { opts.push("NOBOT"); }
                         if !opts.is_empty() {
                             ctx.notice(me, from.uid, t!(ctx, "  Options    : {options}", options = opts.join(", ")));
                         }
