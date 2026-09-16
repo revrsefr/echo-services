@@ -152,7 +152,7 @@ impl Service for NickServ {
             Some("UNSUSPEND") => suspend::handle(me, from, args, ctx, net, db, false),
             Some("NOEXPIRE") => noexpire::handle(me, from, args, ctx, db),
             Some("UPDATE") => update::handle(me, from, ctx, db),
-            Some("LIST") => list::handle(me, from, args, ctx, db),
+            Some("LIST") => list::handle(me, from, args, ctx, net, db),
             Some("GETEMAIL") => getemail::handle(me, from, args, ctx, db),
             Some("HELP") => {
                 let (t1, t2) = (args.get(1).copied(), args.get(2).copied());
