@@ -31,6 +31,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
     if !groups.is_empty() {
         ctx.notice(me, from.uid, t!(ctx, "  Groups     : {list} (from GroupServ)", list = groups.join(" ")));
     }
+    // Channels this account founded (public — ownership shows in CS LIST anyway).
+    let owned = db.channels_owned_by(&acct.name);
+    if !owned.is_empty() {
+        ctx.notice(me, from.uid, echo_api::plural!(ctx, owned.len(), one = "  Channels   : {count} founded", other = "  Channels   : {count} founded", count = owned.len()));
+    }
     // Last-seen is public by default; SET HIDE STATUS keeps it to owner and opers.
     if privileged || !acct.hide_status {
         let last_seen = if net.uids_logged_into(&acct.name).is_empty() {
@@ -39,6 +44,10 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
             "now (online)".to_string()
         };
         ctx.notice(me, from.uid, t!(ctx, "  Last seen  : {last_seen}", last_seen = last_seen));
+    }
+    // Vhost (HostServ) — the account's displayed host, if one is assigned.
+    if let Some(v) = db.vhost(&acct.name) {
+        ctx.notice(me, from.uid, t!(ctx, "  Vhost      : {host}", host = v.host));
     }
     // A greet is public — the bot shows it in-channel to everyone anyway.
     if !acct.greet.is_empty() {
@@ -64,6 +73,11 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         let ajoin = db.ajoin_list(&acct.name);
         if !ajoin.is_empty() {
             ctx.notice(me, from.uid, echo_api::plural!(ctx, ajoin.len(), one = "  Auto-join  : {count} channel — see \x02AJOIN LIST\x02", other = "  Auto-join  : {count} channels — see \x02AJOIN LIST\x02", count = ajoin.len()));
+        }
+        // TLS client-cert fingerprints for SASL EXTERNAL / CertFP login.
+        let certs = db.certfps(&acct.name);
+        if !certs.is_empty() {
+            ctx.notice(me, from.uid, echo_api::plural!(ctx, certs.len(), one = "  CertFP     : {count} fingerprint — see \x02CERT LIST\x02", other = "  CertFP     : {count} fingerprints — see \x02CERT LIST\x02", count = certs.len()));
         }
     }
     // A staff note is for operators' eyes only, never the account's owner.

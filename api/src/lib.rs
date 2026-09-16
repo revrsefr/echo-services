@@ -1964,6 +1964,10 @@ pub struct ChannelView {
     pub nobot: bool,
     // BotServ: whether any message kicker is active on this channel.
     pub kickers_active: bool,
+    // Account that inherits the channel if the founder drops (SET SUCCESSOR); None = unset.
+    pub successor: Option<String>,
+    // Unix time the channel was last used (join/op activity) — shown in INFO, drives expiry.
+    pub last_used: u64,
 }
 
 // A single ChanServ SET option, named for the typed `set_channel_setting` call.

@@ -691,5 +691,7 @@ fn channel_view(c: &ChannelInfo) -> ChannelView {
         bot_greet: c.settings.bot_greet,
         nobot: c.settings.nobot,
         kickers_active: c.kickers.any(),
+        successor: c.successor.clone(),
+        last_used: c.last_used,
     }
 }

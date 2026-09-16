@@ -186,6 +186,9 @@ impl Service for ChanServ {
                     Some(info) => {
                         ctx.notice(me, from.uid, t!(ctx, "Information for \x02{name}\x02:", name = info.name));
                         ctx.notice(me, from.uid, t!(ctx, "  Founder    : \x02{founder}\x02", founder = info.founder));
+                        if let Some(succ) = &info.successor {
+                            ctx.notice(me, from.uid, t!(ctx, "  Successor  : \x02{succ}\x02", succ = succ));
+                        }
                         if !info.desc.is_empty() {
                             ctx.notice(me, from.uid, t!(ctx, "  Description: {desc}", desc = info.desc));
                         }
@@ -196,6 +199,7 @@ impl Service for ChanServ {
                             ctx.notice(me, from.uid, t!(ctx, "  Email      : {email}", email = info.email));
                         }
                         ctx.notice(me, from.uid, t!(ctx, "  Registered : {when}", when = echo_api::human_time(info.ts)));
+                        ctx.notice(me, from.uid, t!(ctx, "  Last used  : {when}", when = echo_api::human_time(info.last_used)));
                         if !info.topic.is_empty() {
                             ctx.notice(me, from.uid, t!(ctx, "  Topic      : {topic}", topic = info.topic));
                         }
