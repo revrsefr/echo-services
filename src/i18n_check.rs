@@ -113,6 +113,20 @@ fn unescape(s: &str) -> String {
                 chars.next(); // skip the two hex digits
                 chars.next();
             }
+            Some((_, 'u')) => {
+                // \u{XX..}: emit the char between the braces (e.g. \u{00b7} -> ·).
+                let brace = i + 2; // index of '{'
+                if let Some(close_rel) = s[brace..].find('}') {
+                    let hex = &s[brace + 1..brace + close_rel];
+                    if let Some(ch) = u32::from_str_radix(hex, 16).ok().and_then(char::from_u32) {
+                        out.push(ch);
+                    }
+                    let close = brace + close_rel;
+                    while chars.peek().map(|&(j, _)| j <= close).unwrap_or(false) {
+                        chars.next();
+                    }
+                }
+            }
             Some((_, 'n')) => out.push('\n'),
             Some((_, 't')) => out.push('\t'),
             Some((_, 'r')) => out.push('\r'),
