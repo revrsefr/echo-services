@@ -24,7 +24,10 @@ jobs:
           # cmake + a C compiler for aws-lc-sys (rustls's crypto backend). The
           # node image already ships gcc/g++/make; protoc is vendored in build.rs.
           apt-get update && apt-get install -y --no-install-recommends cmake clang
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal -c clippy
+          # Pin to the toolchain the server actually builds/deploys with (the box
+          # has rustc 1.85.1, no rustup), so CI tests exactly what ships and stays
+          # reproducible instead of tracking whatever "latest stable" adds new lints.
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.85.1 -c clippy
           . "$HOME/.cargo/env"
           cargo build --workspace --locked
           cargo clippy --workspace --locked -- -D warnings

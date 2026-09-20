@@ -18,7 +18,7 @@ pub fn handle(me: &str, from: &Sender, args: &[&str], ctx: &mut ServiceCtx, net:
         ctx.notice(me, from.uid, t!(ctx, "No channels match \x02{pattern}\x02.", pattern = pattern));
         return;
     }
-    chans.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+    chans.sort_by_key(|c| c.name.to_ascii_lowercase());
     let total = chans.len();
     ctx.notice(me, from.uid, t!(ctx, "Channels matching \x02{pattern}\x02:", pattern = pattern));
     // Only the shown slice is enriched, so a broad glob never does N live lookups.
