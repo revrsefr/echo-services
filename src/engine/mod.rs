@@ -12,8 +12,8 @@ use tokio::sync::mpsc;
 
 use crate::proto::{AuthThen, NetAction, NetEvent, RegReply};
 use db::{Db, LogEntry, NewsKind, RegError};
-use scram::Verifier;
 use echo_api::Privs;
+use scram::Verifier;
 use service::{Sender, Service, ServiceCtx};
 use state::Network;
 
@@ -107,26 +107,26 @@ pub struct Engine {
     sasl_sessions: HashMap<String, TimedSession>, // client uid -> in-progress exchange
     sasl_source: HashMap<String, (Instant, String)>, // client uid -> real host/IP from the SASL H message
     reg_limiter: RegLimiter,
-    cmd_limiter: CmdLimiter, // per-host flood control for service commands
+    cmd_limiter: CmdLimiter,   // per-host flood control for service commands
     dict_limiter: DictLimiter, // global rate cap on outbound DICT lookups
     chan_service: Option<String>, // uid to source channel modes from (ChanServ)
     nick_service: Option<String>, // uid of the account service (NickServ), for its notices
     irc_out: Option<mpsc::UnboundedSender<NetAction>>, // services-initiated actions -> the uplink
     opers: HashMap<String, Privs>, // casefolded account -> privileges (from [[oper]] config)
-    sid: String, // our services SID, for minting bot uids
+    sid: String,               // our services SID, for minting bot uids
     // Nick-protection enforcement. `synced` gates it until the uplink's initial
     // burst is done, so a relink doesn't enforce every already-online user.
     synced: bool,
-    guest_nick: String, // base for the Guest#### rename on enforcement
-    service_host: String, // hostname the service pseudo-clients wear
+    guest_nick: String,        // base for the Guest#### rename on enforcement
+    service_host: String,      // hostname the service pseudo-clients wear
     service_oper_type: String, // oper type our services are flagged with (WHOIS "is a <this>"); empty = don't oper
-    services_channel: String, // channel all service pseudo-clients join at startup; empty = none
+    services_channel: String,  // channel all service pseudo-clients join at startup; empty = none
     standard_replies: bool, // emit IRCv3 FAIL/WARN/NOTE for service errors; off = degrade to notices
-    config_path: String, // path to config.toml, so OperServ REHASH can re-read it live
-    enforce_seq: u32,   // counter appended to guest_nick
+    config_path: String,    // path to config.toml, so OperServ REHASH can re-read it live
+    enforce_seq: u32,       // counter appended to guest_nick
     pending_enforce: Vec<PendingEnforce>, // registered nicks awaiting identify-or-rename
     bot_uids: HashMap<String, String>, // casefolded bot nick -> live uid (per connection)
-    services_signon: u64, // burst time our pseudo-clients signed on, for WHOIS IDLE replies
+    services_signon: u64,   // burst time our pseudo-clients signed on, for WHOIS IDLE replies
     bot_idents: HashMap<String, u64>, // casefolded bot nick -> hash of user/host/gecos (to spot BOT CHANGE)
     next_bot_index: u32,
     bot_channels: std::collections::HashSet<(String, String)>, // (bot nick lc, channel) the bot has joined
@@ -178,7 +178,7 @@ struct VoteState {
 // unidentified on that nick when `deadline` passes, they're renamed to a guest.
 struct PendingEnforce {
     uid: String,
-    nick: String, // the registered nick they must identify to (lowercased account)
+    nick: String,  // the registered nick they must identify to (lowercased account)
     deadline: u64, // unix secs
 }
 
@@ -233,8 +233,14 @@ mod security;
 
 impl Engine {
     pub fn new(services: Vec<Box<dyn Service>>, db: Db) -> Self {
-        let chan_service = services.iter().find(|s| s.manages_channels()).map(|s| s.uid().to_string());
-        let nick_service = services.iter().find(|s| s.manages_accounts()).map(|s| s.uid().to_string());
+        let chan_service = services
+            .iter()
+            .find(|s| s.manages_channels())
+            .map(|s| s.uid().to_string());
+        let nick_service = services
+            .iter()
+            .find(|s| s.manages_accounts())
+            .map(|s| s.uid().to_string());
         // Network-wide help index: every service that publishes topics, so HelpServ
         // can front help for the whole network through NetView.
         let mut network = Network::default();
@@ -308,8 +314,14 @@ impl Engine {
     // Stats API. Any service's counters ride in here alongside these.
     pub fn stats_snapshot(&self) -> std::collections::BTreeMap<String, u64> {
         let mut m: std::collections::BTreeMap<String, u64> = self.network.stat_counters().clone();
-        m.insert("accounts.total".to_string(), self.db.accounts().count() as u64);
-        m.insert("channels.total".to_string(), self.db.channels().count() as u64);
+        m.insert(
+            "accounts.total".to_string(),
+            self.db.accounts().count() as u64,
+        );
+        m.insert(
+            "channels.total".to_string(),
+            self.db.channels().count() as u64,
+        );
         m.insert("bots.total".to_string(), self.db.bots().count() as u64);
         m.insert("opers.total".to_string(), self.opers.len() as u64);
         m
@@ -356,7 +368,12 @@ impl Engine {
     // Wall-clock seconds, overridable in tests so the time-based FLOOD kicker is
     // deterministic.
     fn now_secs(&self) -> u64 {
-        self.now_override.unwrap_or_else(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0))
+        self.now_override.unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        })
     }
 
     // Wire the channel the link layer drains, so the engine can push actions to the
@@ -376,7 +393,11 @@ impl Engine {
     // config opers and the runtime OPER grants are unioned, so either source can
     // make an account an operator.
     fn oper_privs(&self, account: &str) -> Privs {
-        let config = self.opers.get(&account.to_ascii_lowercase()).copied().unwrap_or_default();
+        let config = self
+            .opers
+            .get(&account.to_ascii_lowercase())
+            .copied()
+            .unwrap_or_default();
         match self.db.oper_privs_of(account, self.now_secs()) {
             Some(runtime) => config.union(runtime),
             None => config,
@@ -429,7 +450,13 @@ impl Engine {
     // relevant channel. None when nothing matches, the user is unknown, or there is
     // no feed sink. The cheap `any_notifies` gate keeps the common (no-watch) path
     // off the per-event identity lookup.
-    fn notify_line(&self, flag: char, uid: &str, chan: Option<&str>, what: &str) -> Option<NetAction> {
+    fn notify_line(
+        &self,
+        flag: char,
+        uid: &str,
+        chan: Option<&str>,
+        what: &str,
+    ) -> Option<NetAction> {
         if !self.db.any_notifies() {
             return None;
         }
@@ -456,7 +483,11 @@ impl Engine {
         if !target.server.is_empty() {
             parts.push(format!("Server: {}", target.server));
         }
-        let detail = if parts.is_empty() { String::new() } else { format!(" · {}", parts.join(" · ")) };
+        let detail = if parts.is_empty() {
+            String::new()
+        } else {
+            format!(" · {}", parts.join(" · "))
+        };
         let who = format!("\x02{}\x02!{}@{}", target.nick, target.ident, target.host);
         self.feed("NOTIFY", format!("{who} {what}{detail}"))
     }
@@ -468,7 +499,11 @@ impl Engine {
         self.network.channel_part(channel, uid);
         self.prune_channel_if_gone(channel);
         self.forget_chatter(channel, uid);
-        if let Some(bot_lc) = self.bot_uids.iter().find_map(|(lc, u)| (u == uid).then(|| lc.clone())) {
+        if let Some(bot_lc) = self
+            .bot_uids
+            .iter()
+            .find_map(|(lc, u)| (u == uid).then(|| lc.clone()))
+        {
             if self.bot_channels.remove(&(bot_lc, channel.to_string())) {
                 return self.reconcile_bots();
             }
@@ -479,7 +514,12 @@ impl Engine {
     // Inactivity-expiry thresholds (seconds); None leaves that kind never
     // expiring. `warn` is the lead time before expiry to email a warning (None =
     // no warning emails).
-    pub fn set_expiry(&mut self, account_ttl: Option<u64>, channel_ttl: Option<u64>, warn: Option<u64>) {
+    pub fn set_expiry(
+        &mut self,
+        account_ttl: Option<u64>,
+        channel_ttl: Option<u64>,
+        warn: Option<u64>,
+    ) {
         self.account_ttl = account_ttl;
         self.channel_ttl = channel_ttl;
         self.expire_warn = warn;
@@ -500,7 +540,11 @@ impl Engine {
     // the default. None means unlimited (limiting off, or an exception of 0). At
     // DEFCON 2 or lower the base tightens to a single session regardless of config.
     fn session_limit_for(&self, ip: &str) -> Option<u32> {
-        let default = if self.db.defcon() <= 2 { 1 } else { self.session_limit? };
+        let default = if self.db.defcon() <= 2 {
+            1
+        } else {
+            self.session_limit?
+        };
         let limit = self.db.session_exception_for(ip).unwrap_or(default);
         (limit > 0).then_some(limit)
     }
@@ -509,8 +553,18 @@ impl Engine {
     // any new bots, quit any that were deleted. Run at burst and after commands.
     fn reconcile_bots(&mut self) -> Vec<NetAction> {
         let mut out = Vec::new();
-        let live: Vec<(String, String, String, String)> =
-            self.db.bots().map(|b| (b.nick.clone(), b.user.clone(), b.host.clone(), b.gecos.clone())).collect();
+        let live: Vec<(String, String, String, String)> = self
+            .db
+            .bots()
+            .map(|b| {
+                (
+                    b.nick.clone(),
+                    b.user.clone(),
+                    b.host.clone(),
+                    b.gecos.clone(),
+                )
+            })
+            .collect();
         for (nick, user, host, gecos) in &live {
             let k = nick.to_ascii_lowercase();
             let ident = ident_hash(user, host, gecos);
@@ -518,7 +572,10 @@ impl Engine {
             // stale client so it is reintroduced (and rejoins its channels) below.
             if self.bot_uids.contains_key(&k) && self.bot_idents.get(&k) != Some(&ident) {
                 if let Some(uid) = self.bot_uids.remove(&k) {
-                    out.push(NetAction::QuitUser { uid, reason: "Bot changed".to_string() });
+                    out.push(NetAction::QuitUser {
+                        uid,
+                        reason: "Bot changed".to_string(),
+                    });
                 }
                 self.network.bot_forget(&k);
                 self.bot_channels.retain(|(b, _)| *b != k);
@@ -526,51 +583,95 @@ impl Engine {
             if !self.bot_uids.contains_key(&k) {
                 let uid = format!("{}B{:05}", self.sid, self.next_bot_index);
                 self.next_bot_index += 1;
-                out.push(NetAction::IntroduceUser { uid: uid.clone(), nick: nick.clone(), ident: user.clone(), host: host.clone(), gecos: gecos.clone() });
+                out.push(NetAction::IntroduceUser {
+                    uid: uid.clone(),
+                    nick: nick.clone(),
+                    ident: user.clone(),
+                    host: host.clone(),
+                    gecos: gecos.clone(),
+                });
                 self.network.bot_connect(nick, &uid);
                 self.bot_uids.insert(k.clone(), uid);
                 self.bot_idents.insert(k, ident);
             }
         }
-        let live_keys: std::collections::HashSet<String> = live.iter().map(|(n, ..)| n.to_ascii_lowercase()).collect();
-        let removed: Vec<String> = self.bot_uids.keys().filter(|k| !live_keys.contains(*k)).cloned().collect();
+        let live_keys: std::collections::HashSet<String> =
+            live.iter().map(|(n, ..)| n.to_ascii_lowercase()).collect();
+        let removed: Vec<String> = self
+            .bot_uids
+            .keys()
+            .filter(|k| !live_keys.contains(*k))
+            .cloned()
+            .collect();
         for k in removed {
             if let Some(uid) = self.bot_uids.remove(&k) {
-                out.push(NetAction::QuitUser { uid, reason: "Bot removed".to_string() });
+                out.push(NetAction::QuitUser {
+                    uid,
+                    reason: "Bot removed".to_string(),
+                });
             }
             self.bot_idents.remove(&k);
             self.network.bot_forget(&k);
             self.bot_channels.retain(|(b, _)| *b != k); // its channel memberships go with it
         }
         // Join assigned channels, part unassigned ones (for still-live bots).
-        let assigned: Vec<(String, String)> = self.db.channels()
-            .filter_map(|c| c.assigned_bot.as_ref().map(|b| (b.to_ascii_lowercase(), c.name.clone())))
+        let assigned: Vec<(String, String)> = self
+            .db
+            .channels()
+            .filter_map(|c| {
+                c.assigned_bot
+                    .as_ref()
+                    .map(|b| (b.to_ascii_lowercase(), c.name.clone()))
+            })
             .collect();
-        let desired: std::collections::HashSet<(String, String)> =
-            assigned.into_iter().filter(|(b, _)| self.bot_uids.contains_key(b)).collect();
+        let desired: std::collections::HashSet<(String, String)> = assigned
+            .into_iter()
+            .filter(|(b, _)| self.bot_uids.contains_key(b))
+            .collect();
         for (bot_lc, chan) in &desired {
             if !self.bot_channels.contains(&(bot_lc.clone(), chan.clone())) {
                 if let Some(uid) = self.bot_uids.get(bot_lc) {
                     // BotServ bots join as protected admins + op (+ao) so they hold
                     // op and ordinary ops still can't kick or deop them — the
                     // standard bot default.
-                    out.push(NetAction::ServiceJoin { uid: uid.clone(), channel: chan.clone(), modes: "ao".into() });
+                    out.push(NetAction::ServiceJoin {
+                        uid: uid.clone(),
+                        channel: chan.clone(),
+                        modes: "ao".into(),
+                    });
                     // The bot's join (re)creates the channel on the uplink, and the
                     // uplink sends IJOIN (no modes) for later member joins — so nothing
                     // else re-applies the registered mode-lock (+r). Re-assert it here.
-                    if let Some(modes) = self.db.channel(chan).map(|c| c.lock_modes()).filter(|m| !m.is_empty()) {
+                    if let Some(modes) = self
+                        .db
+                        .channel(chan)
+                        .map(|c| c.lock_modes())
+                        .filter(|m| !m.is_empty())
+                    {
                         let from = self.channel_mode_source(chan);
-                        out.push(NetAction::ChannelMode { from, channel: chan.clone(), modes });
+                        out.push(NetAction::ChannelMode {
+                            from,
+                            channel: chan.clone(),
+                            modes,
+                        });
                     }
                     self.bot_channels.insert((bot_lc.clone(), chan.clone()));
                 }
             }
         }
-        let to_part: Vec<(String, String)> = self.bot_channels.iter().filter(|bc| !desired.contains(*bc)).cloned().collect();
+        let to_part: Vec<(String, String)> = self
+            .bot_channels
+            .iter()
+            .filter(|bc| !desired.contains(*bc))
+            .cloned()
+            .collect();
         for (bot_lc, chan) in to_part {
             self.bot_channels.remove(&(bot_lc.clone(), chan.clone()));
             if let Some(uid) = self.bot_uids.get(&bot_lc) {
-                out.push(NetAction::ServicePart { uid: uid.clone(), channel: chan });
+                out.push(NetAction::ServicePart {
+                    uid: uid.clone(),
+                    channel: chan,
+                });
             }
         }
         out
@@ -595,14 +696,24 @@ impl Engine {
     // Covers every mechanism (SASL PLAIN/SCRAM/EXTERNAL, NickServ IDENTIFY).
     // `account` is who they authenticated as (or tried to) — it can be attacker-
     // supplied on a failure, so it is sanitised; no secret is ever included.
-    fn auth_report(&self, ok: bool, account: Option<&str>, mech: &str, client: &str, reason: Option<&str>) -> Option<NetAction> {
+    fn auth_report(
+        &self,
+        ok: bool,
+        account: Option<&str>,
+        mech: &str,
+        client: &str,
+        reason: Option<&str>,
+    ) -> Option<NetAction> {
         let source = self.auth_source(client);
         let acct = safe(account.unwrap_or("*"));
         tracing::info!(target: "echo::auth", ok, account = %acct, mech, source = %source, reason = reason.unwrap_or("-"), "login attempt");
         let body = if ok {
             format!("\x02{acct}\x02 login ok · {mech} · from {source}")
         } else {
-            format!("\x02{acct}\x02 login \x02FAILED\x02 · {mech} · from {source} · {}", reason.unwrap_or("denied"))
+            format!(
+                "\x02{acct}\x02 login \x02FAILED\x02 · {mech} · from {source} · {}",
+                reason.unwrap_or("denied")
+            )
         };
         self.feed("AUTH", body)
     }
@@ -610,7 +721,13 @@ impl Engine {
     fn sasl_login(&self, mech: &str, agent: &str, client: &str, account: String) -> Vec<NetAction> {
         if self.db.is_suspended(&account) {
             let mut out = sasl_fail(agent, client);
-            out.extend(self.auth_report(false, Some(&account), mech, client, Some("account suspended")));
+            out.extend(self.auth_report(
+                false,
+                Some(&account),
+                mech,
+                client,
+                Some("account suspended"),
+            ));
             return out;
         }
         let mut out = sasl_success(agent, client, account.clone());
@@ -620,7 +737,14 @@ impl Engine {
 
     // A SASL rejection plus an auth-feed line naming why — for the credential
     // failures worth surfacing (bad password, bad/unknown cert, unknown account).
-    fn sasl_deny(&self, mech: &str, agent: &str, client: &str, account: Option<&str>, reason: &str) -> Vec<NetAction> {
+    fn sasl_deny(
+        &self,
+        mech: &str,
+        agent: &str,
+        client: &str,
+        account: Option<&str>,
+        reason: &str,
+    ) -> Vec<NetAction> {
         let mut out = sasl_fail(agent, client);
         out.extend(self.auth_report(false, account, mech, client, Some(reason)));
         out
@@ -633,29 +757,48 @@ impl Engine {
     fn login_connect_effects(&self, uid: &str, account: &str) -> Vec<NetAction> {
         let mut out = Vec::new();
         for entry in self.db.ajoin_list(account) {
-            out.push(NetAction::ForceJoin { uid: uid.to_string(), channel: entry.channel.clone(), key: entry.key.clone() });
+            out.push(NetAction::ForceJoin {
+                uid: uid.to_string(),
+                channel: entry.channel.clone(),
+                key: entry.key.clone(),
+            });
         }
         if let Some(vhost) = self.db.active_vhost(account) {
             // Send the whole vhost as one SetHost; the ircd splits an `ident@host`
             // spec and applies it as a single CHGHOST (no double host-change notice).
-            out.push(NetAction::SetHost { uid: uid.to_string(), host: vhost });
+            out.push(NetAction::SetHost {
+                uid: uid.to_string(),
+                host: vhost,
+            });
         }
         // Publish the account's public profile as IRCv3 metadata on this session,
         // so clients (Orbit) show avatar/bio/etc. Metadata lives on the connection,
         // so it must be re-sent on every login.
         for field in echo_api::ProfileField::ALL {
             if let Some(v) = self.db.profile_field(account, field) {
-                out.push(NetAction::Metadata { target: uid.to_string(), key: field.meta_key().to_string(), value: v });
+                out.push(NetAction::Metadata {
+                    target: uid.to_string(),
+                    key: field.meta_key().to_string(),
+                    value: v,
+                });
             }
         }
         // Re-apply the account's OperServ SWHOIS line (per-connection on the ircd).
         if let Some(swhois) = self.db.swhois(account) {
-            out.push(NetAction::Metadata { target: uid.to_string(), key: "swhois".to_string(), value: swhois });
+            out.push(NetAction::Metadata {
+                target: uid.to_string(),
+                key: "swhois".to_string(),
+                value: swhois,
+            });
         }
         // Re-apply the account's persistent SIGNORE list (per-connection too).
         let signore = self.db.signore(account);
         if !signore.is_empty() {
-            out.push(NetAction::Metadata { target: uid.to_string(), key: "signore".to_string(), value: signore.join(" ") });
+            out.push(NetAction::Metadata {
+                target: uid.to_string(),
+                key: "signore".to_string(),
+                value: signore.join(" "),
+            });
         }
         let unread = self.db.unread_memos(account);
         if unread > 0 && self.db.memo_notify_on(account) {
@@ -692,12 +835,33 @@ impl Engine {
 
     // A full read of current directory state, for the gRPC Snapshot RPC.
     pub fn directory_snapshot(&self) -> (Vec<db::Account>, Vec<db::ChannelInfo>) {
-        (self.db.accounts().cloned().collect(), self.db.channels().cloned().collect())
+        (
+            self.db.accounts().cloned().collect(),
+            self.db.channels().cloned().collect(),
+        )
     }
 
     // Read accessors for the admin panel (in-process, under the shared lock).
     pub fn account_privs(&self, account: &str) -> Privs {
         self.oper_privs(account)
+    }
+
+    /// Website login lookup: `(canonical_name, scram256_verifier, is_staff)` for
+    /// `name` if the account exists and has a SCRAM-SHA-256 verifier. The caller
+    /// runs `scram::verify_plain` off the engine lock so the PBKDF2 never stalls
+    /// the daemon. `is_staff` = the account holds any oper privilege (from the
+    /// `[[oper]]` config). Returns None for an unknown / verifier-less account.
+    pub fn web_auth_lookup(&self, name: &str) -> Option<(String, String, bool)> {
+        let (canon, verifier) = {
+            let acct = self.db.account(name)?;
+            // Only a verified, un-suspended account may hold a website session.
+            if !acct.verified || acct.suspension.is_some() {
+                return None;
+            }
+            (acct.name.clone(), acct.scram256.clone()?)
+        };
+        let staff = self.account_privs(&canon).any();
+        Some((canon, verifier, staff))
     }
     pub fn akills(&self) -> Vec<echo_api::AkillView> {
         self.db.akills()
@@ -768,7 +932,11 @@ impl Engine {
             Some(db::IngestEffect::TakenOver(a)) => {
                 // The account still exists (its home moved) — end local sessions
                 // using the old credential, but keep the channels it founded.
-                self.handle_account_gone(&a, "collided with another network and no longer belongs to you", false);
+                self.handle_account_gone(
+                    &a,
+                    "collided with another network and no longer belongs to you",
+                    false,
+                );
                 false
             }
             Some(db::IngestEffect::Dropped(a)) => {
@@ -781,10 +949,22 @@ impl Engine {
                 self.logout_account_sessions(&a, "was suspended");
                 false
             }
-            Some(db::IngestEffect::BanAdded { kind, mask, setter, duration, reason }) => {
+            Some(db::IngestEffect::BanAdded {
+                kind,
+                mask,
+                setter,
+                duration,
+                reason,
+            }) => {
                 // Push the gossiped network ban to our ircd now, rather than only
                 // holding it for the next netburst.
-                self.emit_irc(NetAction::AddLine { kind, mask, setter, duration, reason });
+                self.emit_irc(NetAction::AddLine {
+                    kind,
+                    mask,
+                    setter,
+                    duration,
+                    reason,
+                });
                 false
             }
             Some(db::IngestEffect::BanLifted { kind, mask }) => {
@@ -821,14 +1001,28 @@ impl Engine {
         // Release the registered mode on each dropped (not inherited) channel.
         for chan in &orphaned {
             if let Some(cs) = &cs {
-                self.emit_irc(NetAction::ChannelMode { from: cs.clone(), channel: chan.clone(), modes: "-r".to_string() });
+                self.emit_irc(NetAction::ChannelMode {
+                    from: cs.clone(),
+                    channel: chan.clone(),
+                    modes: "-r".to_string(),
+                });
             }
         }
         // Tell any online successor they inherited a channel.
         for (chan, s) in &inherited {
-            if let (Some(ns), Some(uid)) = (&ns, self.network.uids_logged_into(s).into_iter().next()) {
-                let text = echo_api::render(&self.lang_for_account(s), "You are now the founder of \x02{chan}\x02 (inherited from \x02{account}\x02).", &[("chan", chan.to_string()), ("account", account.to_string())]);
-                self.emit_irc(NetAction::Notice { from: ns.clone(), to: uid, text });
+            if let (Some(ns), Some(uid)) =
+                (&ns, self.network.uids_logged_into(s).into_iter().next())
+            {
+                let text = echo_api::render(
+                    &self.lang_for_account(s),
+                    "You are now the founder of \x02{chan}\x02 (inherited from \x02{account}\x02).",
+                    &[("chan", chan.to_string()), ("account", account.to_string())],
+                );
+                self.emit_irc(NetAction::Notice {
+                    from: ns.clone(),
+                    to: uid,
+                    text,
+                });
             }
         }
         // Log out and inform each local session that held the name.
@@ -836,8 +1030,19 @@ impl Engine {
             self.logout_uid(&uid, account, reason);
             if !orphaned.is_empty() {
                 if let Some(ns) = &ns {
-                    let text = echo_api::render(&self.lang_for_uid(&uid), "Channels you had registered as \x02{account}\x02 were released: {list}.", &[("account", account.to_string()), ("list", orphaned.join(", "))]);
-                    self.emit_irc(NetAction::Notice { from: ns.clone(), to: uid.clone(), text });
+                    let text = echo_api::render(
+                        &self.lang_for_uid(&uid),
+                        "Channels you had registered as \x02{account}\x02 were released: {list}.",
+                        &[
+                            ("account", account.to_string()),
+                            ("list", orphaned.join(", ")),
+                        ],
+                    );
+                    self.emit_irc(NetAction::Notice {
+                        from: ns.clone(),
+                        to: uid.clone(),
+                        text,
+                    });
                 }
             }
         }
@@ -851,7 +1056,12 @@ impl Engine {
         // they hand back (e.g. telling an opponent their game just ended).
         let mut notices = Vec::new();
         {
-            let Self { services, network, db, .. } = self;
+            let Self {
+                services,
+                network,
+                db,
+                ..
+            } = self;
             for svc in services.iter_mut() {
                 notices.extend(svc.on_user_quit(uid, &*network, &*db));
             }
@@ -876,7 +1086,11 @@ impl Engine {
         if self.network.channel_members(channel).next().is_some() {
             return;
         }
-        if self.bot_channels.iter().any(|(_, c)| c.eq_ignore_ascii_case(channel)) {
+        if self
+            .bot_channels
+            .iter()
+            .any(|(_, c)| c.eq_ignore_ascii_case(channel))
+        {
             return;
         }
         self.network.remove_channel(channel);
@@ -884,21 +1098,39 @@ impl Engine {
 
     // Log a single session out of `account`, telling them why (services-sourced).
     fn logout_uid(&mut self, uid: &str, account: &str, reason: &str) {
-        if let Some(action) = self.feed("SESS", format!("{} logged out of \x02{account}\x02 ({reason})", self.who(uid))) {
+        if let Some(action) = self.feed(
+            "SESS",
+            format!(
+                "{} logged out of \x02{account}\x02 ({reason})",
+                self.who(uid)
+            ),
+        ) {
             self.emit_irc(action);
         }
         for act in echo_api::vhost_restore_actions(&self.network, &self.db, uid, account) {
             self.emit_irc(act);
         }
         self.network.clear_account(uid);
-        self.emit_irc(NetAction::Metadata { target: uid.to_string(), key: "accountname".to_string(), value: String::new() });
+        self.emit_irc(NetAction::Metadata {
+            target: uid.to_string(),
+            key: "accountname".to_string(),
+            value: String::new(),
+        });
         if let Some(ns) = self.nick_service.clone() {
             // `clear_account(uid)` above already dropped the uid→account map, so
             // resolve the language from the account name, not the (now-anonymous) uid.
             let lang = self.lang_for_account(account);
             let reason = echo_api::render(&lang, reason, &[]);
-            let text = echo_api::render(&lang, "Your account \x02{account}\x02 {reason}. You have been logged out.", &[("account", account.to_string()), ("reason", reason)]);
-            self.emit_irc(NetAction::Notice { from: ns, to: uid.to_string(), text });
+            let text = echo_api::render(
+                &lang,
+                "Your account \x02{account}\x02 {reason}. You have been logged out.",
+                &[("account", account.to_string()), ("reason", reason)],
+            );
+            self.emit_irc(NetAction::Notice {
+                from: ns,
+                to: uid.to_string(),
+                text,
+            });
         }
     }
 
@@ -934,7 +1166,9 @@ impl Engine {
     // The language to address `account`'s owner in: their stored preference, or
     // the network default.
     fn lang_for_account(&self, account: &str) -> String {
-        self.db.language_of(account).unwrap_or_else(|| self.db.default_language())
+        self.db
+            .language_of(account)
+            .unwrap_or_else(|| self.db.default_language())
     }
 
     // The language to address the user on `uid` in: their logged-in account's
@@ -955,8 +1189,16 @@ impl Engine {
         let (dead_bw, dead_tr) = {
             let db = &self.db;
             (
-                self.badword_cache.keys().filter(|c| db.channel(c.as_str()).is_none()).cloned().collect::<Vec<_>>(),
-                self.trigger_cache.keys().filter(|c| db.channel(c.as_str()).is_none()).cloned().collect::<Vec<_>>(),
+                self.badword_cache
+                    .keys()
+                    .filter(|c| db.channel(c.as_str()).is_none())
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                self.trigger_cache
+                    .keys()
+                    .filter(|c| db.channel(c.as_str()).is_none())
+                    .cloned()
+                    .collect::<Vec<_>>(),
             )
         };
         for c in dead_bw {
@@ -974,15 +1216,41 @@ impl Engine {
         if let Some(lead) = self.expire_warn.filter(|_| self.db.email_enabled()) {
             if let Some(ttl) = self.account_ttl {
                 for (account, email, left) in self.db.accounts_to_warn(now, ttl, lead) {
-                    let mail = echo_api::email::expiry_warning(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), echo_api::email::ExpiryTarget::Account, &account, &human_duration(left), &self.lang_for_account(&account));
-                    self.emit_irc(NetAction::SendEmail { to: email, subject: mail.subject, text: mail.text, html: Some(mail.html) });
+                    let mail = echo_api::email::expiry_warning(
+                        self.db.email_brand(),
+                        self.db.email_accent(),
+                        self.db.email_logo(),
+                        echo_api::email::ExpiryTarget::Account,
+                        &account,
+                        &human_duration(left),
+                        &self.lang_for_account(&account),
+                    );
+                    self.emit_irc(NetAction::SendEmail {
+                        to: email,
+                        subject: mail.subject,
+                        text: mail.text,
+                        html: Some(mail.html),
+                    });
                     self.db.mark_account_warned(&account);
                 }
             }
             if let Some(ttl) = self.channel_ttl {
                 for (channel, email, left, lang) in self.db.channels_to_warn(now, ttl, lead) {
-                    let mail = echo_api::email::expiry_warning(self.db.email_brand(), self.db.email_accent(), self.db.email_logo(), echo_api::email::ExpiryTarget::Channel, &channel, &human_duration(left), &lang);
-                    self.emit_irc(NetAction::SendEmail { to: email, subject: mail.subject, text: mail.text, html: Some(mail.html) });
+                    let mail = echo_api::email::expiry_warning(
+                        self.db.email_brand(),
+                        self.db.email_accent(),
+                        self.db.email_logo(),
+                        echo_api::email::ExpiryTarget::Channel,
+                        &channel,
+                        &human_duration(left),
+                        &lang,
+                    );
+                    self.emit_irc(NetAction::SendEmail {
+                        to: email,
+                        subject: mail.subject,
+                        text: mail.text,
+                        html: Some(mail.html),
+                    });
                     self.db.mark_channel_warned(&channel);
                 }
             }
@@ -992,12 +1260,20 @@ impl Engine {
                 // Never expire an operator's account or one still in use. oper_privs
                 // unions config [[oper]] AND runtime OperServ OPER grants — self.opers
                 // is config-only, so a runtime-granted oper was being dropped.
-                if self.oper_privs(&account).any() || !self.network.uids_logged_into(&account).is_empty() {
+                if self.oper_privs(&account).any()
+                    || !self.network.uids_logged_into(&account).is_empty()
+                {
                     continue;
                 }
                 if self.db.drop_account(&account).unwrap_or(false) {
-                    self.handle_account_gone(&account, "expired after a long period of inactivity", true);
-                    self.audit(format!("Account \x02{account}\x02 expired after inactivity."));
+                    self.handle_account_gone(
+                        &account,
+                        "expired after a long period of inactivity",
+                        true,
+                    );
+                    self.audit(format!(
+                        "Account \x02{account}\x02 expired after inactivity."
+                    ));
                 }
             }
         }
@@ -1010,9 +1286,15 @@ impl Engine {
                 }
                 if self.db.drop_channel(&channel).is_ok() {
                     if let Some(cs) = &cs {
-                        self.emit_irc(NetAction::ChannelMode { from: cs.clone(), channel: channel.clone(), modes: "-r".to_string() });
+                        self.emit_irc(NetAction::ChannelMode {
+                            from: cs.clone(),
+                            channel: channel.clone(),
+                            modes: "-r".to_string(),
+                        });
                     }
-                    self.audit(format!("Channel \x02{channel}\x02 expired after inactivity."));
+                    self.audit(format!(
+                        "Channel \x02{channel}\x02 expired after inactivity."
+                    ));
                 }
             }
         }
@@ -1035,7 +1317,11 @@ impl Engine {
         self.db
             .news(kind)
             .into_iter()
-            .map(|n| NetAction::Notice { from: self.sid.clone(), to: uid.to_string(), text: format!("[\x02{label}\x02] {}", n.text) })
+            .map(|n| NetAction::Notice {
+                from: self.sid.clone(),
+                to: uid.to_string(),
+                text: format!("[\x02{label}\x02] {}", n.text),
+            })
             .collect()
     }
 
@@ -1101,7 +1387,11 @@ impl Engine {
             .or_else(|| self.network.nick_of(requester))
             .unwrap_or("an operator")
             .to_string();
-        let notice = |text: String| NetAction::Notice { from: agent.to_string(), to: requester.to_string(), text };
+        let notice = |text: String| NetAction::Notice {
+            from: agent.to_string(),
+            to: requester.to_string(),
+            text,
+        };
         let cfg = match crate::config::Config::load(&path) {
             Ok(cfg) => cfg,
             Err(e) => {
@@ -1109,7 +1399,9 @@ impl Engine {
                 if let Some(line) = self.feed("OPER", format!("\x02{oper}\x02 ran \x02REHASH\x02 · config.toml failed to parse, keeping the running config · {e}")) {
                     out.push(line);
                 }
-                out.push(notice(format!("REHASH failed: {e}. The running configuration is unchanged.")));
+                out.push(notice(format!(
+                    "REHASH failed: {e}. The running configuration is unchanged."
+                )));
                 return (false, out);
             }
         };
@@ -1120,26 +1412,41 @@ impl Engine {
         self.set_services_channel(cfg.server.services_channel.clone());
         self.set_standard_replies(cfg.server.standard_replies);
         self.set_log_channel(cfg.log.as_ref().map(|l| l.channel.clone()));
-        self.db.set_notify_exclude(cfg.log.as_ref().map(|l| l.notify_exclude.clone()).unwrap_or_default());
+        self.db.set_notify_exclude(
+            cfg.log
+                .as_ref()
+                .map(|l| l.notify_exclude.clone())
+                .unwrap_or_default(),
+        );
         self.db.set_confusable_check(cfg.register.confusable_check);
         self.db.set_registration_vouch(cfg.register.vouch);
         self.set_guest_nick(&cfg.server.guest_nick);
         if let Some(expire) = &cfg.expire {
-            self.set_expiry(expire.account_ttl(), expire.channel_ttl(), expire.warn_ttl());
+            self.set_expiry(
+                expire.account_ttl(),
+                expire.channel_ttl(),
+                expire.warn_ttl(),
+            );
         }
         if let Some(session) = &cfg.session {
             self.set_session_limit(session.limit());
         }
         self.set_security(cfg.security.clone());
         let sr = if self.standard_replies { "on" } else { "off" };
-        let chan = if self.services_channel.is_empty() { "(none)" } else { &self.services_channel };
+        let chan = if self.services_channel.is_empty() {
+            "(none)"
+        } else {
+            &self.services_channel
+        };
         let opers_word = if oper_count == 1 { "oper" } else { "opers" };
         let mut out = Vec::new();
         // Announce it in the log channel so staff see who reloaded what, when.
         if let Some(line) = self.feed("OPER", format!("\x02{oper}\x02 reloaded the configuration live · \x02{oper_count}\x02 {opers_word} · standard-replies \x02{sr}\x02 · services \x02{chan}\x02 · no restart needed")) {
             out.push(line);
         }
-        out.push(notice(format!("Configuration reloaded from \x02{path}\x02.")));
+        out.push(notice(format!(
+            "Configuration reloaded from \x02{path}\x02."
+        )));
         out.push(notice(format!(
             "Applied: \x02{oper_count}\x02 oper(s), standard-replies \x02{sr}\x02, services channel \x02{chan}\x02, service oper-type \x02{}\x02.",
             if self.service_oper_type.is_empty() { "(none)" } else { &self.service_oper_type },
@@ -1165,7 +1472,11 @@ impl Engine {
                 self.emit_irc(action);
             }
         }
-        let msg = if ok { "configuration reloaded" } else { "reload failed; running configuration unchanged" };
+        let msg = if ok {
+            "configuration reloaded"
+        } else {
+            "reload failed; running configuration unchanged"
+        };
         (ok, msg.to_string())
     }
 
@@ -1177,7 +1488,9 @@ impl Engine {
         if !self.synced {
             return Vec::new();
         }
-        let Some(account) = self.db.resolve_account(nick) else { return Vec::new() };
+        let Some(account) = self.db.resolve_account(nick) else {
+            return Vec::new();
+        };
         let account = account.to_string();
         if self.network.account_of(uid) == Some(account.as_str()) {
             return Vec::new(); // already identified to it
@@ -1185,10 +1498,16 @@ impl Engine {
         if !self.db.account_wants_protect(&account) {
             return Vec::new(); // owner turned nick protection off (SET KILL OFF)
         }
-        let Some(ns) = self.nick_service.clone() else { return Vec::new() };
+        let Some(ns) = self.nick_service.clone() else {
+            return Vec::new();
+        };
         let deadline = self.now_secs() + ENFORCE_GRACE;
         self.pending_enforce.retain(|p| p.uid != uid);
-        self.pending_enforce.push(PendingEnforce { uid: uid.to_string(), nick: nick.to_string(), deadline });
+        self.pending_enforce.push(PendingEnforce {
+            uid: uid.to_string(),
+            nick: nick.to_string(),
+            deadline,
+        });
         vec![NetAction::Notice {
             from: ns,
             to: uid.to_string(),
@@ -1208,11 +1527,14 @@ impl Engine {
             if self.pending_enforce[i].deadline <= now {
                 let p = self.pending_enforce.remove(i);
                 let still_there = self.network.uid_by_nick(&p.nick) == Some(p.uid.as_str());
-                let identified = self.network.account_of(&p.uid) == self.db.resolve_account(&p.nick);
+                let identified =
+                    self.network.account_of(&p.uid) == self.db.resolve_account(&p.nick);
                 // Re-check protection at fire time: the owner may have turned KILL
                 // off during the grace window, in which case don't rename.
                 let account = self.db.resolve_account(&p.nick).map(str::to_string);
-                let wants = account.as_deref().is_some_and(|a| self.db.account_wants_protect(a));
+                let wants = account
+                    .as_deref()
+                    .is_some_and(|a| self.db.account_wants_protect(a));
                 if still_there && !identified && wants {
                     fire.push(p.uid);
                 }
@@ -1221,10 +1543,23 @@ impl Engine {
             }
         }
         for uid in fire {
-            let guest = echo_api::next_guest_nick(&self.guest_nick, &mut self.enforce_seq, &self.network, &self.db);
+            let guest = echo_api::next_guest_nick(
+                &self.guest_nick,
+                &mut self.enforce_seq,
+                &self.network,
+                &self.db,
+            );
             if let Some(ns) = self.nick_service.clone() {
-                let text = echo_api::render(&self.db.default_language(), "You didn't identify in time; you've been renamed.", &[]);
-                self.emit_irc(NetAction::Notice { from: ns, to: uid.clone(), text });
+                let text = echo_api::render(
+                    &self.db.default_language(),
+                    "You didn't identify in time; you've been renamed.",
+                    &[],
+                );
+                self.emit_irc(NetAction::Notice {
+                    from: ns,
+                    to: uid.clone(),
+                    text,
+                });
             }
             self.emit_irc(NetAction::ForceNick { uid, nick: guest });
         }
@@ -1239,7 +1574,11 @@ impl Engine {
         if let Some(action) = self.feed("SVC", text.clone()) {
             self.emit_irc(action);
         } else if let (Some(channel), false) = (&self.log_channel, self.sid.is_empty()) {
-            self.emit_irc(NetAction::Notice { from: self.sid.clone(), to: channel.clone(), text });
+            self.emit_irc(NetAction::Notice {
+                from: self.sid.clone(),
+                to: channel.clone(),
+                text,
+            });
         }
     }
 
@@ -1282,7 +1621,13 @@ impl Engine {
 
     // Insert or refresh a client's in-progress SASL session, stamped now.
     fn stash_sasl(&mut self, client: String, session: SaslSession) {
-        self.sasl_sessions.insert(client, TimedSession { touched: Instant::now(), session });
+        self.sasl_sessions.insert(
+            client,
+            TimedSession {
+                touched: Instant::now(),
+                session,
+            },
+        );
     }
 
     // Remember a client's real host/IP from the SASL H message so the auth feed
@@ -1294,15 +1639,18 @@ impl Engine {
             (Some(only), _) => only.clone(),
             _ => return,
         };
-        self.sasl_source.insert(client.to_string(), (Instant::now(), src));
+        self.sasl_source
+            .insert(client.to_string(), (Instant::now(), src));
     }
 
     // Evict exchanges idle past the TTL. Run before starting a new one so a
     // dropped-mid-auth client the ircd never reported cannot pile up.
     fn sweep_sasl(&mut self) {
         let now = Instant::now();
-        self.sasl_sessions.retain(|_, t| now.duration_since(t.touched) < SASL_SESSION_TTL);
-        self.sasl_source.retain(|_, (t, _)| now.duration_since(*t) < SASL_SESSION_TTL);
+        self.sasl_sessions
+            .retain(|_, t| now.duration_since(t.touched) < SASL_SESSION_TTL);
+        self.sasl_source
+            .retain(|_, (t, _)| now.duration_since(*t) < SASL_SESSION_TTL);
     }
 
     // Sent right after the SERVER line: burst, introduce every service, endburst.
@@ -1316,13 +1664,19 @@ impl Engine {
     // assigned, otherwise the connect-time cloak the oper vhost had replaced (the
     // ircd doesn't put it back itself). An `ident@host` vhost also sets the ident.
     fn restore_host_after_deoper(&self, uid: &str) -> Vec<NetAction> {
-        let vhost = self.network.account_of(uid).and_then(|a| self.db.active_vhost(a));
+        let vhost = self
+            .network
+            .account_of(uid)
+            .and_then(|a| self.db.active_vhost(a));
         let Some(host) = vhost.or_else(|| self.network.host_of(uid).map(str::to_string)) else {
             return Vec::new();
         };
         // One SetHost carries the whole `ident@host`; the ircd splits it into a
         // single CHGHOST (no double host-change notice).
-        vec![NetAction::SetHost { uid: uid.to_string(), host }]
+        vec![NetAction::SetHost {
+            uid: uid.to_string(),
+            host,
+        }]
     }
 
     pub fn startup_actions(&mut self) -> Vec<NetAction> {
@@ -1334,11 +1688,11 @@ impl Engine {
         self.bot_channels.clear();
         self.network.clear_bots();
         self.network.clear_servers(); // the burst re-introduces the server tree
-        // A re-link's burst re-introduces every user and channel, but the
-        // half-finished SASL exchanges and armed nick-enforcement timers from the
-        // dropped connection are orphaned — forget them so a re-link (were one ever
-        // added in-process) can't act on stale connection state. Today the process
-        // exits on uplink loss and systemd restarts it, so this is defensive.
+                                      // A re-link's burst re-introduces every user and channel, but the
+                                      // half-finished SASL exchanges and armed nick-enforcement timers from the
+                                      // dropped connection are orphaned — forget them so a re-link (were one ever
+                                      // added in-process) can't act on stale connection state. Today the process
+                                      // exits on uplink loss and systemd restarts it, so this is defensive.
         self.sasl_sessions.clear();
         self.sasl_source.clear();
         self.pending_enforce.clear();
@@ -1354,11 +1708,18 @@ impl Engine {
             });
             // Oper them up so WHOIS labels them a network service (the oper line).
             if !self.service_oper_type.is_empty() {
-                out.push(NetAction::OperType { uid: svc.uid().to_string(), oper_type: self.service_oper_type.clone() });
+                out.push(NetAction::OperType {
+                    uid: svc.uid().to_string(),
+                    oper_type: self.service_oper_type.clone(),
+                });
             }
             // All service pseudo-clients sit in the services channel (configurable).
             if !self.services_channel.is_empty() {
-                out.push(NetAction::ServiceJoin { uid: svc.uid().to_string(), channel: self.services_channel.clone(), modes: "o".into() });
+                out.push(NetAction::ServiceJoin {
+                    uid: svc.uid().to_string(),
+                    channel: self.services_channel.clone(),
+                    modes: "o".into(),
+                });
             }
         }
         // Advertise our SASL mechanisms so the uplink can offer `sasl=PLAIN` to
@@ -1369,7 +1730,11 @@ impl Engine {
         // already joined it above as the services channel.
         if let (false, Some(chan)) = (self.debugserv_uid.is_empty(), self.log_channel.clone()) {
             if !chan.eq_ignore_ascii_case(&self.services_channel) {
-                out.push(NetAction::ServiceJoin { uid: self.debugserv_uid.clone(), channel: chan, modes: "o".into() });
+                out.push(NetAction::ServiceJoin {
+                    uid: self.debugserv_uid.clone(),
+                    channel: chan,
+                    modes: "o".into(),
+                });
             }
         }
         // Re-assert the network bans over the fresh link, each with its remaining
@@ -1377,20 +1742,38 @@ impl Engine {
         let now = self.now_secs();
         for a in self.db.akills() {
             let duration = a.expires.map(|e| e.saturating_sub(now)).unwrap_or(0);
-            out.push(NetAction::AddLine { kind: a.kind.wire().to_string(), mask: a.mask, setter: a.setter, duration, reason: a.reason });
+            out.push(NetAction::AddLine {
+                kind: a.kind.wire().to_string(),
+                mask: a.mask,
+                setter: a.setter,
+                duration,
+                reason: a.reason,
+            });
         }
         // Re-assert a Q-line for every forbidden nick, so a FORBID keeps the nick
         // unusable across a relink (services X-lines don't survive the split).
         for f in self.db.forbids() {
             if matches!(f.kind, echo_api::ForbidKind::Nick) {
-                out.push(NetAction::AddLine { kind: echo_api::XlineKind::Qline.wire().to_string(), mask: f.mask, setter: f.setter, duration: 0, reason: f.reason });
+                out.push(NetAction::AddLine {
+                    kind: echo_api::XlineKind::Qline.wire().to_string(),
+                    mask: f.mask,
+                    setter: f.setter,
+                    duration: 0,
+                    reason: f.reason,
+                });
             }
         }
         // Re-assert the spam filters so they survive an ircd restart (m_filter has
         // no s2s delete, so echo is the durable source of truth for them).
         for f in self.db.filters() {
             let duration = f.expires.map(|e| e.saturating_sub(now)).unwrap_or(0);
-            out.push(NetAction::Metadata { target: "*".to_string(), key: "filter".to_string(), value: echo_api::encode_filter(&f.pattern, &f.action, &f.flags, duration, &f.reason) });
+            out.push(NetAction::Metadata {
+                target: "*".to_string(),
+                key: "filter".to_string(),
+                value: echo_api::encode_filter(
+                    &f.pattern, &f.action, &f.flags, duration, &f.reason,
+                ),
+            });
         }
         // Re-introduce our juped servers over the fresh link.
         for (name, sid, reason) in self.db.jupes() {
@@ -1416,16 +1799,29 @@ impl Engine {
                 // pseudo-clients asks us for its idle/signon; answer or that WHOIS
                 // shows nothing at all. Services are always active (idle 0).
                 if self.is_own_client(&target) {
-                    vec![NetAction::IdleReply { target, requester, signon: self.services_signon, idle: 0 }]
+                    vec![NetAction::IdleReply {
+                        target,
+                        requester,
+                        signon: self.services_signon,
+                        idle: 0,
+                    }]
                 } else {
                     Vec::new()
                 }
             }
-            NetEvent::UserAttrs { uid, ident, realhost, gecos } => {
+            NetEvent::UserAttrs {
+                uid,
+                ident,
+                realhost,
+                gecos,
+            } => {
                 // Full identity (ident/host/gecos) is known now, so this is where a
                 // connect watch can match the whole nick!user@host#gecos.
                 self.network.set_user_attrs(&uid, ident, realhost, gecos);
-                let mut out: Vec<NetAction> = self.notify_line('c', &uid, None, "connected").into_iter().collect();
+                let mut out: Vec<NetAction> = self
+                    .notify_line('c', &uid, None, "connected")
+                    .into_iter()
+                    .collect();
                 out.extend(self.security_screen_connect(&uid));
                 out
             }
@@ -1468,13 +1864,21 @@ impl Engine {
                 Vec::new()
             }
             NetEvent::ExtbanRegistry { entries } => {
-                let names = entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>().join(" ");
+                let names = entries
+                    .iter()
+                    .map(|e| e.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ");
                 tracing::info!(count = entries.len(), extbans = %names, "learned ircd extban set");
                 self.db.set_live_extbans(entries);
                 Vec::new()
             }
             NetEvent::ChanModeRegistry { modes } => {
-                let prefixes = modes.iter().filter(|c| c.is_prefix()).map(|c| c.letter).collect::<String>();
+                let prefixes = modes
+                    .iter()
+                    .filter(|c| c.is_prefix())
+                    .map(|c| c.letter)
+                    .collect::<String>();
                 tracing::info!(count = modes.len(), prefixes = %prefixes, "learned ircd channel-mode set");
                 self.db.set_live_chanmodes(modes);
                 Vec::new()
@@ -1505,26 +1909,40 @@ impl Engine {
                 }
                 Vec::new()
             }
-            NetEvent::UserConnect { uid, nick, host, ip } => {
+            NetEvent::UserConnect {
+                uid,
+                nick,
+                host,
+                ip,
+            } => {
                 let arriving_nick = nick.clone();
-                self.network.user_connect(uid.clone(), nick, host, ip.clone());
+                self.network
+                    .user_connect(uid.clone(), nick, host, ip.clone());
                 // DEFCON 1 is a full lockdown: no new connections are accepted.
                 if self.db.defcon() == 1 && !self.sid.is_empty() {
-                    return self.finish(out, vec![NetAction::KillUser {
-                        from: self.sid.clone(),
-                        uid,
-                        reason: "The network is in lockdown (DEFCON 1). Please try again later.".to_string(),
-                    }]);
+                    return self.finish(
+                        out,
+                        vec![NetAction::KillUser {
+                            from: self.sid.clone(),
+                            uid,
+                            reason:
+                                "The network is in lockdown (DEFCON 1). Please try again later."
+                                    .to_string(),
+                        }],
+                    );
                 }
                 // Enforce the session limit: kill the connection that puts an IP
                 // over its allowance (default limit, raised/lowered by exceptions).
                 if let Some(limit) = self.session_limit_for(&ip) {
                     if self.network.session_count(&ip) > limit {
-                        return self.finish(out, vec![NetAction::KillUser {
-                            from: self.sid.clone(),
-                            uid,
-                            reason: format!("Session limit exceeded ({limit} from {ip})"),
-                        }]);
+                        return self.finish(
+                            out,
+                            vec![NetAction::KillUser {
+                                from: self.sid.clone(),
+                                uid,
+                                reason: format!("Session limit exceeded ({limit} from {ip})"),
+                            }],
+                        );
                     }
                 }
                 // Greet with the logon news, and — separately — prompt-then-
@@ -1575,9 +1993,14 @@ impl Engine {
                 // new nick — otherwise identifying under a guest nick then switching
                 // to the account nick would silently lose the registered mode.
                 if self.network.account_of(&uid).is_some() {
-                    out.push(NetAction::UserMode { uid: uid.clone(), modes: "+r".to_string() });
+                    out.push(NetAction::UserMode {
+                        uid: uid.clone(),
+                        modes: "+r".to_string(),
+                    });
                 }
-                if let Some(line) = self.notify_line('n', &uid, None, &format!("changed nick (was {old_nick})")) {
+                if let Some(line) =
+                    self.notify_line('n', &uid, None, &format!("changed nick (was {old_nick})"))
+                {
                     out.push(line);
                 }
                 out.extend(self.security_screen_nick(&uid));
@@ -1596,11 +2019,20 @@ impl Engine {
                 let from = self.channel_mode_source(&channel);
                 match self.db.channel(&channel) {
                     Some(info) => {
-                        let mut out = vec![NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: info.lock_modes() }];
+                        let mut out = vec![NetAction::ChannelMode {
+                            from: from.clone(),
+                            channel: channel.clone(),
+                            modes: info.lock_modes(),
+                        }];
                         // KEEPTOPIC: restore the remembered topic on a recreated channel,
                         // credited to whoever originally set it.
                         if info.settings.keeptopic && !info.topic.is_empty() {
-                            out.push(NetAction::Topic { from, channel, topic: info.topic.clone(), setter: info.topic_setter.clone() });
+                            out.push(NetAction::Topic {
+                                from,
+                                channel,
+                                topic: info.topic.clone(),
+                                setter: info.topic_setter.clone(),
+                            });
                         }
                         out
                     }
@@ -1608,12 +2040,32 @@ impl Engine {
                 }
             }
             // Enforce the mode lock: revert any change that broke it.
-            NetEvent::ChannelModeChange { channel, modes, setter } => {
+            NetEvent::ChannelModeChange {
+                channel,
+                modes,
+                setter,
+            } => {
                 self.network.apply_channel_mode(&channel, &modes);
-                let mut out: Vec<NetAction> = self.notify_line('m', &setter, Some(&channel), &format!("set mode {modes} on {channel}")).into_iter().collect();
+                let mut out: Vec<NetAction> = self
+                    .notify_line(
+                        'm',
+                        &setter,
+                        Some(&channel),
+                        &format!("set mode {modes} on {channel}"),
+                    )
+                    .into_iter()
+                    .collect();
                 let from = self.channel_mode_source(&channel);
-                if let Some(revert) = self.db.channel(&channel).and_then(|info| info.enforce(&modes)) {
-                    out.push(NetAction::ChannelMode { from, channel, modes: revert });
+                if let Some(revert) = self
+                    .db
+                    .channel(&channel)
+                    .and_then(|info| info.enforce(&modes))
+                {
+                    out.push(NetAction::ChannelMode {
+                        from,
+                        channel,
+                        modes: revert,
+                    });
                 }
                 out
             }
@@ -1623,7 +2075,10 @@ impl Engine {
                 self.network.channel_join(&channel, &uid, op);
                 // A watched user (or any user of a watched channel) joining: emit a
                 // staff line regardless of what enforcement below does.
-                let mut watch: Vec<NetAction> = self.notify_line('j', &uid, Some(&channel), &format!("joined {channel}")).into_iter().collect();
+                let mut watch: Vec<NetAction> = self
+                    .notify_line('j', &uid, Some(&channel), &format!("joined {channel}"))
+                    .into_iter()
+                    .collect();
                 // A join to a registered channel is activity: keep it from expiring.
                 if self.db.channel(&channel).is_some() {
                     self.db.mark_channel_used(&channel, self.now_secs());
@@ -1636,11 +2091,19 @@ impl Engine {
                 let from = self.channel_mode_source(&channel);
                 // Group-aware: a member of a group that holds channel access gets
                 // the group's status mode too.
-                let mode = account.as_deref().and_then(|a| self.db.channel_join_mode(&channel, a));
+                let mode = account
+                    .as_deref()
+                    .and_then(|a| self.db.channel_join_mode(&channel, a));
                 // Op-level access is a capability, not a specific mode string — a
                 // SOP auto-gets "+ao", so never compare the mode against "+o".
-                let has_op_access = account.as_deref().is_some_and(|a| self.db.channel(&channel).is_some_and(|c| c.is_op(a)));
-                let entrymsg = self.db.channel(&channel).map(|c| c.entrymsg.clone()).filter(|m| !m.is_empty());
+                let has_op_access = account
+                    .as_deref()
+                    .is_some_and(|a| self.db.channel(&channel).is_some_and(|c| c.is_op(a)));
+                let entrymsg = self
+                    .db
+                    .channel(&channel)
+                    .map(|c| c.entrymsg.clone())
+                    .filter(|m| !m.is_empty());
                 // Computed before the match below moves `channel` into its actions.
                 let greet = self.greet_on_join(&channel, account.as_deref());
                 let mut acts = std::mem::take(&mut watch);
@@ -1649,32 +2112,70 @@ impl Engine {
                 // to secureops/restricted — it's staff, not a member.
                 let is_bot = self.bot_uids.values().any(|b| b == &uid);
                 // A user barred by the deny flag never keeps status (#549).
-                let denied = account.as_deref().is_some_and(|a| self.db.channel(&channel).is_some_and(|c| c.denied(a)));
+                let denied = account
+                    .as_deref()
+                    .is_some_and(|a| self.db.channel(&channel).is_some_and(|c| c.denied(a)));
                 // SECUREOPS: a user who arrives opped (FJOIN prefix) but lacks op-level
                 // access loses it, unless we're about to grant it to them anyway.
-                if op && !is_bot && (denied || (!has_op_access && self.db.channel(&channel).is_some_and(|c| c.settings.secureops))) {
-                    acts.push(NetAction::ChannelMode { from: from.clone(), channel: channel.clone(), modes: format!("-o {uid}") });
+                if op
+                    && !is_bot
+                    && (denied
+                        || (!has_op_access
+                            && self
+                                .db
+                                .channel(&channel)
+                                .is_some_and(|c| c.settings.secureops)))
+                {
+                    acts.push(NetAction::ChannelMode {
+                        from: from.clone(),
+                        channel: channel.clone(),
+                        modes: format!("-o {uid}"),
+                    });
                 }
                 // RESTRICTED: only users with access (or opers) may be in the channel.
-                if mode.is_none() && !is_bot && self.db.channel(&channel).is_some_and(|c| c.settings.restricted) {
+                if mode.is_none()
+                    && !is_bot
+                    && self
+                        .db
+                        .channel(&channel)
+                        .is_some_and(|c| c.settings.restricted)
+                {
                     let is_oper = account.as_deref().is_some_and(|a| self.oper_privs(a).any());
                     if !is_oper {
-                        acts.push(NetAction::Kick { from, channel, uid, reason: "This channel is restricted to users with access.".to_string() });
+                        acts.push(NetAction::Kick {
+                            from,
+                            channel,
+                            uid,
+                            reason: "This channel is restricted to users with access.".to_string(),
+                        });
                         return self.finish(out, acts);
                     }
                 }
                 // AUTOOP (on by default): the channel must allow it and the user
                 // must want it (NickServ SET AUTOOP) — either can opt out.
-                let autoop = self.db.channel(&channel).is_none_or(|c| !c.settings.noautoop)
-                    && account.as_deref().is_none_or(|a| self.db.account_wants_autoop(a));
+                let autoop = self
+                    .db
+                    .channel(&channel)
+                    .is_none_or(|c| !c.settings.noautoop)
+                    && account
+                        .as_deref()
+                        .is_none_or(|a| self.db.account_wants_autoop(a));
                 match mode {
                     // A user with access gets their status mode, plus the entry message.
                     Some(m) => {
                         if let Some(msg) = entrymsg {
-                            acts.push(NetAction::Notice { from: from.clone(), to: uid.clone(), text: msg });
+                            acts.push(NetAction::Notice {
+                                from: from.clone(),
+                                to: uid.clone(),
+                                text: msg,
+                            });
                         }
                         if autoop {
-                            acts.push(NetAction::ChannelMode { from, channel, modes: echo_api::status_mode(m, &uid) });
+                            acts.push(NetAction::ChannelMode {
+                                from,
+                                channel,
+                                modes: echo_api::status_mode(m, &uid),
+                            });
                         }
                     }
                     // No access: an auto-kick match is banned and kicked, else greeted.
@@ -1683,7 +2184,11 @@ impl Engine {
                         if !hit.is_empty() {
                             acts.extend(hit);
                         } else if let Some(msg) = entrymsg {
-                            acts.push(NetAction::Notice { from, to: uid, text: msg });
+                            acts.push(NetAction::Notice {
+                                from,
+                                to: uid,
+                                text: msg,
+                            });
                         }
                     }
                 }
@@ -1695,25 +2200,55 @@ impl Engine {
                 }
                 acts
             }
-            NetEvent::Part { uid, channel, reason } => {
+            NetEvent::Part {
+                uid,
+                channel,
+                reason,
+            } => {
                 // Match before dropping membership so the identity is still resolvable.
-                let what = if reason.is_empty() { format!("left {channel}") } else { format!("left {channel} ({reason})") };
-                let mut out: Vec<NetAction> = self.notify_line('p', &uid, Some(&channel), &what).into_iter().collect();
+                let what = if reason.is_empty() {
+                    format!("left {channel}")
+                } else {
+                    format!("left {channel} ({reason})")
+                };
+                let mut out: Vec<NetAction> = self
+                    .notify_line('p', &uid, Some(&channel), &what)
+                    .into_iter()
+                    .collect();
                 out.extend(self.member_left(&channel, &uid));
                 out.extend(self.security_screen_part(&uid, &channel));
                 out
             }
-            NetEvent::Kicked { channel, uid, by, reason } => {
+            NetEvent::Kicked {
+                channel,
+                uid,
+                by,
+                reason,
+            } => {
                 // Two watches can fire: the victim and the kicker. Resolve nicks and
                 // match before the membership drop.
                 let bynick = self.network.nick_of(&by).unwrap_or(&by).to_string();
                 let victim = self.network.nick_of(&uid).unwrap_or(&uid).to_string();
-                let tail = if reason.is_empty() { String::new() } else { format!(" ({reason})") };
+                let tail = if reason.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({reason})")
+                };
                 let mut out = Vec::new();
-                if let Some(l) = self.notify_line('k', &uid, Some(&channel), &format!("was kicked from {channel} by {bynick}{tail}")) {
+                if let Some(l) = self.notify_line(
+                    'k',
+                    &uid,
+                    Some(&channel),
+                    &format!("was kicked from {channel} by {bynick}{tail}"),
+                ) {
                     out.push(l);
                 }
-                if let Some(l) = self.notify_line('k', &by, Some(&channel), &format!("kicked {victim} from {channel}{tail}")) {
+                if let Some(l) = self.notify_line(
+                    'k',
+                    &by,
+                    Some(&channel),
+                    &format!("kicked {victim} from {channel}{tail}"),
+                ) {
                     out.push(l);
                 }
                 out.extend(self.member_left(&channel, &uid));
@@ -1742,16 +2277,28 @@ impl Engine {
                         // Strip +o for a denied user (always), or under secureops from a
                         // user without op-level access.
                         let denied = account.as_deref().is_some_and(|a| c.denied(a));
-                        let secure = c.settings.secureops && !account.as_deref().is_some_and(|a| c.is_op(a));
+                        let secure =
+                            c.settings.secureops && !account.as_deref().is_some_and(|a| c.is_op(a));
                         if denied || secure {
                             let from = self.chan_service.clone().unwrap_or_default();
-                            return self.finish(out, vec![NetAction::ChannelMode { from, channel, modes: format!("-o {uid}") }]);
+                            return self.finish(
+                                out,
+                                vec![NetAction::ChannelMode {
+                                    from,
+                                    channel,
+                                    modes: format!("-o {uid}"),
+                                }],
+                            );
                         }
                     }
                 }
                 Vec::new()
             }
-            NetEvent::ChannelVoice { channel, uid, voice } => {
+            NetEvent::ChannelVoice {
+                channel,
+                uid,
+                voice,
+            } => {
                 self.network.set_voice(&channel, &uid, voice);
                 // SECUREVOICES: a user who gains +v without voice-level (or higher)
                 // access loses it. A services bot is staff, never a member.
@@ -1762,10 +2309,18 @@ impl Engine {
                         // Strip +v for a denied user (always), or under securevoices from
                         // a user without voice-level (or higher) access.
                         let denied = account.as_deref().is_some_and(|a| c.denied(a));
-                        let secure = c.settings.securevoices && !account.as_deref().is_some_and(|a| c.join_mode(a).is_some());
+                        let secure = c.settings.securevoices
+                            && !account.as_deref().is_some_and(|a| c.join_mode(a).is_some());
                         if denied || secure {
                             let from = self.chan_service.clone().unwrap_or_default();
-                            return self.finish(out, vec![NetAction::ChannelMode { from, channel, modes: format!("-v {uid}") }]);
+                            return self.finish(
+                                out,
+                                vec![NetAction::ChannelMode {
+                                    from,
+                                    channel,
+                                    modes: format!("-v {uid}"),
+                                }],
+                            );
                         }
                     }
                 }
@@ -1775,8 +2330,18 @@ impl Engine {
                 self.network.set_channel_key(&channel, key);
                 Vec::new()
             }
-            NetEvent::TopicChange { channel, setter, topic, setby } => {
-                let watch = self.notify_line('t', &setter, Some(&channel), &format!("changed the topic of {channel}"));
+            NetEvent::TopicChange {
+                channel,
+                setter,
+                topic,
+                setby,
+            } => {
+                let watch = self.notify_line(
+                    't',
+                    &setter,
+                    Some(&channel),
+                    &format!("changed the topic of {channel}"),
+                );
                 // Who set it, as a stable nick!ident@host — NEVER the source uid, which
                 // is recycled to another user the instant this connection drops. Prefer
                 // the ircd's own setby mask; else snapshot the still-connected source.
@@ -1784,22 +2349,42 @@ impl Engine {
                     setby
                 } else {
                     match self.network.nick_of(&setter) {
-                        Some(nick) => match (self.network.ident_of(&setter), self.network.host_of(&setter)) {
+                        Some(nick) => match (
+                            self.network.ident_of(&setter),
+                            self.network.host_of(&setter),
+                        ) {
                             (Some(ident), Some(host)) => format!("{nick}!{ident}@{host}"),
                             _ => nick.to_string(),
                         },
                         None => String::new(),
                     }
                 };
-                self.network.set_channel_topic(&channel, topic.clone(), author.clone());
-                let info = self.db.channel(&channel).map(|c| (c.settings.keeptopic, c.settings.topiclock, c.topic.clone(), c.topic_setter.clone()));
+                self.network
+                    .set_channel_topic(&channel, topic.clone(), author.clone());
+                let info = self.db.channel(&channel).map(|c| {
+                    (
+                        c.settings.keeptopic,
+                        c.settings.topiclock,
+                        c.topic.clone(),
+                        c.topic_setter.clone(),
+                    )
+                });
                 // The setter may change a locked topic only with op-level access.
-                let authorized = self.network.account_of(&setter).and_then(|a| self.db.channel(&channel).map(|c| c.is_op(a))).unwrap_or(false);
+                let authorized = self
+                    .network
+                    .account_of(&setter)
+                    .and_then(|a| self.db.channel(&channel).map(|c| c.is_op(a)))
+                    .unwrap_or(false);
                 let mut out: Vec<NetAction> = match info {
                     // TOPICLOCK + unauthorised: put the kept topic back, keeping its author.
                     Some((_, true, stored, stored_by)) if !authorized => {
                         let from = self.chan_service.clone().unwrap_or_default();
-                        vec![NetAction::Topic { from, channel, topic: stored, setter: stored_by }]
+                        vec![NetAction::Topic {
+                            from,
+                            channel,
+                            topic: stored,
+                            setter: stored_by,
+                        }]
                     }
                     // Otherwise remember the new topic if the channel keeps it.
                     Some((keep, lock, _, _)) if keep || lock => {
@@ -1813,15 +2398,25 @@ impl Engine {
             }
             NetEvent::Quit { uid, reason } => {
                 // Match before we forget them, so their identity is still resolvable.
-                let what = if reason.is_empty() { "disconnected".to_string() } else { format!("disconnected ({reason})") };
-                let mut out: Vec<NetAction> = self.notify_line('d', &uid, None, &what).into_iter().collect();
+                let what = if reason.is_empty() {
+                    "disconnected".to_string()
+                } else {
+                    format!("disconnected ({reason})")
+                };
+                let mut out: Vec<NetAction> = self
+                    .notify_line('d', &uid, None, &what)
+                    .into_iter()
+                    .collect();
                 out.extend(self.security_screen_quit(&uid, &reason));
                 out.extend(self.forget_user(&uid));
                 out
             }
             NetEvent::UserMode { uid, modes } => {
                 self.network.apply_user_mode(&uid, &modes);
-                let mut out: Vec<NetAction> = self.notify_line('u', &uid, None, &format!("set user mode {modes}")).into_iter().collect();
+                let mut out: Vec<NetAction> = self
+                    .notify_line('u', &uid, None, &format!("set user mode {modes}"))
+                    .into_iter()
+                    .collect();
                 // On deoper the ircd leaves the oper vhost applied; put back the user's
                 // services vhost, or the connect-time cloak if they have none (#462).
                 if !self.is_own_client(&uid) && mode_removed(&modes, 'o') {
@@ -1831,18 +2426,35 @@ impl Engine {
             }
             NetEvent::OperUp { uid, oper_type } => {
                 self.network.set_user_oper(&uid, oper_type.clone());
-                let what = if oper_type.is_empty() { "opered up".to_string() } else { format!("opered up as \x02{oper_type}\x02") };
-                let mut out: Vec<NetAction> = self.notify_line('o', &uid, None, &what).into_iter().collect();
+                let what = if oper_type.is_empty() {
+                    "opered up".to_string()
+                } else {
+                    format!("opered up as \x02{oper_type}\x02")
+                };
+                let mut out: Vec<NetAction> = self
+                    .notify_line('o', &uid, None, &what)
+                    .into_iter()
+                    .collect();
                 // #556: once linked (not on the burst), warn an oper who authed with a
                 // TLS cert that isn't on their account — the ircd only checks the oper
                 // block, never the account's own cert list.
                 if self.synced {
-                    if let (Some(ns), Some(account), Some(fp)) = (self.nick_service.clone(), self.network.account_of(&uid).map(str::to_string), self.network.fingerprint_of(&uid).map(|f| f.to_ascii_lowercase())) {
+                    if let (Some(ns), Some(account), Some(fp)) = (
+                        self.nick_service.clone(),
+                        self.network.account_of(&uid).map(str::to_string),
+                        self.network
+                            .fingerprint_of(&uid)
+                            .map(|f| f.to_ascii_lowercase()),
+                    ) {
                         let certs = self.db.certfps(&account);
                         if !certs.is_empty() && !certs.contains(&fp) {
                             let lang = self.lang_for_uid(&uid);
                             let text = echo_api::render(&lang, "You opered up with a TLS certificate fingerprint that isn't on your account. Add it with \x02/msg NickServ CERT ADD\x02.", &[]);
-                            out.push(NetAction::Notice { from: ns, to: uid.clone(), text });
+                            out.push(NetAction::Notice {
+                                from: ns,
+                                to: uid.clone(),
+                                text,
+                            });
                         }
                     }
                 }
@@ -1851,19 +2463,25 @@ impl Engine {
             NetEvent::UserKilled { uid } => {
                 // A killed service agent (NickServ, ChanServ, …) has a fixed uid;
                 // bring it straight back so an oper can't KILL it off the network.
-                if let Some(intro) = self.services.iter().find(|s| s.uid() == uid).map(|s| NetAction::IntroduceUser {
-                    uid: s.uid().to_string(),
-                    nick: s.nick().to_string(),
-                    ident: "services".to_string(),
-                    host: s.host().to_string(),
-                    gecos: s.gecos().to_string(),
+                if let Some(intro) = self.services.iter().find(|s| s.uid() == uid).map(|s| {
+                    NetAction::IntroduceUser {
+                        uid: s.uid().to_string(),
+                        nick: s.nick().to_string(),
+                        ident: "services".to_string(),
+                        host: s.host().to_string(),
+                        gecos: s.gecos().to_string(),
+                    }
                 }) {
                     return self.finish(out, vec![intro]);
                 }
                 // If the ircd killed one of our bots, forget it so reconcile
                 // reintroduces it (and rejoins its channels); a killed real user is
                 // simply gone.
-                if let Some(bot_lc) = self.bot_uids.iter().find_map(|(lc, u)| (u == &uid).then(|| lc.clone())) {
+                if let Some(bot_lc) = self
+                    .bot_uids
+                    .iter()
+                    .find_map(|(lc, u)| (u == &uid).then(|| lc.clone()))
+                {
                     self.bot_uids.remove(&bot_lc);
                     self.bot_idents.remove(&bot_lc);
                     self.network.bot_forget(&bot_lc);
@@ -1894,11 +2512,23 @@ impl Engine {
                 }
                 Vec::new()
             }
-            NetEvent::Privmsg { from, to, text, msgid } => self.dispatch(&from, &to, &text, msgid),
-            NetEvent::AccountRequest { reqid, origin, kind, account, p2, p3 } => {
-                self.account_request(reqid, origin, kind, account, p2, p3)
-            }
-            NetEvent::Sasl { client, mode, data, .. } => self.sasl(client, mode, data),
+            NetEvent::Privmsg {
+                from,
+                to,
+                text,
+                msgid,
+            } => self.dispatch(&from, &to, &text, msgid),
+            NetEvent::AccountRequest {
+                reqid,
+                origin,
+                kind,
+                account,
+                p2,
+                p3,
+            } => self.account_request(reqid, origin, kind, account, p2, p3),
+            NetEvent::Sasl {
+                client, mode, data, ..
+            } => self.sasl(client, mode, data),
             _ => Vec::new(),
         };
         // In tests there is no link layer to run DeferAuthenticate off-thread, so
@@ -1919,8 +2549,16 @@ impl Engine {
         let evout: Vec<NetAction> = evout
             .into_iter()
             .flat_map(|a| match a {
-                NetAction::DeferAuthenticate { verifier, password, then } => {
-                    let ok = crate::engine::scram::verify_plain(crate::engine::scram::Hash::Sha256, &verifier, &password);
+                NetAction::DeferAuthenticate {
+                    verifier,
+                    password,
+                    then,
+                } => {
+                    let ok = crate::engine::scram::verify_plain(
+                        crate::engine::scram::Hash::Sha256,
+                        &verifier,
+                        &password,
+                    );
                     self.complete_authenticate(ok, then)
                 }
                 other => vec![other],
@@ -1945,13 +2583,24 @@ impl Engine {
     fn degrade_standard_replies(&self, actions: &mut [NetAction]) {
         for a in actions.iter_mut() {
             let slot = a.inner_mut();
-            if let NetAction::StandardReply { from, to, command, text, .. } = slot {
+            if let NetAction::StandardReply {
+                from,
+                to,
+                command,
+                text,
+                ..
+            } = slot
+            {
                 let body = if command.is_empty() || command == "*" {
                     format!("*** {text}")
                 } else {
                     format!("*** {command}: {text}")
                 };
-                *slot = NetAction::Notice { from: std::mem::take(from), to: std::mem::take(to), text: body };
+                *slot = NetAction::Notice {
+                    from: std::mem::take(from),
+                    to: std::mem::take(to),
+                    text: body,
+                };
             }
         }
     }
@@ -1963,9 +2612,15 @@ impl Engine {
         let now = self.now_secs();
         for a in actions.iter_mut() {
             match a {
-                NetAction::Kick { channel, uid, reason, .. } => {
+                NetAction::Kick {
+                    channel,
+                    uid,
+                    reason,
+                    ..
+                } => {
                     let target = self.network.nick_of(uid).unwrap_or(uid).to_string();
-                    let summary = format!("kicked \x02{target}\x02 from \x02{channel}\x02: {reason}");
+                    let summary =
+                        format!("kicked \x02{target}\x02 from \x02{channel}\x02: {reason}");
                     let id = self.network.record_incident(summary, now);
                     reason.push_str(&format!(" [#{id}]"));
                 }
@@ -1989,7 +2644,11 @@ impl Engine {
         let mut out = Vec::new();
         self.pending_unbans.retain(|u| {
             if u.at <= now {
-                out.push(NetAction::ChannelMode { from: u.from.clone(), channel: u.channel.clone(), modes: format!("-b {}", u.mask) });
+                out.push(NetAction::ChannelMode {
+                    from: u.from.clone(),
+                    channel: u.channel.clone(),
+                    modes: format!("-b {}", u.mask),
+                });
                 false
             } else {
                 true
@@ -2008,11 +2667,17 @@ impl Engine {
                     if value.is_empty() {
                         self.network.clear_account(target);
                         // Drop the "registered" user mode when logging out.
-                        self.emit_irc(NetAction::UserMode { uid: target.clone(), modes: "-r".to_string() });
+                        self.emit_irc(NetAction::UserMode {
+                            uid: target.clone(),
+                            modes: "-r".to_string(),
+                        });
                     } else {
                         self.network.set_account(target, value);
                         // Set the "registered" user mode (+r) now that they're identified.
-                        self.emit_irc(NetAction::UserMode { uid: target.clone(), modes: "+r".to_string() });
+                        self.emit_irc(NetAction::UserMode {
+                            uid: target.clone(),
+                            modes: "+r".to_string(),
+                        });
                         // Identified now: cancel any pending nick-protection rename.
                         self.pending_enforce.retain(|p| p.uid != *target);
                         // A login is activity: keep the account from expiring.
@@ -2034,7 +2699,10 @@ impl Engine {
     // configured — announce each to it, sourced from the services server. Private
     // and purely cosmetic events are deliberately not surfaced.
     fn audit_feed(&mut self, mark: usize, nick: &str, account: Option<&str>) -> Vec<NetAction> {
-        let tagged: Vec<(&'static str, String)> = self.db.events_since(mark).iter()
+        let tagged: Vec<(&'static str, String)> = self
+            .db
+            .events_since(mark)
+            .iter()
             .filter_map(|e| audit_summary(e).map(|s| (event_category(e), s)))
             .collect();
         if tagged.is_empty() {
@@ -2054,9 +2722,15 @@ impl Engine {
             // Prefer DebugServ's voice; fall back to a server notice when it's off.
             match self.feed(cat, line.clone()) {
                 Some(action) => out.push(action),
-                None => if let (Some(channel), false) = (&self.log_channel, self.sid.is_empty()) {
-                    out.push(NetAction::Notice { from: self.sid.clone(), to: channel.clone(), text: line });
-                },
+                None => {
+                    if let (Some(channel), false) = (&self.log_channel, self.sid.is_empty()) {
+                        out.push(NetAction::Notice {
+                            from: self.sid.clone(),
+                            to: channel.clone(),
+                            text: line,
+                        });
+                    }
+                }
             }
         }
         out
@@ -2069,7 +2743,8 @@ impl Engine {
     // live, else ChanServ — so in-channel actions (auto-op, mode lock, entry
     // message) front as the bot when the channel has one, like Anope.
     fn channel_mode_source(&self, channel: &str) -> String {
-        self.db.channel(channel)
+        self.db
+            .channel(channel)
             .and_then(|c| c.assigned_bot.clone())
             .map(|b| b.to_ascii_lowercase())
             .and_then(|b| self.bot_uids.get(&b).cloned())
@@ -2089,7 +2764,11 @@ impl Engine {
             return None;
         }
         let botuid = self.network.uid_by_nick(&bot)?.to_string();
-        Some(NetAction::Privmsg { from: botuid, to: channel.to_string(), text: format!("[{acc}] {greet}") })
+        Some(NetAction::Privmsg {
+            from: botuid,
+            to: channel.to_string(),
+            text: format!("[{acc}] {greet}"),
+        })
     }
 
     // Ban+kick `uid` from `channel` if their current identity matches its akick
@@ -2098,10 +2777,17 @@ impl Engine {
         let matched = {
             let target = self.network.ban_target(uid);
             target.as_ref().and_then(|t| {
-                self.db.channel(channel).and_then(|c| c.akick_match(t)).map(|k| {
-                    let reason = if k.reason.is_empty() { "You are banned from this channel.".to_string() } else { k.reason.clone() };
-                    (k.mask.clone(), reason)
-                })
+                self.db
+                    .channel(channel)
+                    .and_then(|c| c.akick_match(t))
+                    .map(|k| {
+                        let reason = if k.reason.is_empty() {
+                            "You are banned from this channel.".to_string()
+                        } else {
+                            k.reason.clone()
+                        };
+                        (k.mask.clone(), reason)
+                    })
             })
         };
         match matched {
@@ -2109,8 +2795,17 @@ impl Engine {
                 let from = self.channel_mode_source(channel);
                 self.network.channel_part(channel, uid);
                 vec![
-                    NetAction::ChannelMode { from: from.clone(), channel: channel.to_string(), modes: format!("+b {mask}") },
-                    NetAction::Kick { from, channel: channel.to_string(), uid: uid.to_string(), reason },
+                    NetAction::ChannelMode {
+                        from: from.clone(),
+                        channel: channel.to_string(),
+                        modes: format!("+b {mask}"),
+                    },
+                    NetAction::Kick {
+                        from,
+                        channel: channel.to_string(),
+                        uid: uid.to_string(),
+                        reason,
+                    },
                 ]
             }
             None => Vec::new(),
@@ -2127,7 +2822,11 @@ impl Engine {
             if self.db.is_channel_suspended(&channel) {
                 continue;
             }
-            if account.as_deref().and_then(|a| self.db.channel_join_mode(&channel, a)).is_some() {
+            if account
+                .as_deref()
+                .and_then(|a| self.db.channel_join_mode(&channel, a))
+                .is_some()
+            {
                 continue;
             }
             acts.extend(self.akick_hit(uid, &channel));
@@ -2143,7 +2842,9 @@ impl Engine {
 // The audit feed labels the ban kind from the persisted (string) event token; an
 // unmodelled/peer kind falls back to the generic label.
 fn ban_kind_label(kind: &str) -> &'static str {
-    echo_api::XlineKind::from_wire(kind).map(|k| k.label()).unwrap_or("network ban")
+    echo_api::XlineKind::from_wire(kind)
+        .map(|k| k.label())
+        .unwrap_or("network ban")
 }
 
 // A rough human span for an expiry deadline in an email ("7 days", "12 hours").
@@ -2163,15 +2864,32 @@ fn human_duration(secs: u64) -> String {
 fn event_category(event: &db::Event) -> &'static str {
     use db::Event::*;
     match event {
-        AccountRegistered(_) | AccountDropped { .. } | AccountVerified { .. }
-        | AccountPasswordSet { .. } | AccountEmailSet { .. } | CertAdded { .. }
-        | CertRemoved { .. } | AccountSuspended { .. } | AccountUnsuspended { .. }
-        | NickGrouped { .. } | NickUngrouped { .. } | VhostSet { .. } | VhostDeleted { .. }
+        AccountRegistered(_)
+        | AccountDropped { .. }
+        | AccountVerified { .. }
+        | AccountPasswordSet { .. }
+        | AccountEmailSet { .. }
+        | CertAdded { .. }
+        | CertRemoved { .. }
+        | AccountSuspended { .. }
+        | AccountUnsuspended { .. }
+        | NickGrouped { .. }
+        | NickUngrouped { .. }
+        | VhostSet { .. }
+        | VhostDeleted { .. }
         | AccountOperNoteSet { .. } => "ACCT",
-        ChannelRegistered { .. } | ChannelDropped { .. } | ChannelFounderSet { .. }
-        | ChannelSuccessorSet { .. } | ChannelAccessAdd { .. } | ChannelAccessDel { .. }
-        | ChannelAkickAdd { .. } | ChannelAkickDel { .. } | ChannelSuspended { .. }
-        | ChannelUnsuspended { .. } | ChannelBotAssigned { .. } | ChannelBotUnassigned { .. }
+        ChannelRegistered { .. }
+        | ChannelDropped { .. }
+        | ChannelFounderSet { .. }
+        | ChannelSuccessorSet { .. }
+        | ChannelAccessAdd { .. }
+        | ChannelAccessDel { .. }
+        | ChannelAkickAdd { .. }
+        | ChannelAkickDel { .. }
+        | ChannelSuspended { .. }
+        | ChannelUnsuspended { .. }
+        | ChannelBotAssigned { .. }
+        | ChannelBotUnassigned { .. }
         | ChannelOperNoteSet { .. } => "CHAN",
         _ => "OPER",
     }
@@ -2180,7 +2898,11 @@ fn event_category(event: &db::Event) -> &'static str {
 // echo's ircd module dependencies: (module, critical?, the feature it enables).
 const IRCD_DEPS: &[(&str, bool, &str)] = &[
     ("account", true, "account login tracking"),
-    ("services", true, "services-server privileges (SVS*, u-line)"),
+    (
+        "services",
+        true,
+        "services-server privileges (SVS*, u-line)",
+    ),
     ("rline", false, "regex realname bans (SNLINE)"),
     ("chghost", false, "vhosts (HostServ)"),
     ("chgident", false, "vidents (HostServ)"),
@@ -2199,14 +2921,20 @@ fn verify_ircd_dependencies(net: &Network) {
         if !net.has_module(module) {
             missing += 1;
             if critical {
-                tracing::error!(module, "REQUIRED ircd module not loaded — {feature} will not work");
+                tracing::error!(
+                    module,
+                    "REQUIRED ircd module not loaded — {feature} will not work"
+                );
             } else {
                 tracing::warn!(module, "ircd module not loaded — {feature} is unavailable");
             }
         }
     }
     if missing == 0 {
-        tracing::info!(count = net.module_count(), "verified ircd module dependencies");
+        tracing::info!(
+            count = net.module_count(),
+            "verified ircd module dependencies"
+        );
     }
 }
 
@@ -2235,32 +2963,69 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         },
         CertAdded { account, fp } => format!("added cert \x02{fp}\x02 to \x02{account}\x02"),
         CertRemoved { account, fp } => format!("removed cert \x02{fp}\x02 from \x02{account}\x02"),
-        AccountSuspended { account, reason, .. } => format!("suspended account \x02{account}\x02 ({reason})"),
+        AccountSuspended {
+            account, reason, ..
+        } => format!("suspended account \x02{account}\x02 ({reason})"),
         AccountUnsuspended { account } => format!("unsuspended account \x02{account}\x02"),
-        NickGrouped { nick, account } => format!("grouped nick \x02{nick}\x02 to \x02{account}\x02"),
+        NickGrouped { nick, account } => {
+            format!("grouped nick \x02{nick}\x02 to \x02{account}\x02")
+        }
         NickUngrouped { nick } => format!("ungrouped nick \x02{nick}\x02"),
-        VhostSet { account, host, expires, .. } => {
-            let kind = if expires.is_some() { " (temporary)" } else { "" };
+        VhostSet {
+            account,
+            host,
+            expires,
+            ..
+        } => {
+            let kind = if expires.is_some() {
+                " (temporary)"
+            } else {
+                ""
+            };
             format!("set vhost \x02{host}\x02 on \x02{account}\x02{kind}")
         }
         VhostDeleted { account } => format!("removed the vhost on \x02{account}\x02"),
-        ChannelRegistered { name, founder, .. } => format!("registered channel \x02{name}\x02 (founder \x02{founder}\x02)"),
+        ChannelRegistered { name, founder, .. } => {
+            format!("registered channel \x02{name}\x02 (founder \x02{founder}\x02)")
+        }
         ChannelDropped { name } => format!("dropped channel \x02{name}\x02"),
         ChannelRenamed { old, new } => format!("renamed channel \x02{old}\x02 to \x02{new}\x02"),
-        ChannelFounderSet { channel, founder } => format!("set founder of \x02{channel}\x02 to \x02{founder}\x02"),
+        ChannelFounderSet { channel, founder } => {
+            format!("set founder of \x02{channel}\x02 to \x02{founder}\x02")
+        }
         ChannelSuccessorSet { channel, successor } => match successor {
             Some(s) => format!("set successor of \x02{channel}\x02 to \x02{s}\x02"),
             None => format!("cleared the successor of \x02{channel}\x02"),
         },
-        ChannelAccessAdd { channel, account, level } => format!("set \x02{account}\x02 to {level} on \x02{channel}\x02"),
-        ChannelAccessDel { channel, account } => format!("removed \x02{account}\x02 from \x02{channel}\x02 access"),
-        ChannelAkickAdd { channel, mask, reason } => format!("added akick \x02{mask}\x02 on \x02{channel}\x02 ({reason})"),
-        ChannelAkickDel { channel, mask } => format!("removed akick \x02{mask}\x02 on \x02{channel}\x02"),
-        ChannelLevelSet { channel, cap, role } => format!("set level \x02{cap}\x02 to \x02{role}\x02 on \x02{channel}\x02"),
-        ChannelLevelReset { channel, cap } => format!("reset level \x02{cap}\x02 on \x02{channel}\x02"),
-        ChannelSuspended { channel, reason, .. } => format!("suspended channel \x02{channel}\x02 ({reason})"),
+        ChannelAccessAdd {
+            channel,
+            account,
+            level,
+        } => format!("set \x02{account}\x02 to {level} on \x02{channel}\x02"),
+        ChannelAccessDel { channel, account } => {
+            format!("removed \x02{account}\x02 from \x02{channel}\x02 access")
+        }
+        ChannelAkickAdd {
+            channel,
+            mask,
+            reason,
+        } => format!("added akick \x02{mask}\x02 on \x02{channel}\x02 ({reason})"),
+        ChannelAkickDel { channel, mask } => {
+            format!("removed akick \x02{mask}\x02 on \x02{channel}\x02")
+        }
+        ChannelLevelSet { channel, cap, role } => {
+            format!("set level \x02{cap}\x02 to \x02{role}\x02 on \x02{channel}\x02")
+        }
+        ChannelLevelReset { channel, cap } => {
+            format!("reset level \x02{cap}\x02 on \x02{channel}\x02")
+        }
+        ChannelSuspended {
+            channel, reason, ..
+        } => format!("suspended channel \x02{channel}\x02 ({reason})"),
         ChannelUnsuspended { channel } => format!("unsuspended channel \x02{channel}\x02"),
-        ChannelBotAssigned { channel, bot } => format!("assigned bot \x02{bot}\x02 to \x02{channel}\x02"),
+        ChannelBotAssigned { channel, bot } => {
+            format!("assigned bot \x02{bot}\x02 to \x02{channel}\x02")
+        }
         ChannelBotUnassigned { channel } => format!("removed the bot from \x02{channel}\x02"),
         BotAdded(b) => format!("added bot \x02{}\x02", b.nick),
         BotRemoved { nick } => format!("removed bot \x02{nick}\x02"),
@@ -2276,16 +3041,45 @@ fn audit_summary(event: &db::Event) -> Option<String> {
             Some(t) => format!("set the vhost template to \x02{t}\x02"),
             None => "cleared the vhost template".to_string(),
         },
-        AkillAdded { kind, mask, reason, expires, .. } => {
-            let temp = if expires.is_some() { " (temporary)" } else { "" };
-            format!("set a {} on \x02{mask}\x02{temp} ({reason})", ban_kind_label(kind))
+        AkillAdded {
+            kind,
+            mask,
+            reason,
+            expires,
+            ..
+        } => {
+            let temp = if expires.is_some() {
+                " (temporary)"
+            } else {
+                ""
+            };
+            format!(
+                "set a {} on \x02{mask}\x02{temp} ({reason})",
+                ban_kind_label(kind)
+            )
         }
-        AkillRemoved { kind, mask } => format!("lifted the {} on \x02{mask}\x02", ban_kind_label(kind)),
-        FilterAdded { pattern, action, reason, .. } => format!("added a \x02{action}\x02 spam filter on \x02{pattern}\x02 ({reason})"),
+        AkillRemoved { kind, mask } => {
+            format!("lifted the {} on \x02{mask}\x02", ban_kind_label(kind))
+        }
+        FilterAdded {
+            pattern,
+            action,
+            reason,
+            ..
+        } => format!("added a \x02{action}\x02 spam filter on \x02{pattern}\x02 ({reason})"),
         FilterRemoved { pattern } => format!("removed the spam filter on \x02{pattern}\x02"),
-        ForbidAdded { kind, mask, reason, .. } => format!("forbade {} \x02{mask}\x02 ({reason})", kind.to_ascii_lowercase()),
-        ForbidRemoved { kind, mask } => format!("un-forbade {} \x02{mask}\x02", kind.to_ascii_lowercase()),
-        NotifyAdded { mask, flags, .. } => format!("added a notify watch on \x02{mask}\x02 [{flags}]"),
+        ForbidAdded {
+            kind, mask, reason, ..
+        } => format!(
+            "forbade {} \x02{mask}\x02 ({reason})",
+            kind.to_ascii_lowercase()
+        ),
+        ForbidRemoved { kind, mask } => {
+            format!("un-forbade {} \x02{mask}\x02", kind.to_ascii_lowercase())
+        }
+        NotifyAdded { mask, flags, .. } => {
+            format!("added a notify watch on \x02{mask}\x02 [{flags}]")
+        }
         NotifyRemoved { mask } => format!("removed the notify watch on \x02{mask}\x02"),
         JupeAdded { name, reason, .. } => format!("juped server \x02{name}\x02 ({reason})"),
         JupeRemoved { name } => format!("lifted the jupe on \x02{name}\x02"),
@@ -2299,26 +3093,47 @@ fn audit_summary(event: &db::Event) -> Option<String> {
         },
         NewsAdded { kind, .. } => format!("added a \x02{kind}\x02 bulletin"),
         NewsDeleted { .. } => "removed a bulletin".to_string(),
-        ReportFiled { reporter, target, reason, .. } => format!("\x02{reporter}\x02 reported \x02{target}\x02: {reason}"),
+        ReportFiled {
+            reporter,
+            target,
+            reason,
+            ..
+        } => format!("\x02{reporter}\x02 reported \x02{target}\x02: {reason}"),
         ReportClosed { id } => format!("closed report #{id}"),
         ReportDeleted { id } => format!("deleted report #{id}"),
-        HelpRequested { requester, message, .. } => format!("\x02{requester}\x02 asked for help: {message}"),
+        HelpRequested {
+            requester, message, ..
+        } => format!("\x02{requester}\x02 asked for help: {message}"),
         HelpTaken { id, handler } => format!("\x02{handler}\x02 took help ticket #{id}"),
         HelpClosed { id } => format!("closed help ticket #{id}"),
-        GroupRegistered { name, founder, .. } => format!("registered group \x02{name}\x02 (founder \x02{founder}\x02)"),
+        GroupRegistered { name, founder, .. } => {
+            format!("registered group \x02{name}\x02 (founder \x02{founder}\x02)")
+        }
         GroupDropped { name } => format!("dropped group \x02{name}\x02"),
-        GroupFounderSet { name, founder } => format!("set founder of \x02{name}\x02 to \x02{founder}\x02"),
-        GroupFlagsSet { name, account, flags } => {
+        GroupFounderSet { name, founder } => {
+            format!("set founder of \x02{name}\x02 to \x02{founder}\x02")
+        }
+        GroupFlagsSet {
+            name,
+            account,
+            flags,
+        } => {
             if flags.is_empty() {
                 format!("added \x02{account}\x02 to group \x02{name}\x02")
             } else {
                 format!("set \x02{account}\x02 in group \x02{name}\x02 to \x02{flags}\x02")
             }
         }
-        GroupMemberDel { name, account } => format!("removed \x02{account}\x02 from group \x02{name}\x02"),
-        OperGranted { account, privs, .. } => format!("granted \x02{account}\x02 operator ({})", privs.join(", ")),
+        GroupMemberDel { name, account } => {
+            format!("removed \x02{account}\x02 from group \x02{name}\x02")
+        }
+        OperGranted { account, privs, .. } => {
+            format!("granted \x02{account}\x02 operator ({})", privs.join(", "))
+        }
         OperRevoked { account } => format!("revoked \x02{account}\x02's operator access"),
-        SessionExceptionAdded { mask, limit, .. } => format!("set a session exception \x02{mask}\x02 (limit {limit})"),
+        SessionExceptionAdded { mask, limit, .. } => {
+            format!("set a session exception \x02{mask}\x02 (limit {limit})")
+        }
         SessionExceptionRemoved { mask } => format!("removed the session exception \x02{mask}\x02"),
         AccountNoExpire { account, on } => {
             let verb = if *on { "pinned" } else { "unpinned" };
@@ -2329,13 +3144,40 @@ fn audit_summary(event: &db::Event) -> Option<String> {
             format!("{verb} channel \x02{channel}\x02 against expiry")
         }
         // Private, self-service, or cosmetic — not surfaced.
-        AjoinAdded { .. } | AjoinRemoved { .. } | AccountGreetSet { .. } | AccountSignoreSet { .. } | AccountLanguageSet { .. } | AccountProfileSet { .. } | AccountAutoOpSet { .. } | AccountKillSet { .. } | AccountHideStatusSet { .. } | AccountSnoticeSet { .. } | VhostRequested { .. }
-        | VhostRequestCleared { .. } | MemoSent { .. } | MemoRead { .. } | MemoDeleted { .. }
-        | MemoIgnoreAdd { .. } | MemoIgnoreDel { .. } | MemoPrefsSet { .. }
-        | ChannelMlock { .. } | ChannelDescSet { .. } | ChannelEntryMsgSet { .. } | ChannelUrlSet { .. } | ChannelEmailSet { .. } | ChannelSettingsSet { .. }
-        | ChannelKickerSet { .. } | ChannelBadwordsSet { .. } | ChannelTriggersSet { .. }
-        | ChannelTopicSet { .. } | AccountSeen { .. } | ChannelUsed { .. }
-        | AccountExpiryWarned { .. } | ChannelExpiryWarned { .. } | StatsSet { .. } | IncidentsSet { .. } => return None,
+        AjoinAdded { .. }
+        | AjoinRemoved { .. }
+        | AccountGreetSet { .. }
+        | AccountSignoreSet { .. }
+        | AccountLanguageSet { .. }
+        | AccountProfileSet { .. }
+        | AccountAutoOpSet { .. }
+        | AccountKillSet { .. }
+        | AccountHideStatusSet { .. }
+        | AccountSnoticeSet { .. }
+        | VhostRequested { .. }
+        | VhostRequestCleared { .. }
+        | MemoSent { .. }
+        | MemoRead { .. }
+        | MemoDeleted { .. }
+        | MemoIgnoreAdd { .. }
+        | MemoIgnoreDel { .. }
+        | MemoPrefsSet { .. }
+        | ChannelMlock { .. }
+        | ChannelDescSet { .. }
+        | ChannelEntryMsgSet { .. }
+        | ChannelUrlSet { .. }
+        | ChannelEmailSet { .. }
+        | ChannelSettingsSet { .. }
+        | ChannelKickerSet { .. }
+        | ChannelBadwordsSet { .. }
+        | ChannelTriggersSet { .. }
+        | ChannelTopicSet { .. }
+        | AccountSeen { .. }
+        | ChannelUsed { .. }
+        | AccountExpiryWarned { .. }
+        | ChannelExpiryWarned { .. }
+        | StatsSet { .. }
+        | IncidentsSet { .. } => return None,
     };
     Some(s)
 }
@@ -2418,15 +3260,29 @@ fn safe(s: &str) -> String {
 }
 
 fn sasl_fail(agent: &str, client: &str) -> Vec<NetAction> {
-    vec![NetAction::Sasl { agent: agent.to_string(), client: client.to_string(), mode: "D".to_string(), data: vec!["F".to_string()] }]
+    vec![NetAction::Sasl {
+        agent: agent.to_string(),
+        client: client.to_string(),
+        mode: "D".to_string(),
+        data: vec!["F".to_string()],
+    }]
 }
 
 // The two actions that complete any mechanism: set the account (drives 900),
 // then report SASL success (drives 903).
 fn sasl_success(agent: &str, client: &str, account: String) -> Vec<NetAction> {
     vec![
-        NetAction::Metadata { target: client.to_string(), key: "accountname".to_string(), value: account },
-        NetAction::Sasl { agent: agent.to_string(), client: client.to_string(), mode: "D".to_string(), data: vec!["S".to_string()] },
+        NetAction::Metadata {
+            target: client.to_string(),
+            key: "accountname".to_string(),
+            value: account,
+        },
+        NetAction::Sasl {
+            agent: agent.to_string(),
+            client: client.to_string(),
+            mode: "D".to_string(),
+            data: vec!["S".to_string()],
+        },
     ]
 }
 
@@ -2450,17 +3306,53 @@ enum RegOutcome {
 // so both the pre-check rejection and the post-derivation result share one place.
 fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAction> {
     match reply {
-        RegReply::Relay { reqid, kind, origin } => {
+        RegReply::Relay {
+            reqid,
+            kind,
+            origin,
+        } => {
             let (status, code, message) = match outcome {
                 RegOutcome::Ok => ("success", "*", "Account registered."),
-                RegOutcome::VerifyRequired => ("verification_required", "VERIFICATION_REQUIRED", "Registered — check your email for a code, then VERIFY."),
-                RegOutcome::Forbidden => ("error", "BAD_ACCOUNT_NAME", "That account name is forbidden by network policy."),
-                RegOutcome::ForbiddenEmail => ("error", "BAD_EMAIL", "That email address is forbidden by network policy."),
-                RegOutcome::Exists => ("error", "ACCOUNT_EXISTS", "That account name is already registered."),
-                RegOutcome::RateLimited => ("error", "TEMPORARILY_UNAVAILABLE", "Too many registrations, please wait a moment."),
-                RegOutcome::Frozen => ("error", "TEMPORARILY_UNAVAILABLE", "Registrations are temporarily frozen by network staff."),
-                RegOutcome::External => ("error", "ACCOUNT_REGISTRATION_DISABLED", "Accounts are managed on the website; register there."),
-                RegOutcome::Internal => ("error", "TEMPORARILY_UNAVAILABLE", "Registration is unavailable, try again later."),
+                RegOutcome::VerifyRequired => (
+                    "verification_required",
+                    "VERIFICATION_REQUIRED",
+                    "Registered — check your email for a code, then VERIFY.",
+                ),
+                RegOutcome::Forbidden => (
+                    "error",
+                    "BAD_ACCOUNT_NAME",
+                    "That account name is forbidden by network policy.",
+                ),
+                RegOutcome::ForbiddenEmail => (
+                    "error",
+                    "BAD_EMAIL",
+                    "That email address is forbidden by network policy.",
+                ),
+                RegOutcome::Exists => (
+                    "error",
+                    "ACCOUNT_EXISTS",
+                    "That account name is already registered.",
+                ),
+                RegOutcome::RateLimited => (
+                    "error",
+                    "TEMPORARILY_UNAVAILABLE",
+                    "Too many registrations, please wait a moment.",
+                ),
+                RegOutcome::Frozen => (
+                    "error",
+                    "TEMPORARILY_UNAVAILABLE",
+                    "Registrations are temporarily frozen by network staff.",
+                ),
+                RegOutcome::External => (
+                    "error",
+                    "ACCOUNT_REGISTRATION_DISABLED",
+                    "Accounts are managed on the website; register there.",
+                ),
+                RegOutcome::Internal => (
+                    "error",
+                    "TEMPORARILY_UNAVAILABLE",
+                    "Registration is unavailable, try again later.",
+                ),
             };
             vec![NetAction::AccountResponse {
                 reqid: reqid.clone(),
@@ -2473,7 +3365,11 @@ fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAct
             }]
         }
         RegReply::NickServ { agent, uid, nick } => {
-            let notice = |text: String| NetAction::Notice { from: agent.clone(), to: uid.clone(), text };
+            let notice = |text: String| NetAction::Notice {
+                from: agent.clone(),
+                to: uid.clone(),
+                text,
+            };
             match outcome {
                 // Registering identifies you to the nick right away (drives 900).
                 // VerifyRequired still logs you in; the emailed-code notice is
@@ -2492,18 +3388,38 @@ fn reg_reply(reply: &RegReply, outcome: RegOutcome, account: &str) -> Vec<NetAct
             }
         }
         RegReply::Admin { agent, uid } => {
-            let notice = |text: String| NetAction::Notice { from: agent.clone(), to: uid.clone(), text };
+            let notice = |text: String| NetAction::Notice {
+                from: agent.clone(),
+                to: uid.clone(),
+                text,
+            };
             match outcome {
                 RegOutcome::Ok | RegOutcome::VerifyRequired => {
-                    vec![notice(format!("Account \x02{account}\x02 has been created and is active."))]
+                    vec![notice(format!(
+                        "Account \x02{account}\x02 has been created and is active."
+                    ))]
                 }
-                RegOutcome::Forbidden => vec![notice(format!("\x02{account}\x02 is a forbidden account name."))],
-                RegOutcome::ForbiddenEmail => vec![notice("That email address is forbidden by network policy.".to_string())],
-                RegOutcome::Exists => vec![notice(format!("\x02{account}\x02 is already registered."))],
-                RegOutcome::RateLimited => vec![notice("Registrations are busy right now; try again in a moment.".to_string())],
-                RegOutcome::Frozen => vec![notice("Registrations are temporarily frozen by network staff.".to_string())],
-                RegOutcome::External => vec![notice("Accounts are managed on the website — create it there.".to_string())],
-                RegOutcome::Internal => vec![notice("Sorry, that didn't work. Please try again in a moment.".to_string())],
+                RegOutcome::Forbidden => vec![notice(format!(
+                    "\x02{account}\x02 is a forbidden account name."
+                ))],
+                RegOutcome::ForbiddenEmail => vec![notice(
+                    "That email address is forbidden by network policy.".to_string(),
+                )],
+                RegOutcome::Exists => {
+                    vec![notice(format!("\x02{account}\x02 is already registered."))]
+                }
+                RegOutcome::RateLimited => vec![notice(
+                    "Registrations are busy right now; try again in a moment.".to_string(),
+                )],
+                RegOutcome::Frozen => vec![notice(
+                    "Registrations are temporarily frozen by network staff.".to_string(),
+                )],
+                RegOutcome::External => vec![notice(
+                    "Accounts are managed on the website — create it there.".to_string(),
+                )],
+                RegOutcome::Internal => vec![notice(
+                    "Sorry, that didn't work. Please try again in a moment.".to_string(),
+                )],
             }
         }
     }
@@ -2522,12 +3438,17 @@ const REG_REFILL_PER_SEC: f64 = 0.5; // steady-state: one every two seconds
 
 impl RegLimiter {
     fn new() -> Self {
-        Self { tokens: REG_BURST, last: Instant::now() }
+        Self {
+            tokens: REG_BURST,
+            last: Instant::now(),
+        }
     }
 
     fn allow(&mut self) -> bool {
         let now = Instant::now();
-        self.tokens = (self.tokens + now.duration_since(self.last).as_secs_f64() * REG_REFILL_PER_SEC).min(REG_BURST);
+        self.tokens = (self.tokens
+            + now.duration_since(self.last).as_secs_f64() * REG_REFILL_PER_SEC)
+            .min(REG_BURST);
         self.last = now;
         if self.tokens >= 1.0 {
             self.tokens -= 1.0;
@@ -2552,12 +3473,17 @@ const DICT_REFILL_PER_SEC: f64 = 1.0;
 
 impl DictLimiter {
     fn new() -> Self {
-        Self { tokens: DICT_BURST, last: Instant::now() }
+        Self {
+            tokens: DICT_BURST,
+            last: Instant::now(),
+        }
     }
 
     fn allow(&mut self) -> bool {
         let now = Instant::now();
-        self.tokens = (self.tokens + now.duration_since(self.last).as_secs_f64() * DICT_REFILL_PER_SEC).min(DICT_BURST);
+        self.tokens = (self.tokens
+            + now.duration_since(self.last).as_secs_f64() * DICT_REFILL_PER_SEC)
+            .min(DICT_BURST);
         self.last = now;
         if self.tokens >= 1.0 {
             self.tokens -= 1.0;
@@ -2604,8 +3530,13 @@ impl CmdLimiter {
 
     fn check_at(&mut self, key: &str, now: Instant) -> CmdVerdict {
         self.sweep(now);
-        let b = self.buckets.entry(key.to_string()).or_insert(CmdBucket { tokens: CMD_BURST, last: now, last_warn: None });
-        b.tokens = (b.tokens + now.duration_since(b.last).as_secs_f64() * CMD_REFILL_PER_SEC).min(CMD_BURST);
+        let b = self.buckets.entry(key.to_string()).or_insert(CmdBucket {
+            tokens: CMD_BURST,
+            last: now,
+            last_warn: None,
+        });
+        b.tokens = (b.tokens + now.duration_since(b.last).as_secs_f64() * CMD_REFILL_PER_SEC)
+            .min(CMD_BURST);
         b.last = now;
         if b.tokens >= 1.0 {
             b.tokens -= 1.0;
@@ -2614,7 +3545,9 @@ impl CmdLimiter {
         // Over budget. Warn at most once per window, then drop silently — a sustained
         // flood that the ircd's fakelag paces to a trickle must not draw a fresh
         // "slow down" on every other line, which would just backscatter the flood.
-        if b.last_warn.is_none_or(|w| now.duration_since(w) >= CMD_WARN_EVERY) {
+        if b.last_warn
+            .is_none_or(|w| now.duration_since(w) >= CMD_WARN_EVERY)
+        {
             b.last_warn = Some(now);
             CmdVerdict::Warn
         } else {
@@ -2632,7 +3565,9 @@ impl CmdLimiter {
             }
         }
         self.last_sweep = Some(now);
-        self.buckets.retain(|_, b| (b.tokens + now.duration_since(b.last).as_secs_f64() * CMD_REFILL_PER_SEC) < CMD_BURST);
+        self.buckets.retain(|_, b| {
+            (b.tokens + now.duration_since(b.last).as_secs_f64() * CMD_REFILL_PER_SEC) < CMD_BURST
+        });
     }
 }
 
