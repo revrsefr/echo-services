@@ -50,6 +50,7 @@ pub fn banner(color: bool) -> String {
     } else {
         ("", "", "", "")
     };
+    #[allow(clippy::const_is_empty)] // ECHO_COMMIT_DATE can be empty in a non-git build
     let commit = if COMMIT_DATE.is_empty() {
         String::new()
     } else {

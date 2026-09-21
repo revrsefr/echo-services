@@ -2310,7 +2310,7 @@ impl Engine {
                         // a user without voice-level (or higher) access.
                         let denied = account.as_deref().is_some_and(|a| c.denied(a));
                         let secure = c.settings.securevoices
-                            && !account.as_deref().is_some_and(|a| c.join_mode(a).is_some());
+                            && account.as_deref().is_none_or(|a| c.join_mode(a).is_none());
                         if denied || secure {
                             let from = self.chan_service.clone().unwrap_or_default();
                             return self.finish(

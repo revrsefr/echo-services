@@ -718,7 +718,7 @@ impl Db {
     /// Delete one memo by index. Returns whether it existed.
     pub fn memo_del(&mut self, account: &str, index: usize) -> bool {
         let k = key(account);
-        if !self.accounts.get(&k).is_some_and(|a| index < a.memos.len()) {
+        if self.accounts.get(&k).is_none_or(|a| index >= a.memos.len()) {
             return false;
         }
         let _ = self.log.append(Event::MemoDeleted { account: account.to_string(), index });

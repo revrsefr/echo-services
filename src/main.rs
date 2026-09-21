@@ -296,7 +296,7 @@ async fn main() -> Result<()> {
         // `en.json` is an OPTIONAL override: the msgid is the built-in English text,
         // but any entry here replaces it — so all help + replies are editable from a
         // file without recompiling. Every other code's file is the translation catalog.
-        for code in db.available_languages().to_vec() {
+        for code in db.available_languages().iter().cloned() {
             let path = format!("{}/{}.json", lang.dir, code);
             match std::fs::read_to_string(&path) {
                 Ok(data) => match serde_json::from_str::<std::collections::HashMap<String, String>>(&data) {
